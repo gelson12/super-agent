@@ -20,7 +20,7 @@ def ask_gemini(prompt: str, system: str = SYSTEM_PROMPT_GEMINI) -> str:
     try:
         full_prompt = f"{system}\n\n{prompt}" if system else prompt
         resp = _get_client().models.generate_content(
-            model="gemini-2.0-flash",
+            model="gemini-1.5-flash",
             contents=full_prompt,
         )
         return (resp.text or "").strip()
