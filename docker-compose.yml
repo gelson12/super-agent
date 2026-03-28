@@ -1,0 +1,10 @@
+services:
+  agent:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file: .env
+    volumes:
+      - ./app:/app/app        # live-reload source in dev
+      - ./agent_memory.db:/app/agent_memory.db  # persist SQLite across restarts
+    restart: unless-stopped
