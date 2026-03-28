@@ -78,7 +78,8 @@ def chat(req: ChatRequest, request: Request):
     Conversation history is saved per session_id.
     """
     result = dispatch(req.message)
-    append_exchange(req.session_id, req.message, result["response"])
+    if not result["response"].startswith("["):
+        append_exchange(req.session_id, req.message, result["response"])
     return ChatResponse(
         response=result["response"],
         model_used=result["model_used"],
@@ -97,7 +98,8 @@ def chat_direct(req: DirectChatRequest, request: Request):
     result = dispatch(req.message, force_model=req.model)
     if result["model_used"] is None:
         raise HTTPException(status_code=400, detail=result["response"])
-    append_exchange(req.session_id, req.message, result["response"])
+    if not result["response"].startswith("["):
+        append_exchange(req.session_id, req.message, result["response"])
     return ChatResponse(
         response=result["response"],
         model_used=result["model_used"],
