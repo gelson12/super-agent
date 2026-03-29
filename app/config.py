@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     max_tokens_gemini: int = 2048
     max_tokens_deepseek: int = 2048
 
+    # Web UI access password (leave empty to disable auth)
+    ui_password: str = ""
+
     # GitHub integration
     github_pat: str = ""
 

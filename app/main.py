@@ -11,10 +11,12 @@ Endpoints:
   POST /storage/upload      — upload file with auto quota management
 """
 import os
-from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form
+import secrets
+from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 from pydantic import BaseModel, Field
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
@@ -25,8 +27,30 @@ from .memory.session import append_exchange, get_messages, clear_session
 from .storage.cloudinary_manager import get_storage_status, upload_file
 from .models.claude import ask_claude_vision
 from .models.gemini import transcribe_audio
+from .config import settings
 
 limiter = Limiter(key_func=get_remote_address)
+
+# ── Auth middleware ────────────────────────────────────────────────────────────
+# Protected paths require header: X-Token: <UI_PASSWORD>
+# If UI_PASSWORD is not set, auth is disabled.
+
+_OPEN_PATHS = {"/", "/health", "/auth"}
+_OPEN_PREFIXES = ("/static",)
+
+
+class AuthMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        if not settings.ui_password:
+            return await call_next(request)
+        path = request.url.path
+        if path in _OPEN_PATHS or any(path.startswith(p) for p in _OPEN_PREFIXES):
+            return await call_next(request)
+        token = request.headers.get("X-Token", "")
+        if not secrets.compare_digest(token, settings.ui_password):
+            return JSONResponse({"detail": "Unauthorized"}, status_code=401)
+        return await call_next(request)
+
 
 app = FastAPI(
     title="Super Agent Backend",
@@ -36,6 +60,7 @@ app = FastAPI(
 
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(AuthMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
@@ -93,6 +118,20 @@ def root():
 @app.get("/health", tags=["meta"])
 def health():
     return {"ok": True, "version": "1.0.0"}
+
+
+class AuthRequest(BaseModel):
+    password: str
+
+
+@app.post("/auth", tags=["meta"])
+def auth(req: AuthRequest):
+    """Validate password. Returns ok:true if correct."""
+    if not settings.ui_password:
+        return {"ok": True}
+    if not secrets.compare_digest(req.password, settings.ui_password):
+        raise HTTPException(status_code=401, detail="Wrong password")
+    return {"ok": True}
 
 
 @app.post("/chat", response_model=ChatResponse, tags=["agent"])

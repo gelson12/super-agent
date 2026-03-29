@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Super Agent</title>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -16,6 +17,65 @@
       flex-direction: column;
     }
 
+    /* ── Login screen ─────────────────────────────────────────────────────── */
+    #lock-screen {
+      position: fixed; inset: 0;
+      background: #0f0f0f;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 999;
+    }
+    #lock-screen.hidden { display: none; }
+
+    .lock-card {
+      background: #141414;
+      border: 1px solid #2a2a2a;
+      border-radius: 20px;
+      padding: 40px 32px;
+      width: 320px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      align-items: center;
+    }
+    .lock-card .lock-icon { font-size: 36px; }
+    .lock-card h2 { font-size: 18px; font-weight: 600; }
+    .lock-card p { font-size: 13px; color: #666; text-align: center; }
+
+    #pw-input {
+      width: 100%;
+      background: #1e1e1e;
+      border: 1px solid #2a2a2a;
+      border-radius: 10px;
+      padding: 12px 14px;
+      color: #e8e8e8;
+      font-size: 14px;
+      outline: none;
+    }
+    #pw-input:focus { border-color: #6d28d9; }
+
+    #pw-submit {
+      width: 100%;
+      background: #6d28d9;
+      border: none;
+      border-radius: 10px;
+      padding: 12px;
+      color: #fff;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    #pw-submit:hover { background: #7c3aed; }
+
+    #pw-error {
+      font-size: 12px;
+      color: #ef4444;
+      display: none;
+    }
+
+    /* ── Header ───────────────────────────────────────────────────────────── */
     header {
       padding: 16px 24px;
       border-bottom: 1px solid #222;
@@ -24,17 +84,16 @@
       gap: 12px;
       background: #141414;
     }
-
     header .dot {
       width: 10px; height: 10px;
       border-radius: 50%;
       background: #22c55e;
       box-shadow: 0 0 6px #22c55e;
     }
-
     header h1 { font-size: 17px; font-weight: 600; }
     header span { font-size: 12px; color: #666; margin-left: auto; }
 
+    /* ── Chat ─────────────────────────────────────────────────────────────── */
     #chat {
       flex: 1;
       overflow-y: auto;
@@ -44,12 +103,7 @@
       gap: 16px;
     }
 
-    .message {
-      display: flex;
-      flex-direction: column;
-      max-width: 72%;
-    }
-
+    .message { display: flex; flex-direction: column; max-width: 72%; }
     .message.user { align-self: flex-end; align-items: flex-end; }
     .message.agent { align-self: flex-start; align-items: flex-start; }
 
@@ -57,17 +111,50 @@
       padding: 12px 16px;
       border-radius: 16px;
       font-size: 14px;
-      line-height: 1.6;
-      white-space: pre-wrap;
+      line-height: 1.65;
       word-break: break-word;
     }
+
+    /* rendered markdown inside bubbles */
+    .bubble p { margin-bottom: 8px; }
+    .bubble p:last-child { margin-bottom: 0; }
+    .bubble strong { font-weight: 700; }
+    .bubble em { font-style: italic; }
+    .bubble ul, .bubble ol { padding-left: 18px; margin-bottom: 8px; }
+    .bubble li { margin-bottom: 4px; }
+    .bubble code {
+      background: rgba(255,255,255,0.08);
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-family: "Fira Mono", monospace;
+      font-size: 13px;
+    }
+    .bubble pre {
+      background: #111;
+      border: 1px solid #333;
+      border-radius: 8px;
+      padding: 12px;
+      overflow-x: auto;
+      margin: 8px 0;
+    }
+    .bubble pre code { background: none; padding: 0; font-size: 13px; }
+    .bubble h1,.bubble h2,.bubble h3 { margin: 10px 0 6px; font-weight: 600; }
+    .bubble blockquote {
+      border-left: 3px solid #6d28d9;
+      padding-left: 10px;
+      color: #999;
+      margin: 6px 0;
+    }
+    .bubble table { border-collapse: collapse; margin: 8px 0; font-size: 13px; }
+    .bubble th, .bubble td { border: 1px solid #333; padding: 6px 10px; }
+    .bubble th { background: #1a1a1a; }
 
     .message.user .bubble {
       background: #6d28d9;
       color: #fff;
       border-bottom-right-radius: 4px;
+      white-space: pre-wrap;
     }
-
     .message.agent .bubble {
       background: #1e1e1e;
       color: #e8e8e8;
@@ -86,13 +173,8 @@
     }
 
     .speak-btn {
-      background: none;
-      border: none;
-      cursor: pointer;
-      color: #555;
-      padding: 0;
-      font-size: 14px;
-      line-height: 1;
+      background: none; border: none; cursor: pointer;
+      color: #555; padding: 0; font-size: 14px; line-height: 1;
       transition: color 0.2s;
     }
     .speak-btn:hover { color: #a78bfa; }
@@ -102,8 +184,10 @@
       border: 1px solid #2a2a2a;
       color: #666;
       font-style: italic;
+      white-space: pre-wrap;
     }
 
+    /* ── Input area ───────────────────────────────────────────────────────── */
     #input-area {
       padding: 12px 24px;
       border-top: 1px solid #222;
@@ -128,7 +212,6 @@
       font-family: inherit;
       line-height: 1.5;
     }
-
     #input:focus { border-color: #6d28d9; }
     #input::placeholder { color: #444; }
 
@@ -136,16 +219,12 @@
       background: #1e1e1e;
       border: 1px solid #2a2a2a;
       border-radius: 12px;
-      width: 48px;
-      height: 48px;
+      width: 48px; height: 48px;
       cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
+      display: flex; align-items: center; justify-content: center;
       flex-shrink: 0;
       transition: all 0.2s;
-      color: #888;
-      font-size: 18px;
+      color: #888; font-size: 18px;
     }
     .icon-btn:hover { border-color: #6d28d9; color: #a78bfa; }
     .icon-btn:disabled { opacity: 0.4; cursor: not-allowed; }
@@ -153,23 +232,15 @@
 
     @keyframes pulse {
       0%, 100% { box-shadow: 0 0 0 0 rgba(239,68,68,0.4); }
-      50% { box-shadow: 0 0 0 6px rgba(239,68,68,0); }
+      50%       { box-shadow: 0 0 0 6px rgba(239,68,68,0); }
     }
 
     #send {
-      background: #6d28d9;
-      border: none;
-      border-radius: 12px;
-      width: 48px;
-      height: 48px;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      flex-shrink: 0;
-      transition: background 0.2s;
+      background: #6d28d9; border: none; border-radius: 12px;
+      width: 48px; height: 48px; cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0; transition: background 0.2s;
     }
-
     #send:hover { background: #7c3aed; }
     #send:disabled { background: #333; cursor: not-allowed; }
     #send svg { fill: white; }
@@ -177,52 +248,25 @@
     #image-input { display: none; }
 
     .image-preview {
-      max-width: 260px;
-      max-height: 180px;
-      border-radius: 10px;
-      margin-bottom: 6px;
+      max-width: 260px; max-height: 180px;
+      border-radius: 10px; margin-bottom: 6px;
       border: 1px solid #2a2a2a;
     }
 
-    .transcript-label {
-      font-size: 11px;
-      color: #666;
-      font-style: italic;
-      margin-bottom: 4px;
-    }
-
+    /* ── Empty state ──────────────────────────────────────────────────────── */
     .empty-state {
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      gap: 12px;
-      color: #444;
+      flex: 1; display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      gap: 12px; color: #444;
     }
-
     .empty-state h2 { font-size: 20px; color: #666; }
     .empty-state p { font-size: 13px; text-align: center; max-width: 320px; line-height: 1.6; }
 
-    .suggestions {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      justify-content: center;
-      margin-top: 8px;
-    }
-
+    .suggestions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 8px; }
     .suggestion {
-      background: #1e1e1e;
-      border: 1px solid #2a2a2a;
-      border-radius: 20px;
-      padding: 8px 14px;
-      font-size: 12px;
-      color: #888;
-      cursor: pointer;
-      transition: all 0.2s;
+      background: #1e1e1e; border: 1px solid #2a2a2a; border-radius: 20px;
+      padding: 8px 14px; font-size: 12px; color: #888; cursor: pointer; transition: all 0.2s;
     }
-
     .suggestion:hover { border-color: #6d28d9; color: #a78bfa; }
 
     ::-webkit-scrollbar { width: 6px; }
@@ -232,6 +276,19 @@
 </head>
 <body>
 
+<!-- ── Lock screen ──────────────────────────────────────────────────────────── -->
+<div id="lock-screen">
+  <div class="lock-card">
+    <div class="lock-icon">🔒</div>
+    <h2>Super Agent</h2>
+    <p>Enter your access password to continue.</p>
+    <input id="pw-input" type="password" placeholder="Password" autocomplete="current-password" />
+    <div id="pw-error">Incorrect password. Try again.</div>
+    <button id="pw-submit" onclick="submitPassword()">Unlock</button>
+  </div>
+</div>
+
+<!-- ── App ─────────────────────────────────────────────────────────────────── -->
 <header>
   <div class="dot"></div>
   <h1>Super Agent</h1>
@@ -253,25 +310,67 @@
 
 <div id="input-area">
   <input type="file" id="image-input" accept="image/jpeg,image/png,image/gif,image/webp" onchange="handleImageSelected()" />
-
-  <!-- Image attach -->
-  <button class="icon-btn" id="img-btn" title="Attach image" onclick="document.getElementById('image-input').click()">
-    🖼
-  </button>
-
-  <!-- Audio record -->
-  <button class="icon-btn" id="mic-btn" title="Hold to record voice" onclick="toggleRecording()">
-    🎙
-  </button>
-
+  <button class="icon-btn" id="img-btn" title="Attach image" onclick="document.getElementById('image-input').click()">🖼</button>
+  <button class="icon-btn" id="mic-btn" title="Click to record voice" onclick="toggleRecording()">🎙</button>
   <textarea id="input" placeholder="Message the super agent..." rows="1"></textarea>
-
   <button id="send" onclick="sendMessage()">
     <svg width="20" height="20" viewBox="0 0 24 24"><path d="M2 21L23 12 2 3v7l15 2-15 2v7z"/></svg>
   </button>
 </div>
 
 <script>
+  // ── Auth ────────────────────────────────────────────────────────────────────
+  let accessToken = sessionStorage.getItem('sa_token') || '';
+
+  async function submitPassword() {
+    const pw = document.getElementById('pw-input').value;
+    if (!pw) return;
+    try {
+      const res = await fetch('/auth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: pw }),
+      });
+      if (res.ok) {
+        accessToken = pw;
+        sessionStorage.setItem('sa_token', pw);
+        document.getElementById('lock-screen').classList.add('hidden');
+        document.getElementById('pw-error').style.display = 'none';
+      } else {
+        document.getElementById('pw-error').style.display = 'block';
+        document.getElementById('pw-input').value = '';
+      }
+    } catch {
+      document.getElementById('pw-error').style.display = 'block';
+    }
+  }
+
+  document.getElementById('pw-input').addEventListener('keydown', e => {
+    if (e.key === 'Enter') submitPassword();
+  });
+
+  // Auto-unlock if already have token
+  (async () => {
+    if (!accessToken) return;
+    const res = await fetch('/auth', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: accessToken }),
+    });
+    if (res.ok) {
+      document.getElementById('lock-screen').classList.add('hidden');
+    } else {
+      sessionStorage.removeItem('sa_token');
+      accessToken = '';
+    }
+  })();
+
+  // Helper to add auth header to all API calls
+  function authHeaders(extra = {}) {
+    return { 'X-Token': accessToken, ...extra };
+  }
+
+  // ── Session / UI ────────────────────────────────────────────────────────────
   const sessionId = 'web-' + Math.random().toString(36).slice(2, 9);
   document.getElementById('session-label').textContent = 'Session: ' + sessionId;
 
@@ -281,19 +380,26 @@
   const micBtn = document.getElementById('mic-btn');
   let hasMessages = false;
 
-  // ── Text auto-resize ────────────────────────────────────────────────────────
   input.addEventListener('keydown', e => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
   });
-
   input.addEventListener('input', () => {
     input.style.height = 'auto';
     input.style.height = Math.min(input.scrollHeight, 160) + 'px';
   });
 
-  function suggest(el) {
-    input.value = el.textContent;
-    sendMessage();
+  function suggest(el) { input.value = el.textContent; sendMessage(); }
+
+  // ── Markdown rendering ──────────────────────────────────────────────────────
+  marked.setOptions({ breaks: true, gfm: true });
+
+  function renderMarkdown(text) {
+    // Remove LaTeX delimiters \[ ... \] and \( ... \) — replace with plain text
+    text = text.replace(/\\\[/g, '').replace(/\\\]/g, '').replace(/\\\(/g, '').replace(/\\\)/g, '');
+    text = text.replace(/\\frac\{([^}]+)\}\{([^}]+)\}/g, '($1/$2)');
+    text = text.replace(/\\times/g, '×');
+    text = text.replace(/\\cdot/g, '·');
+    return marked.parse(text);
   }
 
   // ── Message rendering ───────────────────────────────────────────────────────
@@ -305,10 +411,16 @@
     const div = document.createElement('div');
     div.className = 'message ' + role;
     if (extraEl) div.appendChild(extraEl);
+
     const bubble = document.createElement('div');
     bubble.className = 'bubble';
-    bubble.textContent = text;
+    if (role === 'agent') {
+      bubble.innerHTML = renderMarkdown(text);
+    } else {
+      bubble.textContent = text;
+    }
     div.appendChild(bubble);
+
     if (meta) {
       const m = document.createElement('div');
       m.className = 'meta';
@@ -336,7 +448,8 @@
       btn.textContent = '🔊';
       return;
     }
-    const utt = new SpeechSynthesisUtterance(text);
+    const plain = text.replace(/[*_`#>\[\]]/g, '').replace(/\n+/g, ' ');
+    const utt = new SpeechSynthesisUtterance(plain);
     utt.onend = () => { btn.textContent = '🔊'; };
     btn.textContent = '⏹';
     window.speechSynthesis.speak(utt);
@@ -346,37 +459,31 @@
   async function sendMessage() {
     const text = input.value.trim();
     if (!text) return;
-
-    input.value = '';
-    input.style.height = 'auto';
+    input.value = ''; input.style.height = 'auto';
     sendBtn.disabled = true;
-
     addMessage('user', text);
     const typing = addMessage('agent', 'Thinking…');
     typing.classList.add('typing');
-
     try {
       const res = await fetch('/chat', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text, session_id: sessionId })
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ message: text, session_id: sessionId }),
       });
-
       const data = await res.json();
       typing.remove();
-
-      if (res.ok) {
-        addMessage('agent', data.response, `${data.model_used} · via ${data.routed_by}`);
-      } else {
-        addMessage('agent', '⚠️ ' + (data.detail || 'Something went wrong.'));
-      }
-    } catch (err) {
-      typing.remove();
-      addMessage('agent', '⚠️ Could not reach the server. Try again.');
-    }
-
+      if (res.status === 401) { lockScreen(); return; }
+      if (res.ok) addMessage('agent', data.response, `${data.model_used} · via ${data.routed_by}`);
+      else addMessage('agent', '⚠️ ' + (data.detail || 'Something went wrong.'));
+    } catch { typing.remove(); addMessage('agent', '⚠️ Could not reach the server.'); }
     sendBtn.disabled = false;
     input.focus();
+  }
+
+  function lockScreen() {
+    sessionStorage.removeItem('sa_token');
+    accessToken = '';
+    document.getElementById('lock-screen').classList.remove('hidden');
   }
 
   // ── Image upload ────────────────────────────────────────────────────────────
@@ -394,56 +501,35 @@
     const file = selectedImage;
     selectedImage = null;
     document.getElementById('image-input').value = '';
-
     const promptText = input.value.trim() || 'Describe this image in detail.';
-    input.value = '';
-    input.style.height = 'auto';
+    input.value = ''; input.style.height = 'auto';
     sendBtn.disabled = true;
-
-    // Show preview
     const img = document.createElement('img');
     img.className = 'image-preview';
     img.src = URL.createObjectURL(file);
     addMessage('user', promptText, null, img);
-
     const typing = addMessage('agent', 'Analysing image…');
     typing.classList.add('typing');
-
     try {
       const fd = new FormData();
       fd.append('file', file);
       fd.append('prompt', promptText);
       fd.append('session_id', sessionId);
-
-      const res = await fetch('/chat/image', { method: 'POST', body: fd });
+      const res = await fetch('/chat/image', { method: 'POST', headers: authHeaders(), body: fd });
       const data = await res.json();
       typing.remove();
-
-      if (res.ok) {
-        addMessage('agent', data.response, `${data.model_used} · via ${data.routed_by}`);
-      } else {
-        addMessage('agent', '⚠️ ' + (data.detail || 'Image analysis failed.'));
-      }
-    } catch (err) {
-      typing.remove();
-      addMessage('agent', '⚠️ Could not reach the server. Try again.');
-    }
-
-    sendBtn.disabled = false;
-    input.focus();
+      if (res.status === 401) { lockScreen(); return; }
+      if (res.ok) addMessage('agent', data.response, `${data.model_used} · via ${data.routed_by}`);
+      else addMessage('agent', '⚠️ ' + (data.detail || 'Image analysis failed.'));
+    } catch { typing.remove(); addMessage('agent', '⚠️ Could not reach the server.'); }
+    sendBtn.disabled = false; input.focus();
   }
 
   // ── Audio recording ─────────────────────────────────────────────────────────
-  let mediaRecorder = null;
-  let audioChunks = [];
-  let isRecording = false;
+  let mediaRecorder = null, audioChunks = [], isRecording = false;
 
   async function toggleRecording() {
-    if (isRecording) {
-      stopRecording();
-    } else {
-      await startRecording();
-    }
+    if (isRecording) stopRecording(); else await startRecording();
   }
 
   async function startRecording() {
@@ -457,9 +543,7 @@
       isRecording = true;
       micBtn.classList.add('recording');
       micBtn.title = 'Click to stop recording';
-    } catch (err) {
-      addMessage('agent', '⚠️ Microphone access denied. Please allow microphone permissions.');
-    }
+    } catch { addMessage('agent', '⚠️ Microphone access denied.'); }
   }
 
   function stopRecording() {
@@ -468,45 +552,30 @@
       mediaRecorder.stream.getTracks().forEach(t => t.stop());
       isRecording = false;
       micBtn.classList.remove('recording');
-      micBtn.title = 'Hold to record voice';
+      micBtn.title = 'Click to record voice';
     }
   }
 
   async function sendAudioMessage() {
     const mimeType = mediaRecorder.mimeType || 'audio/webm';
     const blob = new Blob(audioChunks, { type: mimeType });
-
     sendBtn.disabled = true;
     const typing = addMessage('agent', 'Transcribing…');
     typing.classList.add('typing');
-
     try {
       const fd = new FormData();
       fd.append('file', blob, 'recording.webm');
       fd.append('session_id', sessionId);
-
-      const res = await fetch('/chat/audio', { method: 'POST', body: fd });
+      const res = await fetch('/chat/audio', { method: 'POST', headers: authHeaders(), body: fd });
       const data = await res.json();
       typing.remove();
-
+      if (res.status === 401) { lockScreen(); return; }
       if (res.ok) {
-        if (data.transcript) {
-          const tl = document.createElement('div');
-          tl.className = 'transcript-label';
-          tl.textContent = '🎙 "' + data.transcript + '"';
-          addMessage('user', data.transcript);
-        }
+        if (data.transcript) addMessage('user', data.transcript);
         addMessage('agent', data.response, `${data.model_used} · via ${data.routed_by}`);
-      } else {
-        addMessage('agent', '⚠️ ' + (data.detail || 'Audio transcription failed.'));
-      }
-    } catch (err) {
-      typing.remove();
-      addMessage('agent', '⚠️ Could not reach the server. Try again.');
-    }
-
-    sendBtn.disabled = false;
-    input.focus();
+      } else addMessage('agent', '⚠️ ' + (data.detail || 'Audio transcription failed.'));
+    } catch { typing.remove(); addMessage('agent', '⚠️ Could not reach the server.'); }
+    sendBtn.disabled = false; input.focus();
   }
 </script>
 </body>
