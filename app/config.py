@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     max_tokens_gemini: int = 2048
     max_tokens_deepseek: int = 2048
 
+    # GitHub integration
+    github_pat: str = ""
+
     # Cloudinary storage
     cloudinary_api_key: str = ""
     cloudinary_api_secret: str = ""
