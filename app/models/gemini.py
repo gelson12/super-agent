@@ -1,5 +1,5 @@
 from google import genai
-from google.genai import errors as genai_errors
+from google.genai import errors as genai_errors, types as genai_types
 from ..config import settings
 from ..prompts import SYSTEM_PROMPT_GEMINI
 
@@ -80,3 +80,28 @@ def ask_gemini(prompt: str, system: str = SYSTEM_PROMPT_GEMINI) -> str:
         return f"[Gemini error: {e}]"
     except Exception as e:
         return f"[Gemini error: {e}]"
+
+
+def transcribe_audio(audio_bytes: bytes, mime_type: str = "audio/webm") -> str:
+    """Transcribe audio using Gemini's native audio understanding."""
+    if not settings.gemini_api_key:
+        return "[Gemini error: GEMINI_API_KEY not set]"
+
+    model = _detect_working_model()
+    if model is None:
+        return "[Gemini error: no available model found]"
+
+    try:
+        audio_part = genai_types.Part(
+            inline_data=genai_types.Blob(mime_type=mime_type, data=audio_bytes)
+        )
+        text_part = genai_types.Part(
+            text="Transcribe this audio accurately. Return only the spoken words, nothing else."
+        )
+        resp = _get_client().models.generate_content(
+            model=model,
+            contents=genai_types.Content(role="user", parts=[audio_part, text_part]),
+        )
+        return (resp.text or "").strip()
+    except Exception as e:
+        return f"[Gemini transcription error: {e}]"

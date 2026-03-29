@@ -80,7 +80,22 @@
       color: #555;
       margin-top: 4px;
       padding: 0 4px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
     }
+
+    .speak-btn {
+      background: none;
+      border: none;
+      cursor: pointer;
+      color: #555;
+      padding: 0;
+      font-size: 14px;
+      line-height: 1;
+      transition: color 0.2s;
+    }
+    .speak-btn:hover { color: #a78bfa; }
 
     .typing .bubble {
       background: #1e1e1e;
@@ -90,11 +105,11 @@
     }
 
     #input-area {
-      padding: 16px 24px;
+      padding: 12px 24px;
       border-top: 1px solid #222;
       background: #141414;
       display: flex;
-      gap: 12px;
+      gap: 8px;
       align-items: flex-end;
     }
 
@@ -117,6 +132,30 @@
     #input:focus { border-color: #6d28d9; }
     #input::placeholder { color: #444; }
 
+    .icon-btn {
+      background: #1e1e1e;
+      border: 1px solid #2a2a2a;
+      border-radius: 12px;
+      width: 48px;
+      height: 48px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      transition: all 0.2s;
+      color: #888;
+      font-size: 18px;
+    }
+    .icon-btn:hover { border-color: #6d28d9; color: #a78bfa; }
+    .icon-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .icon-btn.recording { border-color: #ef4444; color: #ef4444; animation: pulse 1s infinite; }
+
+    @keyframes pulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(239,68,68,0.4); }
+      50% { box-shadow: 0 0 0 6px rgba(239,68,68,0); }
+    }
+
     #send {
       background: #6d28d9;
       border: none;
@@ -133,8 +172,24 @@
 
     #send:hover { background: #7c3aed; }
     #send:disabled { background: #333; cursor: not-allowed; }
-
     #send svg { fill: white; }
+
+    #image-input { display: none; }
+
+    .image-preview {
+      max-width: 260px;
+      max-height: 180px;
+      border-radius: 10px;
+      margin-bottom: 6px;
+      border: 1px solid #2a2a2a;
+    }
+
+    .transcript-label {
+      font-size: 11px;
+      color: #666;
+      font-style: italic;
+      margin-bottom: 4px;
+    }
 
     .empty-state {
       flex: 1;
@@ -186,7 +241,7 @@
 <div id="chat">
   <div class="empty-state" id="empty">
     <h2>Super Agent</h2>
-    <p>Multi-model AI with semantic routing — Claude, Gemini, DeepSeek, and GitHub access.</p>
+    <p>Multi-model AI with semantic routing — Claude, Gemini, DeepSeek, and GitHub access.<br>Supports text, images, and voice.</p>
     <div class="suggestions">
       <div class="suggestion" onclick="suggest(this)">List my GitHub repos</div>
       <div class="suggestion" onclick="suggest(this)">Write me a short email</div>
@@ -197,7 +252,20 @@
 </div>
 
 <div id="input-area">
+  <input type="file" id="image-input" accept="image/jpeg,image/png,image/gif,image/webp" onchange="handleImageSelected()" />
+
+  <!-- Image attach -->
+  <button class="icon-btn" id="img-btn" title="Attach image" onclick="document.getElementById('image-input').click()">
+    🖼
+  </button>
+
+  <!-- Audio record -->
+  <button class="icon-btn" id="mic-btn" title="Hold to record voice" onclick="toggleRecording()">
+    🎙
+  </button>
+
   <textarea id="input" placeholder="Message the super agent..." rows="1"></textarea>
+
   <button id="send" onclick="sendMessage()">
     <svg width="20" height="20" viewBox="0 0 24 24"><path d="M2 21L23 12 2 3v7l15 2-15 2v7z"/></svg>
   </button>
@@ -210,8 +278,10 @@
   const chat = document.getElementById('chat');
   const input = document.getElementById('input');
   const sendBtn = document.getElementById('send');
+  const micBtn = document.getElementById('mic-btn');
   let hasMessages = false;
 
+  // ── Text auto-resize ────────────────────────────────────────────────────────
   input.addEventListener('keydown', e => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
   });
@@ -226,13 +296,15 @@
     sendMessage();
   }
 
-  function addMessage(role, text, meta) {
+  // ── Message rendering ───────────────────────────────────────────────────────
+  function addMessage(role, text, meta, extraEl) {
     if (!hasMessages) {
       document.getElementById('empty').remove();
       hasMessages = true;
     }
     const div = document.createElement('div');
     div.className = 'message ' + role;
+    if (extraEl) div.appendChild(extraEl);
     const bubble = document.createElement('div');
     bubble.className = 'bubble';
     bubble.textContent = text;
@@ -241,6 +313,14 @@
       const m = document.createElement('div');
       m.className = 'meta';
       m.textContent = meta;
+      if (role === 'agent') {
+        const sp = document.createElement('button');
+        sp.className = 'speak-btn';
+        sp.title = 'Read aloud';
+        sp.textContent = '🔊';
+        sp.onclick = () => speakText(text, sp);
+        m.appendChild(sp);
+      }
       div.appendChild(m);
     }
     chat.appendChild(div);
@@ -248,6 +328,21 @@
     return div;
   }
 
+  // ── TTS ─────────────────────────────────────────────────────────────────────
+  function speakText(text, btn) {
+    if (!window.speechSynthesis) return;
+    if (window.speechSynthesis.speaking) {
+      window.speechSynthesis.cancel();
+      btn.textContent = '🔊';
+      return;
+    }
+    const utt = new SpeechSynthesisUtterance(text);
+    utt.onend = () => { btn.textContent = '🔊'; };
+    btn.textContent = '⏹';
+    window.speechSynthesis.speak(utt);
+  }
+
+  // ── Text chat ───────────────────────────────────────────────────────────────
   async function sendMessage() {
     const text = input.value.trim();
     if (!text) return;
@@ -257,7 +352,6 @@
     sendBtn.disabled = true;
 
     addMessage('user', text);
-
     const typing = addMessage('agent', 'Thinking…');
     typing.classList.add('typing');
 
@@ -275,6 +369,136 @@
         addMessage('agent', data.response, `${data.model_used} · via ${data.routed_by}`);
       } else {
         addMessage('agent', '⚠️ ' + (data.detail || 'Something went wrong.'));
+      }
+    } catch (err) {
+      typing.remove();
+      addMessage('agent', '⚠️ Could not reach the server. Try again.');
+    }
+
+    sendBtn.disabled = false;
+    input.focus();
+  }
+
+  // ── Image upload ────────────────────────────────────────────────────────────
+  let selectedImage = null;
+
+  function handleImageSelected() {
+    const file = document.getElementById('image-input').files[0];
+    if (!file) return;
+    selectedImage = file;
+    sendImageMessage();
+  }
+
+  async function sendImageMessage() {
+    if (!selectedImage) return;
+    const file = selectedImage;
+    selectedImage = null;
+    document.getElementById('image-input').value = '';
+
+    const promptText = input.value.trim() || 'Describe this image in detail.';
+    input.value = '';
+    input.style.height = 'auto';
+    sendBtn.disabled = true;
+
+    // Show preview
+    const img = document.createElement('img');
+    img.className = 'image-preview';
+    img.src = URL.createObjectURL(file);
+    addMessage('user', promptText, null, img);
+
+    const typing = addMessage('agent', 'Analysing image…');
+    typing.classList.add('typing');
+
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      fd.append('prompt', promptText);
+      fd.append('session_id', sessionId);
+
+      const res = await fetch('/chat/image', { method: 'POST', body: fd });
+      const data = await res.json();
+      typing.remove();
+
+      if (res.ok) {
+        addMessage('agent', data.response, `${data.model_used} · via ${data.routed_by}`);
+      } else {
+        addMessage('agent', '⚠️ ' + (data.detail || 'Image analysis failed.'));
+      }
+    } catch (err) {
+      typing.remove();
+      addMessage('agent', '⚠️ Could not reach the server. Try again.');
+    }
+
+    sendBtn.disabled = false;
+    input.focus();
+  }
+
+  // ── Audio recording ─────────────────────────────────────────────────────────
+  let mediaRecorder = null;
+  let audioChunks = [];
+  let isRecording = false;
+
+  async function toggleRecording() {
+    if (isRecording) {
+      stopRecording();
+    } else {
+      await startRecording();
+    }
+  }
+
+  async function startRecording() {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      audioChunks = [];
+      mediaRecorder = new MediaRecorder(stream);
+      mediaRecorder.ondataavailable = e => { if (e.data.size > 0) audioChunks.push(e.data); };
+      mediaRecorder.onstop = sendAudioMessage;
+      mediaRecorder.start();
+      isRecording = true;
+      micBtn.classList.add('recording');
+      micBtn.title = 'Click to stop recording';
+    } catch (err) {
+      addMessage('agent', '⚠️ Microphone access denied. Please allow microphone permissions.');
+    }
+  }
+
+  function stopRecording() {
+    if (mediaRecorder && isRecording) {
+      mediaRecorder.stop();
+      mediaRecorder.stream.getTracks().forEach(t => t.stop());
+      isRecording = false;
+      micBtn.classList.remove('recording');
+      micBtn.title = 'Hold to record voice';
+    }
+  }
+
+  async function sendAudioMessage() {
+    const mimeType = mediaRecorder.mimeType || 'audio/webm';
+    const blob = new Blob(audioChunks, { type: mimeType });
+
+    sendBtn.disabled = true;
+    const typing = addMessage('agent', 'Transcribing…');
+    typing.classList.add('typing');
+
+    try {
+      const fd = new FormData();
+      fd.append('file', blob, 'recording.webm');
+      fd.append('session_id', sessionId);
+
+      const res = await fetch('/chat/audio', { method: 'POST', body: fd });
+      const data = await res.json();
+      typing.remove();
+
+      if (res.ok) {
+        if (data.transcript) {
+          const tl = document.createElement('div');
+          tl.className = 'transcript-label';
+          tl.textContent = '🎙 "' + data.transcript + '"';
+          addMessage('user', data.transcript);
+        }
+        addMessage('agent', data.response, `${data.model_used} · via ${data.routed_by}`);
+      } else {
+        addMessage('agent', '⚠️ ' + (data.detail || 'Audio transcription failed.'));
       }
     } catch (err) {
       typing.remove();

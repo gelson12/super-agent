@@ -11,7 +11,7 @@ Endpoints:
   POST /storage/upload      — upload file with auto quota management
 """
 import os
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -23,6 +23,8 @@ from slowapi.errors import RateLimitExceeded
 from .routing.dispatcher import dispatch
 from .memory.session import append_exchange, get_messages, clear_session
 from .storage.cloudinary_manager import get_storage_status, upload_file
+from .models.claude import ask_claude_vision
+from .models.gemini import transcribe_audio
 
 limiter = Limiter(key_func=get_remote_address)
 
@@ -158,3 +160,58 @@ def storage_upload(req: UploadRequest):
         return upload_file(req.file_path, req.resource_type, req.public_id)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Upload failed: {e}")
+
+
+# ── Multimodal ────────────────────────────────────────────────────────────────
+
+ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/gif", "image/webp"}
+ALLOWED_AUDIO_TYPES = {"audio/webm", "audio/mp4", "audio/mpeg", "audio/wav", "audio/ogg"}
+
+
+@app.post("/chat/image", tags=["agent"])
+@limiter.limit("20/minute")
+async def chat_image(
+    request: Request,
+    file: UploadFile = File(...),
+    prompt: str = Form(default=""),
+    session_id: str = Form(default="default"),
+):
+    """Analyse an image with Claude Vision."""
+    if file.content_type not in ALLOWED_IMAGE_TYPES:
+        raise HTTPException(status_code=415, detail=f"Unsupported image type: {file.content_type}")
+    image_bytes = await file.read()
+    if len(image_bytes) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Image too large (max 5 MB)")
+    response = ask_claude_vision(image_bytes, file.content_type, prompt)
+    if not response.startswith("["):
+        append_exchange(session_id, prompt or "[image]", response)
+    return {"response": response, "model_used": "CLAUDE", "routed_by": "vision", "session_id": session_id}
+
+
+@app.post("/chat/audio", tags=["agent"])
+@limiter.limit("20/minute")
+async def chat_audio(
+    request: Request,
+    file: UploadFile = File(...),
+    session_id: str = Form(default="default"),
+):
+    """Transcribe audio with Gemini, then route the transcript through the agent."""
+    if file.content_type not in ALLOWED_AUDIO_TYPES:
+        raise HTTPException(status_code=415, detail=f"Unsupported audio type: {file.content_type}")
+    audio_bytes = await file.read()
+    if len(audio_bytes) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Audio too large (max 10 MB)")
+    transcript = transcribe_audio(audio_bytes, file.content_type)
+    if transcript.startswith("["):
+        return {"response": transcript, "model_used": "GEMINI", "routed_by": "transcription_error",
+                "transcript": "", "session_id": session_id}
+    result = dispatch(transcript)
+    if not result["response"].startswith("["):
+        append_exchange(session_id, transcript, result["response"])
+    return {
+        "response": result["response"],
+        "model_used": result["model_used"],
+        "routed_by": result["routed_by"],
+        "transcript": transcript,
+        "session_id": session_id,
+    }
