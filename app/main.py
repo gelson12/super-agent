@@ -10,8 +10,11 @@ Endpoints:
   GET  /storage/status      — Cloudinary storage usage
   POST /storage/upload      — upload file with auto quota management
 """
+import os
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
@@ -69,6 +72,18 @@ class UploadRequest(BaseModel):
     file_path: str = Field(..., description="Absolute path to file to upload")
     resource_type: str = Field(default="auto", description="image | video | raw | auto")
     public_id: str = Field(default=None, description="Optional custom public ID")
+
+
+# ── Static UI ─────────────────────────────────────────────────────────────────
+
+_static_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "static")
+if os.path.isdir(_static_dir):
+    app.mount("/static", StaticFiles(directory=_static_dir), name="static")
+
+@app.get("/", include_in_schema=False)
+def root():
+    index = os.path.join(_static_dir, "index.html")
+    return FileResponse(index)
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
