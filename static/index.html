@@ -394,11 +394,21 @@
   marked.setOptions({ breaks: true, gfm: true });
 
   function renderMarkdown(text) {
-    // Remove LaTeX delimiters \[ ... \] and \( ... \) — replace with plain text
+    // Strip LaTeX box notation — \boxed{x} → x
+    text = text.replace(/\\boxed\{([^}]+)\}/g, '**$1**');
+    // Remove LaTeX delimiters \[ ... \] and \( ... \)
     text = text.replace(/\\\[/g, '').replace(/\\\]/g, '').replace(/\\\(/g, '').replace(/\\\)/g, '');
+    // Common LaTeX math → readable text
     text = text.replace(/\\frac\{([^}]+)\}\{([^}]+)\}/g, '($1/$2)');
     text = text.replace(/\\times/g, '×');
     text = text.replace(/\\cdot/g, '·');
+    text = text.replace(/\\sqrt\{([^}]+)\}/g, '√($1)');
+    text = text.replace(/\\approx/g, '≈');
+    text = text.replace(/\\neq/g, '≠');
+    text = text.replace(/\\leq/g, '≤');
+    text = text.replace(/\\geq/g, '≥');
+    text = text.replace(/\\pm/g, '±');
+    text = text.replace(/\\_/g, '_');
     return marked.parse(text);
   }
 
