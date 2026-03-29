@@ -45,7 +45,7 @@ def _get_agent():
             api_key=settings.anthropic_api_key,
             max_tokens=settings.max_tokens_claude,
         )
-        _agent = create_react_agent(llm, _GITHUB_TOOLS, state_modifier=_SYSTEM)
+        _agent = create_react_agent(llm, _GITHUB_TOOLS)
     return _agent
 
 
@@ -55,7 +55,12 @@ def run_github_agent(message: str) -> str:
         return "[GitHub agent error: GITHUB_PAT not set]"
 
     agent = _get_agent()
-    result = agent.invoke({"messages": [{"role": "user", "content": message}]})
+    result = agent.invoke({
+        "messages": [
+            {"role": "system", "content": _SYSTEM},
+            {"role": "user", "content": message},
+        ]
+    })
 
     for msg in reversed(result.get("messages", [])):
         if hasattr(msg, "type") and msg.type in ("ai", "assistant"):
