@@ -394,8 +394,10 @@
   marked.setOptions({ breaks: true, gfm: true });
 
   function renderMarkdown(text) {
-    // Strip LaTeX box notation — \boxed{x} → x
+    // Strip LaTeX box notation — \boxed{x} → bold x
     text = text.replace(/\\boxed\{([^}]+)\}/g, '**$1**');
+    // \text{...} → plain text content
+    text = text.replace(/\\text\{([^}]*)\}/g, '$1');
     // Remove LaTeX delimiters \[ ... \] and \( ... \)
     text = text.replace(/\\\[/g, '').replace(/\\\]/g, '').replace(/\\\(/g, '').replace(/\\\)/g, '');
     // Common LaTeX math → readable text
