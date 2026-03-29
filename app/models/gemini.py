@@ -2,7 +2,6 @@ from google import genai
 from google.genai import errors as genai_errors
 from ..config import settings
 from ..prompts import SYSTEM_PROMPT_GEMINI
-from ..monitoring.credits import tracker
 
 _client: genai.Client | None = None
 
@@ -73,13 +72,6 @@ def ask_gemini(prompt: str, system: str = SYSTEM_PROMPT_GEMINI) -> str:
             model=model,
             contents=full_prompt,
         )
-        # Record token usage from response — zero extra API calls
-        if hasattr(resp, "usage_metadata") and resp.usage_metadata:
-            tracker.record(
-                "GEMINI",
-                input_tokens=getattr(resp.usage_metadata, "prompt_token_count", 0),
-                output_tokens=getattr(resp.usage_metadata, "candidates_token_count", 0),
-            )
         return (resp.text or "").strip()
     except genai_errors.APIError as e:
         # If the cached model stops working, reset and let it re-detect next call

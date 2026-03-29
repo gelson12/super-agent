@@ -19,9 +19,7 @@ from slowapi.errors import RateLimitExceeded
 
 from .routing.dispatcher import dispatch
 from .memory.session import append_exchange, get_messages, clear_session
-from .monitoring.credits import tracker
 from .storage.cloudinary_manager import get_storage_status, upload_file
-from .config import settings
 
 limiter = Limiter(key_func=get_remote_address)
 
@@ -40,16 +38,6 @@ app.add_middleware(
     allow_methods=["GET", "POST", "DELETE"],
     allow_headers=["*"],
 )
-
-
-@app.on_event("startup")
-def startup():
-    """Configure credit tracker budgets from settings."""
-    tracker.configure({
-        "CLAUDE": settings.budget_claude_usd,
-        "GEMINI": settings.budget_gemini_usd,
-        "DEEPSEEK": settings.budget_deepseek_usd,
-    })
 
 
 # ── Schemas ───────────────────────────────────────────────────────────────────
@@ -134,16 +122,6 @@ def delete_history(session_id: str):
     """Clear all messages for a session."""
     clear_session(session_id)
     return {"ok": True, "session_id": session_id, "cleared": True}
-
-
-@app.get("/credits", tags=["monitoring"])
-def credits_status():
-    """
-    Show token usage and estimated credit health for all models.
-    DeepSeek actual balance is fetched at most once per hour.
-    Claude and Gemini show estimated remaining based on tokens used.
-    """
-    return tracker.get_status(deepseek_api_key=settings.deepseek_api_key)
 
 
 @app.get("/storage/status", tags=["storage"])

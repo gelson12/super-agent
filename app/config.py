@@ -18,11 +18,6 @@ class Settings(BaseSettings):
     max_tokens_gemini: int = 2048
     max_tokens_deepseek: int = 2048
 
-    # Per-model budget alerts (USD) — set 0 to disable
-    budget_claude_usd: float = 5.0
-    budget_gemini_usd: float = 5.0
-    budget_deepseek_usd: float = 5.0
-
     # Cloudinary storage
     cloudinary_api_key: str = ""
     cloudinary_api_secret: str = ""
