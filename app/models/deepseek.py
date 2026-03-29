@@ -1,6 +1,7 @@
 from openai import OpenAI, APIError, APIConnectionError, RateLimitError
 from ..config import settings
 from ..prompts import SYSTEM_PROMPT_DEEPSEEK
+from ..monitoring.credits import tracker
 
 _client: OpenAI | None = None
 
@@ -29,6 +30,12 @@ def ask_deepseek(prompt: str, system: str = SYSTEM_PROMPT_DEEPSEEK) -> str:
             model="deepseek-chat",
             max_tokens=settings.max_tokens_deepseek,
             messages=messages,
+        )
+        # Record token usage from response — zero extra API calls
+        tracker.record(
+            "DEEPSEEK",
+            input_tokens=resp.usage.prompt_tokens,
+            output_tokens=resp.usage.completion_tokens,
         )
         return resp.choices[0].message.content.strip()
     except RateLimitError:

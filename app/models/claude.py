@@ -1,6 +1,7 @@
 from anthropic import Anthropic, APIError, APIConnectionError, RateLimitError
 from ..config import settings
 from ..prompts import SYSTEM_PROMPT_CLAUDE
+from ..monitoring.credits import tracker
 
 _client: Anthropic | None = None
 
@@ -22,6 +23,12 @@ def ask_claude(prompt: str, system: str = SYSTEM_PROMPT_CLAUDE) -> str:
             max_tokens=settings.max_tokens_claude,
             system=system,
             messages=[{"role": "user", "content": prompt}],
+        )
+        # Record token usage from response — zero extra API calls
+        tracker.record(
+            "CLAUDE",
+            input_tokens=resp.usage.input_tokens,
+            output_tokens=resp.usage.output_tokens,
         )
         return "".join(
             block.text for block in resp.content if block.type == "text"

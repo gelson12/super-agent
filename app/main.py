@@ -1,15 +1,17 @@
 """
 Super Agent — FastAPI backend
 Endpoints:
-  GET  /health          — liveness check
-  POST /chat            — route message to best model
-  POST /chat/direct     — force a specific model
-  GET  /history/{sid}   — retrieve session history
-  DELETE /history/{sid} — clear session history
+  GET  /health              — liveness check
+  POST /chat                — route message to best model
+  POST /chat/direct         — force a specific model
+  GET  /history/{sid}       — retrieve session history
+  DELETE /history/{sid}     — clear session history
+  GET  /credits             — API credit & usage status
+  GET  /storage/status      — Cloudinary storage usage
+  POST /storage/upload      — upload file with auto quota management
 """
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
@@ -17,6 +19,9 @@ from slowapi.errors import RateLimitExceeded
 
 from .routing.dispatcher import dispatch
 from .memory.session import append_exchange, get_messages, clear_session
+from .monitoring.credits import tracker
+from .storage.cloudinary_manager import get_storage_status, upload_file
+from .config import settings
 
 limiter = Limiter(key_func=get_remote_address)
 
@@ -37,7 +42,17 @@ app.add_middleware(
 )
 
 
-# ── Request / Response schemas ──────────────────────────────────────────────
+@app.on_event("startup")
+def startup():
+    """Configure credit tracker budgets from settings."""
+    tracker.configure({
+        "CLAUDE": settings.budget_claude_usd,
+        "GEMINI": settings.budget_gemini_usd,
+        "DEEPSEEK": settings.budget_deepseek_usd,
+    })
+
+
+# ── Schemas ───────────────────────────────────────────────────────────────────
 
 class ChatRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=4000)
@@ -62,21 +77,23 @@ class HistoryMessage(BaseModel):
     content: str
 
 
-# ── Routes ───────────────────────────────────────────────────────────────────
+class UploadRequest(BaseModel):
+    file_path: str = Field(..., description="Absolute path to file to upload")
+    resource_type: str = Field(default="auto", description="image | video | raw | auto")
+    public_id: str = Field(default=None, description="Optional custom public ID")
+
+
+# ── Routes ────────────────────────────────────────────────────────────────────
 
 @app.get("/health", tags=["meta"])
 def health():
-    """Liveness check."""
     return {"ok": True, "version": "1.0.0"}
 
 
 @app.post("/chat", response_model=ChatResponse, tags=["agent"])
 @limiter.limit("30/minute")
 def chat(req: ChatRequest, request: Request):
-    """
-    Route the message to the best model automatically via semantic classifier.
-    Conversation history is saved per session_id.
-    """
+    """Auto-route message to best model via semantic classifier."""
     result = dispatch(req.message)
     if not result["response"].startswith("["):
         append_exchange(req.session_id, req.message, result["response"])
@@ -91,10 +108,7 @@ def chat(req: ChatRequest, request: Request):
 @app.post("/chat/direct", response_model=ChatResponse, tags=["agent"])
 @limiter.limit("30/minute")
 def chat_direct(req: DirectChatRequest, request: Request):
-    """
-    Force a specific model — skips the classifier.
-    Useful for testing or when you already know the right model.
-    """
+    """Force a specific model — skips the classifier."""
     result = dispatch(req.message, force_model=req.model)
     if result["model_used"] is None:
         raise HTTPException(status_code=400, detail=result["response"])
@@ -112,10 +126,7 @@ def chat_direct(req: DirectChatRequest, request: Request):
 def get_history(session_id: str):
     """Retrieve all messages for a session."""
     msgs = get_messages(session_id)
-    return [
-        HistoryMessage(role=m.type, content=m.content)
-        for m in msgs
-    ]
+    return [HistoryMessage(role=m.type, content=m.content) for m in msgs]
 
 
 @app.delete("/history/{session_id}", tags=["memory"])
@@ -123,3 +134,34 @@ def delete_history(session_id: str):
     """Clear all messages for a session."""
     clear_session(session_id)
     return {"ok": True, "session_id": session_id, "cleared": True}
+
+
+@app.get("/credits", tags=["monitoring"])
+def credits_status():
+    """
+    Show token usage and estimated credit health for all models.
+    DeepSeek actual balance is fetched at most once per hour.
+    Claude and Gemini show estimated remaining based on tokens used.
+    """
+    return tracker.get_status(deepseek_api_key=settings.deepseek_api_key)
+
+
+@app.get("/storage/status", tags=["storage"])
+def storage_status():
+    """Show current Cloudinary storage usage and quota."""
+    try:
+        return get_storage_status()
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Storage unavailable: {e}")
+
+
+@app.post("/storage/upload", tags=["storage"])
+def storage_upload(req: UploadRequest):
+    """
+    Upload a file to Cloudinary.
+    Automatically deletes oldest assets if storage exceeds 1 GB.
+    """
+    try:
+        return upload_file(req.file_path, req.resource_type, req.public_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Upload failed: {e}")
