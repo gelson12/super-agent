@@ -28,6 +28,9 @@ from .storage.cloudinary_manager import get_storage_status, upload_file
 from .models.claude import ask_claude_vision
 from .models.gemini import transcribe_audio
 from .config import settings
+from .cache.response_cache import cache
+from .learning.insight_log import insight_log
+from .learning.adapter import adapter
 
 limiter = Limiter(key_func=get_remote_address)
 
@@ -88,6 +91,8 @@ class ChatResponse(BaseModel):
     model_used: str
     routed_by: str
     session_id: str
+    complexity: int = 0
+    cache_hit: bool = False
 
 
 class HistoryMessage(BaseModel):
@@ -138,7 +143,7 @@ def auth(req: AuthRequest):
 @limiter.limit("30/minute")
 def chat(req: ChatRequest, request: Request):
     """Auto-route message to best model via semantic classifier."""
-    result = dispatch(req.message)
+    result = dispatch(req.message, session_id=req.session_id)
     if not result["response"].startswith("["):
         append_exchange(req.session_id, req.message, result["response"])
     return ChatResponse(
@@ -146,6 +151,8 @@ def chat(req: ChatRequest, request: Request):
         model_used=result["model_used"],
         routed_by=result["routed_by"],
         session_id=req.session_id,
+        complexity=result.get("complexity", 0),
+        cache_hit=result.get("cache_hit", False),
     )
 
 
@@ -153,7 +160,7 @@ def chat(req: ChatRequest, request: Request):
 @limiter.limit("30/minute")
 def chat_direct(req: DirectChatRequest, request: Request):
     """Force a specific model — skips the classifier."""
-    result = dispatch(req.message, force_model=req.model)
+    result = dispatch(req.message, force_model=req.model, session_id=req.session_id)
     if result["model_used"] is None:
         raise HTTPException(status_code=400, detail=result["response"])
     if not result["response"].startswith("["):
@@ -163,6 +170,8 @@ def chat_direct(req: DirectChatRequest, request: Request):
         model_used=result["model_used"],
         routed_by=result["routed_by"],
         session_id=req.session_id,
+        complexity=result.get("complexity", 0),
+        cache_hit=result.get("cache_hit", False),
     )
 
 
@@ -178,6 +187,30 @@ def delete_history(session_id: str):
     """Clear all messages for a session."""
     clear_session(session_id)
     return {"ok": True, "session_id": session_id, "cleared": True}
+
+
+@app.get("/stats", tags=["meta"])
+def stats():
+    """
+    Combined intelligence stats:
+    - Cache hits/misses, estimated token savings and cost saved
+    - Interaction log summary (total requests, model distribution, error rate)
+    """
+    return {
+        "cache": cache.stats(),
+        "interactions": insight_log.summary(),
+    }
+
+
+@app.get("/wisdom", tags=["meta"])
+def wisdom():
+    """
+    Adaptive self-improvement state:
+    - Learned context injected into prompts
+    - Haiku ceiling (max complexity Haiku handles)
+    - Analysis history and routing notes
+    """
+    return adapter.wisdom_dict()
 
 
 @app.get("/storage/status", tags=["storage"])
