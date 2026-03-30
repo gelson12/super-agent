@@ -16,7 +16,24 @@ if [ -n "$GITHUB_PAT" ]; then
 fi
 
 # ── Workspace for repos ────────────────────────────────────────────────────────
-mkdir -p /workspace /var/log/supervisor
+mkdir -p /workspace /workspace/.vscode /workspace/.vscode-ext /var/log/supervisor
+
+# ── code-server config (password via file — avoids supervisord env quoting issues) ──
+mkdir -p /root/.config/code-server
+cat > /root/.config/code-server/config.yaml <<EOF
+bind-addr: 0.0.0.0:3001
+auth: password
+password: "${UI_PASSWORD:-changeme}"
+disable-update-check: true
+disable-telemetry: true
+EOF
+echo "[entrypoint] code-server config written (auth: password)."
+
+# ── Verify code-server binary is reachable ────────────────────────────────────
+if ! command -v code-server >/dev/null 2>&1; then
+    echo "[entrypoint] WARNING: code-server not found in PATH — trying /usr/lib/code-server/bin/code-server"
+fi
+echo "[entrypoint] code-server location: $(which code-server 2>/dev/null || echo 'NOT FOUND')"
 
 # ── Start all services via supervisor ─────────────────────────────────────────
 echo "[entrypoint] Starting supervisor (nginx + uvicorn + code-server) on PORT=${PORT}"
