@@ -32,6 +32,8 @@ from .cache.response_cache import cache
 from .learning.insight_log import insight_log
 from .learning.adapter import adapter
 from .learning.wisdom_store import wisdom_store
+from .learning.algorithm_store import algorithm_store
+from .learning.algorithm_builder import build_and_commit_algorithms
 
 limiter = Limiter(key_func=get_remote_address)
 
@@ -297,6 +299,46 @@ def wisdom():
     - Analysis history and routing notes
     """
     return adapter.wisdom_dict()
+
+
+@app.get("/algorithms", tags=["algorithms"])
+def list_algorithms():
+    """
+    List all self-built algorithms currently loaded in the algorithm store.
+    Shows name, load status, and last refresh timestamp.
+    """
+    return {
+        "store": algorithm_store.status(),
+        "algorithms": algorithm_store.list_algorithms(),
+    }
+
+
+@app.post("/algorithms/build", tags=["algorithms"])
+def build_algorithms():
+    """
+    Manually trigger a build of self-generated algorithms from the current
+    wisdom store and insight log data.
+    New algorithms are committed to the 'super-agent-algorithms' GitHub repo.
+    Runs automatically every 200 interactions.
+    """
+    try:
+        summary = build_and_commit_algorithms()
+        return {"ok": True, **summary}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Algorithm build failed: {e}")
+
+
+@app.get("/algorithms/reload", tags=["algorithms"])
+def reload_algorithms():
+    """
+    Hot-reload algorithms from the GitHub repo without restarting.
+    Useful after a manual commit or forced build.
+    """
+    try:
+        algorithm_store._refresh()
+        return {"ok": True, "store": algorithm_store.status()}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Reload failed: {e}")
 
 
 @app.get("/storage/status", tags=["storage"])

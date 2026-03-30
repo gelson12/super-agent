@@ -66,6 +66,12 @@ class Adapter:
         self._interaction_count += 1
         if self._interaction_count % 100 == 0:
             self._analyse()
+        if self._interaction_count % 200 == 0:
+            try:
+                from .algorithm_builder import build_and_commit_algorithms
+                build_and_commit_algorithms()
+            except Exception:
+                pass
         if self._interaction_count % 500 == 0:
             try:
                 from .wisdom_store import wisdom_store

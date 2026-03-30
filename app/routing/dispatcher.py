@@ -14,6 +14,7 @@ from ..learning.peer_review import peer_reviewer
 from ..learning.ensemble import ensemble_voter
 from ..learning.red_team import red_team
 from ..learning.cot_handoff import cot_handoff
+from ..learning.algorithm_store import algorithm_store
 
 _HANDLERS = {
     "GEMINI":   ask_gemini,
@@ -263,6 +264,24 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
     else:
         model = suggested
         routed_by = "complexity_score"
+
+    # ── 6b. Algorithm-store routing override ─────────────────────────────────
+    # If a self-built routing heuristic is loaded, use it to potentially
+    # override the suggested model with historically better-performing one.
+    try:
+        _algo = algorithm_store.get_algorithm("routing_heuristic")
+        if _algo and _algo.ok:
+            _primary_cat = wisdom_store._detect_category(routed_by, model)
+            _algo_model = _algo.run(
+                fn_name="recommend_model",
+                category=_primary_cat,
+                complexity=complexity,
+            )
+            if _algo_model and _algo_model.upper() in _HANDLERS and _algo_model.upper() != model:
+                model = _algo_model.upper()
+                routed_by = f"{routed_by}_algo"
+    except Exception:
+        pass  # Never let algorithm routing crash dispatch
 
     # ── 7. Cache lookup ───────────────────────────────────────────────────────
     if model in _CACHEABLE_MODELS:
