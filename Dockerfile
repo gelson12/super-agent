@@ -16,7 +16,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # ── code-server (VSCode in browser) ───────────────────────────────────────────
-RUN curl -fsSL https://code-server.dev/install.sh | sh
+RUN curl -fsSL https://code-server.dev/install.sh | sh \
+    && which code-server \
+    && code-server --version
 
 # ── Claude Code CLI ───────────────────────────────────────────────────────────
 RUN npm install -g @anthropic-ai/claude-code
@@ -32,8 +34,8 @@ COPY . .
 COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 COPY nginx.conf.template /app/nginx.conf.template
 
-# ── Workspace for cloned repos ────────────────────────────────────────────────
-RUN mkdir -p /workspace /var/log/supervisor
+# ── Workspace for cloned repos + code-server user dirs ───────────────────────
+RUN mkdir -p /workspace /workspace/.vscode /workspace/.vscode-ext /var/log/supervisor
 
 # ── Entrypoint (strip Windows CRLF → LF, then make executable) ───────────────
 COPY entrypoint.sh /app/entrypoint.sh
