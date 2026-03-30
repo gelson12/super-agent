@@ -1,13 +1,20 @@
 from ..models.gemini import ask_gemini
 from ..prompts import ROUTING_PROMPT
 
-VALID_MODELS = {"GEMINI", "DEEPSEEK", "CLAUDE"}
+VALID_MODELS = {"GEMINI", "DEEPSEEK", "CLAUDE", "HAIKU"}
 
-# Keyword-based fallback — used when Gemini is unavailable (quota/rate limit)
-_DEEPSEEK_KEYWORDS = {"code", "function", "debug", "algorithm", "math", "calculate",
-                      "sql", "script", "class", "json", "yaml", "regex", "error", "bug"}
-_CLAUDE_KEYWORDS = {"write", "email", "draft", "summarize", "summary", "explain",
-                    "essay", "letter", "review", "rewrite", "translate", "creative"}
+# Keyword-based fallback — used when Gemini classifier is unavailable
+_DEEPSEEK_KEYWORDS = {
+    "code", "function", "debug", "algorithm", "math", "calculate",
+    "sql", "script", "class", "json", "yaml", "regex", "error", "bug",
+    "programming", "syntax", "compile", "runtime",
+}
+_CLAUDE_KEYWORDS = {
+    "write", "draft", "summarize", "summary", "explain in depth",
+    "essay", "letter", "review", "rewrite", "translate", "creative",
+    "analyze", "analysis", "research", "compare", "evaluate",
+}
+# Everything else → Haiku (fast, cheap, handles conversational queries)
 
 
 def _keyword_classify(request: str) -> str:
@@ -16,18 +23,17 @@ def _keyword_classify(request: str) -> str:
         return "CLAUDE"
     if any(k in lower for k in _DEEPSEEK_KEYWORDS):
         return "DEEPSEEK"
-    return "GEMINI"
+    return "HAIKU"
 
 
 def classify_request(request: str) -> str:
     """
     Use Gemini Flash to classify a user request into a target model.
-    Falls back to keyword-based classification if Gemini is unavailable.
-    Returns one of: GEMINI | DEEPSEEK | CLAUDE
+    Falls back to keyword classification if Gemini is unavailable.
+    Returns one of: GEMINI | DEEPSEEK | CLAUDE | HAIKU
     """
     raw = ask_gemini(ROUTING_PROMPT.format(request=request), system="")
 
-    # If Gemini returned an error string, use keyword fallback instead
     if raw.startswith("[Gemini error"):
         return _keyword_classify(request)
 

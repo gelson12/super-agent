@@ -2,9 +2,10 @@ ROUTING_PROMPT = """Classify this user request into exactly one category.
 Reply with only the category name, nothing else.
 
 Categories:
-- GEMINI    : classification, extraction, translation, short factual Q&A, data parsing, language detection
+- HAIKU     : casual chat, simple questions, greetings, quick lookups, general conversation (DEFAULT)
+- GEMINI    : classification, extraction, translation, data parsing, language detection
 - DEEPSEEK  : coding, debugging, math, structured reasoning, JSON/YAML generation, algorithms
-- CLAUDE    : writing, summarization, email drafting, nuanced explanation, creative tasks, final polish
+- CLAUDE    : long-form writing, summarization, email drafting, nuanced explanation, creative tasks, deep analysis
 
 Request: {request}
 

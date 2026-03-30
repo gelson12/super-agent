@@ -2,13 +2,43 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# Install dependencies first (layer-cached unless requirements.txt changes)
+# ── System packages ────────────────────────────────────────────────────────────
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    nginx \
+    supervisor \
+    git \
+    curl \
+    gnupg \
+    ca-certificates \
+    gettext-base \
+    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# ── code-server (VSCode in browser) ───────────────────────────────────────────
+RUN curl -fsSL https://code-server.dev/install.sh | sh
+
+# ── Claude Code CLI ───────────────────────────────────────────────────────────
+RUN npm install -g @anthropic-ai/claude-code
+
+# ── Python dependencies ───────────────────────────────────────────────────────
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application source
+# ── Application source ────────────────────────────────────────────────────────
 COPY . .
+
+# ── Config files ──────────────────────────────────────────────────────────────
+COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+COPY nginx.conf.template /app/nginx.conf.template
+
+# ── Workspace for cloned repos ────────────────────────────────────────────────
+RUN mkdir -p /workspace /var/log/supervisor
+
+# ── Entrypoint ────────────────────────────────────────────────────────────────
+COPY entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
 
 EXPOSE 8000
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["/app/entrypoint.sh"]

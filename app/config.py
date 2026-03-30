@@ -21,6 +21,14 @@ class Settings(BaseSettings):
     # Web UI access password (leave empty to disable auth)
     ui_password: str = ""
 
+    # Owner safe word — required to authorize critical write operations
+    # (GitHub writes, n8n workflow edits, shell write commands)
+    # Set via Railway env var OWNER_SAFE_WORD — never hardcode the real value.
+    owner_safe_word: str = "alpha0"
+
+    # code-server (VSCode in browser) password — set via CODE_SERVER_PASSWORD
+    code_server_password: str = ""
+
     # GitHub integration
     github_pat: str = ""
 
