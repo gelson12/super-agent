@@ -66,17 +66,78 @@ class Adapter:
         self._interaction_count += 1
         if self._interaction_count % 100 == 0:
             self._analyse()
+        if self._interaction_count % 500 == 0:
+            try:
+                from .wisdom_store import wisdom_store
+                wisdom_store.sync_to_cloudinary()
+            except Exception:
+                pass
 
     def maybe_analyse(self) -> None:
         """Alias — kept for backwards compatibility."""
         self.tick()
 
-    def get_learned_context(self) -> str:
-        """Return learned context string for injection into system prompts."""
-        ctx = self._wisdom.get("learned_context", "")
-        if not ctx:
+    def get_collective_context(self) -> str:
+        """Return collective model strength context from wisdom_store."""
+        try:
+            from .wisdom_store import wisdom_store
+            return wisdom_store.get_collective_context()
+        except Exception:
             return ""
-        return f"\n\n[Adaptive context from past interactions]\n{ctx}"
+
+    def get_learned_context(self) -> str:
+        """Return combined learned + collective context for system prompt injection."""
+        ctx = self._wisdom.get("learned_context", "")
+        collective = self.get_collective_context()
+        parts = []
+        if ctx:
+            parts.append(f"[Adaptive context from past interactions]\n{ctx}")
+        if collective:
+            parts.append(collective)
+        return "\n\n".join(parts) if parts else ""
+
+    def analyse_peer_review_impact(self) -> dict:
+        """
+        Compare error rates between peer-reviewed and non-reviewed high-complexity
+        queries (complexity >= 4). Useful for measuring whether peer review helps.
+        """
+        from .insight_log import LOG_PATH
+
+        entries: list[dict] = []
+        if os.path.exists(LOG_PATH):
+            try:
+                with open(LOG_PATH, "r", encoding="utf-8") as f:
+                    entries = json.load(f)
+            except (json.JSONDecodeError, OSError):
+                return {"error": "Could not read insight log"}
+
+        reviewed = [e for e in entries if "peer_review" in e.get("routed_by", "")]
+        non_reviewed = [
+            e for e in entries
+            if "peer_review" not in e.get("routed_by", "")
+            and e.get("complexity", 0) >= 4
+        ]
+
+        def _error_rate(lst: list) -> Optional[float]:
+            if not lst:
+                return None
+            return round(sum(1 for e in lst if e.get("error")) / len(lst) * 100, 1)
+
+        reviewed_rate = _error_rate(reviewed)
+        non_reviewed_rate = _error_rate(non_reviewed)
+        improvement = (
+            (non_reviewed_rate or 0.0) - (reviewed_rate or 0.0)
+            if reviewed_rate is not None and non_reviewed_rate is not None
+            else None
+        )
+
+        return {
+            "reviewed_count": len(reviewed),
+            "reviewed_error_rate_pct": reviewed_rate,
+            "non_reviewed_count": len(non_reviewed),
+            "non_reviewed_error_rate_pct": non_reviewed_rate,
+            "improvement_pct": improvement,
+        }
 
     def get_haiku_ceiling(self) -> int:
         """Return max complexity score that Haiku should handle."""
@@ -164,6 +225,23 @@ class Adapter:
             )
 
         learned_context = " ".join(context_parts)
+
+        # ── Pull latest drift alert from wisdom_store ─────────────────────────
+        try:
+            from .wisdom_store import wisdom_store
+            drift_alerts = wisdom_store._pool.get("drift_alerts", [])
+            if drift_alerts:
+                latest = drift_alerts[-1]
+                drift_note = (
+                    f"Drift alert: {latest.get('model')} win rate in "
+                    f"{latest.get('category')} dropped to "
+                    f"{latest.get('win_rate', 0):.0%} "
+                    f"({latest.get('samples', 0)} samples)"
+                )
+                if drift_note not in notes:
+                    notes.append(drift_note)
+        except Exception:
+            pass
 
         # ── Persist ───────────────────────────────────────────────────────────
         self._wisdom["learned_context"] = learned_context

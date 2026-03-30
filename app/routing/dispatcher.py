@@ -9,6 +9,11 @@ from ..security.safe_word import check_authorization
 from ..cache.response_cache import cache
 from ..learning.insight_log import insight_log
 from ..learning.adapter import adapter
+from ..learning.wisdom_store import wisdom_store
+from ..learning.peer_review import peer_reviewer
+from ..learning.ensemble import ensemble_voter
+from ..learning.red_team import red_team
+from ..learning.cot_handoff import cot_handoff
 
 _HANDLERS = {
     "GEMINI":   ask_gemini,
@@ -31,9 +36,38 @@ _SHELL_KEYWORDS = {
     "claude cli", "run claude",
 }
 
-# Models that benefit from cache (stateless, repeatable responses)
 _CACHEABLE_MODELS = {"HAIKU", "GEMINI", "DEEPSEEK", "CLAUDE"}
 
+# ── Confidence scoring ────────────────────────────────────────────────────────
+
+_HEDGE_WORDS = [
+    "i think", "i believe", "i'm not sure", "i am not sure",
+    "probably", "possibly", "might be", "may be", "not certain",
+    "could be", "uncertain", "unclear", "i'm unsure", "perhaps",
+    "it seems", "it appears", "roughly", "approximately",
+]
+
+
+def _score_confidence(response: str) -> int:
+    """
+    Scan response for hedge words → return confidence score 0–100.
+    100 = fully confident, 0 = highly uncertain.
+    Zero extra API calls — pure string scan.
+    """
+    lower = response.lower()
+    hedge_count = sum(1 for h in _HEDGE_WORDS if h in lower)
+    if hedge_count == 0:
+        return 100
+    if hedge_count == 1:
+        return 80
+    if hedge_count == 2:
+        return 60
+    if hedge_count == 3:
+        return 40
+    return max(0, 100 - hedge_count * 20)
+
+
+# ── Keyword routing helpers ───────────────────────────────────────────────────
 
 def _is_github_request(message: str) -> bool:
     lower = message.lower()
@@ -45,32 +79,71 @@ def _is_shell_request(message: str) -> bool:
     return any(k in lower for k in _SHELL_KEYWORDS)
 
 
+# ── Extended result builder ───────────────────────────────────────────────────
+
+def _build_extended_result(base: dict, **kwargs) -> dict:
+    """
+    Merge a base dispatch result dict with all new collective intelligence
+    fields (with safe defaults). Keeps return shape consistent across all
+    code paths (early returns, cache hits, agents, new layers).
+    """
+    return {
+        **base,
+        "was_reviewed": False,
+        "critic_model": None,
+        "critique_was_substantive": False,
+        "is_ensemble": False,
+        "models_used": [],
+        "disagreement_detected": False,
+        "cot_used": False,
+        "reasoning_model": None,
+        "answer_model": None,
+        "trace_length": 0,
+        "red_team_ran": False,
+        "escalated": False,
+        "red_verdict": None,
+        "confidence_score": _score_confidence(base.get("response", "")),
+        "cloudinary_url": None,
+        **kwargs,
+    }
+
+
+# ── Main dispatch function ────────────────────────────────────────────────────
+
 def dispatch(message: str, force_model: str | None = None, session_id: str = "default") -> dict:
     """
-    Route a message to the appropriate model/agent.
+    Route a message through the full collective intelligence pipeline.
 
     Pipeline:
-    1. Safe-word guard (blocks critical write ops without authorisation)
-    2. Forced model override (if caller specifies)
-    3. Trivial query bypass → Haiku directly (no classifier call)
-    4. Complexity scoring → suggested model tier
-    5. Cache lookup (TTL 1 hour)
-    6. Keyword routing: SHELL → GITHUB → classifier
-    7. Adaptive model selection (respects Haiku ceiling from adapter)
-    8. Response cache write + interaction logging
+    1.  Safe-word guard
+    2.  Forced model override
+    3.  Trivial query bypass → Haiku directly
+    4.  Complexity scoring
+    5.  Keyword routing: SHELL → GITHUB
+    6.  Adaptive model selection (Haiku ceiling from adapter)
+    7.  Cache lookup
+    8a. complexity == 5 → Ensemble (replaces single model call)
+    8b. Single model call
+        → CoT handoff (complexity >= 4, classifier-routed)
+        → Peer review  (complexity >= 4)
+        → Red team     (complexity >= 3, CONFIDENCE_MODE=true)
+    9.  Cache write + insight log + adapter tick + wisdom record
 
-    Returns dict with: model_used, response, routed_by, complexity, cache_hit
+    Returns dict with: model_used, response, routed_by, complexity, cache_hit,
+    plus collective intelligence fields: was_reviewed, is_ensemble, cot_used,
+    red_team_ran, escalated, confidence_score, cloudinary_url, and more.
     """
+
     # ── 1. Safe word guard ────────────────────────────────────────────────────
     authorized, block_reason = check_authorization(message)
     if not authorized:
-        return {
+        return _build_extended_result({
             "model_used": "SECURITY",
             "response": block_reason,
             "routed_by": "safe_word_guard",
             "complexity": 0,
             "cache_hit": False,
-        }
+        })
 
     # ── 2. Forced model override ──────────────────────────────────────────────
     if force_model:
@@ -79,15 +152,15 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
             response = run_shell_agent(message, authorized=authorized)
             insight_log.record(message, "SHELL", response, "forced", 3, session_id)
             adapter.tick()
-            return {
+            return _build_extended_result({
                 "model_used": "SHELL",
                 "response": response,
                 "routed_by": "forced",
                 "complexity": 3,
                 "cache_hit": False,
-            }
+            })
         if model not in _HANDLERS:
-            return {
+            return _build_extended_result({
                 "model_used": None,
                 "response": (
                     f"Unknown model '{force_model}'. "
@@ -96,31 +169,32 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
                 "routed_by": "forced",
                 "complexity": 0,
                 "cache_hit": False,
-            }
+            })
         complexity = score_complexity(message)
         cached = cache.get(message, model) if model in _CACHEABLE_MODELS else None
         if cached:
             insight_log.record(message, model, cached, "forced_cache", complexity, session_id)
             adapter.tick()
-            return {
+            return _build_extended_result({
                 "model_used": model,
                 "response": cached,
                 "routed_by": "forced_cache",
                 "complexity": complexity,
                 "cache_hit": True,
-            }
+            })
         response = _HANDLERS[model](message)
         if model in _CACHEABLE_MODELS:
             cache.set(message, model, response)
         insight_log.record(message, model, response, "forced", complexity, session_id)
         adapter.tick()
-        return {
+        wisdom_store.record_outcome(model, wisdom_store._detect_category("forced", model), response.startswith("["))
+        return _build_extended_result({
             "model_used": model,
             "response": response,
             "routed_by": "forced",
             "complexity": complexity,
             "cache_hit": False,
-        }
+        })
 
     # ── 3. Trivial bypass ─────────────────────────────────────────────────────
     if detect_trivial(message):
@@ -128,65 +202,62 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
         if cached:
             insight_log.record(message, "HAIKU", cached, "trivial_cache", 1, session_id)
             adapter.tick()
-            return {
+            return _build_extended_result({
                 "model_used": "HAIKU",
                 "response": cached,
                 "routed_by": "trivial_cache",
                 "complexity": 1,
                 "cache_hit": True,
-            }
+            })
         response = ask_claude_haiku(message)
         cache.set(message, "HAIKU", response)
         insight_log.record(message, "HAIKU", response, "trivial", 1, session_id)
         adapter.tick()
-        return {
+        wisdom_store.record_outcome("HAIKU", "trivial/chat", response.startswith("["))
+        return _build_extended_result({
             "model_used": "HAIKU",
             "response": response,
             "routed_by": "trivial",
             "complexity": 1,
             "cache_hit": False,
-        }
+        })
 
     # ── 4. Complexity score ───────────────────────────────────────────────────
     complexity = score_complexity(message)
 
-    # ── 5. Keyword routing (shell → github) ───────────────────────────────────
+    # ── 5. Keyword routing ────────────────────────────────────────────────────
     if _is_shell_request(message):
         response = run_shell_agent(message, authorized=authorized)
         insight_log.record(message, "SHELL", response, "shell_keywords", complexity, session_id)
         adapter.tick()
-        return {
+        return _build_extended_result({
             "model_used": "SHELL",
             "response": response,
             "routed_by": "shell_keywords",
             "complexity": complexity,
             "cache_hit": False,
-        }
+        })
 
     if _is_github_request(message):
         response = run_github_agent(message)
         insight_log.record(message, "GITHUB", response, "github_keywords", complexity, session_id)
         adapter.tick()
-        return {
+        return _build_extended_result({
             "model_used": "GITHUB",
             "response": response,
             "routed_by": "github_keywords",
             "complexity": complexity,
             "cache_hit": False,
-        }
+        })
 
     # ── 6. Adaptive model selection ───────────────────────────────────────────
     haiku_ceiling = adapter.get_haiku_ceiling()
     suggested = model_for_complexity(complexity)
-
-    # If the adapter has lowered the ceiling, escalate from HAIKU when needed
     if suggested == "HAIKU" and complexity > haiku_ceiling:
         suggested = "DEEPSEEK"
 
-    # Still run the LLM classifier for ambiguous mid-range queries (complexity 3–4)
     if complexity in (3, 4):
         classified = classify_request(message)
-        # Classifier wins unless adapter has flagged that model as unreliable
         model = classified
         routed_by = "classifier"
     else:
@@ -199,25 +270,91 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
         if cached:
             insight_log.record(message, model, cached, f"{routed_by}_cache", complexity, session_id)
             adapter.tick()
-            return {
+            return _build_extended_result({
                 "model_used": model,
                 "response": cached,
                 "routed_by": f"{routed_by}_cache",
                 "complexity": complexity,
                 "cache_hit": True,
-            }
+            })
 
-    # ── 8. Call model, cache result, log ─────────────────────────────────────
+    # ── 8a. Ensemble (complexity == 5) ────────────────────────────────────────
+    if complexity == 5:
+        ensemble_result = ensemble_voter.vote(message, complexity, session_id)
+        if ensemble_result["is_ensemble"]:
+            response = ensemble_result["response"]
+            if model in _CACHEABLE_MODELS:
+                cache.set(message, "ENSEMBLE", response)
+            insight_log.record(message, "ENSEMBLE", response, routed_by, complexity, session_id)
+            adapter.tick()
+            wisdom_store.record_outcome("CLAUDE", "writing/analysis", response.startswith("["))
+            return _build_extended_result({
+                "model_used": "ENSEMBLE",
+                "response": response,
+                "routed_by": routed_by,
+                "complexity": complexity,
+                "cache_hit": False,
+            },
+                is_ensemble=True,
+                models_used=ensemble_result["models_used"],
+                disagreement_detected=ensemble_result["disagreement_detected"],
+                cloudinary_url=ensemble_result["cloudinary_url"],
+            )
+
+    # ── 8b. Single model call ─────────────────────────────────────────────────
     response = _HANDLERS[model](message)
+
+    # Layer 1: CoT handoff (complexity >= 4, classifier-routed)
+    cot_result = {
+        "cot_used": False, "response": "", "reasoning_model": None,
+        "answer_model": None, "trace_length": 0,
+    }
+    if complexity >= 4 and routed_by == "classifier":
+        cot_result = cot_handoff.handoff(message, model, routed_by, complexity, session_id)
+        if cot_result["cot_used"] and cot_result["response"] and not cot_result["response"].startswith("["):
+            response = cot_result["response"]
+
+    # Layer 2: Peer review (complexity >= 4)
+    review_result = {
+        "was_reviewed": False, "critic_model": None,
+        "critique_was_substantive": False, "critique": None,
+    }
+    if complexity >= 4:
+        review_result = peer_reviewer.review(message, response, model, complexity, session_id)
+        response = review_result["final_response"]
+
+    # Layer 3: Red team (complexity >= 3, confidence_mode enabled)
+    rt_result = {"red_team_ran": False, "escalated": False, "red_verdict": None}
+    if complexity >= 3:
+        rt_result = red_team.challenge(message, response, complexity, session_id)
+        response = rt_result["response"]
+
+    # ── 9. Cache + log + adapt + wisdom ──────────────────────────────────────
     if model in _CACHEABLE_MODELS:
         cache.set(message, model, response)
     insight_log.record(message, model, response, routed_by, complexity, session_id)
     adapter.tick()
+    wisdom_store.record_outcome(
+        model,
+        wisdom_store._detect_category(routed_by, model),
+        response.startswith("["),
+    )
 
-    return {
+    return _build_extended_result({
         "model_used": model,
         "response": response,
         "routed_by": routed_by,
         "complexity": complexity,
         "cache_hit": False,
-    }
+    },
+        was_reviewed=review_result["was_reviewed"],
+        critic_model=review_result.get("critic_model"),
+        critique_was_substantive=review_result.get("critique_was_substantive", False),
+        cot_used=cot_result["cot_used"],
+        reasoning_model=cot_result.get("reasoning_model"),
+        answer_model=cot_result.get("answer_model"),
+        trace_length=cot_result.get("trace_length", 0),
+        red_team_ran=rt_result["red_team_ran"],
+        escalated=rt_result["escalated"],
+        red_verdict=rt_result.get("red_verdict"),
+    )

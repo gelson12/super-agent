@@ -26,6 +26,11 @@ class Settings(BaseSettings):
     # Set via Railway env var OWNER_SAFE_WORD — never hardcode the real value.
     owner_safe_word: str = "alpha0"
 
+    # Red team / adversarial challenge mode
+    # When True, Haiku attacks every response (complexity >= 3) looking for flaws.
+    # Off by default — enable via Railway env var CONFIDENCE_MODE=true.
+    confidence_mode: bool = False
+
     # code-server (VSCode in browser) password — set via CODE_SERVER_PASSWORD
     code_server_password: str = ""
 

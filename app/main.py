@@ -31,6 +31,7 @@ from .config import settings
 from .cache.response_cache import cache
 from .learning.insight_log import insight_log
 from .learning.adapter import adapter
+from .learning.wisdom_store import wisdom_store
 
 limiter = Limiter(key_func=get_remote_address)
 
@@ -93,6 +94,19 @@ class ChatResponse(BaseModel):
     session_id: str
     complexity: int = 0
     cache_hit: bool = False
+    # Collective intelligence fields (additive — backwards compatible)
+    was_reviewed: bool = False
+    is_ensemble: bool = False
+    cot_used: bool = False
+    red_team_ran: bool = False
+    escalated: bool = False
+    confidence_score: int = 100
+    cloudinary_url: str | None = None
+
+
+class EnsembleRequest(BaseModel):
+    message: str = Field(..., min_length=1, max_length=4000)
+    session_id: str = Field(default="default", max_length=128)
 
 
 class HistoryMessage(BaseModel):
@@ -139,6 +153,25 @@ def auth(req: AuthRequest):
     return {"ok": True}
 
 
+def _chat_response_from_result(result: dict, session_id: str) -> ChatResponse:
+    """Build a ChatResponse from a dispatch result dict."""
+    return ChatResponse(
+        response=result["response"],
+        model_used=result["model_used"] or "UNKNOWN",
+        routed_by=result["routed_by"],
+        session_id=session_id,
+        complexity=result.get("complexity", 0),
+        cache_hit=result.get("cache_hit", False),
+        was_reviewed=result.get("was_reviewed", False),
+        is_ensemble=result.get("is_ensemble", False),
+        cot_used=result.get("cot_used", False),
+        red_team_ran=result.get("red_team_ran", False),
+        escalated=result.get("escalated", False),
+        confidence_score=result.get("confidence_score", 100),
+        cloudinary_url=result.get("cloudinary_url"),
+    )
+
+
 @app.post("/chat", response_model=ChatResponse, tags=["agent"])
 @limiter.limit("30/minute")
 def chat(req: ChatRequest, request: Request):
@@ -146,14 +179,7 @@ def chat(req: ChatRequest, request: Request):
     result = dispatch(req.message, session_id=req.session_id)
     if not result["response"].startswith("["):
         append_exchange(req.session_id, req.message, result["response"])
-    return ChatResponse(
-        response=result["response"],
-        model_used=result["model_used"],
-        routed_by=result["routed_by"],
-        session_id=req.session_id,
-        complexity=result.get("complexity", 0),
-        cache_hit=result.get("cache_hit", False),
-    )
+    return _chat_response_from_result(result, req.session_id)
 
 
 @app.post("/chat/direct", response_model=ChatResponse, tags=["agent"])
@@ -165,14 +191,7 @@ def chat_direct(req: DirectChatRequest, request: Request):
         raise HTTPException(status_code=400, detail=result["response"])
     if not result["response"].startswith("["):
         append_exchange(req.session_id, req.message, result["response"])
-    return ChatResponse(
-        response=result["response"],
-        model_used=result["model_used"],
-        routed_by=result["routed_by"],
-        session_id=req.session_id,
-        complexity=result.get("complexity", 0),
-        cache_hit=result.get("cache_hit", False),
-    )
+    return _chat_response_from_result(result, req.session_id)
 
 
 @app.get("/history/{session_id}", response_model=list[HistoryMessage], tags=["memory"])
@@ -187,6 +206,73 @@ def delete_history(session_id: str):
     """Clear all messages for a session."""
     clear_session(session_id)
     return {"ok": True, "session_id": session_id, "cleared": True}
+
+
+@app.get("/collective-wisdom", tags=["meta"])
+def collective_wisdom():
+    """
+    Collective intelligence state: per-model win rates by category,
+    drift alerts, last Cloudinary sync timestamp, interaction count.
+    """
+    return wisdom_store.wisdom_dict()
+
+
+@app.get("/peer-review-stats", tags=["meta"])
+def peer_review_stats():
+    """
+    Peer review impact analysis: compares error rates between peer-reviewed
+    and non-reviewed high-complexity (>= 4) queries.
+    """
+    return adapter.analyse_peer_review_impact()
+
+
+@app.post("/chat/ensemble", tags=["agent"])
+@limiter.limit("10/minute")
+def chat_ensemble(req: EnsembleRequest, request: Request):
+    """
+    Force ensemble mode: asks Claude, Gemini, and DeepSeek in parallel,
+    then synthesizes with Haiku. Long responses (> 2000 chars) are
+    uploaded to Cloudinary and a URL is returned.
+    """
+    from .learning.ensemble import ensemble_voter as _ev
+    result = _ev.vote(req.message, complexity=5, session_id=req.session_id)
+    response = result["response"] or "[Ensemble failed to produce a response]"
+    if not response.startswith("["):
+        append_exchange(req.session_id, req.message, response)
+    return {
+        "response": response,
+        "model_used": "ENSEMBLE",
+        "models_used": result["models_used"],
+        "routed_by": "ensemble_forced",
+        "session_id": req.session_id,
+        "is_ensemble": True,
+        "disagreement_detected": result["disagreement_detected"],
+        "cloudinary_url": result["cloudinary_url"],
+    }
+
+
+@app.get("/wisdom/reload", tags=["meta"])
+def wisdom_reload():
+    """
+    Hot-reload collective wisdom from Cloudinary without restarting.
+    Useful after a container rebuild or when syncing across instances.
+    """
+    try:
+        url = wisdom_store._pool.get("cloudinary_backup_url")
+        if not url:
+            return {"ok": False, "reason": "No Cloudinary backup URL stored yet — run 500+ interactions first."}
+        fresh = wisdom_store._download_from_cloudinary(url)
+        if fresh is None:
+            return {"ok": False, "reason": "Download from Cloudinary failed — check credentials and URL."}
+        with wisdom_store._lock:
+            wisdom_store._pool.update(fresh)
+        return {
+            "ok": True,
+            "synced_from": url,
+            "last_synced_ts": wisdom_store._pool.get("last_synced_ts"),
+        }
+    except Exception as e:
+        return {"ok": False, "reason": str(e)}
 
 
 @app.get("/stats", tags=["meta"])

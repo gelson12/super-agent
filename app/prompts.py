@@ -96,3 +96,61 @@ History:
 {history}
 
 Summary (bullet points):"""
+
+
+# ── Peer review — critic model finds flaws in primary model's answer ───────────
+PEER_REVIEW_PROMPT = """Here is a response to the following query:
+
+Query: {query}
+
+Response: {response}
+
+Critique in 2-3 sentences: What is missing, wrong, or could be improved? Be specific and direct."""
+
+
+# ── Ensemble synthesis — Haiku merges three model answers into one ─────────────
+ENSEMBLE_SYNTHESIS_PROMPT = """Three AI models answered the same question. Synthesize the single best answer by combining their strongest points and resolving any contradictions.
+
+Question: {query}
+
+Model A (Claude): {response_a}
+
+Model B (Gemini): {response_b}
+
+Model C (DeepSeek): {response_c}
+
+Synthesized answer:"""
+
+
+# ── Red team — Haiku adversarially attacks the response ───────────────────────
+RED_TEAM_PROMPT = """Find ONE specific flaw, factual error, or dangerous assumption in this response. If the response is sound, say exactly: LGTM
+
+Query: {query}
+Response: {response}
+
+Flaw or LGTM:"""
+
+
+# ── Chain-of-thought: step 1 — reasoning trace (no answer yet) ────────────────
+COT_REASONING_PROMPT = """Think through this step by step (3-5 steps). Do not answer yet — only reason through the problem:
+
+{query}
+
+Step-by-step reasoning:"""
+
+
+# ── Chain-of-thought: step 2 — second model answers using the trace ───────────
+COT_ANSWER_PROMPT = """Given this reasoning context:
+
+{trace}
+
+Now answer the following question concisely:
+
+{query}
+
+Answer:"""
+
+
+# ── Collective context — injected into system prompts from wisdom_store ────────
+COLLECTIVE_CONTEXT_PROMPT = """[Collective model intelligence — learned from past interactions]
+{strengths_summary}"""
