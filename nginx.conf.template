@@ -14,7 +14,7 @@ http {
         # ── VSCode (code-server) ───────────────────────────────────────────────
         # Accessible at /code/
         location /code/ {
-            proxy_pass         http://localhost:8080/;
+            proxy_pass         http://localhost:3001/;
             proxy_http_version 1.1;
 
             # WebSocket support (required for code-server terminal & live editing)

@@ -35,9 +35,9 @@ COPY nginx.conf.template /app/nginx.conf.template
 # ── Workspace for cloned repos ────────────────────────────────────────────────
 RUN mkdir -p /workspace /var/log/supervisor
 
-# ── Entrypoint ────────────────────────────────────────────────────────────────
+# ── Entrypoint (strip Windows CRLF → LF, then make executable) ───────────────
 COPY entrypoint.sh /app/entrypoint.sh
-RUN chmod +x /app/entrypoint.sh
+RUN sed -i 's/\r//' /app/entrypoint.sh && chmod +x /app/entrypoint.sh
 
 EXPOSE 8000
 
