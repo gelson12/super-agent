@@ -7,10 +7,14 @@ Also provides get_compressed_context() which returns the last 6 messages
 verbatim plus a Haiku-generated bullet-point summary of older messages,
 keeping token usage bounded on long sessions.
 """
+import os
 from langchain_community.chat_message_histories import SQLChatMessageHistory
 from langchain_core.messages import BaseMessage
 
-DB_PATH = "sqlite:///agent_memory.db"
+# Prefer /workspace (Railway persistent volume) so conversation history
+# survives container restarts. Falls back to local directory.
+_db_dir = "/workspace" if os.access("/workspace", os.W_OK) else "."
+DB_PATH = f"sqlite:///{_db_dir}/agent_memory.db"
 
 
 def get_session_history(session_id: str) -> SQLChatMessageHistory:

@@ -1,0 +1,43 @@
+name: jarvis_agent
+description: JARVIS voice interface for Super Agent — multi-model AI assistant
+
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Wake word detection ("jarvis" built-in keyword — free, no API key needed)
+  porcupine_flutter: ^3.0.0
+
+  # On-device speech-to-text (Android SpeechRecognizer)
+  speech_to_text: ^6.6.0
+
+  # TTS fallback (British accent, zero cost)
+  flutter_tts: ^4.0.0
+
+  # HTTP client for Super Agent API
+  http: ^1.2.0
+
+  # Plays ElevenLabs MP3 audio
+  just_audio: ^0.9.38
+
+  # Runtime permissions (RECORD_AUDIO)
+  permission_handler: ^11.3.0
+
+  # Persist server URL, password, ElevenLabs key
+  shared_preferences: ^2.3.0
+
+  # Temp directory for ElevenLabs MP3 files
+  path_provider: ^2.1.0
+
+  # Generate unique session ID
+  uuid: ^4.3.0
+
+flutter:
+  uses-material-design: true
