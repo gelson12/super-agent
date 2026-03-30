@@ -97,7 +97,10 @@ class AlgorithmStore:
         self._lock = threading.Lock()
         self._algorithms: dict[str, LoadedAlgorithm] = {}
         self._last_refresh: float = 0.0
-        self._refresh()  # eager load on startup
+        # Lazy background load — never blocks the main thread or app startup.
+        # Algorithms will be available after the first background fetch completes.
+        t = threading.Thread(target=self._refresh, daemon=True)
+        t.start()
 
     # ── Refresh ───────────────────────────────────────────────────────────────
 
@@ -136,7 +139,8 @@ class AlgorithmStore:
 
     def _maybe_refresh(self) -> None:
         if time.time() - self._last_refresh > REFRESH_INTERVAL_SECS:
-            self._refresh()
+            t = threading.Thread(target=self._refresh, daemon=True)
+            t.start()
 
     # ── Public API ────────────────────────────────────────────────────────────
 
