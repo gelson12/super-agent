@@ -68,8 +68,8 @@ class Adapter:
             self._analyse()
         if self._interaction_count % 200 == 0:
             try:
-                from .algorithm_builder import build_and_commit_algorithms
-                build_and_commit_algorithms()
+                from .algorithm_builder import build_and_commit_algorithms as _build
+                _build()
             except Exception:
                 pass
         if self._interaction_count % 500 == 0:

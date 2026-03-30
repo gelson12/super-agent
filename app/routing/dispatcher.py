@@ -14,7 +14,6 @@ from ..learning.peer_review import peer_reviewer
 from ..learning.ensemble import ensemble_voter
 from ..learning.red_team import red_team
 from ..learning.cot_handoff import cot_handoff
-from ..learning.algorithm_store import algorithm_store
 
 _HANDLERS = {
     "GEMINI":   ask_gemini,
@@ -266,10 +265,10 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
         routed_by = "complexity_score"
 
     # ── 6b. Algorithm-store routing override ─────────────────────────────────
-    # If a self-built routing heuristic is loaded, use it to potentially
-    # override the suggested model with historically better-performing one.
+    # Lazy import — only loads algorithm_store after startup is complete.
     try:
-        _algo = algorithm_store.get_algorithm("routing_heuristic")
+        from ..learning.algorithm_store import algorithm_store as _algo_store
+        _algo = _algo_store.get_algorithm("routing_heuristic")
         if _algo and _algo.ok:
             _primary_cat = wisdom_store._detect_category(routed_by, model)
             _algo_model = _algo.run(

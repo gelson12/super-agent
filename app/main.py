@@ -32,8 +32,8 @@ from .cache.response_cache import cache
 from .learning.insight_log import insight_log
 from .learning.adapter import adapter
 from .learning.wisdom_store import wisdom_store
-from .learning.algorithm_store import algorithm_store
-from .learning.algorithm_builder import build_and_commit_algorithms
+# algorithm_store and algorithm_builder are imported lazily inside endpoints
+# to avoid any startup-time blocking that could cause Railway health check failures
 
 limiter = Limiter(key_func=get_remote_address)
 
@@ -307,9 +307,10 @@ def list_algorithms():
     List all self-built algorithms currently loaded in the algorithm store.
     Shows name, load status, and last refresh timestamp.
     """
+    from .learning.algorithm_store import algorithm_store as _store
     return {
-        "store": algorithm_store.status(),
-        "algorithms": algorithm_store.list_algorithms(),
+        "store": _store.status(),
+        "algorithms": _store.list_algorithms(),
     }
 
 
@@ -321,8 +322,9 @@ def build_algorithms():
     New algorithms are committed to the 'super-agent-algorithms' GitHub repo.
     Runs automatically every 200 interactions.
     """
+    from .learning.algorithm_builder import build_and_commit_algorithms as _build
     try:
-        summary = build_and_commit_algorithms()
+        summary = _build()
         return {"ok": True, **summary}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Algorithm build failed: {e}")
@@ -334,9 +336,10 @@ def reload_algorithms():
     Hot-reload algorithms from the GitHub repo without restarting.
     Useful after a manual commit or forced build.
     """
+    from .learning.algorithm_store import algorithm_store as _store
     try:
-        algorithm_store._refresh()
-        return {"ok": True, "store": algorithm_store.status()}
+        _store._refresh()
+        return {"ok": True, "store": _store.status()}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Reload failed: {e}")
 
