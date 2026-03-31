@@ -1,7 +1,9 @@
 #!/bin/bash
 set -e
 
-export PORT=${PORT:-8000}
+# Railway's internal mesh always connects to container port 8000.
+# Hardcode this so nginx binds to 8000 regardless of Railway's $PORT injection.
+export PORT=8000
 
 # ── Generate nginx config with correct PORT ────────────────────────────────────
 envsubst '$PORT' < /app/nginx.conf.template > /etc/nginx/nginx.conf
@@ -10,8 +12,8 @@ envsubst '$PORT' < /app/nginx.conf.template > /etc/nginx/nginx.conf
 if [ -n "$GITHUB_PAT" ]; then
     git config --global credential.helper store
     echo "https://x-access-token:${GITHUB_PAT}@github.com" > /root/.git-credentials
-    git config --global user.email "super-agent@railway.app"
-    git config --global user.name "Super Agent"
+    git config --global user.email "gelson_m@hotmail.com"
+    git config --global user.name "Gelson Mascarenhas"
     echo "[entrypoint] GitHub credentials configured."
 fi
 
