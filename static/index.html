@@ -17,29 +17,62 @@
       flex-direction: column;
     }
 
+    /* ── Bridge logo glow animation ─────────────────────────────────────────── */
+    @keyframes logo-glow {
+      0%, 100% {
+        filter: drop-shadow(0 0 6px #c9a227)
+                drop-shadow(0 0 14px #c9a227)
+                drop-shadow(0 0 28px rgba(201,162,39,0.5));
+      }
+      50% {
+        filter: drop-shadow(0 0 12px #f0c040)
+                drop-shadow(0 0 28px #f0c040)
+                drop-shadow(0 0 55px rgba(240,192,64,0.7))
+                drop-shadow(0 0 80px rgba(201,162,39,0.4));
+      }
+    }
+
+    .bridge-logo {
+      display: block;
+      animation: logo-glow 2.4s ease-in-out infinite;
+      /* White background removal via canvas is applied in JS */
+    }
+
     /* ── Login screen ─────────────────────────────────────────────────────── */
     #lock-screen {
       position: fixed; inset: 0;
       background: #0f0f0f;
       display: flex;
+      flex-direction: column;
       align-items: center;
       justify-content: center;
+      gap: 32px;
       z-index: 999;
     }
     #lock-screen.hidden { display: none; }
+
+    .lock-logo-wrap {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .lock-logo-wrap .bridge-logo {
+      height: 110px;
+      width: auto;
+    }
 
     .lock-card {
       background: #141414;
       border: 1px solid #2a2a2a;
       border-radius: 20px;
-      padding: 40px 32px;
+      padding: 36px 32px;
       width: 320px;
       display: flex;
       flex-direction: column;
       gap: 16px;
       align-items: center;
     }
-    .lock-card .lock-icon { font-size: 36px; }
     .lock-card h2 { font-size: 18px; font-weight: 600; }
     .lock-card p { font-size: 13px; color: #666; text-align: center; }
 
@@ -53,21 +86,22 @@
       font-size: 14px;
       outline: none;
     }
-    #pw-input:focus { border-color: #6d28d9; }
+    #pw-input:focus { border-color: #c9a227; }
 
     #pw-submit {
       width: 100%;
-      background: #6d28d9;
+      background: linear-gradient(135deg, #9a7920, #c9a227, #9a7920);
       border: none;
       border-radius: 10px;
       padding: 12px;
-      color: #fff;
+      color: #000;
       font-size: 14px;
-      font-weight: 600;
+      font-weight: 700;
       cursor: pointer;
-      transition: background 0.2s;
+      transition: opacity 0.2s;
+      letter-spacing: 0.5px;
     }
-    #pw-submit:hover { background: #7c3aed; }
+    #pw-submit:hover { opacity: 0.85; }
 
     #pw-error {
       font-size: 12px;
@@ -77,21 +111,44 @@
 
     /* ── Header ───────────────────────────────────────────────────────────── */
     header {
-      padding: 16px 24px;
+      padding: 10px 24px;
       border-bottom: 1px solid #222;
       display: flex;
       align-items: center;
-      gap: 12px;
+      justify-content: space-between;
       background: #141414;
+      position: relative;
+      min-height: 60px;
     }
+
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
     header .dot {
       width: 10px; height: 10px;
       border-radius: 50%;
       background: #22c55e;
       box-shadow: 0 0 6px #22c55e;
+      flex-shrink: 0;
     }
-    header h1 { font-size: 17px; font-weight: 600; }
-    header span { font-size: 12px; color: #666; margin-left: auto; }
+
+    .header-center {
+      position: absolute;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      align-items: center;
+    }
+
+    .header-center .bridge-logo {
+      height: 44px;
+      width: auto;
+    }
+
+    header span { font-size: 12px; color: #666; }
 
     /* ── Chat ─────────────────────────────────────────────────────────────── */
     #chat {
@@ -140,7 +197,7 @@
     .bubble pre code { background: none; padding: 0; font-size: 13px; }
     .bubble h1,.bubble h2,.bubble h3 { margin: 10px 0 6px; font-weight: 600; }
     .bubble blockquote {
-      border-left: 3px solid #6d28d9;
+      border-left: 3px solid #c9a227;
       padding-left: 10px;
       color: #999;
       margin: 6px 0;
@@ -150,10 +207,11 @@
     .bubble th { background: #1a1a1a; }
 
     .message.user .bubble {
-      background: #6d28d9;
-      color: #fff;
+      background: linear-gradient(135deg, #7a5e10, #c9a227);
+      color: #000;
       border-bottom-right-radius: 4px;
       white-space: pre-wrap;
+      font-weight: 500;
     }
     .message.agent .bubble {
       background: #1e1e1e;
@@ -177,7 +235,7 @@
       color: #555; padding: 0; font-size: 14px; line-height: 1;
       transition: color 0.2s;
     }
-    .speak-btn:hover { color: #a78bfa; }
+    .speak-btn:hover { color: #c9a227; }
 
     .typing .bubble {
       background: #1e1e1e;
@@ -212,7 +270,7 @@
       font-family: inherit;
       line-height: 1.5;
     }
-    #input:focus { border-color: #6d28d9; }
+    #input:focus { border-color: #c9a227; }
     #input::placeholder { color: #444; }
 
     .icon-btn {
@@ -226,7 +284,7 @@
       transition: all 0.2s;
       color: #888; font-size: 18px;
     }
-    .icon-btn:hover { border-color: #6d28d9; color: #a78bfa; }
+    .icon-btn:hover { border-color: #c9a227; color: #c9a227; }
     .icon-btn:disabled { opacity: 0.4; cursor: not-allowed; }
     .icon-btn.recording { border-color: #ef4444; color: #ef4444; animation: pulse 1s infinite; }
 
@@ -236,14 +294,15 @@
     }
 
     #send {
-      background: #6d28d9; border: none; border-radius: 12px;
+      background: linear-gradient(135deg, #9a7920, #c9a227);
+      border: none; border-radius: 12px;
       width: 48px; height: 48px; cursor: pointer;
       display: flex; align-items: center; justify-content: center;
-      flex-shrink: 0; transition: background 0.2s;
+      flex-shrink: 0; transition: opacity 0.2s;
     }
-    #send:hover { background: #7c3aed; }
-    #send:disabled { background: #333; cursor: not-allowed; }
-    #send svg { fill: white; }
+    #send:hover { opacity: 0.85; }
+    #send:disabled { background: #333; cursor: not-allowed; opacity: 1; }
+    #send svg { fill: #000; }
 
     #image-input { display: none; }
 
@@ -257,17 +316,13 @@
     .empty-state {
       flex: 1; display: flex; flex-direction: column;
       align-items: center; justify-content: center;
-      gap: 12px; color: #444;
+      gap: 0;
     }
-    .empty-state h2 { font-size: 20px; color: #666; }
-    .empty-state p { font-size: 13px; text-align: center; max-width: 320px; line-height: 1.6; }
 
-    .suggestions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 8px; }
-    .suggestion {
-      background: #1e1e1e; border: 1px solid #2a2a2a; border-radius: 20px;
-      padding: 8px 14px; font-size: 12px; color: #888; cursor: pointer; transition: all 0.2s;
+    .empty-state .bridge-logo {
+      height: 160px;
+      width: auto;
     }
-    .suggestion:hover { border-color: #6d28d9; color: #a78bfa; }
 
     ::-webkit-scrollbar { width: 6px; }
     ::-webkit-scrollbar-track { background: transparent; }
@@ -278,8 +333,10 @@
 
 <!-- ── Lock screen ──────────────────────────────────────────────────────────── -->
 <div id="lock-screen">
+  <div class="lock-logo-wrap">
+    <img class="bridge-logo" id="lock-logo" src="/static/bridge.png" alt="Bridge" crossorigin="anonymous" />
+  </div>
   <div class="lock-card">
-    <div class="lock-icon">🔒</div>
     <h2>Super Agent</h2>
     <p>Enter your access password to continue.</p>
     <input id="pw-input" type="password" placeholder="Password" autocomplete="current-password" />
@@ -290,21 +347,19 @@
 
 <!-- ── App ─────────────────────────────────────────────────────────────────── -->
 <header>
-  <div class="dot"></div>
-  <h1>Super Agent</h1>
-  <span id="session-label">Session: default</span>
+  <div class="header-left">
+    <div class="dot"></div>
+    <span id="session-label" style="font-size:12px;color:#666;">Session: default</span>
+  </div>
+  <div class="header-center">
+    <img class="bridge-logo" id="header-logo" src="/static/bridge.png" alt="Bridge" crossorigin="anonymous" />
+  </div>
+  <div style="width:80px;"></div><!-- spacer to balance the left side -->
 </header>
 
 <div id="chat">
   <div class="empty-state" id="empty">
-    <h2>Super Agent</h2>
-    <p>Multi-model AI with semantic routing — Claude, Gemini, DeepSeek, and GitHub access.<br>Supports text, images, and voice.</p>
-    <div class="suggestions">
-      <div class="suggestion" onclick="suggest(this)">List my GitHub repos</div>
-      <div class="suggestion" onclick="suggest(this)">Write me a short email</div>
-      <div class="suggestion" onclick="suggest(this)">Debug this Python error</div>
-      <div class="suggestion" onclick="suggest(this)">Explain async/await</div>
-    </div>
+    <img class="bridge-logo" id="empty-logo" src="/static/bridge.png" alt="Bridge" crossorigin="anonymous" />
   </div>
 </div>
 
@@ -319,6 +374,48 @@
 </div>
 
 <script>
+  // ── Remove white background from logo images via canvas ──────────────────────
+  function removeWhiteBg(imgEl) {
+    if (!imgEl.complete || imgEl.naturalWidth === 0) return;
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.width = imgEl.naturalWidth;
+      canvas.height = imgEl.naturalHeight;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(imgEl, 0, 0);
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const d = imageData.data;
+      for (let i = 0; i < d.length; i += 4) {
+        const r = d[i], g = d[i + 1], b = d[i + 2];
+        // Make near-white pixels fully transparent
+        if (r > 210 && g > 210 && b > 210) {
+          d[i + 3] = 0;
+        }
+        // Soft edge: slightly off-white pixels fade out
+        else if (r > 180 && g > 180 && b > 180) {
+          const whiteness = (r + g + b) / 3;
+          d[i + 3] = Math.round((1 - (whiteness - 180) / 30) * 255);
+        }
+      }
+      ctx.putImageData(imageData, 0, 0);
+      imgEl.src = canvas.toDataURL('image/png');
+    } catch (e) {
+      // CORS or tainted canvas — skip silently, logo still shows
+    }
+  }
+
+  // Apply white removal to all logo instances when they load
+  ['lock-logo', 'header-logo', 'empty-logo'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) {
+      if (el.complete && el.naturalWidth > 0) {
+        removeWhiteBg(el);
+      } else {
+        el.addEventListener('load', () => removeWhiteBg(el));
+      }
+    }
+  });
+
   // ── Auth ────────────────────────────────────────────────────────────────────
   let accessToken = sessionStorage.getItem('sa_token') || '';
 
@@ -365,7 +462,6 @@
     }
   })();
 
-  // Helper to add auth header to all API calls
   function authHeaders(extra = {}) {
     return { 'X-Token': accessToken, ...extra };
   }
@@ -388,19 +484,13 @@
     input.style.height = Math.min(input.scrollHeight, 160) + 'px';
   });
 
-  function suggest(el) { input.value = el.textContent; sendMessage(); }
-
   // ── Markdown rendering ──────────────────────────────────────────────────────
   marked.setOptions({ breaks: true, gfm: true });
 
   function renderMarkdown(text) {
-    // Strip LaTeX box notation — \boxed{x} → bold x
     text = text.replace(/\\boxed\{([^}]+)\}/g, '**$1**');
-    // \text{...} → plain text content
     text = text.replace(/\\text\{([^}]*)\}/g, '$1');
-    // Remove LaTeX delimiters \[ ... \] and \( ... \)
     text = text.replace(/\\\[/g, '').replace(/\\\]/g, '').replace(/\\\(/g, '').replace(/\\\)/g, '');
-    // Common LaTeX math → readable text
     text = text.replace(/\\frac\{([^}]+)\}\{([^}]+)\}/g, '($1/$2)');
     text = text.replace(/\\times/g, '×');
     text = text.replace(/\\cdot/g, '·');
