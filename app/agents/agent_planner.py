@@ -18,6 +18,7 @@ import concurrent.futures
 from ..models.claude import ask_claude, ask_claude_haiku
 from ..models.deepseek import ask_deepseek
 from ..learning.claude_code_worker import ask_claude_code, log_claude_code_result
+from ..learning.insight_log import insight_log
 
 MAX_RETRIES = 3
 
@@ -61,18 +62,19 @@ PLAN:
 [copy the winning plan here verbatim, unchanged]"""
 
 _ADJUDICATE_PROMPT_N = """\
-Multiple AI models proposed competing execution plans for the same agentic task.
-Evaluate all plans critically and select the strongest one.
+Multiple AI models proposed execution plans for the same agentic task.
+Your job is NOT to pick one — synthesize the BEST plan by taking the
+strongest elements from each model's proposal.
 
 Task: {task}
 
 {plans}
 
 Reply in this exact format:
-WINNER: [{labels}]
-REASON: [2 sentences — why this plan is strongest]
+SYNTHESIS_RATIONALE: [2 sentences — what you took from each plan and why]
 PLAN:
-[copy the winning plan here verbatim, unchanged]"""
+[The synthesized plan — combine the best phases, risks, and constraints.
+ Do not copy any single plan verbatim. Merge and improve.]"""
 
 # Keywords that indicate a code/file task — triggers Claude Code as 3rd competitor
 _CODE_KEYWORDS = {
@@ -97,6 +99,13 @@ def _parse_winner_label(adjudication: str) -> str:
     return "A"
 
 
+def _extract_plan_section(adjudication: str) -> str | None:
+    """Extract the PLAN: section from synthesis or adjudication output."""
+    if "PLAN:" in adjudication:
+        return adjudication.split("PLAN:", 1)[1].strip()
+    return None
+
+
 _HEAL_PROMPT = """\
 An AI agent failed during task execution. Diagnose the failure and prescribe a fix.
 
@@ -119,29 +128,36 @@ REVISED_APPROACH: [if SAFE — the full revised instruction for the next attempt
 def compete_and_plan(task: str, agent_type: str, tools: list[str]) -> str:
     """
     Run Claude, DeepSeek, and (for code tasks) Claude Code CLI in parallel.
-    Haiku adjudicates the winning plan. Falls back gracefully if any model fails.
+    Haiku synthesizes the best plan from all available proposals.
 
-    Claude Code CLI (Plan C) is only spawned for code/file/debug tasks because
-    it has unique file-system access — irrelevant overhead for general queries.
+    DeepSeek is automatically skipped if its win rate falls below 40%
+    (learned from insight_log — Feature 8 feedback loop).
+
+    Claude Code CLI (Plan C) is only spawned for code/file/debug tasks
+    because it has file-system access irrelevant to general queries.
     """
     prompt = _PLAN_PROMPT.format(
         agent_type=agent_type,
         tools=", ".join(tools),
         task=task,
     )
+
+    # Feature 8: skip consistently underperforming models
+    win_rates = insight_log.get_model_win_rates()
+    use_deepseek = win_rates.get("DEEPSEEK", 1.0) >= 0.40
     use_claude_code = _is_code_task(task)
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
         future_a = pool.submit(ask_claude, prompt)
-        future_b = pool.submit(ask_deepseek, prompt)
+        future_b = pool.submit(ask_deepseek, prompt) if use_deepseek else None
         future_c = pool.submit(ask_claude_code, prompt) if use_claude_code else None
 
         plan_a = future_a.result()
-        plan_b = future_b.result()
+        plan_b = future_b.result() if future_b else None
         plan_c = future_c.result() if future_c else None
 
     a_failed = plan_a.startswith("[")
-    b_failed = plan_b.startswith("[")
+    b_failed = (not plan_b) or plan_b.startswith("[")
     c_failed = (not plan_c) or plan_c.startswith("[")
 
     # Build list of available (non-failed) plans with labels
@@ -160,29 +176,22 @@ def compete_and_plan(task: str, agent_type: str, tools: list[str]) -> str:
     if len(available) == 1:
         return available[0][0]
 
-    # Adjudicate with Haiku (fast, cheap) using N-way prompt
+    # Feature 6: Haiku synthesizes the best plan (not just picks a winner)
     plans_block = "\n\n".join(
         f"── Plan {label} ──────────────────────────────────────────────────────────\n{plan}"
         for plan, label in available
     )
-    labels_str = ", ".join(label for _, label in available)
-    adj_prompt = _ADJUDICATE_PROMPT_N.format(
-        task=task, plans=plans_block, labels=labels_str
-    )
+    adj_prompt = _ADJUDICATE_PROMPT_N.format(task=task, plans=plans_block)
 
     try:
         adjudication = ask_claude_haiku(adj_prompt)
-        winner_label = _parse_winner_label(adjudication)
 
-        # Log Claude Code outcome whenever it competed
+        # Log Claude Code contribution whenever it participated
         if plan_c and not c_failed:
-            was_winner = winner_label == "C"
-            log_claude_code_result(prompt, plan_c, was_winner, agent_type)
+            log_claude_code_result(prompt, plan_c, True, agent_type)
 
-        if "PLAN:" in adjudication:
-            return adjudication.split("PLAN:", 1)[1].strip()
-        # Fall back to the winning plan directly
-        return dict(available).get(winner_label, available[0][0])
+        plan_section = _extract_plan_section(adjudication)
+        return plan_section if plan_section else available[0][0]
     except Exception:
         return available[0][0]
 

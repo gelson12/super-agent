@@ -77,6 +77,7 @@ from ..tools.database_tools import (
     db_run_safe_query,
 )
 from ..storage.cloudinary_manager import check_storage, upload_to_storage
+from ..tools.search_tools import web_search
 from ..tools.algorithm_tools import (
     trigger_algorithm_build,
     list_available_algorithms,
@@ -158,6 +159,8 @@ _SELF_IMPROVE_TOOLS = [
     run_claude_cli, clone_repo,
     # Claude Code CLI (reads /workspace files for code review + second opinions)
     ask_claude_code_tool,
+    # Web search (current docs, error messages, library releases)
+    web_search,
     # GitHub (read own source)
     github_list_repos, github_list_files, github_read_file,
     github_create_or_update_file, github_create_branch, github_create_pull_request,

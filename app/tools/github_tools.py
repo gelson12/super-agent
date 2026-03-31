@@ -2,6 +2,7 @@ import base64
 from github import Github, GithubException
 from langchain_core.tools import tool
 from ..config import settings
+from ..cache.tool_cache import cached_tool
 
 
 def _client() -> Github:
@@ -40,6 +41,7 @@ def github_list_files(repo_name: str, path: str = "", branch: str = "main") -> s
 
 
 @tool
+@cached_tool(ttl=300)
 def github_read_file(repo_name: str, file_path: str, branch: str = "main") -> str:
     """Read the content of a file from a GitHub repository."""
     try:

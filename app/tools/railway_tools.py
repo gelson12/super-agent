@@ -14,6 +14,7 @@ import shlex
 import httpx
 from langchain_core.tools import tool
 from ..config import settings
+from ..cache.tool_cache import cached_tool
 
 _RAILWAY_API = "https://backboard.railway.app/graphql/v2"
 
@@ -106,6 +107,7 @@ def railway_list_services(dummy: str = "") -> str:
 
 
 @tool
+@cached_tool(ttl=30)
 def railway_get_logs(service_name: str = "") -> str:
     """
     Get recent deployment logs from Railway via CLI.
@@ -118,6 +120,7 @@ def railway_get_logs(service_name: str = "") -> str:
 
 
 @tool
+@cached_tool(ttl=120)
 def railway_list_variables(dummy: str = "") -> str:
     """List all environment variables in the Railway service (names only, not values)."""
     if not settings.railway_token:

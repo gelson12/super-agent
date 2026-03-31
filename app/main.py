@@ -12,15 +12,17 @@ Endpoints:
 """
 import os
 import secrets
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from pydantic import BaseModel, Field
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
+import anthropic as _anthropic
 
 from .routing.dispatcher import dispatch
 from .memory.session import append_exchange, get_messages, clear_session
@@ -58,10 +60,40 @@ class AuthMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
+def _scheduled_health_check() -> None:
+    """Feature 3: Proactive daily self-diagnosis — auto-fix SAFE issues."""
+    try:
+        from .routing.dispatcher import dispatch as _dispatch
+        _dispatch(
+            "run full health check: check DB health, Railway logs, failure patterns, "
+            "and auto-fix any SAFE issues you find",
+            session_id="scheduler",
+        )
+    except Exception:
+        pass  # Never let scheduler crash the process
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    from apscheduler.schedulers.background import BackgroundScheduler
+    scheduler = BackgroundScheduler()
+    scheduler.add_job(
+        _scheduled_health_check,
+        "interval",
+        hours=24,
+        id="daily_health_check",
+        replace_existing=True,
+    )
+    scheduler.start()
+    yield
+    scheduler.shutdown(wait=False)
+
+
 app = FastAPI(
     title="Super Agent Backend",
     description="Multi-model AI agent with semantic routing (Claude / Gemini / DeepSeek)",
     version="1.0.0",
+    lifespan=_lifespan,
 )
 
 app.state.limiter = limiter
@@ -182,6 +214,41 @@ def chat(req: ChatRequest, request: Request):
     if not result["response"].startswith("["):
         append_exchange(req.session_id, req.message, result["response"])
     return _chat_response_from_result(result, req.session_id)
+
+
+@app.post("/chat/stream", tags=["agent"])
+@limiter.limit("30/minute")
+def chat_stream(req: ChatRequest, request: Request):
+    """
+    Feature 2: Stream Claude's response token-by-token via Server-Sent Events.
+    The frontend reads the stream and renders tokens as they arrive.
+    Falls back gracefully — if streaming fails, use POST /chat instead.
+    """
+    client = _anthropic.Anthropic(api_key=settings.anthropic_api_key)
+
+    def _generate():
+        try:
+            with client.messages.stream(
+                model="claude-sonnet-4-6",
+                max_tokens=settings.max_tokens_claude,
+                messages=[{"role": "user", "content": req.message}],
+            ) as stream:
+                for text in stream.text_stream:
+                    # Escape newlines so each SSE data line stays intact
+                    yield f"data: {text.replace(chr(10), ' ')}\n\n"
+            yield "data: [DONE]\n\n"
+        except Exception as e:
+            yield f"data: [Stream error: {e}]\n\n"
+            yield "data: [DONE]\n\n"
+
+    return StreamingResponse(
+        _generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",  # disable nginx buffering
+        },
+    )
 
 
 @app.post("/chat/direct", response_model=ChatResponse, tags=["agent"])

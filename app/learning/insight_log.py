@@ -78,8 +78,8 @@ class InsightLog:
             pass  # non-fatal — metrics are best-effort
         self._buffer.clear()
 
-    def summary(self) -> dict:
-        """Return in-memory + on-disk entry count and model distribution."""
+    def _load_all(self) -> list[dict]:
+        """Return all entries: on-disk + in-memory buffer combined."""
         on_disk: list[dict] = []
         if os.path.exists(LOG_PATH):
             try:
@@ -87,8 +87,32 @@ class InsightLog:
                     on_disk = json.load(f)
             except (json.JSONDecodeError, OSError):
                 on_disk = []
+        return on_disk + self._buffer
 
-        all_entries = on_disk + self._buffer
+    def get_model_win_rates(self, min_samples: int = 20) -> dict[str, float]:
+        """
+        Return {model: win_rate} for models with >= min_samples interactions.
+        win_rate = fraction of non-error responses (0.0–1.0).
+        Used by agent_planner to skip consistently underperforming models.
+        """
+        entries = self._load_all()
+        counts: dict[str, dict] = {}
+        for e in entries:
+            model = e.get("model", "UNKNOWN")
+            if model not in counts:
+                counts[model] = {"total": 0, "errors": 0}
+            counts[model]["total"] += 1
+            if e.get("error"):
+                counts[model]["errors"] += 1
+        return {
+            model: round(1.0 - (v["errors"] / v["total"]), 3)
+            for model, v in counts.items()
+            if v["total"] >= min_samples
+        }
+
+    def summary(self) -> dict:
+        """Return in-memory + on-disk entry count and model distribution."""
+        all_entries = self._load_all()
         total = len(all_entries)
         if not total:
             return {"total_interactions": 0}

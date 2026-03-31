@@ -12,6 +12,7 @@ import json
 import httpx
 from langchain_core.tools import tool
 from ..config import settings
+from ..cache.tool_cache import cached_tool
 
 _TIMEOUT = 30
 
@@ -106,6 +107,7 @@ def _delete(path: str) -> str:
 # ── Read tools ─────────────────────────────────────────────────────────────────
 
 @tool
+@cached_tool(ttl=60)
 def n8n_list_workflows() -> str:
     """List all n8n workflows with their ID, name, and active/inactive status."""
     result = _get("/api/v1/workflows?limit=100")
@@ -119,6 +121,7 @@ def n8n_list_workflows() -> str:
 
 
 @tool
+@cached_tool(ttl=120)
 def n8n_get_workflow(workflow_id: str) -> str:
     """Get the full JSON definition of an n8n workflow by its ID."""
     result = _get(f"/api/v1/workflows/{workflow_id}")

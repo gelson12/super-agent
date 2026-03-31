@@ -16,6 +16,7 @@ from ..learning.peer_review import peer_reviewer
 from ..learning.ensemble import ensemble_voter
 from ..learning.red_team import red_team
 from ..learning.cot_handoff import cot_handoff
+from ..memory.vector_memory import get_memory_context, store_memory
 
 _HANDLERS = {
     "GEMINI":   ask_gemini,
@@ -77,6 +78,13 @@ _SELF_IMPROVE_KEYWORDS = {
     "patch yourself", "hotfix yourself",
 }
 
+_SEARCH_KEYWORDS = {
+    "search", "look up", "look up", "google", "latest news", "what's happening",
+    "current", "today", "what happened", "recent", "news about",
+    "price of", "weather", "who is", "when did", "what is the score",
+    "stock price", "live", "right now", "this week", "this year",
+}
+
 _CACHEABLE_MODELS = {"HAIKU", "GEMINI", "DEEPSEEK", "CLAUDE"}
 
 # ── Confidence scoring ────────────────────────────────────────────────────────
@@ -135,6 +143,43 @@ def _is_self_improve_request(message: str) -> bool:
     return any(k in lower for k in _SELF_IMPROVE_KEYWORDS)
 
 
+def _is_search_request(message: str) -> bool:
+    lower = message.lower()
+    return any(k in lower for k in _SEARCH_KEYWORDS)
+
+
+def _classify_route_with_confidence(message: str) -> tuple[str, float]:
+    """
+    Feature 5: Use Haiku to classify the route with a confidence score.
+    Falls back to ("GENERAL", 0.0) on any error — never blocks dispatch.
+    ~200ms overhead — only called when no keyword match was found.
+    """
+    prompt = (
+        f'Classify this user message into exactly one category.\n'
+        f'Message: "{message}"\n\n'
+        f'Categories: SHELL, GITHUB, N8N, SELF_IMPROVE, SEARCH, GENERAL\n'
+        f'Confidence: 0.0 to 1.0\n\n'
+        f'Reply in exactly this format:\n'
+        f'CATEGORY: <category>\n'
+        f'CONFIDENCE: <0.0-1.0>'
+    )
+    try:
+        result = ask_claude_haiku(prompt)
+        category, confidence = "GENERAL", 0.0
+        for line in result.splitlines():
+            line = line.strip()
+            if line.startswith("CATEGORY:"):
+                category = line.split(":", 1)[1].strip().upper()
+            elif line.startswith("CONFIDENCE:"):
+                try:
+                    confidence = float(line.split(":", 1)[1].strip())
+                except ValueError:
+                    pass
+        return category, confidence
+    except Exception:
+        return "GENERAL", 0.0
+
+
 # ── Extended result builder ───────────────────────────────────────────────────
 
 def _build_extended_result(base: dict, **kwargs) -> dict:
@@ -190,6 +235,11 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
     plus collective intelligence fields: was_reviewed, is_ensemble, cot_used,
     red_team_ran, escalated, confidence_score, cloudinary_url, and more.
     """
+
+    # ── 0. Semantic memory injection (Feature 4) ──────────────────────────────
+    # Prepend relevant past-session context — silently skipped if pgvector unavailable
+    memory_ctx = get_memory_context(message)
+    augmented_message = (memory_ctx + message) if memory_ctx else message
 
     # ── 1. Safe word guard ────────────────────────────────────────────────────
     authorized, block_reason = check_authorization(message)
@@ -282,6 +332,27 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
     # ── 4. Complexity score ───────────────────────────────────────────────────
     complexity = score_complexity(message)
 
+    # ── 4a. Web search routing (Feature 1) ───────────────────────────────────
+    if _is_search_request(message):
+        from ..tools.search_tools import web_search
+        results = web_search.invoke({"query": message})
+        synthesis_prompt = (
+            f"Web search results for the query: '{message}'\n\n"
+            f"{results}\n\n"
+            f"Synthesize a clear, accurate, and concise answer based on these results."
+        )
+        response = ask_claude(synthesis_prompt)
+        store_memory(session_id, f"Q: {message[:300]} A: {response[:300]}")
+        insight_log.record(message, "CLAUDE+SEARCH", response, "web_search", complexity, session_id)
+        adapter.tick()
+        return _build_extended_result({
+            "model_used": "CLAUDE+SEARCH",
+            "response": response,
+            "routed_by": "web_search",
+            "complexity": complexity,
+            "cache_hit": False,
+        })
+
     # ── 4b. Self-improvement routing (highest priority after debug) ──────────
     if _is_self_improve_request(message):
         response = run_self_improve_agent(message, authorized=authorized)
@@ -308,9 +379,26 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
             "cache_hit": False,
         })
 
-    # ── 5. Keyword routing ────────────────────────────────────────────────────
+    # ── 5. Keyword routing + confidence boost (Features 1 & 5) ───────────────
+    # Keywords give immediate 1.0 confidence. If no keyword matches, Haiku
+    # classifies with a confidence score — only routes if >= 0.7.
+    _kw_route = None
     if _is_shell_request(message):
-        response = run_shell_agent(message, authorized=authorized)
+        _kw_route = "SHELL"
+    elif _is_github_request(message):
+        _kw_route = "GITHUB"
+    elif _is_n8n_request(message):
+        _kw_route = "N8N"
+
+    if _kw_route is None:
+        # No keyword match — ask Haiku to classify (Feature 5)
+        _ai_route, _ai_conf = _classify_route_with_confidence(message)
+        if _ai_conf >= 0.7 and _ai_route not in ("GENERAL", "SEARCH"):
+            _kw_route = _ai_route
+
+    if _kw_route == "SHELL":
+        response = run_shell_agent(augmented_message, authorized=authorized)
+        store_memory(session_id, f"Q: {message[:300]} A: {response[:300]}")
         insight_log.record(message, "SHELL", response, "shell_keywords", complexity, session_id)
         adapter.tick()
         return _build_extended_result({
@@ -321,8 +409,9 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
             "cache_hit": False,
         })
 
-    if _is_github_request(message):
-        response = run_github_agent(message)
+    if _kw_route == "GITHUB":
+        response = run_github_agent(augmented_message)
+        store_memory(session_id, f"Q: {message[:300]} A: {response[:300]}")
         insight_log.record(message, "GITHUB", response, "github_keywords", complexity, session_id)
         adapter.tick()
         return _build_extended_result({
@@ -333,8 +422,9 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
             "cache_hit": False,
         })
 
-    if _is_n8n_request(message):
-        response = run_n8n_agent(message)
+    if _kw_route == "N8N":
+        response = run_n8n_agent(augmented_message)
+        store_memory(session_id, f"Q: {message[:300]} A: {response[:300]}")
         insight_log.record(message, "N8N", response, "n8n_keywords", complexity, session_id)
         adapter.tick()
         return _build_extended_result({
@@ -415,7 +505,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
             )
 
     # ── 8b. Single model call ─────────────────────────────────────────────────
-    response = _HANDLERS[model](message)
+    response = _HANDLERS[model](augmented_message)
 
     # Layer 1: CoT handoff (complexity >= 4, classifier-routed)
     cot_result = {
@@ -442,11 +532,13 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
         rt_result = red_team.challenge(message, response, complexity, session_id)
         response = rt_result["response"]
 
-    # ── 9. Cache + log + adapt + wisdom ──────────────────────────────────────
+    # ── 9. Cache + log + adapt + wisdom + memory ─────────────────────────────
     if model in _CACHEABLE_MODELS:
         cache.set(message, model, response)
     insight_log.record(message, model, response, routed_by, complexity, session_id)
     adapter.tick()
+    # Feature 4: store exchange in semantic memory for future cross-session recall
+    store_memory(session_id, f"Q: {message[:300]} A: {response[:300]}")
     wisdom_store.record_outcome(
         model,
         wisdom_store._detect_category(routed_by, model),

@@ -316,6 +316,13 @@
       gap: 0;
     }
 
+    .cursor {
+      display: inline-block;
+      animation: blink 0.7s step-end infinite;
+      color: #c9a227;
+    }
+    @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+
     ::-webkit-scrollbar { width: 6px; }
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: #2a2a2a; border-radius: 3px; }
@@ -547,27 +554,99 @@
     window.speechSynthesis.speak(utt);
   }
 
-  // ── Text chat ───────────────────────────────────────────────────────────────
+  // ── Text chat (streaming, falls back to JSON) ───────────────────────────────
   async function sendMessage() {
     const text = input.value.trim();
     if (!text) return;
     input.value = ''; input.style.height = 'auto';
     sendBtn.disabled = true;
     addMessage('user', text);
-    const typing = addMessage('agent', 'Thinking…');
-    typing.classList.add('typing');
+
+    // Create the agent message bubble immediately
+    if (!hasMessages) { document.getElementById('empty').remove(); hasMessages = true; }
+    const msgDiv = document.createElement('div');
+    msgDiv.className = 'message agent';
+    const bubble = document.createElement('div');
+    bubble.className = 'bubble';
+    bubble.textContent = '▍'; // blinking cursor
+    msgDiv.appendChild(bubble);
+    chat.appendChild(msgDiv);
+    chat.scrollTop = chat.scrollHeight;
+
+    let fullText = '';
+    let streamOk = false;
+
     try {
-      const res = await fetch('/chat', {
+      const res = await fetch('/chat/stream', {
         method: 'POST',
         headers: authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ message: text, session_id: sessionId }),
       });
-      const data = await res.json();
-      typing.remove();
-      if (res.status === 401) { lockScreen(); return; }
-      if (res.ok) addMessage('agent', data.response, `${data.model_used} · via ${data.routed_by}`);
-      else addMessage('agent', '⚠️ ' + (data.detail || 'Something went wrong.'));
-    } catch { typing.remove(); addMessage('agent', '⚠️ Could not reach the server.'); }
+
+      if (res.ok && res.body) {
+        streamOk = true;
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          const chunk = decoder.decode(value, { stream: true });
+          for (const line of chunk.split('\n')) {
+            if (!line.startsWith('data: ')) continue;
+            const token = line.slice(6);
+            if (token === '[DONE]') break;
+            if (token.startsWith('[Stream error')) {
+              streamOk = false;
+              break;
+            }
+            fullText += token + ' ';
+            bubble.innerHTML = renderMarkdown(fullText) + '<span class="cursor">▍</span>';
+            chat.scrollTop = chat.scrollHeight;
+          }
+        }
+        // Remove cursor, render final markdown
+        bubble.innerHTML = renderMarkdown(fullText);
+        const meta = document.createElement('div');
+        meta.className = 'meta';
+        meta.textContent = 'CLAUDE · streaming';
+        const sp = document.createElement('button');
+        sp.className = 'speak-btn'; sp.title = 'Read aloud'; sp.textContent = '🔊';
+        sp.onclick = () => speakText(fullText, sp);
+        meta.appendChild(sp);
+        msgDiv.appendChild(meta);
+      }
+    } catch (_) { streamOk = false; }
+
+    // Fallback to regular /chat if streaming failed
+    if (!streamOk) {
+      bubble.textContent = 'Thinking…';
+      msgDiv.classList.add('typing');
+      try {
+        const res = await fetch('/chat', {
+          method: 'POST',
+          headers: authHeaders({ 'Content-Type': 'application/json' }),
+          body: JSON.stringify({ message: text, session_id: sessionId }),
+        });
+        const data = await res.json();
+        msgDiv.classList.remove('typing');
+        if (res.status === 401) { lockScreen(); return; }
+        if (res.ok) {
+          bubble.innerHTML = renderMarkdown(data.response);
+          const meta = document.createElement('div');
+          meta.className = 'meta';
+          meta.textContent = `${data.model_used} · via ${data.routed_by}`;
+          const sp = document.createElement('button');
+          sp.className = 'speak-btn'; sp.title = 'Read aloud'; sp.textContent = '🔊';
+          sp.onclick = () => speakText(data.response, sp);
+          meta.appendChild(sp);
+          msgDiv.appendChild(meta);
+        } else {
+          bubble.textContent = '⚠️ ' + (data.detail || 'Something went wrong.');
+        }
+      } catch { bubble.textContent = '⚠️ Could not reach the server.'; }
+    }
+
     sendBtn.disabled = false;
     input.focus();
   }

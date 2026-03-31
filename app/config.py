@@ -59,5 +59,8 @@ class Settings(BaseSettings):
     # Railway sets DATABASE_URL as "postgres://..." — we normalise to "postgresql://..."
     database_url: str = ""
 
+    # Tavily web search (optional upgrade from DuckDuckGo — higher quality results)
+    tavily_api_key: str = ""
+
 
 settings = Settings()
