@@ -85,6 +85,16 @@ if ! command -v code-server >/dev/null 2>&1; then
 fi
 echo "[entrypoint] code-server location: $(which code-server 2>/dev/null || echo 'NOT FOUND')"
 
+# ── Flutter & Android SDK health check ───────────────────────────────────────
+if command -v flutter >/dev/null 2>&1; then
+    yes | sdkmanager --licenses >/dev/null 2>&1 || true
+    flutter doctor --android-licenses -y >/dev/null 2>&1 || true
+    flutter doctor 2>&1 | head -20 | sed 's/^/[flutter] /'
+    echo "[entrypoint] Flutter ready: $(flutter --version 2>&1 | head -1)"
+else
+    echo "[entrypoint] WARNING: Flutter not found in PATH — mobile builds unavailable"
+fi
+
 # ── Start all services via supervisor ─────────────────────────────────────────
 echo "[entrypoint] Starting supervisor (nginx + uvicorn + code-server) on PORT=${PORT}"
 exec /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf

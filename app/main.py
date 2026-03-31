@@ -361,6 +361,120 @@ def wisdom_reload():
         return {"ok": False, "reason": str(e)}
 
 
+class MobileBuildRequest(BaseModel):
+    project_name: str = Field(..., min_length=1, max_length=64, pattern=r"^[a-z][a-z0-9_]*$")
+    description: str = Field(default="A Flutter app built by Super Agent", max_length=200)
+    platform: str = Field(default="android", description="android | ios")
+    flutter_code: str = Field(default="", description="Optional custom lib/main.dart content")
+    org_id: str = Field(default="com.superagent", max_length=64)
+
+
+@app.post("/build/mobile", tags=["mobile"])
+@limiter.limit("5/hour")
+def build_mobile(req: MobileBuildRequest, request: Request):
+    """
+    Autonomous Flutter mobile app build pipeline.
+
+    1. Scaffold Flutter project in /workspace
+    2. Optionally inject custom lib/main.dart
+    3. Build debug APK (Android) or trigger GitHub Actions (iOS)
+    4. Upload APK to Cloudinary → return download URL
+    5. Push project to GitHub → return repo URL
+    """
+    import json as _json
+    from .tools.flutter_tools import (
+        flutter_create_project,
+        flutter_build_apk,
+        upload_build_artifact,
+        flutter_git_push,
+    )
+
+    platform = req.platform.lower()
+    log_lines = []
+
+    try:
+        # Step 1: Create project
+        create_out = flutter_create_project.invoke({
+            "project_name": req.project_name,
+            "org_id": req.org_id,
+            "description": req.description,
+        })
+        log_lines.append(create_out)
+
+        project_path = f"/workspace/{req.project_name}"
+
+        # Step 2: Inject custom Dart code if provided
+        if req.flutter_code.strip():
+            from pathlib import Path as _Path
+            main_dart = _Path(project_path) / "lib" / "main.dart"
+            main_dart.write_text(req.flutter_code)
+            log_lines.append(f"Injected custom lib/main.dart ({len(req.flutter_code)} chars)")
+
+        apk_url = None
+        repo_url = None
+
+        if platform == "android":
+            # Step 3a: Build APK
+            build_out = flutter_build_apk.invoke({"project_path": project_path})
+            log_lines.append(build_out)
+
+            # Step 4: Upload to Cloudinary
+            apk_path = f"{project_path}/build/app/outputs/flutter-apk/app-debug.apk"
+            upload_out = upload_build_artifact.invoke({
+                "file_path": apk_path,
+                "filename": f"builds/{req.project_name}_android_{int(__import__('time').time())}",
+            })
+            try:
+                upload_data = _json.loads(upload_out)
+                apk_url = upload_data.get("url")
+            except Exception:
+                apk_url = upload_out
+            log_lines.append(f"Cloudinary: {apk_url}")
+
+        elif platform == "ios":
+            log_lines.append(
+                "iOS builds run on GitHub Actions (macos-latest runner). "
+                "Push to mobile/ to trigger the workflow, or use workflow_dispatch. "
+                "Download link will appear in the Actions run summary."
+            )
+
+        # Step 5: Push to GitHub
+        push_out = flutter_git_push.invoke({
+            "project_path": project_path,
+            "repo_name": req.project_name,
+            "commit_message": f"Initial {req.project_name} Flutter project",
+        })
+        log_lines.append(push_out)
+        # Extract repo URL from first line
+        repo_url = push_out.split("\n")[0].replace("Repo: ", "").strip()
+
+        install_guide_url = str(request.base_url) + "install-guide"
+
+        return {
+            "project_name": req.project_name,
+            "platform": platform,
+            "apk_url": apk_url,
+            "repo_url": repo_url,
+            "install_guide_url": install_guide_url,
+            "build_log": "\n---\n".join(log_lines),
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Build failed: {e}\n\nLog:\n" + "\n".join(log_lines))
+
+
+@app.get("/install-guide", tags=["mobile"], response_class=FileResponse)
+def install_guide():
+    """
+    Return the mobile app installation guide (Markdown).
+    Covers Android APK sideloading and iOS AltStore installation step-by-step.
+    """
+    guide_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "INSTALL_GUIDE.md")
+    if os.path.isfile(guide_path):
+        return FileResponse(guide_path, media_type="text/markdown", filename="INSTALL_GUIDE.md")
+    return {"error": "Install guide not found"}
+
+
 @app.get("/stats", tags=["meta"])
 def stats():
     """

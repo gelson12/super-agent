@@ -84,6 +84,13 @@ from ..tools.algorithm_tools import (
     recommend_model_for_query,
     get_fallback_model,
 )
+from ..tools.flutter_tools import (
+    flutter_create_project,
+    flutter_build_apk,
+    flutter_test,
+    upload_build_artifact,
+    flutter_git_push,
+)
 
 _SYSTEM = """You are Super Agent's autonomous self-improvement and self-repair engine.
 
@@ -101,6 +108,9 @@ You have full access to every system Super Agent depends on.
 - Manage Cloudinary storage (check usage, upload, cleanup)
 - Run shell commands in /workspace (clone repos, run tests, inspect files)
 - Use Claude CLI for code review and AI-assisted fixes
+- Build Flutter mobile apps: scaffold projects, build Android APKs, run tests
+- Upload APK/IPA packages to Cloudinary and return download links
+- Push Flutter projects to GitHub repos autonomously
 
 ## AUTONOMOUS DECISION FRAMEWORK
 
@@ -179,6 +189,9 @@ _SELF_IMPROVE_TOOLS = [
     # Algorithms
     trigger_algorithm_build, list_available_algorithms,
     recommend_model_for_query, get_fallback_model,
+    # Flutter / Mobile builds
+    flutter_create_project, flutter_build_apk, flutter_test,
+    upload_build_artifact, flutter_git_push,
 ]
 
 _agent = None

@@ -32,6 +32,50 @@ RUN code-server --install-extension GitHub.vscode-pull-request-github \
     && code-server --install-extension Anthropic.claude-code \
     && echo "[docker] VS Code extensions installed."
 
+# ── Java 17 (Android SDK requirement) ────────────────────────────────────────
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    openjdk-17-jdk \
+    clang cmake ninja-build pkg-config \
+    libgtk-2.0-dev \
+    unzip xz-utils zip lib32stdc++6 \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+
+# ── Flutter SDK (stable 3.27.4) ───────────────────────────────────────────────
+ENV FLUTTER_VERSION=3.27.4
+ENV FLUTTER_HOME=/opt/flutter
+RUN curl -fsSL \
+    "https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_${FLUTTER_VERSION}-stable.tar.xz" \
+    | tar xJ -C /opt/ \
+    && git config --global --add safe.directory /opt/flutter
+ENV PATH="${FLUTTER_HOME}/bin:${PATH}"
+RUN flutter config --no-analytics && flutter precache --android
+
+# ── Android SDK command-line tools ────────────────────────────────────────────
+ENV ANDROID_HOME=/opt/android-sdk
+ENV ANDROID_SDK_ROOT=/opt/android-sdk
+RUN mkdir -p ${ANDROID_HOME}/cmdline-tools \
+    && curl -fsSL https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip \
+       -o /tmp/cmdtools.zip \
+    && unzip -q /tmp/cmdtools.zip -d /tmp/cmdtools \
+    && mv /tmp/cmdtools/cmdline-tools ${ANDROID_HOME}/cmdline-tools/latest \
+    && rm -rf /tmp/cmdtools /tmp/cmdtools.zip
+ENV PATH="${ANDROID_HOME}/cmdline-tools/latest/bin:${ANDROID_HOME}/platform-tools:${PATH}"
+
+RUN yes | sdkmanager --licenses > /dev/null \
+    && sdkmanager \
+       "platforms;android-34" \
+       "build-tools;34.0.0" \
+       "platform-tools" \
+       "ndk;26.3.11579264" \
+    && flutter config --android-sdk ${ANDROID_HOME}
+
+# ── VS Code / code-server extensions (Dart + Flutter) ────────────────────────
+RUN code-server --install-extension Dart-Code.dart-code \
+    && code-server --install-extension Dart-Code.flutter \
+    && echo "[docker] Dart + Flutter extensions installed."
+
 # ── Python dependencies ───────────────────────────────────────────────────────
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
