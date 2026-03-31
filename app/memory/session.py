@@ -1,7 +1,13 @@
 """
-SQLite-backed per-session conversation memory.
-Uses LangChain's SQLChatMessageHistory for local persistence.
-No external services required — data stored in agent_memory.db.
+Conversation memory — PostgreSQL-first, SQLite fallback.
+
+Priority:
+  1. PostgreSQL — when DATABASE_URL is set (Railway PostgreSQL plugin).
+     All sessions persist forever, survive any container restart, and
+     support concurrent workers without file locking.
+  2. SQLite on Railway Persistent Volume (/workspace/agent_memory.db) —
+     when DATABASE_URL is not set but /workspace is writable.
+  3. SQLite in current directory — local/dev fallback.
 
 Also provides get_compressed_context() which returns the last 6 messages
 verbatim plus a Haiku-generated bullet-point summary of older messages,
@@ -11,10 +17,24 @@ import os
 from langchain_community.chat_message_histories import SQLChatMessageHistory
 from langchain_core.messages import BaseMessage
 
-# Prefer /workspace (Railway persistent volume) so conversation history
-# survives container restarts. Falls back to local directory.
-_db_dir = "/workspace" if os.access("/workspace", os.W_OK) else "."
-DB_PATH = f"sqlite:///{_db_dir}/agent_memory.db"
+
+def _resolve_db_path() -> str:
+    """
+    Return the correct database connection string.
+
+    Railway injects DATABASE_URL as "postgres://..." — SQLAlchemy requires
+    "postgresql://..." so we normalise the prefix.
+    """
+    raw = os.environ.get("DATABASE_URL", "")
+    if raw:
+        # Normalise Railway's postgres:// → postgresql:// for SQLAlchemy
+        return raw.replace("postgres://", "postgresql://", 1)
+    # No PostgreSQL — use SQLite on persistent volume or local fallback
+    db_dir = "/workspace" if os.access("/workspace", os.W_OK) else "."
+    return f"sqlite:///{db_dir}/agent_memory.db"
+
+
+DB_PATH = _resolve_db_path()
 
 
 def get_session_history(session_id: str) -> SQLChatMessageHistory:

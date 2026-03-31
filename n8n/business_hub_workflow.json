@@ -1,0 +1,572 @@
+{
+  "name": "Business Hub",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "business-hub",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "webhook-entry",
+      "name": "Webhook Entry",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "business-hub-main"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": { "caseSensitive": false },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "route-gmail",
+                    "leftValue": "={{ $json.service }}",
+                    "rightValue": "gmail",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "Gmail"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": false },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "route-slack",
+                    "leftValue": "={{ $json.service }}",
+                    "rightValue": "slack",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "Slack"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": false },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "route-sheets",
+                    "leftValue": "={{ $json.service }}",
+                    "rightValue": "google_sheets",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "Google Sheets"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": false },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "route-hubspot",
+                    "leftValue": "={{ $json.service }}",
+                    "rightValue": "hubspot",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "HubSpot"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": false },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "route-twitter",
+                    "leftValue": "={{ $json.service }}",
+                    "rightValue": "twitter",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "Twitter/X"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": false },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "route-linkedin",
+                    "leftValue": "={{ $json.service }}",
+                    "rightValue": "linkedin",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "LinkedIn"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": false },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "route-telegram",
+                    "leftValue": "={{ $json.service }}",
+                    "rightValue": "telegram",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "Telegram"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": false },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "route-mailchimp",
+                    "leftValue": "={{ $json.service }}",
+                    "rightValue": "mailchimp",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "Mailchimp"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": false },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "route-airtable",
+                    "leftValue": "={{ $json.service }}",
+                    "rightValue": "airtable",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "Airtable"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": false },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "route-facebook",
+                    "leftValue": "={{ $json.service }}",
+                    "rightValue": "facebook",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "Facebook"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": false },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "route-instagram",
+                    "leftValue": "={{ $json.service }}",
+                    "rightValue": "instagram",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "Instagram"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": false },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "route-whatsapp",
+                    "leftValue": "={{ $json.service }}",
+                    "rightValue": "whatsapp",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "WhatsApp"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": false },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "route-tiktok",
+                    "leftValue": "={{ $json.service }}",
+                    "rightValue": "tiktok",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "TikTok"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": false },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "route-youtube",
+                    "leftValue": "={{ $json.service }}",
+                    "rightValue": "youtube",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "YouTube"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": false },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "route-superagent",
+                    "leftValue": "={{ $json.service }}",
+                    "rightValue": "super_agent",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "Super Agent AI"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "router",
+      "name": "Service Router",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.to }}",
+        "subject": "={{ $json.subject }}",
+        "message": "={{ $json.body }}",
+        "options": {}
+      },
+      "id": "gmail-node",
+      "name": "Gmail",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [700, 0],
+      "credentials": { "gmailOAuth2": { "id": "RECONNECT", "name": "Gmail account" } }
+    },
+    {
+      "parameters": {
+        "channel": "={{ $json.channel || '#general' }}",
+        "text": "={{ $json.message }}",
+        "otherOptions": {}
+      },
+      "id": "slack-node",
+      "name": "Slack",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.3,
+      "position": [700, 100],
+      "credentials": { "slackApi": { "id": "RECONNECT", "name": "Slack account" } }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": { "value": "={{ $json.spreadsheet_id }}" },
+        "sheetName": { "value": "={{ $json.sheet || 'Sheet1' }}" },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {}
+        },
+        "options": {}
+      },
+      "id": "sheets-node",
+      "name": "Google Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [700, 200],
+      "credentials": { "googleSheetsOAuth2Api": { "id": "RECONNECT", "name": "Google Sheets account" } }
+    },
+    {
+      "parameters": {
+        "resource": "contact",
+        "operation": "upsert",
+        "additionalFields": {}
+      },
+      "id": "hubspot-node",
+      "name": "HubSpot",
+      "type": "n8n-nodes-base.hubspot",
+      "typeVersion": 2,
+      "position": [700, 300],
+      "credentials": { "hubspotAppToken": { "id": "RECONNECT", "name": "HubSpot account" } }
+    },
+    {
+      "parameters": {
+        "text": "={{ $json.tweet }}",
+        "additionalFields": {}
+      },
+      "id": "twitter-node",
+      "name": "Twitter/X",
+      "type": "n8n-nodes-base.twitter",
+      "typeVersion": 2,
+      "position": [700, 400],
+      "credentials": { "twitterOAuth2Api": { "id": "RECONNECT", "name": "Twitter account" } }
+    },
+    {
+      "parameters": {
+        "person": "urn:li:person:RECONNECT",
+        "text": "={{ $json.post }}",
+        "shareMediaCategory": "NONE",
+        "additionalFields": {}
+      },
+      "id": "linkedin-node",
+      "name": "LinkedIn",
+      "type": "n8n-nodes-base.linkedIn",
+      "typeVersion": 1,
+      "position": [700, 500],
+      "credentials": { "linkedInOAuth2Api": { "id": "RECONNECT", "name": "LinkedIn account" } }
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $json.chat_id }}",
+        "text": "={{ $json.message }}",
+        "additionalFields": {}
+      },
+      "id": "telegram-node",
+      "name": "Telegram",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [700, 600],
+      "credentials": { "telegramApi": { "id": "RECONNECT", "name": "Telegram account" } }
+    },
+    {
+      "parameters": {
+        "operation": "addMember",
+        "listId": "={{ $json.list_id }}",
+        "email": "={{ $json.email }}",
+        "jsonParameters": false,
+        "options": {}
+      },
+      "id": "mailchimp-node",
+      "name": "Mailchimp",
+      "type": "n8n-nodes-base.mailchimp",
+      "typeVersion": 1,
+      "position": [700, 700],
+      "credentials": { "mailchimpApi": { "id": "RECONNECT", "name": "Mailchimp account" } }
+    },
+    {
+      "parameters": {
+        "operation": "create",
+        "application": { "value": "={{ $json.base_id }}" },
+        "table": { "value": "={{ $json.table }}" },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {}
+        }
+      },
+      "id": "airtable-node",
+      "name": "Airtable",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2.1,
+      "position": [700, 800],
+      "credentials": { "airtableTokenApi": { "id": "RECONNECT", "name": "Airtable account" } }
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "url": "https://graph.facebook.com/v19.0/me/feed",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "facebookGraphApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"message\": \"{{ $json.post }}\",\n  \"access_token\": \"{{ $credentials.facebookGraphApi.accessToken }}\"\n}",
+        "options": {}
+      },
+      "id": "facebook-node",
+      "name": "Facebook",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [700, 900]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "url": "https://graph.facebook.com/v19.0/me/media",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"caption\": \"{{ $json.caption }}\",\n  \"image_url\": \"{{ $json.image_url }}\"\n}",
+        "options": {}
+      },
+      "id": "instagram-node",
+      "name": "Instagram",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [700, 1000]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "url": "https://graph.facebook.com/v19.0/PHONE_NUMBER_ID/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [{ "name": "Authorization", "value": "=Bearer {{ $json.whatsapp_token }}" }]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"messaging_product\": \"whatsapp\",\n  \"to\": \"{{ $json.to }}\",\n  \"type\": \"text\",\n  \"text\": { \"body\": \"{{ $json.message }}\" }\n}",
+        "options": {}
+      },
+      "id": "whatsapp-node",
+      "name": "WhatsApp",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [700, 1100]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "url": "https://open.tiktokapis.com/v2/post/publish/video/init/",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [{ "name": "Authorization", "value": "=Bearer {{ $json.tiktok_token }}" }]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"post_info\": { \"title\": \"{{ $json.title }}\", \"privacy_level\": \"PUBLIC_TO_EVERYONE\" },\n  \"source_info\": { \"source\": \"URL\", \"video_url\": \"{{ $json.video_url }}\" }\n}",
+        "options": {}
+      },
+      "id": "tiktok-node",
+      "name": "TikTok",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [700, 1200]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "url": "https://www.googleapis.com/upload/youtube/v3/videos",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [{ "name": "Authorization", "value": "=Bearer {{ $json.youtube_token }}" }]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"snippet\": { \"title\": \"{{ $json.title }}\", \"description\": \"{{ $json.description }}\" },\n  \"status\": { \"privacyStatus\": \"public\" }\n}",
+        "options": {}
+      },
+      "id": "youtube-node",
+      "name": "YouTube",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [700, 1300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://super-agent-production.up.railway.app/chat",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [{ "name": "X-Token", "value": "={{ $json.super_agent_password || $env.SUPER_AGENT_PASSWORD }}" }]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"message\": \"{{ $json.message }}\",\n  \"session_id\": \"{{ $json.session_id || 'n8n-default' }}\"\n}",
+        "options": { "response": { "response": { "responseFormat": "json" } } }
+      },
+      "id": "superagent-node",
+      "name": "Super Agent AI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [700, 1400]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"ok\": true,\n  \"service\": \"{{ $('Service Router').params.rules.values[$runIndex].outputKey }}\",\n  \"result\": {{ JSON.stringify($json) }}\n}",
+        "options": {}
+      },
+      "id": "respond",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [940, 700]
+    }
+  ],
+  "connections": {
+    "Webhook Entry": {
+      "main": [[{ "node": "Service Router", "type": "main", "index": 0 }]]
+    },
+    "Service Router": {
+      "main": [
+        [{ "node": "Gmail", "type": "main", "index": 0 }],
+        [{ "node": "Slack", "type": "main", "index": 0 }],
+        [{ "node": "Google Sheets", "type": "main", "index": 0 }],
+        [{ "node": "HubSpot", "type": "main", "index": 0 }],
+        [{ "node": "Twitter/X", "type": "main", "index": 0 }],
+        [{ "node": "LinkedIn", "type": "main", "index": 0 }],
+        [{ "node": "Telegram", "type": "main", "index": 0 }],
+        [{ "node": "Mailchimp", "type": "main", "index": 0 }],
+        [{ "node": "Airtable", "type": "main", "index": 0 }],
+        [{ "node": "Facebook", "type": "main", "index": 0 }],
+        [{ "node": "Instagram", "type": "main", "index": 0 }],
+        [{ "node": "WhatsApp", "type": "main", "index": 0 }],
+        [{ "node": "TikTok", "type": "main", "index": 0 }],
+        [{ "node": "YouTube", "type": "main", "index": 0 }],
+        [{ "node": "Super Agent AI", "type": "main", "index": 0 }]
+      ]
+    },
+    "Gmail": { "main": [[{ "node": "Respond", "type": "main", "index": 0 }]] },
+    "Slack": { "main": [[{ "node": "Respond", "type": "main", "index": 0 }]] },
+    "Google Sheets": { "main": [[{ "node": "Respond", "type": "main", "index": 0 }]] },
+    "HubSpot": { "main": [[{ "node": "Respond", "type": "main", "index": 0 }]] },
+    "Twitter/X": { "main": [[{ "node": "Respond", "type": "main", "index": 0 }]] },
+    "LinkedIn": { "main": [[{ "node": "Respond", "type": "main", "index": 0 }]] },
+    "Telegram": { "main": [[{ "node": "Respond", "type": "main", "index": 0 }]] },
+    "Mailchimp": { "main": [[{ "node": "Respond", "type": "main", "index": 0 }]] },
+    "Airtable": { "main": [[{ "node": "Respond", "type": "main", "index": 0 }]] },
+    "Facebook": { "main": [[{ "node": "Respond", "type": "main", "index": 0 }]] },
+    "Instagram": { "main": [[{ "node": "Respond", "type": "main", "index": 0 }]] },
+    "WhatsApp": { "main": [[{ "node": "Respond", "type": "main", "index": 0 }]] },
+    "TikTok": { "main": [[{ "node": "Respond", "type": "main", "index": 0 }]] },
+    "YouTube": { "main": [[{ "node": "Respond", "type": "main", "index": 0 }]] },
+    "Super Agent AI": { "main": [[{ "node": "Respond", "type": "main", "index": 0 }]] }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "description": "Unified webhook router that dispatches to 15 services: Gmail, Slack, Google Sheets, HubSpot, Twitter/X, LinkedIn, Telegram, Mailchimp, Airtable, Facebook, Instagram, WhatsApp, TikTok, YouTube, and Super Agent AI."
+  }
+}

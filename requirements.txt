@@ -17,3 +17,4 @@ slowapi>=0.1.9
 cloudinary>=1.36.0
 PyGithub>=2.1.0
 python-multipart>=0.0.9
+psycopg2-binary>=2.9.0

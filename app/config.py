@@ -48,11 +48,16 @@ class Settings(BaseSettings):
     langchain_project: str = "super-agent"
 
     # n8n workflow automation — set via Railway env vars
-    n8n_base_url: str = ""   # e.g. https://your-name.app.n8n.cloud
+    n8n_base_url: str = ""   # e.g. https://n8n-production.up.railway.app
     n8n_api_key: str = ""    # n8n → Settings → n8n API → Create API Key
 
     # Railway CLI token — set via Railway env var RAILWAY_TOKEN
     railway_token: str = ""
+
+    # PostgreSQL — injected automatically by Railway when PostgreSQL plugin is added.
+    # Falls back to SQLite in /workspace if not set.
+    # Railway sets DATABASE_URL as "postgres://..." — we normalise to "postgresql://..."
+    database_url: str = ""
 
 
 settings = Settings()
