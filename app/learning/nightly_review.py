@@ -25,6 +25,18 @@ _FALLBACK_DIR = Path(".")
 _MAX_INTERACTIONS = 50      # cap to avoid overflowing Claude Code's context
 _MAX_ERRORS_SHOWN = 20
 
+# Core paths that must never be auto-applied — human safe word required
+_CORE_FILES = frozenset({
+    "app/routing/dispatcher.py",
+    "app/main.py",
+    "app/agents/",
+    "app/models/",
+    "app/config.py",
+    "entrypoint.sh",
+    "Dockerfile",
+    "requirements.txt",
+})
+
 
 def _review_path(date_str: str) -> Path:
     base = _REVIEW_DIR if os.access(_REVIEW_DIR, os.W_OK) else _FALLBACK_DIR
@@ -135,7 +147,61 @@ Produce a structured improvement report in the following JSON format — no othe
 
 Be specific and actionable. Reference actual file names and function names where possible.
 If today had very few interactions, focus on the codebase quality instead.
-safe_to_auto_apply must always be false — these are advisory suggestions only."""
+Set safe_to_auto_apply to true only for low-priority suggestions on non-core utility files
+(app/tools/, app/cache/, app/memory/, app/learning/).
+Always false for dispatcher.py, main.py, agents/, models/, config.py, Dockerfile, requirements.txt."""
+
+
+def _is_auto_applicable(suggestion: dict) -> bool:
+    """Return True if this suggestion qualifies for autonomous application."""
+    if suggestion.get("priority") != "low":
+        return False
+    file_path = suggestion.get("file_to_change", "")
+    return not any(file_path.startswith(core) for core in _CORE_FILES)
+
+
+def auto_apply_safe_suggestions(review: dict) -> list[dict]:
+    """
+    For each low-priority, non-core suggestion in the review, call
+    run_self_improve_agent() to apply it autonomously.
+    Returns a list of result records (one per suggestion attempted).
+    Never raises — errors are captured per-suggestion.
+    """
+    from ..agents.self_improve_agent import run_self_improve_agent
+
+    applied = []
+    for s in review.get("feature_improvements", []):
+        if not _is_auto_applicable(s):
+            continue
+        msg = (
+            f"Apply this pre-approved nightly review suggestion (LOW priority, non-core file):\n"
+            f"Feature: {s.get('feature_name')}\n"
+            f"Observation: {s.get('observation')}\n"
+            f"Suggested improvement: {s.get('suggested_improvement')}\n"
+            f"File to change: {s.get('file_to_change')}\n\n"
+            f"This is a pre-approved LOW priority suggestion from the nightly review. "
+            f"Apply it now using the minimal targeted change described above."
+        )
+        try:
+            result = run_self_improve_agent(msg)
+            applied.append({
+                "feature_number": s.get("feature_number"),
+                "feature_name": s.get("feature_name"),
+                "file_to_change": s.get("file_to_change"),
+                "agent_result": result[:500],
+                "status": "applied",
+            })
+            print(f"[nightly_review] Auto-applied: {s.get('feature_name')} → {s.get('file_to_change')}")
+        except Exception as e:
+            applied.append({
+                "feature_number": s.get("feature_number"),
+                "feature_name": s.get("feature_name"),
+                "file_to_change": s.get("file_to_change"),
+                "status": "error",
+                "error": str(e),
+            })
+            print(f"[nightly_review] Auto-apply error for {s.get('feature_name')}: {e}")
+    return applied
 
 
 def run_nightly_review() -> dict:
@@ -183,6 +249,14 @@ def run_nightly_review() -> dict:
 
         out_path.write_text(json.dumps(review, indent=2))
         print(f"[nightly_review] Review written to {out_path}")
+
+        # Auto-apply low-priority, non-core suggestions
+        applied = auto_apply_safe_suggestions(review)
+        if applied:
+            review["_auto_applied"] = applied
+            out_path.write_text(json.dumps(review, indent=2))
+            print(f"[nightly_review] Auto-applied {len(applied)} low-risk suggestion(s)")
+
         return review
 
     except Exception as e:
