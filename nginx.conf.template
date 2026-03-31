@@ -1,41 +1,87 @@
 events {
-    worker_connections 1024;
+    worker_connections 4096;
+    use epoll;
+    multi_accept on;
 }
 
 http {
-    include       /etc/nginx/mime.types;
-    default_type  application/octet-stream;
-    sendfile      on;
-    keepalive_timeout 65;
+    include            /etc/nginx/mime.types;
+    default_type       application/octet-stream;
+    sendfile           on;
+    tcp_nopush         on;
+    tcp_nodelay        on;
+
+    # Keep connections alive long enough for code-server WebSocket sessions
+    keepalive_timeout  300s;
+    keepalive_requests 10000;
+
+    # Allow large file uploads (APK/IPA builds, audio, images)
+    client_max_body_size 256m;
+    client_body_timeout  300s;
+    client_header_timeout 60s;
+
+    # Never buffer responses — essential for SSE streaming and code-server terminal
+    proxy_buffering    off;
+    proxy_buffer_size  4k;
+
+    # Gzip for API JSON responses (not binary/streams)
+    gzip              on;
+    gzip_types        application/json text/plain text/css application/javascript;
+    gzip_min_length   1024;
+    gzip_comp_level   2;
 
     server {
         listen ${PORT};
 
-        # ── VSCode (code-server) ───────────────────────────────────────────────
-        # Accessible at /code/
+        # ── VSCode / code-server (/code/) ──────────────────────────────────────
+        #
+        # STABILITY NOTES:
+        #   proxy_buffering off     — mandatory for WebSocket/terminal; buffering
+        #                             causes code-server terminal to freeze or drop
+        #   proxy_read_timeout 24h  — code-server sessions stay connected for a
+        #                             full working day without nginx dropping them
+        #   proxy_set_header Connection "upgrade"  — required for WS handshake
+        #
         location /code/ {
-            proxy_pass            http://127.0.0.1:3001/;
-            proxy_http_version    1.1;
+            proxy_pass              http://127.0.0.1:3001/;
+            proxy_http_version      1.1;
 
-            # WebSocket support (required for code-server terminal & live editing)
+            # WebSocket upgrade (terminals, live editing, extension host)
             proxy_set_header Upgrade    $http_upgrade;
             proxy_set_header Connection "upgrade";
             proxy_set_header Host       $host;
             proxy_set_header X-Real-IP  $remote_addr;
-            proxy_read_timeout          86400s;
-            proxy_send_timeout          86400s;
-            proxy_connect_timeout       60s;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+
+            # Never buffer code-server — kills WebSocket reliability
+            proxy_buffering         off;
+            proxy_request_buffering off;
+
+            # 24-hour timeouts — keep VS Code sessions alive indefinitely
+            proxy_read_timeout      86400s;
+            proxy_send_timeout      86400s;
+            proxy_connect_timeout   10s;
         }
 
         # ── Super Agent API + Web UI ───────────────────────────────────────────
         location / {
-            proxy_pass         http://127.0.0.1:8001;
-            proxy_http_version 1.1;
-            proxy_set_header   Host       $host;
-            proxy_set_header   X-Real-IP  $remote_addr;
-            proxy_read_timeout 600s;
-            proxy_send_timeout 600s;
-            proxy_connect_timeout 60s;
+            proxy_pass              http://127.0.0.1:8001;
+            proxy_http_version      1.1;
+            proxy_set_header Host       $host;
+            proxy_set_header X-Real-IP  $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+
+            # Disable buffering for SSE streaming (/chat/stream endpoint)
+            proxy_buffering         off;
+            proxy_request_buffering off;
+            add_header X-Accel-Buffering no;
+
+            # Long timeouts for agentic tasks (GitHub reads, Railway builds, etc.)
+            proxy_read_timeout      3600s;
+            proxy_send_timeout      3600s;
+            proxy_connect_timeout   10s;
         }
     }
 }
