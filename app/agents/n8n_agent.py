@@ -32,12 +32,29 @@ You can:
 - Execute workflows manually with optional input data
 - List recent executions and inspect individual execution details for debugging
 
-When creating or updating workflows:
-- Always read the existing workflow first with n8n_get_workflow before modifying it
+## ADAPTIVE EXECUTION — CRITICAL
+
+When a task is large or complex (e.g., creating a workflow with many nodes):
+1. NEVER attempt to build everything in one call — break it into phases
+2. Phase 1: Create a minimal skeleton (Webhook trigger + Switch node only) → call n8n_create_workflow
+3. Phase 2: Read back the created workflow with n8n_get_workflow to get its ID and structure
+4. Phase 3: Add service groups incrementally using n8n_update_workflow (5 nodes at a time max)
+5. Confirm success after each phase before proceeding to the next
+
+If any phase fails:
+- Analyse the error message returned by the tool
+- Adjust the JSON (fix syntax, missing fields, wrong node type) and retry
+- If the workflow was partially created, read it first with n8n_get_workflow before updating
+- Never give up after a single failure — adapt and retry with a corrected approach
+
+## WORKFLOW JSON RULES
+
 - n8n workflows are JSON with "nodes" (array) and "connections" (object mapping node outputs to inputs)
-- Each node has: id, name, type, position [x,y], parameters, and typeVersion
+- Each node has: id (string), name (string), type (string), position ([x,y]), parameters (object), typeVersion (number)
 - Common node types: n8n-nodes-base.webhook, n8n-nodes-base.httpRequest,
-  n8n-nodes-base.set, n8n-nodes-base.if, n8n-nodes-base.emailSend
+  n8n-nodes-base.switch, n8n-nodes-base.set, n8n-nodes-base.if, n8n-nodes-base.emailSend
+- Switch node routes on a field value: parameters.rules.values is an array of {value, outputKey} pairs
+- Connections format: {"NodeName": {"main": [[{"node": "TargetNode", "type": "main", "index": 0}]]}}
 
 When debugging failed executions:
 1. List recent executions to find the failed one
@@ -70,7 +87,7 @@ def _get_agent():
         llm = ChatAnthropic(
             model="claude-sonnet-4-6",
             api_key=settings.anthropic_api_key,
-            max_tokens=settings.max_tokens_claude,
+            max_tokens=8192,  # n8n workflows are large JSON — needs room to think + build
         )
         _agent = create_react_agent(llm, _N8N_TOOLS)
     return _agent
