@@ -8,6 +8,7 @@ the owner safe word — the dispatcher enforces this before calling this agent.
 from langgraph.prebuilt import create_react_agent
 from langchain_anthropic import ChatAnthropic
 from ..config import settings
+from .agent_planner import run_with_plan_and_recovery
 from ..tools.n8n_tools import (
     n8n_list_workflows,
     n8n_get_workflow,
@@ -93,29 +94,44 @@ def _get_agent():
     return _agent
 
 
+def _invoke(message: str) -> str:
+    """Raw agent invoke — called by run_with_plan_and_recovery."""
+    agent = _get_agent()
+    result = agent.invoke({
+        "messages": [
+            {"role": "system", "content": _SYSTEM},
+            {"role": "user", "content": message},
+        ]
+    })
+    for msg in reversed(result.get("messages", [])):
+        if hasattr(msg, "type") and msg.type in ("ai", "assistant"):
+            content = msg.content
+            if isinstance(content, list):
+                return " ".join(
+                    block.get("text", "") for block in content if isinstance(block, dict)
+                ).strip()
+            return str(content).strip()
+    return "[n8n agent: no response]"
+
+
 def run_n8n_agent(message: str) -> str:
-    """Run the n8n ReAct agent and return the final text response."""
+    """
+    Run the n8n agent with pre-execution model competition + self-healing.
+
+    Pipeline:
+      1. Claude vs DeepSeek compete on execution plan
+      2. Haiku adjudicates — winning plan injected into agent context
+      3. Agent executes; on failure → diagnose → SAFE auto-fix or CRITICAL safe-word prompt
+      4. Up to 3 self-healing retries before escalating
+    """
     if not settings.anthropic_api_key:
         return "[n8n agent error: ANTHROPIC_API_KEY not set]"
     if not settings.n8n_base_url:
         return "[n8n agent error: N8N_BASE_URL not set — add it in Railway Variables tab]"
 
-    agent = _get_agent()
-    try:
-        result = agent.invoke({
-            "messages": [
-                {"role": "system", "content": _SYSTEM},
-                {"role": "user", "content": message},
-            ]
-        })
-        for msg in reversed(result.get("messages", [])):
-            if hasattr(msg, "type") and msg.type in ("ai", "assistant"):
-                content = msg.content
-                if isinstance(content, list):
-                    return " ".join(
-                        block.get("text", "") for block in content if isinstance(block, dict)
-                    ).strip()
-                return str(content).strip()
-        return "[n8n agent: no response]"
-    except Exception as e:
-        return f"[n8n agent error: {e}]"
+    return run_with_plan_and_recovery(
+        agent_fn=_invoke,
+        message=message,
+        agent_type="n8n_agent",
+        tool_names=[t.name for t in _N8N_TOOLS],
+    )

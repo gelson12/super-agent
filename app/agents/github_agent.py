@@ -1,6 +1,7 @@
 from langgraph.prebuilt import create_react_agent
 from langchain_anthropic import ChatAnthropic
 from ..config import settings
+from .agent_planner import run_with_plan_and_recovery
 from ..tools.github_tools import (
     github_list_repos,
     github_list_files,
@@ -49,11 +50,8 @@ def _get_agent():
     return _agent
 
 
-def run_github_agent(message: str) -> str:
-    """Run the GitHub ReAct agent and return the final text response."""
-    if not settings.github_pat:
-        return "[GitHub agent error: GITHUB_PAT not set]"
-
+def _invoke(message: str) -> str:
+    """Raw agent invoke — called by run_with_plan_and_recovery."""
     agent = _get_agent()
     result = agent.invoke({
         "messages": [
@@ -61,7 +59,6 @@ def run_github_agent(message: str) -> str:
             {"role": "user", "content": message},
         ]
     })
-
     for msg in reversed(result.get("messages", [])):
         if hasattr(msg, "type") and msg.type in ("ai", "assistant"):
             content = msg.content
@@ -70,5 +67,25 @@ def run_github_agent(message: str) -> str:
                     block.get("text", "") for block in content if isinstance(block, dict)
                 ).strip()
             return str(content).strip()
-
     return "[GitHub agent: no response]"
+
+
+def run_github_agent(message: str) -> str:
+    """
+    Run the GitHub agent with pre-execution model competition + self-healing.
+
+    Pipeline:
+      1. Claude vs DeepSeek compete on execution plan
+      2. Haiku adjudicates — winning plan injected into agent context
+      3. Agent executes; on failure → diagnose → SAFE auto-fix or CRITICAL safe-word prompt
+      4. Up to 3 self-healing retries before escalating
+    """
+    if not settings.github_pat:
+        return "[GitHub agent error: GITHUB_PAT not set]"
+
+    return run_with_plan_and_recovery(
+        agent_fn=_invoke,
+        message=message,
+        agent_type="github_agent",
+        tool_names=[t.name for t in _GITHUB_TOOLS],
+    )

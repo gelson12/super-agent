@@ -11,6 +11,7 @@ from langgraph.prebuilt import create_react_agent
 
 from ..config import settings
 from ..prompts import ISOLATION_DEBUG_PROMPT
+from .agent_planner import run_with_plan_and_recovery
 from ..tools.shell_tools import (
     run_shell_command,
     run_authorized_shell_command,
@@ -39,13 +40,12 @@ Keep responses concise and action-oriented."""
 
 def run_shell_agent(message: str, authorized: bool = False, debug_mode: bool = False) -> str:
     """
-    Run the shell agent.
+    Run the shell agent with pre-execution model competition + self-healing.
 
     Args:
         message:    The user's request.
         authorized: True if the owner safe word was verified — enables write tools.
-        debug_mode: True when routed as isolation_debug — prepends ISOLATION_DEBUG_PROMPT
-                    so the agent reasons through Isolate → Identify → Fix → Integrate.
+        debug_mode: True when routed as isolation_debug — prepends ISOLATION_DEBUG_PROMPT.
     """
     if not settings.anthropic_api_key:
         return "[Shell agent error: ANTHROPIC_API_KEY not set]"
@@ -59,23 +59,26 @@ def run_shell_agent(message: str, authorized: bool = False, debug_mode: bool = F
         api_key=settings.anthropic_api_key,
         max_tokens=2048,
     )
-
     agent = create_react_agent(llm, tools)
 
     user_content = f"{ISOLATION_DEBUG_PROMPT}\n\n---\n\n{message}" if debug_mode else message
 
-    try:
+    def _invoke(msg: str) -> str:
         result = agent.invoke({
             "messages": [
                 {"role": "system", "content": _SYSTEM_PROMPT},
-                {"role": "user", "content": user_content},
+                {"role": "user", "content": msg},
             ]
         })
-        msgs = result.get("messages", [])
-        for msg in reversed(msgs):
-            text = getattr(msg, "content", "")
+        for m in reversed(result.get("messages", [])):
+            text = getattr(m, "content", "")
             if isinstance(text, str) and text.strip():
                 return text.strip()
         return "[Shell agent returned no response]"
-    except Exception as e:
-        return f"[Shell agent error: {e}]"
+
+    return run_with_plan_and_recovery(
+        agent_fn=_invoke,
+        message=user_content,
+        agent_type="shell_agent",
+        tool_names=[t.name for t in tools],
+    )
