@@ -76,12 +76,21 @@ def _scheduled_health_check() -> None:
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
     from apscheduler.schedulers.background import BackgroundScheduler
+    from .learning.nightly_review import run_nightly_review
     scheduler = BackgroundScheduler()
     scheduler.add_job(
         _scheduled_health_check,
         "interval",
         hours=24,
         id="daily_health_check",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        run_nightly_review,
+        "cron",
+        hour=23,
+        minute=0,
+        id="nightly_review",
         replace_existing=True,
     )
     scheduler.start()
@@ -355,6 +364,26 @@ def stats():
         "cache": cache.stats(),
         "interactions": insight_log.summary(),
     }
+
+
+@app.get("/daily-review", tags=["meta"])
+def daily_review():
+    """
+    Return the most recent nightly Claude Code review report.
+    Generated at 23:00 UTC — advisory only, safe_to_auto_apply is always false.
+    """
+    from .learning.nightly_review import get_latest_review
+    result = get_latest_review()
+    if result is None:
+        return {"message": "No nightly review available yet — first run at 23:00 UTC."}
+    return result
+
+
+@app.get("/daily-review/list", tags=["meta"])
+def daily_review_list():
+    """List all available nightly review dates (newest first)."""
+    from .learning.nightly_review import list_review_dates
+    return {"dates": list_review_dates()}
 
 
 @app.get("/wisdom", tags=["meta"])
