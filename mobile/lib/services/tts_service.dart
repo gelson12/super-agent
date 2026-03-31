@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter_tts/flutter_tts.dart';
@@ -10,6 +12,8 @@ import 'prefs_service.dart';
 ///
 /// Primary: ElevenLabs REST API (deep JARVIS-like voice, 10k chars/month free).
 /// Fallback: flutter_tts with British English accent (zero cost, always available).
+///
+/// Interruption: call stop() from any context — speak() returns immediately.
 class TtsService {
   TtsService._();
   static final instance = TtsService._();
@@ -17,6 +21,9 @@ class TtsService {
   final _player = AudioPlayer();
   final _ftts = FlutterTts();
   bool _speaking = false;
+
+  // Completer resolved by stop() to unblock an in-progress speak() immediately
+  Completer<void>? _interruptCompleter;
 
   bool get isSpeaking => _speaking;
 
@@ -29,22 +36,32 @@ class TtsService {
   }
 
   /// Speak [text]. Uses ElevenLabs if an API key is configured, else flutter_tts.
+  /// Returns as soon as speech finishes OR stop() is called — whichever comes first.
   Future<void> speak(String text) async {
     if (text.trim().isEmpty) return;
     _speaking = true;
+    _interruptCompleter = Completer<void>();
 
     final key = PrefsService.instance.elevenLabsKey;
     if (key.isNotEmpty) {
       final success = await _speakElevenLabs(text, key);
-      if (success) return;
+      if (success) {
+        _interruptCompleter = null;
+        return;
+      }
     }
 
-    // Fallback
     await _speakFallback(text);
+    _interruptCompleter = null;
   }
 
+  /// Stop playback immediately. speak() will return within one event loop tick.
   Future<void> stop() async {
     _speaking = false;
+    // Unblock any awaiting speak() call instantly
+    if (_interruptCompleter != null && !_interruptCompleter!.isCompleted) {
+      _interruptCompleter!.complete();
+    }
     try { await _player.stop(); } catch (_) {}
     try { await _ftts.stop(); } catch (_) {}
   }
@@ -66,24 +83,34 @@ class TtsService {
           'Content-Type': 'application/json',
           'Accept': 'audio/mpeg',
         },
-        body: '{"text":"${_escape(text)}",'
-            '"model_id":"eleven_monolingual_v1",'
-            '"voice_settings":{"stability":0.5,"similarity_boost":0.75}}',
+        // Use jsonEncode for safe escaping — no manual string manipulation
+        body: jsonEncode({
+          'text': text,
+          'model_id': 'eleven_monolingual_v1',
+          'voice_settings': {'stability': 0.5, 'similarity_boost': 0.75},
+        }),
       );
 
       if (resp.statusCode != 200) return false;
+      if (!_speaking) return true; // interrupted before playback started
 
       final bytes = resp.bodyBytes as Uint8List;
       final dir = await getTemporaryDirectory();
-      tmpFile = File('${dir.path}/jarvis_tts.mp3');
+      tmpFile = File('${dir.path}/jarvis_tts_${DateTime.now().millisecondsSinceEpoch}.mp3');
       await tmpFile.writeAsBytes(bytes);
 
       await _player.setFilePath(tmpFile.path);
       await _player.play();
 
-      // Wait until playback completes
-      await _player.processingStateStream
-          .firstWhere((s) => s == ProcessingState.completed);
+      // Wait for completion OR immediate interrupt — whichever fires first
+      await Future.any([
+        _player.processingStateStream
+            .firstWhere((s) =>
+                s == ProcessingState.completed ||
+                s == ProcessingState.idle)
+            .then((_) {}),
+        _interruptCompleter!.future,
+      ]);
 
       _speaking = false;
       return true;
@@ -97,12 +124,17 @@ class TtsService {
   // ── Fallback TTS ────────────────────────────────────────────────────────────
 
   Future<void> _speakFallback(String text) async {
+    final completer = Completer<void>();
+    _ftts.setCompletionHandler(() {
+      _speaking = false;
+      if (!completer.isCompleted) completer.complete();
+    });
     await _ftts.speak(text);
-    // flutter_tts completion fires via setCompletionHandler above
-  }
 
-  String _escape(String s) => s
-      .replaceAll(r'\', r'\\')
-      .replaceAll('"', r'\"')
-      .replaceAll('\n', ' ');
+    // Wait for completion OR interrupt
+    await Future.any([
+      completer.future,
+      _interruptCompleter!.future,
+    ]);
+  }
 }
