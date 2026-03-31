@@ -20,15 +20,14 @@
     /* ── Bridge logo glow animation ─────────────────────────────────────────── */
     @keyframes logo-glow {
       0%, 100% {
-        filter: drop-shadow(0 0 6px #c9a227)
-                drop-shadow(0 0 14px #c9a227)
-                drop-shadow(0 0 28px rgba(201,162,39,0.5));
+        filter: drop-shadow(0 0 3px #c9a227)
+                drop-shadow(0 0 7px #c9a227)
+                drop-shadow(0 0 14px rgba(201,162,39,0.35));
       }
       50% {
-        filter: drop-shadow(0 0 12px #f0c040)
-                drop-shadow(0 0 28px #f0c040)
-                drop-shadow(0 0 55px rgba(240,192,64,0.7))
-                drop-shadow(0 0 80px rgba(201,162,39,0.4));
+        filter: drop-shadow(0 0 6px #f0c040)
+                drop-shadow(0 0 14px #f0c040)
+                drop-shadow(0 0 26px rgba(240,192,64,0.45));
       }
     }
 
@@ -319,11 +318,6 @@
       gap: 0;
     }
 
-    .empty-state .bridge-logo {
-      height: 160px;
-      width: auto;
-    }
-
     ::-webkit-scrollbar { width: 6px; }
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: #2a2a2a; border-radius: 3px; }
@@ -358,9 +352,7 @@
 </header>
 
 <div id="chat">
-  <div class="empty-state" id="empty">
-    <img class="bridge-logo" id="empty-logo" src="/static/bridge.png" alt="Bridge" crossorigin="anonymous" />
-  </div>
+  <div class="empty-state" id="empty"></div>
 </div>
 
 <div id="input-area">
@@ -405,7 +397,7 @@
   }
 
   // Apply white removal to all logo instances when they load
-  ['lock-logo', 'header-logo', 'empty-logo'].forEach(id => {
+  ['lock-logo', 'header-logo'].forEach(id => {
     const el = document.getElementById(id);
     if (el) {
       if (el.complete && el.naturalWidth > 0) {

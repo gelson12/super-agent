@@ -18,7 +18,10 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
+class _HomeScreenState extends State<HomeScreen>
+    with WidgetsBindingObserver, SingleTickerProviderStateMixin {
+  late final AnimationController _glowCtrl;
+  late final Animation<double> _glowAnim;
   JarvisState _state = JarvisState.idle;
   String _userText = '';
   String _agentText = '';
@@ -37,11 +40,19 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _glowCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 2400),
+    )..repeat(reverse: true);
+    _glowAnim = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(parent: _glowCtrl, curve: Curves.easeInOut),
+    );
     _bootstrap();
   }
 
   @override
   void dispose() {
+    _glowCtrl.dispose();
     WidgetsBinding.instance.removeObserver(this);
     _wakeSub?.cancel();
     _partialSub?.cancel();
@@ -248,21 +259,44 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           children: [
             // ── Top bar ──────────────────────────────────────────────────────
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+              child: Stack(
+                alignment: Alignment.center,
                 children: [
-                  Text(
-                    'J · A · R · V · I · S',
-                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                          letterSpacing: 5,
-                          fontSize: 12,
+                  // Centered glowing Bridge logo
+                  AnimatedBuilder(
+                    animation: _glowAnim,
+                    builder: (_, __) {
+                      final glow = 3.0 + _glowAnim.value * 5.0;
+                      final opacity = 0.35 + _glowAnim.value * 0.25;
+                      return Container(
+                        decoration: BoxDecoration(
+                          boxShadow: [
+                            BoxShadow(
+                              color: const Color(0xFFC9A227).withOpacity(opacity),
+                              blurRadius: glow * 2,
+                              spreadRadius: glow * 0.3,
+                            ),
+                          ],
+                          shape: BoxShape.circle,
                         ),
+                        child: Image.asset(
+                          'assets/bridge.png',
+                          height: 38,
+                          color: const Color(0xFFC9A227),
+                          colorBlendMode: BlendMode.modulate,
+                        ),
+                      );
+                    },
                   ),
-                  IconButton(
-                    icon: const Icon(Icons.settings_outlined, color: kCyanDim, size: 20),
-                    onPressed: () => Navigator.pushNamed(context, '/settings'),
-                    tooltip: 'Settings',
+                  // Settings button aligned right
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: IconButton(
+                      icon: const Icon(Icons.settings_outlined, color: kCyanDim, size: 20),
+                      onPressed: () => Navigator.pushNamed(context, '/settings'),
+                      tooltip: 'Settings',
+                    ),
                   ),
                 ],
               ),

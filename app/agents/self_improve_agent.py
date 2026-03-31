@@ -17,9 +17,21 @@ The agent reports what it did and what it found. It does not silently fail.
 """
 from langgraph.prebuilt import create_react_agent
 from langchain_anthropic import ChatAnthropic
+from langchain_core.tools import tool as lc_tool
 
 from ..config import settings
 from .agent_planner import run_with_plan_and_recovery
+from ..learning.claude_code_worker import ask_claude_code as _ask_cc
+
+
+@lc_tool
+def ask_claude_code_tool(prompt: str) -> str:
+    """
+    Ask the in-container Claude Code CLI a question about files in /workspace.
+    Claude Code can read actual repo files — use this for code review, bug
+    diagnosis, or getting a second opinion on a fix before committing it.
+    """
+    return _ask_cc(prompt)
 
 # All tools the self-improve agent has access to
 from ..tools.shell_tools import (
@@ -144,6 +156,8 @@ _SELF_IMPROVE_TOOLS = [
     # Shell
     run_shell_command, run_authorized_shell_command, list_workspace,
     run_claude_cli, clone_repo,
+    # Claude Code CLI (reads /workspace files for code review + second opinions)
+    ask_claude_code_tool,
     # GitHub (read own source)
     github_list_repos, github_list_files, github_read_file,
     github_create_or_update_file, github_create_branch, github_create_pull_request,

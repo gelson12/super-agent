@@ -17,6 +17,7 @@ This module is model-agnostic — it wraps any callable agent function.
 import concurrent.futures
 from ..models.claude import ask_claude, ask_claude_haiku
 from ..models.deepseek import ask_deepseek
+from ..learning.claude_code_worker import ask_claude_code, log_claude_code_result
 
 MAX_RETRIES = 3
 
@@ -59,6 +60,43 @@ REASON: [2 sentences — why this plan is stronger]
 PLAN:
 [copy the winning plan here verbatim, unchanged]"""
 
+_ADJUDICATE_PROMPT_N = """\
+Multiple AI models proposed competing execution plans for the same agentic task.
+Evaluate all plans critically and select the strongest one.
+
+Task: {task}
+
+{plans}
+
+Reply in this exact format:
+WINNER: [{labels}]
+REASON: [2 sentences — why this plan is strongest]
+PLAN:
+[copy the winning plan here verbatim, unchanged]"""
+
+# Keywords that indicate a code/file task — triggers Claude Code as 3rd competitor
+_CODE_KEYWORDS = {
+    "fix", "debug", "code", "file", "repo", "error", "bug", "refactor",
+    "function", "class", "import", "test", "script", "deploy", "build",
+}
+
+
+def _is_code_task(task: str) -> bool:
+    lower = task.lower()
+    return any(k in lower for k in _CODE_KEYWORDS)
+
+
+def _parse_winner_label(adjudication: str) -> str:
+    """Extract the WINNER label (A, B, or C) from adjudication text."""
+    for line in adjudication.splitlines():
+        if line.strip().startswith("WINNER:"):
+            val = line.split(":", 1)[1].strip()
+            for label in ["C", "B", "A"]:  # prefer C (Claude Code) if tied
+                if label in val:
+                    return label
+    return "A"
+
+
 _HEAL_PROMPT = """\
 An AI agent failed during task execution. Diagnose the failure and prescribe a fix.
 
@@ -80,44 +118,73 @@ REVISED_APPROACH: [if SAFE — the full revised instruction for the next attempt
 
 def compete_and_plan(task: str, agent_type: str, tools: list[str]) -> str:
     """
-    Run Claude and DeepSeek in parallel, Haiku adjudicates.
-    Returns the winning execution plan as a plain string.
-    Falls back gracefully if either model is unavailable.
+    Run Claude, DeepSeek, and (for code tasks) Claude Code CLI in parallel.
+    Haiku adjudicates the winning plan. Falls back gracefully if any model fails.
+
+    Claude Code CLI (Plan C) is only spawned for code/file/debug tasks because
+    it has unique file-system access — irrelevant overhead for general queries.
     """
     prompt = _PLAN_PROMPT.format(
         agent_type=agent_type,
         tools=", ".join(tools),
         task=task,
     )
+    use_claude_code = _is_code_task(task)
 
-    # Run both models in parallel
-    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
         future_a = pool.submit(ask_claude, prompt)
         future_b = pool.submit(ask_deepseek, prompt)
+        future_c = pool.submit(ask_claude_code, prompt) if use_claude_code else None
+
         plan_a = future_a.result()
         plan_b = future_b.result()
+        plan_c = future_c.result() if future_c else None
 
     a_failed = plan_a.startswith("[")
     b_failed = plan_b.startswith("[")
+    c_failed = (not plan_c) or plan_c.startswith("[")
 
-    if a_failed and b_failed:
-        # Both unavailable — proceed without a pre-plan
+    # Build list of available (non-failed) plans with labels
+    available = [
+        (plan, label)
+        for plan, label, failed in [
+            (plan_a, "A", a_failed),
+            (plan_b, "B", b_failed),
+            (plan_c, "C", c_failed),
+        ]
+        if not failed
+    ]
+
+    if not available:
         return f"Execute directly: {task}"
-    if a_failed:
-        return plan_b
-    if b_failed:
-        return plan_a
+    if len(available) == 1:
+        return available[0][0]
 
-    # Adjudicate with Haiku (fast, cheap)
+    # Adjudicate with Haiku (fast, cheap) using N-way prompt
+    plans_block = "\n\n".join(
+        f"── Plan {label} ──────────────────────────────────────────────────────────\n{plan}"
+        for plan, label in available
+    )
+    labels_str = ", ".join(label for _, label in available)
+    adj_prompt = _ADJUDICATE_PROMPT_N.format(
+        task=task, plans=plans_block, labels=labels_str
+    )
+
     try:
-        adjudication = ask_claude_haiku(
-            _ADJUDICATE_PROMPT.format(task=task, plan_a=plan_a, plan_b=plan_b)
-        )
+        adjudication = ask_claude_haiku(adj_prompt)
+        winner_label = _parse_winner_label(adjudication)
+
+        # Log Claude Code outcome whenever it competed
+        if plan_c and not c_failed:
+            was_winner = winner_label == "C"
+            log_claude_code_result(prompt, plan_c, was_winner, agent_type)
+
         if "PLAN:" in adjudication:
             return adjudication.split("PLAN:", 1)[1].strip()
-        return adjudication
+        # Fall back to the winning plan directly
+        return dict(available).get(winner_label, available[0][0])
     except Exception:
-        return plan_a  # Default to Claude's plan on adjudication failure
+        return available[0][0]
 
 
 # ── Self-healing ──────────────────────────────────────────────────────────────
