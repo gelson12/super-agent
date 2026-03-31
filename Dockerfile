@@ -26,9 +26,10 @@ RUN npm install -g @anthropic-ai/claude-code
 # ── Railway CLI ───────────────────────────────────────────────────────────────
 RUN npm install -g @railway/cli
 
-# ── VS Code extensions (GitHub + GitLens for repo management) ─────────────────
+# ── VS Code extensions (GitHub + GitLens + Claude) ────────────────────────────
 RUN code-server --install-extension GitHub.vscode-pull-request-github \
     && code-server --install-extension eamodio.gitlens \
+    && code-server --install-extension Anthropic.claude-code \
     && echo "[docker] VS Code extensions installed."
 
 # ── Python dependencies ───────────────────────────────────────────────────────

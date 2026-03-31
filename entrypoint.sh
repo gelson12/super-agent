@@ -45,6 +45,29 @@ cat > /workspace/.vscode/settings.json <<VSCODE
 VSCODE
 echo "[entrypoint] VS Code workspace settings written."
 
+# ── code-server USER settings (theme, extensions, editor prefs — always restored on boot) ──
+mkdir -p /root/.local/share/code-server/User
+cat > /root/.local/share/code-server/User/settings.json <<USERSETTINGS
+{
+  "workbench.colorTheme": "Abyss",
+  "workbench.startupEditor": "none",
+  "editor.fontSize": 14,
+  "editor.fontFamily": "'Fira Code', 'Cascadia Code', monospace",
+  "editor.fontLigatures": true,
+  "editor.formatOnSave": true,
+  "editor.minimap.enabled": false,
+  "terminal.integrated.fontSize": 13,
+  "git.autofetch": true,
+  "git.enableSmartCommit": true,
+  "git.confirmSync": false,
+  "github.gitAuthentication": true,
+  "extensions.autoUpdate": false,
+  "telemetry.telemetryLevel": "off",
+  "workbench.tips.enabled": false
+}
+USERSETTINGS
+echo "[entrypoint] code-server user settings written (theme: Abyss)."
+
 # ── code-server config (password via file — avoids supervisord env quoting issues) ──
 mkdir -p /root/.config/code-server
 cat > /root/.config/code-server/config.yaml <<EOF
