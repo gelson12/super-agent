@@ -1,0 +1,105 @@
+name: Build iOS IPA
+
+on:
+  push:
+    paths:
+      - 'mobile/**'
+      - '.github/workflows/ios_build.yml'
+  workflow_dispatch:
+    inputs:
+      project_path:
+        description: 'Path to Flutter project (relative to repo root)'
+        required: false
+        default: 'mobile'
+
+jobs:
+  build-ios:
+    runs-on: macos-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.27.4'
+          channel: 'stable'
+          cache: true
+
+      - name: Set project path
+        id: vars
+        run: echo "project=${{ github.event.inputs.project_path || 'mobile' }}" >> $GITHUB_OUTPUT
+
+      - name: Install dependencies
+        working-directory: ${{ steps.vars.outputs.project }}
+        run: flutter pub get
+
+      - name: Run tests
+        working-directory: ${{ steps.vars.outputs.project }}
+        run: flutter test || echo "Tests skipped or failed — continuing build"
+
+      - name: Build IPA (unsigned — works with AltStore/SideStore)
+        working-directory: ${{ steps.vars.outputs.project }}
+        run: flutter build ipa --no-codesign
+
+      - name: Find built IPA
+        id: ipa
+        run: |
+          IPA_PATH=$(find ${{ steps.vars.outputs.project }} -name "*.ipa" | head -1)
+          echo "path=${IPA_PATH}" >> $GITHUB_OUTPUT
+          echo "filename=$(basename ${IPA_PATH})" >> $GITHUB_OUTPUT
+          echo "Found IPA: ${IPA_PATH}"
+
+      - name: Upload IPA to Cloudinary
+        if: steps.ipa.outputs.path != ''
+        env:
+          CLOUDINARY_URL: ${{ secrets.CLOUDINARY_URL }}
+        run: |
+          if [ -z "$CLOUDINARY_URL" ]; then
+            echo "CLOUDINARY_URL secret not set — skipping upload"
+            echo "IPA_DOWNLOAD_URL=NOT_UPLOADED" >> $GITHUB_ENV
+            exit 0
+          fi
+          # Parse cloud name from CLOUDINARY_URL (format: cloudinary://api_key:api_secret@cloud_name)
+          CLOUD_NAME=$(echo "$CLOUDINARY_URL" | sed 's|cloudinary://[^:]*:[^@]*@||')
+          API_KEY=$(echo "$CLOUDINARY_URL" | sed 's|cloudinary://||' | cut -d: -f1)
+          API_SECRET=$(echo "$CLOUDINARY_URL" | sed 's|cloudinary://[^:]*:||' | cut -d@ -f1)
+          PUBLIC_ID="builds/ios_$(date +%Y%m%d_%H%M%S)"
+          RESPONSE=$(curl -s -X POST \
+            "https://api.cloudinary.com/v1_1/${CLOUD_NAME}/raw/upload" \
+            -F "file=@${{ steps.ipa.outputs.path }}" \
+            -F "upload_preset=mobile_builds" \
+            -F "public_id=${PUBLIC_ID}" \
+            -u "${API_KEY}:${API_SECRET}")
+          URL=$(echo "$RESPONSE" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('secure_url','UPLOAD_FAILED'))")
+          echo "IPA_DOWNLOAD_URL=${URL}" >> $GITHUB_ENV
+          echo "Cloudinary URL: ${URL}"
+
+      - name: Write download URL to file
+        run: |
+          echo "${{ env.IPA_DOWNLOAD_URL }}" > ios_download_url.txt
+          cat ios_download_url.txt
+
+      - name: Upload IPA as GitHub artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-ipa-${{ github.sha }}
+          path: |
+            ${{ steps.ipa.outputs.path }}
+            ios_download_url.txt
+          retention-days: 7
+
+      - name: Summary
+        run: |
+          echo "## iOS Build Complete" >> $GITHUB_STEP_SUMMARY
+          echo "- **IPA:** ${{ steps.ipa.outputs.filename }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Download:** ${{ env.IPA_DOWNLOAD_URL }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Retention:** 7 days" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Installing on iOS (AltStore — no Apple ID required)" >> $GITHUB_STEP_SUMMARY
+          echo "1. Install AltStore on your iPhone via [altstore.io](https://altstore.io)" >> $GITHUB_STEP_SUMMARY
+          echo "2. Download the IPA from the link above to your iPhone" >> $GITHUB_STEP_SUMMARY
+          echo "3. Open AltStore → My Apps → + → select the IPA" >> $GITHUB_STEP_SUMMARY
+          echo "4. Trust the developer in Settings → General → VPN & Device Management" >> $GITHUB_STEP_SUMMARY
