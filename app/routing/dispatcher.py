@@ -5,6 +5,7 @@ from ..models.gemini import ask_gemini
 from ..models.deepseek import ask_deepseek
 from ..agents.github_agent import run_github_agent
 from ..agents.shell_agent import run_shell_agent
+from ..agents.n8n_agent import run_n8n_agent
 from ..security.safe_word import check_authorization
 from ..cache.response_cache import cache
 from ..learning.insight_log import insight_log
@@ -41,6 +42,14 @@ _DEBUG_KEYWORDS = {
     "debug", "troubleshoot", "diagnose", "why is it", "why isn't",
     "service down", "can't connect", "connection refused", "timeout",
     "root cause", "fix the issue", "what's wrong", "why is my",
+}
+
+_N8N_KEYWORDS = {
+    "n8n", "workflow", "workflows", "automation", "trigger",
+    "webhook", "execution", "executions",
+    "create workflow", "update workflow", "activate workflow",
+    "deactivate workflow", "run workflow", "debug workflow",
+    "list workflows", "get workflow",
 }
 
 _CACHEABLE_MODELS = {"HAIKU", "GEMINI", "DEEPSEEK", "CLAUDE"}
@@ -89,6 +98,11 @@ def _is_shell_request(message: str) -> bool:
 def _is_debug_request(message: str) -> bool:
     lower = message.lower()
     return any(k in lower for k in _DEBUG_KEYWORDS)
+
+
+def _is_n8n_request(message: str) -> bool:
+    lower = message.lower()
+    return any(k in lower for k in _N8N_KEYWORDS)
 
 
 # ── Extended result builder ───────────────────────────────────────────────────
@@ -272,6 +286,18 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
             "model_used": "GITHUB",
             "response": response,
             "routed_by": "github_keywords",
+            "complexity": complexity,
+            "cache_hit": False,
+        })
+
+    if _is_n8n_request(message):
+        response = run_n8n_agent(message)
+        insight_log.record(message, "N8N", response, "n8n_keywords", complexity, session_id)
+        adapter.tick()
+        return _build_extended_result({
+            "model_used": "N8N",
+            "response": response,
+            "routed_by": "n8n_keywords",
             "complexity": complexity,
             "cache_hit": False,
         })

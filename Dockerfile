@@ -23,6 +23,14 @@ RUN curl -fsSL https://code-server.dev/install.sh | sh \
 # ── Claude Code CLI ───────────────────────────────────────────────────────────
 RUN npm install -g @anthropic-ai/claude-code
 
+# ── Railway CLI ───────────────────────────────────────────────────────────────
+RUN npm install -g @railway/cli
+
+# ── VS Code extensions (GitHub + GitLens for repo management) ─────────────────
+RUN code-server --install-extension GitHub.vscode-pull-request-github \
+    && code-server --install-extension eamodio.gitlens \
+    && echo "[docker] VS Code extensions installed."
+
 # ── Python dependencies ───────────────────────────────────────────────────────
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt

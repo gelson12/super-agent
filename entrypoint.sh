@@ -17,8 +17,33 @@ if [ -n "$GITHUB_PAT" ]; then
     echo "[entrypoint] GitHub credentials configured."
 fi
 
+# ── Railway CLI authentication ────────────────────────────────────────────────
+if [ -n "$RAILWAY_TOKEN" ]; then
+    railway login --token "${RAILWAY_TOKEN}" 2>/dev/null && \
+        echo "[entrypoint] Railway CLI authenticated." || \
+        echo "[entrypoint] WARNING: Railway CLI login failed — check RAILWAY_TOKEN."
+fi
+
 # ── Workspace for repos ────────────────────────────────────────────────────────
 mkdir -p /workspace /workspace/.vscode /workspace/.vscode-ext /var/log/supervisor
+
+# ── VS Code workspace settings (GitHub + Railway + n8n env vars in terminal) ──
+cat > /workspace/.vscode/settings.json <<VSCODE
+{
+  "git.autofetch": true,
+  "git.enableSmartCommit": true,
+  "git.confirmSync": false,
+  "github.gitAuthentication": true,
+  "terminal.integrated.defaultProfile.linux": "bash",
+  "terminal.integrated.env.linux": {
+    "RAILWAY_TOKEN": "${RAILWAY_TOKEN:-}",
+    "GITHUB_PAT": "${GITHUB_PAT:-}",
+    "N8N_BASE_URL": "${N8N_BASE_URL:-}",
+    "N8N_API_KEY": "${N8N_API_KEY:-}"
+  }
+}
+VSCODE
+echo "[entrypoint] VS Code workspace settings written."
 
 # ── code-server config (password via file — avoids supervisord env quoting issues) ──
 mkdir -p /root/.config/code-server

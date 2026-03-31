@@ -47,5 +47,12 @@ class Settings(BaseSettings):
     langchain_api_key: str = ""
     langchain_project: str = "super-agent"
 
+    # n8n workflow automation — set via Railway env vars
+    n8n_base_url: str = ""   # e.g. https://your-name.app.n8n.cloud
+    n8n_api_key: str = ""    # n8n → Settings → n8n API → Create API Key
+
+    # Railway CLI token — set via Railway env var RAILWAY_TOKEN
+    railway_token: str = ""
+
 
 settings = Settings()
