@@ -77,6 +77,7 @@ def _scheduled_health_check() -> None:
 async def _lifespan(app: FastAPI):
     from apscheduler.schedulers.background import BackgroundScheduler
     from .learning.nightly_review import run_nightly_review
+    from .learning.weekly_review import run_weekly_review
     from .learning.improvement_monitor import tick as _monitor_tick
     scheduler = BackgroundScheduler()
     scheduler.add_job(
@@ -92,6 +93,15 @@ async def _lifespan(app: FastAPI):
         hour=23,
         minute=0,
         id="nightly_review",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        run_weekly_review,
+        "cron",
+        day_of_week="sun",
+        hour=23,
+        minute=0,
+        id="weekly_review",
         replace_existing=True,
     )
     scheduler.add_job(
@@ -506,6 +516,26 @@ def daily_review_list():
     """List all available nightly review dates (newest first)."""
     from .learning.nightly_review import list_review_dates
     return {"dates": list_review_dates()}
+
+
+@app.get("/weekly-review", tags=["meta"])
+def weekly_review():
+    """
+    Return the most recent weekly Opus 4.6 review report.
+    Generated every Sunday at 23:00 UTC — strategic 7-day retrospective.
+    """
+    from .learning.weekly_review import get_latest_review as _get
+    result = _get()
+    if result is None:
+        return {"message": "No weekly review available yet — first run this Sunday at 23:00 UTC."}
+    return result
+
+
+@app.get("/weekly-review/list", tags=["meta"])
+def weekly_review_list():
+    """List all available weekly review dates (newest first)."""
+    from .learning.weekly_review import list_review_dates as _list
+    return {"dates": _list()}
 
 
 @app.get("/improvement-status", tags=["meta"])
