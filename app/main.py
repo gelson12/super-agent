@@ -77,6 +77,7 @@ def _scheduled_health_check() -> None:
 async def _lifespan(app: FastAPI):
     from apscheduler.schedulers.background import BackgroundScheduler
     from .learning.nightly_review import run_nightly_review
+    from .learning.improvement_monitor import tick as _monitor_tick
     scheduler = BackgroundScheduler()
     scheduler.add_job(
         _scheduled_health_check,
@@ -91,6 +92,13 @@ async def _lifespan(app: FastAPI):
         hour=23,
         minute=0,
         id="nightly_review",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        _monitor_tick,
+        "interval",
+        minutes=30,
+        id="improvement_monitor",
         replace_existing=True,
     )
     scheduler.start()
@@ -384,6 +392,23 @@ def daily_review_list():
     """List all available nightly review dates (newest first)."""
     from .learning.nightly_review import list_review_dates
     return {"dates": list_review_dates()}
+
+
+@app.get("/improvement-status", tags=["meta"])
+def improvement_status():
+    """
+    Show all improvement monitors: what was applied, health check results,
+    rollback branches, and final status (monitoring / stable / rolled_back).
+    """
+    from .learning.improvement_monitor import list_monitors
+    monitors = list_monitors()
+    return {
+        "total": len(monitors),
+        "monitoring": sum(1 for m in monitors if m.get("status") == "monitoring"),
+        "stable": sum(1 for m in monitors if m.get("status") == "stable"),
+        "rolled_back": sum(1 for m in monitors if m.get("status") == "rolled_back"),
+        "monitors": monitors,
+    }
 
 
 @app.get("/wisdom", tags=["meta"])

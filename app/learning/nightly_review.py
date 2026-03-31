@@ -152,55 +152,156 @@ Set safe_to_auto_apply to true only for low-priority suggestions on non-core uti
 Always false for dispatcher.py, main.py, agents/, models/, config.py, Dockerfile, requirements.txt."""
 
 
-def _is_auto_applicable(suggestion: dict) -> bool:
-    """Return True if this suggestion qualifies for autonomous application."""
-    if suggestion.get("priority") != "low":
-        return False
-    file_path = suggestion.get("file_to_change", "")
-    return not any(file_path.startswith(core) for core in _CORE_FILES)
+def _is_core_file(file_path: str) -> bool:
+    """Return True if this file path is protected and requires human authorization."""
+    return any(file_path.startswith(core) for core in _CORE_FILES)
+
+
+def _is_low_auto_applicable(suggestion: dict) -> bool:
+    """Return True if this suggestion can be applied immediately (low priority, non-core file)."""
+    return (
+        suggestion.get("priority") == "low"
+        and not _is_core_file(suggestion.get("file_to_change", ""))
+    )
+
+
+def _is_vote_eligible(suggestion: dict) -> bool:
+    """Return True if this suggestion should go to the 5-model vote (medium/high, non-core)."""
+    return (
+        suggestion.get("priority") in ("medium", "high")
+        and not _is_core_file(suggestion.get("file_to_change", ""))
+    )
+
+
+def _get_baseline_error_rate() -> float:
+    """Snapshot current error rate for health comparison after deployment."""
+    try:
+        from .insight_log import insight_log
+        summary = insight_log.summary()
+        return float(summary.get("error_rate_pct", 0.0))
+    except Exception:
+        return 0.0
 
 
 def auto_apply_safe_suggestions(review: dict) -> list[dict]:
     """
-    For each low-priority, non-core suggestion in the review, call
-    run_self_improve_agent() to apply it autonomously.
-    Returns a list of result records (one per suggestion attempted).
-    Never raises — errors are captured per-suggestion.
+    Orchestrates autonomous application of improvement suggestions:
+
+    LOW priority + non-core file  → apply immediately, start 6h monitoring
+    MEDIUM/HIGH + non-core file   → 5-model vote (3/5 YES = proceed), start 6h monitoring
+    Core files (any priority)     → skip (requires human safe word)
+
+    Before every change the self-improve agent is instructed to create a
+    rollback branch on GitHub. After every change the 6-hour babysitter starts.
+
+    Never raises — all errors captured per-suggestion.
     """
     from ..agents.self_improve_agent import run_self_improve_agent
+    from .improvement_vote import vote_on_suggestion
+    from .improvement_monitor import start_monitoring
 
     applied = []
+
     for s in review.get("feature_improvements", []):
-        if not _is_auto_applicable(s):
+        feature_name = s.get("feature_name", "unknown")
+        file_to_change = s.get("file_to_change", "")
+        priority = s.get("priority", "low")
+
+        # ── Determine authorization ────────────────────────────────────────────
+        vote_result = None
+        authorized = False
+
+        if _is_low_auto_applicable(s):
+            authorized = True
+            print(f"[nightly_review] LOW auto-apply: {feature_name}")
+
+        elif _is_vote_eligible(s):
+            print(f"[nightly_review] {priority.upper()} — calling 5-model vote for: {feature_name}")
+            try:
+                vote_result = vote_on_suggestion(s)
+                authorized = vote_result["approved"]
+            except Exception as e:
+                applied.append({
+                    "feature_number": s.get("feature_number"),
+                    "feature_name": feature_name,
+                    "file_to_change": file_to_change,
+                    "status": "vote_error",
+                    "error": str(e),
+                })
+                continue
+
+            if not authorized:
+                print(f"[nightly_review] VOTE REJECTED ({vote_result['yes_count']}/5): {feature_name}")
+                applied.append({
+                    "feature_number": s.get("feature_number"),
+                    "feature_name": feature_name,
+                    "file_to_change": file_to_change,
+                    "status": "vote_rejected",
+                    "vote_result": vote_result,
+                })
+                continue
+
+            print(f"[nightly_review] VOTE APPROVED ({vote_result['yes_count']}/5): {feature_name}")
+
+        else:
+            # Core file — skip regardless of priority
+            print(f"[nightly_review] SKIPPED (core file): {feature_name} → {file_to_change}")
             continue
+
+        # ── Build rollback branch name ─────────────────────────────────────────
+        ts_str = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H-%M")
+        rollback_branch = f"rollback/{ts_str}"
+
+        # ── Build agent instruction ────────────────────────────────────────────
+        auth_prefix = "VOTE-AUTHORIZED" if vote_result else "PRE-APPROVED LOW PRIORITY"
         msg = (
-            f"Apply this pre-approved nightly review suggestion (LOW priority, non-core file):\n"
-            f"Feature: {s.get('feature_name')}\n"
+            f"{auth_prefix} nightly review improvement:\n\n"
+            f"STEP 1: Before making any changes, create a backup branch "
+            f"'{rollback_branch}' from the current master HEAD using github_create_branch.\n\n"
+            f"STEP 2: Apply the following minimal targeted change:\n"
+            f"Feature: {feature_name}\n"
             f"Observation: {s.get('observation')}\n"
             f"Suggested improvement: {s.get('suggested_improvement')}\n"
-            f"File to change: {s.get('file_to_change')}\n\n"
-            f"This is a pre-approved LOW priority suggestion from the nightly review. "
-            f"Apply it now using the minimal targeted change described above."
+            f"File to change: {file_to_change}\n\n"
+            f"STEP 3: Confirm the change was committed and pushed to master.\n"
+            f"Report the rollback branch name and commit hash when done."
         )
+
+        # ── Apply via self-improve agent ──────────────────────────────────────
         try:
-            result = run_self_improve_agent(msg)
+            baseline = _get_baseline_error_rate()
+            result = run_self_improve_agent(msg, authorized=authorized)
+
+            # Start 6-hour health monitoring
+            start_monitoring(
+                description=f"{feature_name} — {s.get('suggested_improvement', '')[:100]}",
+                rollback_branch=rollback_branch,
+                files_changed=[file_to_change],
+                baseline_error_rate=baseline,
+            )
+
             applied.append({
                 "feature_number": s.get("feature_number"),
-                "feature_name": s.get("feature_name"),
-                "file_to_change": s.get("file_to_change"),
+                "feature_name": feature_name,
+                "file_to_change": file_to_change,
+                "rollback_branch": rollback_branch,
                 "agent_result": result[:500],
                 "status": "applied",
+                "vote_result": vote_result,
             })
-            print(f"[nightly_review] Auto-applied: {s.get('feature_name')} → {s.get('file_to_change')}")
+            print(f"[nightly_review] Applied + monitoring started: {feature_name}")
+
         except Exception as e:
             applied.append({
                 "feature_number": s.get("feature_number"),
-                "feature_name": s.get("feature_name"),
-                "file_to_change": s.get("file_to_change"),
+                "feature_name": feature_name,
+                "file_to_change": file_to_change,
                 "status": "error",
                 "error": str(e),
+                "vote_result": vote_result,
             })
-            print(f"[nightly_review] Auto-apply error for {s.get('feature_name')}: {e}")
+            print(f"[nightly_review] Apply error for {feature_name}: {e}")
+
     return applied
 
 
