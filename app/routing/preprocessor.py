@@ -59,6 +59,9 @@ _HIGH_COMPLEXITY_SIGNALS = {
     # reasoning
     "pros and cons", "trade-offs", "tradeoffs", "first principles",
     "root cause", "implications", "consequences",
+    # debugging / isolation
+    "isolate", "troubleshoot", "diagnose", "reproduce", "minimum viable",
+    "not working", "broken", "failing",
 }
 
 _MEDIUM_SIGNALS = {

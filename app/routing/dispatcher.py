@@ -36,6 +36,13 @@ _SHELL_KEYWORDS = {
     "claude cli", "run claude",
 }
 
+_DEBUG_KEYWORDS = {
+    "not working", "502", "503", "404", "error", "failing", "broken",
+    "debug", "troubleshoot", "diagnose", "why is it", "why isn't",
+    "service down", "can't connect", "connection refused", "timeout",
+    "root cause", "fix the issue", "what's wrong", "why is my",
+}
+
 _CACHEABLE_MODELS = {"HAIKU", "GEMINI", "DEEPSEEK", "CLAUDE"}
 
 # ── Confidence scoring ────────────────────────────────────────────────────────
@@ -79,6 +86,11 @@ def _is_shell_request(message: str) -> bool:
     return any(k in lower for k in _SHELL_KEYWORDS)
 
 
+def _is_debug_request(message: str) -> bool:
+    lower = message.lower()
+    return any(k in lower for k in _DEBUG_KEYWORDS)
+
+
 # ── Extended result builder ───────────────────────────────────────────────────
 
 def _build_extended_result(base: dict, **kwargs) -> dict:
@@ -119,6 +131,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
     2.  Forced model override
     3.  Trivial query bypass → Haiku directly
     4.  Complexity scoring
+    4b. Isolation debug routing → SHELL agent with Isolate→Identify→Fix→Integrate stance
     5.  Keyword routing: SHELL → GITHUB
     6.  Adaptive model selection (Haiku ceiling from adapter)
     7.  Cache lookup
@@ -224,6 +237,19 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
 
     # ── 4. Complexity score ───────────────────────────────────────────────────
     complexity = score_complexity(message)
+
+    # ── 4b. Isolation debug routing ──────────────────────────────────────────
+    if _is_debug_request(message):
+        response = run_shell_agent(message, authorized=authorized, debug_mode=True)
+        insight_log.record(message, "SHELL", response, "isolation_debug", complexity, session_id)
+        adapter.tick()
+        return _build_extended_result({
+            "model_used": "SHELL",
+            "response": response,
+            "routed_by": "isolation_debug",
+            "complexity": complexity,
+            "cache_hit": False,
+        })
 
     # ── 5. Keyword routing ────────────────────────────────────────────────────
     if _is_shell_request(message):
