@@ -6,6 +6,7 @@ from ..models.deepseek import ask_deepseek
 from ..agents.github_agent import run_github_agent
 from ..agents.shell_agent import run_shell_agent
 from ..agents.n8n_agent import run_n8n_agent
+from ..agents.self_improve_agent import run_self_improve_agent
 from ..security.safe_word import check_authorization
 from ..cache.response_cache import cache
 from ..learning.insight_log import insight_log
@@ -50,6 +51,30 @@ _N8N_KEYWORDS = {
     "create workflow", "update workflow", "activate workflow",
     "deactivate workflow", "run workflow", "debug workflow",
     "list workflows", "get workflow",
+}
+
+_SELF_IMPROVE_KEYWORDS = {
+    # Self-repair
+    "fix yourself", "fix your", "heal yourself", "repair yourself",
+    "auto fix", "autofix yourself", "self repair", "self-repair", "self heal",
+    "auto repair", "auto-fix", "auto-heal",
+    # Health / diagnosis
+    "check your health", "health check", "how are you doing", "diagnose yourself",
+    "what's failing", "what is failing", "show your errors", "show failures",
+    "system health", "are you healthy", "check health",
+    # Self-improvement
+    "improve yourself", "improve your", "upgrade yourself", "update yourself",
+    "make yourself better", "evolve", "learn from", "build algorithm",
+    "build new algorithm", "create algorithm", "generate algorithm",
+    # Infrastructure management
+    "railway status", "railway logs", "redeploy", "deployment status",
+    "check railway", "railway variables", "restart yourself",
+    "check database", "db health", "session stats", "error stats",
+    "failure patterns", "check cloudinary", "storage health",
+    # Explicit self-modification
+    "read your code", "read your source", "fix your code",
+    "update your code", "modify yourself", "rewrite yourself",
+    "patch yourself", "hotfix yourself",
 }
 
 _CACHEABLE_MODELS = {"HAIKU", "GEMINI", "DEEPSEEK", "CLAUDE"}
@@ -103,6 +128,11 @@ def _is_debug_request(message: str) -> bool:
 def _is_n8n_request(message: str) -> bool:
     lower = message.lower()
     return any(k in lower for k in _N8N_KEYWORDS)
+
+
+def _is_self_improve_request(message: str) -> bool:
+    lower = message.lower()
+    return any(k in lower for k in _SELF_IMPROVE_KEYWORDS)
 
 
 # ── Extended result builder ───────────────────────────────────────────────────
@@ -252,7 +282,20 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
     # ── 4. Complexity score ───────────────────────────────────────────────────
     complexity = score_complexity(message)
 
-    # ── 4b. Isolation debug routing ──────────────────────────────────────────
+    # ── 4b. Self-improvement routing (highest priority after debug) ──────────
+    if _is_self_improve_request(message):
+        response = run_self_improve_agent(message, authorized=authorized)
+        insight_log.record(message, "SELF_IMPROVE", response, "self_improve", complexity, session_id)
+        adapter.tick()
+        return _build_extended_result({
+            "model_used": "SELF_IMPROVE",
+            "response": response,
+            "routed_by": "self_improve",
+            "complexity": complexity,
+            "cache_hit": False,
+        })
+
+    # ── 4c. Isolation debug routing ───────────────────────────────────────────
     if _is_debug_request(message):
         response = run_shell_agent(message, authorized=authorized, debug_mode=True)
         insight_log.record(message, "SHELL", response, "isolation_debug", complexity, session_id)
