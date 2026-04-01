@@ -32,15 +32,18 @@ RUN code-server --install-extension GitHub.vscode-pull-request-github \
     && code-server --install-extension Anthropic.claude-code \
     && echo "[docker] VS Code extensions installed."
 
-# ── Java 17 (Android SDK requirement) ────────────────────────────────────────
+# ── Java (Android SDK requirement) ────────────────────────────────────────────
+# Use default-jdk-headless for Debian trixie compatibility (resolves to JDK 21).
+# Android SDK build-tools 34+ require Java 17+ — JDK 21 satisfies this.
+# JAVA_HOME uses /usr/lib/jvm/default-java symlink (always valid regardless of version).
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    openjdk-17-jdk \
+    default-jdk-headless \
     clang cmake ninja-build pkg-config \
-    libgtk-2.0-dev \
-    unzip xz-utils zip lib32stdc++6 \
+    libgtk-3.0-dev \
+    unzip xz-utils zip \
     && rm -rf /var/lib/apt/lists/*
 
-ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+ENV JAVA_HOME=/usr/lib/jvm/default-java
 
 # ── Flutter SDK (stable 3.27.4) ───────────────────────────────────────────────
 ENV FLUTTER_VERSION=3.27.4

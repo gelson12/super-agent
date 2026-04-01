@@ -140,6 +140,16 @@ Produce a structured improvement report in the following JSON format — no othe
   "new_algorithm_ideas": [
     {{"name": "<algorithm name>", "purpose": "<what problem it solves>", "inputs": "<what data it needs>"}}
   ],
+  "required_env_vars": [
+    {{
+      "service": "super-agent | n8n | shared",
+      "variable_name": "EXAMPLE_VAR",
+      "suggested_value": "<value or description if secret>",
+      "reason": "<why this env var is needed>",
+      "is_secret": true,
+      "priority": "low|medium|high"
+    }}
+  ],
   "routing_observations": "<observations about routing accuracy, misroutes, confidence thresholds>",
   "model_performance_notes": "<which models performed well/poorly today and why>",
   "tomorrow_priorities": ["<top 3 things to address tomorrow>"]
@@ -305,6 +315,96 @@ def auto_apply_safe_suggestions(review: dict) -> list[dict]:
     return applied
 
 
+def apply_env_var_proposals(review: dict) -> list[dict]:
+    """
+    Process required_env_vars from the review.
+
+    All env var changes require a 3/5 vote — they are never auto-applied
+    regardless of priority, because they affect production credentials/config.
+
+    After approval:
+      1. Call railway_set_variable to set the variable on the target service
+      2. Trigger railway_redeploy so the change takes effect immediately
+    """
+    from .improvement_vote import vote_on_suggestion
+    from ..tools.railway_tools import railway_set_variable, railway_redeploy
+
+    results = []
+    services_redeployed: set[str] = set()
+
+    for ev in review.get("required_env_vars", []):
+        var_name = ev.get("variable_name", "?")
+        service = ev.get("service", "super-agent")
+        reason = ev.get("reason", "")
+        priority = ev.get("priority", "medium")
+        is_secret = ev.get("is_secret", True)
+        suggested_value = ev.get("suggested_value", "")
+
+        # Build a synthetic suggestion dict for the voter (reuses the same mechanism)
+        vote_suggestion = {
+            "feature_name": f"Env var: {var_name}",
+            "priority": priority,
+            "observation": f"Review proposed adding/updating environment variable on {service} service.",
+            "suggested_improvement": f"Set {var_name}={suggested_value if not is_secret else '<secret>'} on {service}. Reason: {reason}",
+            "file_to_change": f"railway:{service}",  # signals it's an env change not a file
+        }
+
+        print(f"[nightly_review] ENV VAR vote required for {var_name} on {service}")
+        try:
+            vote_result = vote_on_suggestion(vote_suggestion)
+        except Exception as e:
+            results.append({"variable_name": var_name, "service": service, "status": "vote_error", "error": str(e)})
+            continue
+
+        if not vote_result["approved"]:
+            print(f"[nightly_review] ENV VAR REJECTED ({vote_result['yes_count']}/5): {var_name}")
+            results.append({"variable_name": var_name, "service": service, "status": "vote_rejected", "vote_result": vote_result})
+            continue
+
+        print(f"[nightly_review] ENV VAR APPROVED ({vote_result['yes_count']}/5): {var_name}")
+
+        # Apply — only set if a concrete value was suggested and it's not marked as secret
+        if suggested_value and not is_secret:
+            try:
+                set_result = railway_set_variable.invoke({
+                    "variable_name": var_name,
+                    "value": suggested_value,
+                    "service_name": service,
+                })
+                print(f"[nightly_review] Set {var_name} on {service}: {set_result[:100]}")
+
+                # Redeploy the service once per service (not once per variable)
+                if service not in services_redeployed:
+                    redeploy_result = railway_redeploy.invoke({"service_name": service})
+                    services_redeployed.add(service)
+                    print(f"[nightly_review] Redeployed {service}: {redeploy_result[:100]}")
+                else:
+                    redeploy_result = "already redeployed this run"
+
+                results.append({
+                    "variable_name": var_name,
+                    "service": service,
+                    "status": "applied",
+                    "vote_result": vote_result,
+                    "set_result": set_result[:200],
+                    "redeploy_result": redeploy_result[:200],
+                })
+            except Exception as e:
+                results.append({"variable_name": var_name, "service": service, "status": "error", "error": str(e), "vote_result": vote_result})
+        else:
+            # Secret value — log approval but don't auto-set; human must supply the actual value
+            results.append({
+                "variable_name": var_name,
+                "service": service,
+                "status": "approved_needs_secret",
+                "message": f"Approved by vote but requires a secret value — set {var_name} manually in Railway for {service}.",
+                "vote_result": vote_result,
+            })
+            print(f"[nightly_review] {var_name} approved but is secret — human must set the value")
+
+    return results
+
+
 def run_nightly_review() -> dict:
     """
     Entry point called by APScheduler at 23:00 UTC.
@@ -351,12 +451,19 @@ def run_nightly_review() -> dict:
         out_path.write_text(json.dumps(review, indent=2))
         print(f"[nightly_review] Review written to {out_path}")
 
-        # Auto-apply low-priority, non-core suggestions
+        # Auto-apply code suggestions (low → immediate, medium/high → vote)
         applied = auto_apply_safe_suggestions(review)
         if applied:
             review["_auto_applied"] = applied
+
+        # Process env var proposals (always voted, then auto-deploy if approved)
+        env_applied = apply_env_var_proposals(review)
+        if env_applied:
+            review["_env_vars_applied"] = env_applied
+
+        if applied or env_applied:
             out_path.write_text(json.dumps(review, indent=2))
-            print(f"[nightly_review] Auto-applied {len(applied)} low-risk suggestion(s)")
+            print(f"[nightly_review] Applied {len(applied)} suggestion(s), {len(env_applied)} env var(s)")
 
         return review
 

@@ -173,6 +173,16 @@ Produce a structured weekly improvement report in the following JSON format — 
   "new_algorithm_ideas": [
     {{"name": "<algorithm name>", "purpose": "<problem it solves>", "inputs": "<data it needs>", "priority": "low|medium|high"}}
   ],
+  "required_env_vars": [
+    {{
+      "service": "super-agent | n8n | shared",
+      "variable_name": "EXAMPLE_VAR",
+      "suggested_value": "<value or description if secret>",
+      "reason": "<why this env var is needed for the proposed improvement>",
+      "is_secret": true,
+      "priority": "low|medium|high"
+    }}
+  ],
   "next_week_priorities": ["<top 5 things to address next week>"],
   "comparison_to_last_week": "<if you can infer trends, note them; otherwise say: insufficient history>"
 }}
@@ -364,12 +374,20 @@ def run_weekly_review() -> dict:
         out_path.write_text(json.dumps(review, indent=2))
         print(f"[weekly_review] Review written to {out_path}")
 
-        # Apply suggestions via same vote + monitor pipeline
+        # Apply code suggestions via same vote + monitor pipeline
         applied = _apply_suggestions(review)
         if applied:
             review["_auto_applied"] = applied
+
+        # Process env var proposals (voted, then auto-deploy if approved)
+        from .nightly_review import apply_env_var_proposals
+        env_applied = apply_env_var_proposals(review)
+        if env_applied:
+            review["_env_vars_applied"] = env_applied
+
+        if applied or env_applied:
             out_path.write_text(json.dumps(review, indent=2))
-            print(f"[weekly_review] Applied {len(applied)} suggestion(s)")
+            print(f"[weekly_review] Applied {len(applied)} suggestion(s), {len(env_applied)} env var(s)")
 
         return review
 
