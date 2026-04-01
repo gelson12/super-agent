@@ -46,17 +46,20 @@ ENV JAVA_HOME=/usr/lib/jvm/default-java
 # ── Flutter SDK (no precache — first flutter build downloads what it needs) ──
 ENV FLUTTER_VERSION=3.27.4
 ENV FLUTTER_HOME=/opt/flutter
+# PATH must be set BEFORE the RUN that calls flutter (ENV applies to next layers only)
+ENV PATH="${FLUTTER_HOME}/bin:${PATH}"
 RUN curl -fsSL --retry 3 --retry-delay 5 \
     "https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_${FLUTTER_VERSION}-stable.tar.xz" \
     | tar xJ -C /opt/ \
     && git config --global --add safe.directory /opt/flutter \
-    && flutter config --no-analytics \
+    && /opt/flutter/bin/flutter config --no-analytics \
     && echo "[docker] Flutter ${FLUTTER_VERSION} installed."
-ENV PATH="${FLUTTER_HOME}/bin:${PATH}"
 
 # ── Android SDK command-line tools (platforms + build-tools only, skip NDK) ──
 ENV ANDROID_HOME=/opt/android-sdk
 ENV ANDROID_SDK_ROOT=/opt/android-sdk
+# PATH set before the RUN so sdkmanager and flutter are both resolvable
+ENV PATH="${ANDROID_HOME}/cmdline-tools/latest/bin:${ANDROID_HOME}/platform-tools:${PATH}"
 RUN mkdir -p ${ANDROID_HOME}/cmdline-tools \
     && curl -fsSL --retry 3 --retry-delay 5 \
        https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip \
@@ -64,11 +67,11 @@ RUN mkdir -p ${ANDROID_HOME}/cmdline-tools \
     && unzip -q /tmp/cmdtools.zip -d /tmp/cmdtools \
     && mv /tmp/cmdtools/cmdline-tools ${ANDROID_HOME}/cmdline-tools/latest \
     && rm -rf /tmp/cmdtools /tmp/cmdtools.zip \
-    && yes | sdkmanager --licenses \
-    && sdkmanager "platforms;android-34" "build-tools;34.0.0" "platform-tools" \
-    && flutter config --android-sdk ${ANDROID_HOME} \
+    && yes | ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager --licenses \
+    && ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager \
+       "platforms;android-34" "build-tools;34.0.0" "platform-tools" \
+    && /opt/flutter/bin/flutter config --android-sdk ${ANDROID_HOME} \
     && echo "[docker] Android SDK ready."
-ENV PATH="${ANDROID_HOME}/cmdline-tools/latest/bin:${ANDROID_HOME}/platform-tools:${PATH}"
 
 # ── VS Code / code-server extensions (Dart + Flutter) ────────────────────────
 RUN code-server --install-extension Dart-Code.dart-code \
