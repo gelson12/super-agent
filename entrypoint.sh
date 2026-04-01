@@ -18,10 +18,17 @@ if [ -n "$GITHUB_PAT" ]; then
 fi
 
 # ── Railway CLI authentication ────────────────────────────────────────────────
+# Newer Railway CLI reads RAILWAY_TOKEN env var automatically — no login command needed
 if [ -n "$RAILWAY_TOKEN" ]; then
-    railway login --token "${RAILWAY_TOKEN}" 2>/dev/null && \
-        echo "[entrypoint] Railway CLI authenticated." || \
-        echo "[entrypoint] WARNING: Railway CLI login failed — check RAILWAY_TOKEN."
+    export RAILWAY_TOKEN="${RAILWAY_TOKEN}"
+    # Verify the token works silently
+    if railway whoami >/dev/null 2>&1; then
+        echo "[entrypoint] Railway CLI authenticated ($(railway whoami 2>/dev/null))."
+    else
+        echo "[entrypoint] WARNING: RAILWAY_TOKEN is set but Railway CLI auth failed — token may be expired."
+    fi
+else
+    echo "[entrypoint] WARNING: RAILWAY_TOKEN not set — autonomous redeploy disabled."
 fi
 
 # ── Workspace for repos ────────────────────────────────────────────────────────
