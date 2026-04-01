@@ -32,46 +32,43 @@ RUN code-server --install-extension GitHub.vscode-pull-request-github \
     && code-server --install-extension Anthropic.claude-code \
     && echo "[docker] VS Code extensions installed."
 
-# ── Java (Android SDK requirement) ───────────────────────────────────────────
+# ── Java + Android tools (minimal — only what APK builds need) ───────────────
 RUN apt-get update && apt-get install -y --no-install-recommends \
     default-jdk-headless \
-    clang cmake ninja-build pkg-config \
-    libgtk-3.0-dev libblkid-dev \
     unzip xz-utils zip \
     && rm -rf /var/lib/apt/lists/*
 
+# Resolve JAVA_HOME dynamically so it works regardless of JDK version
+RUN JAVA_BIN=$(readlink -f $(which java)) \
+    && echo "JAVA_HOME=$(dirname $(dirname $JAVA_BIN))" >> /etc/environment
 ENV JAVA_HOME=/usr/lib/jvm/default-java
 
-# ── Flutter SDK ───────────────────────────────────────────────────────────────
+# ── Flutter SDK (no precache — first flutter build downloads what it needs) ──
 ENV FLUTTER_VERSION=3.27.4
 ENV FLUTTER_HOME=/opt/flutter
-RUN curl -fsSL \
+RUN curl -fsSL --retry 3 --retry-delay 5 \
     "https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_${FLUTTER_VERSION}-stable.tar.xz" \
     | tar xJ -C /opt/ \
-    && git config --global --add safe.directory /opt/flutter
+    && git config --global --add safe.directory /opt/flutter \
+    && flutter config --no-analytics \
+    && echo "[docker] Flutter ${FLUTTER_VERSION} installed."
 ENV PATH="${FLUTTER_HOME}/bin:${PATH}"
-RUN flutter config --no-analytics && flutter precache --android
 
-# ── Android SDK command-line tools ────────────────────────────────────────────
+# ── Android SDK command-line tools (platforms + build-tools only, skip NDK) ──
 ENV ANDROID_HOME=/opt/android-sdk
 ENV ANDROID_SDK_ROOT=/opt/android-sdk
 RUN mkdir -p ${ANDROID_HOME}/cmdline-tools \
-    && curl -fsSL https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip \
+    && curl -fsSL --retry 3 --retry-delay 5 \
+       https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip \
        -o /tmp/cmdtools.zip \
     && unzip -q /tmp/cmdtools.zip -d /tmp/cmdtools \
     && mv /tmp/cmdtools/cmdline-tools ${ANDROID_HOME}/cmdline-tools/latest \
-    && rm -rf /tmp/cmdtools /tmp/cmdtools.zip
+    && rm -rf /tmp/cmdtools /tmp/cmdtools.zip \
+    && yes | sdkmanager --licenses \
+    && sdkmanager "platforms;android-34" "build-tools;34.0.0" "platform-tools" \
+    && flutter config --android-sdk ${ANDROID_HOME} \
+    && echo "[docker] Android SDK ready."
 ENV PATH="${ANDROID_HOME}/cmdline-tools/latest/bin:${ANDROID_HOME}/platform-tools:${PATH}"
-
-RUN yes | sdkmanager --licenses \
-    && sdkmanager \
-       "platforms;android-34" \
-       "build-tools;34.0.0" \
-       "platform-tools" \
-       "ndk;26.3.11579264"
-
-RUN flutter config --android-sdk ${ANDROID_HOME} \
-    && flutter doctor 2>&1 | head -20 | sed 's/^/[docker-build] /'
 
 # ── VS Code / code-server extensions (Dart + Flutter) ────────────────────────
 RUN code-server --install-extension Dart-Code.dart-code \
