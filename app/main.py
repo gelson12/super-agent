@@ -303,6 +303,10 @@ def chat_stream(req: ChatRequest, request: Request):
                     buf = ""
             if buf.strip():
                 yield f"data: {buf.rstrip().replace(chr(10), chr(92) + 'n')}\n\n"
+            # Send routing metadata so the frontend can show the correct model/agent label
+            _model = result.get("model_used", "AGENT")
+            _route = result.get("routed_by", "dispatcher")
+            yield f"data: [META:{_model}·{_route}]\n\n"
             yield "data: [DONE]\n\n"
 
         return StreamingResponse(_generate_routed(), media_type="text/event-stream", headers=_SSE_HEADERS)
@@ -689,6 +693,51 @@ def storage_upload(req: UploadRequest):
         return upload_file(req.file_path, req.resource_type, req.public_id)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Upload failed: {e}")
+
+
+# ── Bridge website form endpoints ────────────────────────────────────────────
+
+class LeadRequest(BaseModel):
+    name: str = ""
+    email: str = ""
+    company: str = ""
+    service: str = ""
+    message: str = ""
+    language: str = "en"
+    timestamp: str = ""
+
+
+class NewsletterRequest(BaseModel):
+    email: str
+    timestamp: str = ""
+
+
+@app.post("/leads", tags=["website"])
+def submit_lead(req: LeadRequest):
+    """Store a contact form submission from the Bridge commercial website."""
+    import json as _json
+    from pathlib import Path as _Path
+    leads_file = _Path("/workspace/bridge_leads.jsonl")
+    try:
+        with leads_file.open("a") as f:
+            f.write(_json.dumps(req.model_dump()) + "\n")
+    except Exception:
+        pass  # graceful fallback if /workspace not writable
+    return {"ok": True}
+
+
+@app.post("/newsletter", tags=["website"])
+def submit_newsletter(req: NewsletterRequest):
+    """Store a newsletter signup from the Bridge commercial website."""
+    import json as _json
+    from pathlib import Path as _Path
+    nl_file = _Path("/workspace/bridge_newsletter.jsonl")
+    try:
+        with nl_file.open("a") as f:
+            f.write(_json.dumps(req.model_dump()) + "\n")
+    except Exception:
+        pass
+    return {"ok": True}
 
 
 # ── Multimodal ────────────────────────────────────────────────────────────────

@@ -588,28 +588,37 @@
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
 
+        let streamMeta = 'CLAUDE · streaming';
+        let sseBuffer = '';
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
-          const chunk = decoder.decode(value, { stream: true });
-          for (const line of chunk.split('\n')) {
-            if (!line.startsWith('data: ')) continue;
-            const token = line.slice(6);
-            if (token === '[DONE]') break;
-            if (token.startsWith('[Stream error')) {
-              streamOk = false;
-              break;
+          sseBuffer += decoder.decode(value, { stream: true });
+          // Process complete SSE events (terminated by \n\n)
+          const events = sseBuffer.split('\n\n');
+          sseBuffer = events.pop(); // last chunk may be incomplete
+          for (const event of events) {
+            for (const line of event.split('\n')) {
+              if (!line.startsWith('data: ')) continue;
+              const token = line.slice(6).trim();
+              if (token === '[DONE]') break;
+              if (token.startsWith('[Stream error')) { streamOk = false; break; }
+              if (token.startsWith('[META:')) {
+                streamMeta = token.slice(6, -1).replace('·', ' · via ');
+                continue;
+              }
+              // Decode encoded newlines (\n literal) back to real newlines
+              fullText += token.replace(/\\n/g, '\n');
+              bubble.innerHTML = renderMarkdown(fullText) + '<span class="cursor">▍</span>';
+              chat.scrollTop = chat.scrollHeight;
             }
-            fullText += token.replace(/\\n/g, '\n');
-            bubble.innerHTML = renderMarkdown(fullText) + '<span class="cursor">▍</span>';
-            chat.scrollTop = chat.scrollHeight;
           }
         }
         // Remove cursor, render final markdown
         bubble.innerHTML = renderMarkdown(fullText);
         const meta = document.createElement('div');
         meta.className = 'meta';
-        meta.textContent = 'CLAUDE · streaming';
+        meta.textContent = streamMeta;
         const sp = document.createElement('button');
         sp.className = 'speak-btn'; sp.title = 'Read aloud'; sp.textContent = '🔊';
         sp.onclick = () => speakText(fullText, sp);
