@@ -286,20 +286,33 @@ def chat_stream(req: ChatRequest, request: Request):
     if _needs_routing:
         # Run the full dispatcher (agents, tools, routing) synchronously,
         # then SSE the complete response in word-boundary chunks.
-        result = dispatch(msg, session_id=req.session_id)
+        try:
+            result = dispatch(msg, session_id=req.session_id)
+        except Exception as _dispatch_err:
+            def _generate_dispatch_err():
+                err = str(_dispatch_err)[:300].replace(chr(10), " ")
+                yield f"data: Agent encountered an error: {err}\n\n"
+                yield "data: [META:ERROR·dispatch_error·0]\n\n"
+                yield "data: [DONE]\n\n"
+            return StreamingResponse(_generate_dispatch_err(), media_type="text/event-stream", headers=_SSE_HEADERS)
+
         response_text = result["response"]
         if not response_text.startswith("["):
             append_exchange(req.session_id, msg, response_text)
 
         def _generate_routed():
-            # Chunk at word boundaries; encode newlines as \n literal so the
-            # frontend can decode them back to real newlines for markdown rendering.
-            words = response_text.split(" ")
+            # Normalize: replace bare newlines with space+newline+space so that
+            # words on adjacent lines don't merge (e.g. "This\nis" → "This \n is").
+            # Then split on spaces, filter empty, join with a space in the buffer.
+            # Newlines are encoded as \n literals for SSE transport; frontend decodes them.
+            normalized = response_text.replace("\n", " \n ")
+            words = [w for w in normalized.split(" ") if w]
             buf = ""
             for word in words:
                 buf += word + " "
                 if len(buf) >= 60:
-                    yield f"data: {buf.rstrip().replace(chr(10), chr(92) + 'n')}\n\n"
+                    chunk = buf.rstrip().replace(chr(10), chr(92) + "n")
+                    yield f"data: {chunk}\n\n"
                     buf = ""
             if buf.strip():
                 yield f"data: {buf.rstrip().replace(chr(10), chr(92) + 'n')}\n\n"
@@ -312,16 +325,24 @@ def chat_stream(req: ChatRequest, request: Request):
 
         return StreamingResponse(_generate_routed(), media_type="text/event-stream", headers=_SSE_HEADERS)
 
-    # Conversational — stream token-by-token with capabilities-aware system prompt
+    # Conversational — stream token-by-token with capabilities-aware + memory system prompt
+    from .memory.vector_memory import get_memory_context as _get_mem, store_memory as _store_mem
     _caps = build_capabilities_block(settings)
+    _mem_ctx = _get_mem(msg)
+    _learned = _adapter.get_learned_context() or ""
+    # Prepend cross-session memories so the model always sees past context
+    if _mem_ctx:
+        _learned = _mem_ctx + "\n" + _learned
     system = SYSTEM_PROMPT_CLAUDE.format(
         capabilities=_caps,
-        learned_context=_adapter.get_learned_context() or "",
+        learned_context=_learned,
     )
 
     client = _anthropic.Anthropic(api_key=settings.anthropic_api_key)
+    _mem_count = _mem_ctx.count("\n-") if _mem_ctx else 0
 
     def _generate():
+        full_response = []
         try:
             with client.messages.stream(
                 model="claude-sonnet-4-6",
@@ -330,8 +351,15 @@ def chat_stream(req: ChatRequest, request: Request):
                 messages=[{"role": "user", "content": msg}],
             ) as stream:
                 for text in stream.text_stream:
+                    full_response.append(text)
                     # Encode newlines as \n literal — frontend decodes back to real newlines
                     yield f"data: {text.replace(chr(10), chr(92) + 'n')}\n\n"
+            # Persist the full exchange to long-term memory and session history
+            if full_response:
+                _complete = "".join(full_response)
+                _store_mem(req.session_id, f"Q: {msg[:300]} A: {_complete[:300]}")
+                append_exchange(req.session_id, msg, _complete)
+            yield f"data: [META:CLAUDE·conversational·{_mem_count}]\n\n"
             yield "data: [DONE]\n\n"
         except Exception as e:
             yield f"data: [Stream error: {e}]\n\n"

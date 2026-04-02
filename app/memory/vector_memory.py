@@ -14,6 +14,7 @@ import json
 import os
 import re
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 # ── Tier 1: pgvector ──────────────────────────────────────────────────────────
@@ -134,15 +135,45 @@ def _tokenize(text: str) -> set[str]:
     return {w for w in re.findall(r"[a-z0-9]+", text.lower()) if len(w) > 2}
 
 
+# ── Topic auto-extraction ────────────────────────────────────────────────────
+_TOPIC_MAP: dict[str, set[str]] = {
+    "n8n":        {"n8n", "workflow", "automation", "trigger", "webhook", "execution", "node"},
+    "github":     {"github", "repo", "repository", "commit", "branch", "push", "pull", "pr"},
+    "railway":    {"railway", "deploy", "deployment", "service", "redeploy", "logs", "restart"},
+    "flutter":    {"flutter", "apk", "android", "mobile", "dart", "build", "ios"},
+    "memory":     {"memory", "remember", "recall", "forgot", "past", "history", "session"},
+    "vscode":     {"vscode", "codeserver", "editor", "extension", "workspace", "terminal"},
+    "cloudinary": {"cloudinary", "upload", "storage", "image", "artifact", "download"},
+    "debug":      {"debug", "error", "fix", "broken", "failing", "issue", "problem", "404", "502"},
+    "instagram":  {"instagram", "facebook", "genspark", "social", "post", "feed"},
+    "apk":        {"apk", "android", "build", "flutter", "mobile", "app"},
+}
+
+
+def _extract_topics(tokens: set[str]) -> list[str]:
+    """Return matching topic labels for a set of tokens."""
+    return [topic for topic, kws in _TOPIC_MAP.items() if tokens & kws] or ["general"]
+
+
 def _json_store(session_id: str, content: str) -> None:
-    """Append one memory record to the JSONL file."""
+    """
+    Append one memory record to the JSONL file.
+    Embeds ISO timestamp + auto-extracted topics directly into the stored content
+    so that when injected into a prompt the model sees WHEN and WHAT the memory is about.
+    """
     try:
         path = _json_path()
+        tokens = _tokenize(content)
+        topics = _extract_topics(tokens)
+        iso_ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        # Prefix metadata into the content string — visible to the model when retrieved
+        tagged = f"[{iso_ts}][topics:{','.join(topics)}] {content[:880]}"
         record = {
             "session_id": session_id,
-            "content": content[:1000],
+            "content": tagged,
             "ts": time.time(),
-            "tokens": list(_tokenize(content)),
+            # Include topic labels as searchable tokens so topic-keyword queries match
+            "tokens": list(tokens | set(topics)),
         }
         with path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(record) + "\n")
@@ -230,7 +261,7 @@ def store_memory(session_id: str, content: str) -> None:
     _json_store(session_id, content)
 
 
-def retrieve_memories(query: str, top_k: int = 5) -> list[str]:
+def retrieve_memories(query: str, top_k: int = 8) -> list[str]:
     """
     Return the top-k most relevant past memories for a query.
     Uses pgvector if available, keyword scoring otherwise.
@@ -242,13 +273,18 @@ def retrieve_memories(query: str, top_k: int = 5) -> list[str]:
     return _json_retrieve(query, top_k)
 
 
-def get_memory_context(query: str) -> str:
+def get_memory_context(query: str, top_k: int = 8) -> str:
     """
     Called at the start of every dispatch.
-    Returns a formatted context block of relevant past memories, or empty string.
+    Returns a formatted context block of relevant past memories including timestamps,
+    or empty string. top_k=8 ensures richer cross-session recall.
     """
-    memories = retrieve_memories(query)
+    memories = retrieve_memories(query, top_k=top_k)
     if not memories:
         return ""
     lines = "\n".join(f"- {m}" for m in memories)
-    return f"[Relevant context from past sessions]\n{lines}\n\n"
+    return (
+        "[Cross-session memory — these are real past interactions, ordered by relevance]\n"
+        f"{lines}\n"
+        "[End of past context — reference these naturally in your response when relevant]\n\n"
+    )

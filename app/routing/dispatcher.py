@@ -48,8 +48,10 @@ _SHELL_KEYWORDS = {
 _DEBUG_KEYWORDS = {
     "not working", "502", "503", "404", "error", "failing", "broken",
     "debug", "troubleshoot", "diagnose", "why is it", "why isn't",
-    "service down", "can't connect", "connection refused", "timeout",
+    "service down", "can't connect", "cannot connect", "connection refused", "timeout",
     "root cause", "fix the issue", "what's wrong", "why is my",
+    "unreachable", "can't reach", "cannot reach", "not reachable", "application not found",
+    "instance unavailable", "not responding", "no response", "keeps failing",
 }
 
 _N8N_KEYWORDS = {
@@ -65,6 +67,12 @@ _SELF_IMPROVE_KEYWORDS = {
     "fix yourself", "fix your", "heal yourself", "repair yourself",
     "auto fix", "autofix yourself", "self repair", "self-repair", "self heal",
     "auto repair", "auto-fix", "auto-heal",
+    # Autonomous investigation triggers — user asking agent to act on its own
+    "fix it yourself", "fix it", "can you not fix", "cant you fix",
+    "not fix it", "investigate", "figure it out", "look into it",
+    "resolve it", "sort it out", "handle it yourself", "do it yourself",
+    "find out what", "find out why", "find the issue", "find the problem",
+    "why is it", "what is wrong", "what went wrong", "find and fix",
     # Health / diagnosis
     "check your health", "health check", "how are you doing", "diagnose yourself",
     "what's failing", "what is failing", "show your errors", "show failures",
@@ -78,6 +86,8 @@ _SELF_IMPROVE_KEYWORDS = {
     "check railway", "railway variables", "restart yourself",
     "check database", "db health", "session stats", "error stats",
     "failure patterns", "check cloudinary", "storage health",
+    "check n8n", "n8n status", "check infrastructure", "infrastructure status",
+    "check all services", "service status", "are all services",
     # Explicit self-modification
     "read your code", "read your source", "fix your code",
     "update your code", "modify yourself", "rewrite yourself",
