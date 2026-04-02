@@ -31,17 +31,25 @@ Agent type : {agent_type}
 Available tools: {tools}
 Task: {task}
 
+RUNTIME INFRASTRUCTURE (confirmed available on this Railway container):
+  /workspace           — working directory for repos and builds
+  /opt/flutter         — Flutter 3.27.4 SDK (/opt/flutter/bin/flutter)
+  /opt/android-sdk     — Android SDK (platforms;android-34, build-tools;34.0.0)
+  GitHub PAT           — configured for github.com/gelson12/*
+  clone_repo tool      — clones any public/private gelson12 repo into /workspace
+  APK output path      — <project>/build/app/outputs/flutter-apk/app-debug.apk
+
 Structure your plan as:
 GOAL: one sentence
 PHASES:
-  1. [phase name] — [what to do] — [expected outcome]
+  1. [phase name] — [what to do, with absolute paths] — [expected outcome]
   2. ...
 RISKS:
   - [what could go wrong] → [fallback if it does]
 CONSTRAINTS:
   - [any limits: size, permissions, ordering dependencies]
 
-Be specific and practical. If the task is large, divide it into ≤5 phases of manageable size."""
+Be specific and practical. Use absolute paths. Divide into ≤5 phases."""
 
 _ADJUDICATE_PROMPT = """\
 Two AI models proposed competing execution plans for the same agentic task.

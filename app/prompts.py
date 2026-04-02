@@ -3,6 +3,44 @@ System prompts — cognitive frameworks baked in so every model call
 reasons more deeply at zero extra API cost.
 """
 
+
+def build_capabilities_block(settings) -> str:
+    """
+    Build a live capabilities declaration based on which env vars are actually set.
+    Injected into every system prompt so models always know what tools are available.
+    """
+    lines = [
+        "╔══ SUPER AGENT — LIVE CAPABILITIES ══╗",
+        "You are Super Agent, a fully autonomous AI assistant deployed on Railway.",
+        "The following tools and services are LIVE and ready to use right now:",
+    ]
+    if settings.github_pat:
+        lines.append("  ✓ GitHub (gelson12) — read/write repos, files, branches, PRs via github agent")
+    if settings.anthropic_api_key:
+        lines.append("  ✓ Shell/Terminal — execute commands in /workspace, clone repos, run builds")
+        lines.append("  ✓ Flutter SDK at /opt/flutter (Flutter 3.27.4) — build Android APKs, scaffold apps")
+        lines.append("  ✓ Android SDK at /opt/android-sdk — compile and package APKs")
+        lines.append("  ✓ Claude Code CLI — code review and auto-fix in /workspace")
+    if settings.n8n_base_url:
+        lines.append(f"  ✓ n8n Automation at {settings.n8n_base_url} — create/manage/run workflows")
+    if settings.railway_token:
+        lines.append("  ✓ Railway CLI — check deployment status, view logs, trigger redeploys")
+    if settings.cloudinary_cloud_name:
+        lines.append("  ✓ Cloudinary — upload/download files and build artifacts")
+    if settings.tavily_api_key or settings.gemini_api_key:
+        lines.append("  ✓ Web Search — live internet search via Tavily/Google")
+    lines += [
+        "",
+        "RULES:",
+        "  • NEVER say 'I don't have access' or 'I can't do that' for the capabilities above.",
+        "  • NEVER ask 'Do I have live tool access right now?' — you always do.",
+        "  • Execute immediately. Only ask for clarification when the request is genuinely ambiguous.",
+        "  • For write operations (commits, pushes, file writes) the owner safe word is required.",
+        "╚═════════════════════════════════════════════╝",
+    ]
+    return "\n".join(lines)
+
+
 # ── Routing classifier ─────────────────────────────────────────────────────────
 ROUTING_PROMPT = """Classify this user request into exactly one category.
 Reply with only the category name, nothing else.
@@ -19,7 +57,9 @@ Category:"""
 
 
 # ── Claude Sonnet — deep reasoning + cognitive frameworks ─────────────────────
-SYSTEM_PROMPT_CLAUDE = """You are Super Agent — a strategic advisor, analyst, and expert assistant.
+SYSTEM_PROMPT_CLAUDE = """{capabilities}
+
+You are Super Agent — a strategic advisor, analyst, and expert assistant.
 
 Before formulating any response, silently apply this thinking stack:
 
@@ -54,7 +94,9 @@ Then respond:
 
 
 # ── Claude Haiku — fast, conversational, still thoughtful ────────────────────
-SYSTEM_PROMPT_HAIKU = """You are Super Agent — a sharp, friendly assistant.
+SYSTEM_PROMPT_HAIKU = """{capabilities}
+
+You are Super Agent — a sharp, friendly assistant.
 
 Before responding, quickly check:
 • Am I answering what was actually asked?

@@ -17,6 +17,9 @@ from ..learning.ensemble import ensemble_voter
 from ..learning.red_team import red_team
 from ..learning.cot_handoff import cot_handoff
 from ..memory.vector_memory import get_memory_context, store_memory
+from ..memory.session import get_compressed_context
+from ..prompts import build_capabilities_block, SYSTEM_PROMPT_CLAUDE, SYSTEM_PROMPT_HAIKU
+from ..config import settings as _settings
 
 _HANDLERS = {
     "GEMINI":   ask_gemini,
@@ -244,6 +247,29 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
     memory_ctx = get_memory_context(message)
     augmented_message = (memory_ctx + message) if memory_ctx else message
 
+    # ── 0b. Session history injection ─────────────────────────────────────────
+    # Prepend compressed conversation history so models have full context
+    try:
+        session_ctx = get_compressed_context(session_id)
+        if session_ctx:
+            augmented_message = (
+                f"[Conversation history]\n{session_ctx}\n\n"
+                f"[Current message]\n{augmented_message}"
+            )
+    except Exception:
+        pass  # Never let session history crash dispatch
+
+    # ── 0c. Build capabilities-aware system prompts ───────────────────────────
+    _caps = build_capabilities_block(_settings)
+    _system_claude = SYSTEM_PROMPT_CLAUDE.format(
+        capabilities=_caps,
+        learned_context=adapter.get_learned_context() or "",
+    )
+    _system_haiku = SYSTEM_PROMPT_HAIKU.format(
+        capabilities=_caps,
+        learned_context=adapter.get_learned_context() or "",
+    )
+
     # ── 1. Safe word guard ────────────────────────────────────────────────────
     authorized, block_reason = check_authorization(message)
     if not authorized:
@@ -319,7 +345,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
                 "complexity": 1,
                 "cache_hit": True,
             })
-        response = ask_claude_haiku(message)
+        response = ask_claude_haiku(message, system=_system_haiku)
         cache.set(message, "HAIKU", response)
         insight_log.record(message, "HAIKU", response, "trivial", 1, session_id)
         adapter.tick()
@@ -344,7 +370,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
             f"{results}\n\n"
             f"Synthesize a clear, accurate, and concise answer based on these results."
         )
-        response = ask_claude(synthesis_prompt)
+        response = ask_claude(synthesis_prompt, system=_system_claude)
         store_memory(session_id, f"Q: {message[:300]} A: {response[:300]}")
         insight_log.record(message, "CLAUDE+SEARCH", response, "web_search", complexity, session_id)
         adapter.tick()
@@ -508,7 +534,13 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
             )
 
     # ── 8b. Single model call ─────────────────────────────────────────────────
-    response = _HANDLERS[model](augmented_message)
+    # Inject capabilities-aware system prompt for Claude/Haiku
+    if model == "CLAUDE":
+        response = ask_claude(augmented_message, system=_system_claude)
+    elif model == "HAIKU":
+        response = ask_claude_haiku(augmented_message, system=_system_haiku)
+    else:
+        response = _HANDLERS[model](augmented_message)
 
     # Layer 1: CoT handoff (complexity >= 4, classifier-routed)
     cot_result = {

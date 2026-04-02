@@ -264,7 +264,7 @@ def chat_stream(req: ChatRequest, request: Request):
         _is_debug_request,
         _is_search_request,
     )
-    from .prompts import SYSTEM_PROMPT_CLAUDE
+    from .prompts import SYSTEM_PROMPT_CLAUDE, build_capabilities_block
     from .learning.adapter import adapter as _adapter
 
     _SSE_HEADERS = {
@@ -285,23 +285,34 @@ def chat_stream(req: ChatRequest, request: Request):
 
     if _needs_routing:
         # Run the full dispatcher (agents, tools, routing) synchronously,
-        # then SSE the complete response in chunks so the UI still streams.
+        # then SSE the complete response in word-boundary chunks.
         result = dispatch(msg, session_id=req.session_id)
         response_text = result["response"]
         if not response_text.startswith("["):
             append_exchange(req.session_id, msg, response_text)
 
         def _generate_routed():
-            chunk_size = 80
-            for i in range(0, len(response_text), chunk_size):
-                yield f"data: {response_text[i:i+chunk_size].replace(chr(10), ' ')}\n\n"
+            # Chunk at word boundaries; encode newlines as \n literal so the
+            # frontend can decode them back to real newlines for markdown rendering.
+            words = response_text.split(" ")
+            buf = ""
+            for word in words:
+                buf += word + " "
+                if len(buf) >= 60:
+                    yield f"data: {buf.rstrip().replace(chr(10), chr(92) + 'n')}\n\n"
+                    buf = ""
+            if buf.strip():
+                yield f"data: {buf.rstrip().replace(chr(10), chr(92) + 'n')}\n\n"
             yield "data: [DONE]\n\n"
 
         return StreamingResponse(_generate_routed(), media_type="text/event-stream", headers=_SSE_HEADERS)
 
-    # Conversational — stream token-by-token with proper system prompt
-    learned_context = _adapter.get_learned_context()
-    system = SYSTEM_PROMPT_CLAUDE.format(learned_context=learned_context or "")
+    # Conversational — stream token-by-token with capabilities-aware system prompt
+    _caps = build_capabilities_block(settings)
+    system = SYSTEM_PROMPT_CLAUDE.format(
+        capabilities=_caps,
+        learned_context=_adapter.get_learned_context() or "",
+    )
 
     client = _anthropic.Anthropic(api_key=settings.anthropic_api_key)
 
@@ -314,7 +325,8 @@ def chat_stream(req: ChatRequest, request: Request):
                 messages=[{"role": "user", "content": msg}],
             ) as stream:
                 for text in stream.text_stream:
-                    yield f"data: {text.replace(chr(10), ' ')}\n\n"
+                    # Encode newlines as \n literal — frontend decodes back to real newlines
+                    yield f"data: {text.replace(chr(10), chr(92) + 'n')}\n\n"
             yield "data: [DONE]\n\n"
         except Exception as e:
             yield f"data: [Stream error: {e}]\n\n"

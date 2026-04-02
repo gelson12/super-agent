@@ -600,7 +600,7 @@
               streamOk = false;
               break;
             }
-            fullText += token + ' ';
+            fullText += token.replace(/\\n/g, '\n');
             bubble.innerHTML = renderMarkdown(fullText) + '<span class="cursor">▍</span>';
             chat.scrollTop = chat.scrollHeight;
           }
