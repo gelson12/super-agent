@@ -102,6 +102,15 @@ else
     echo "[entrypoint] WARNING: Flutter not found in PATH — mobile builds unavailable"
 fi
 
+# ── Process bridge logo — remove white glow background ───────────────────────
+if [ -f /app/static/bridge.jpg ] && [ ! -f /app/static/bridge.png ]; then
+    python /app/remove_bg.py && echo "[entrypoint] Bridge logo processed."
+elif [ -f /app/static/bridge.png ]; then
+    echo "[entrypoint] Bridge logo already processed (bridge.png exists)."
+else
+    echo "[entrypoint] WARNING: bridge.jpg not found — logo will use fallback."
+fi
+
 # ── Start all services via supervisor ─────────────────────────────────────────
 echo "[entrypoint] Starting supervisor (nginx + uvicorn + code-server) on PORT=${PORT}"
 exec /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf

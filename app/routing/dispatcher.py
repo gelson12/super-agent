@@ -211,6 +211,7 @@ def _build_extended_result(base: dict, **kwargs) -> dict:
         "red_verdict": None,
         "confidence_score": _score_confidence(base.get("response", "")),
         "cloudinary_url": None,
+        "memory_count": 0,
         **kwargs,
     }
 
@@ -242,18 +243,21 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
     red_team_ran, escalated, confidence_score, cloudinary_url, and more.
     """
 
-    # ── 0. Semantic memory injection (Feature 4) ──────────────────────────────
-    # Prepend relevant past-session context — silently skipped if pgvector unavailable
+    # ── 0. Proactive cross-session memory injection ───────────────────────────
+    # Always retrieve relevant past memories regardless of whether pgvector is up.
+    # The JSON fallback in vector_memory.py ensures this always returns something
+    # after the first few exchanges.
     memory_ctx = get_memory_context(message)
+    _memory_count = memory_ctx.count("\n-") if memory_ctx else 0
     augmented_message = (memory_ctx + message) if memory_ctx else message
 
     # ── 0b. Session history injection ─────────────────────────────────────────
-    # Prepend compressed conversation history so models have full context
+    # Prepend compressed conversation history so models have full in-session context
     try:
         session_ctx = get_compressed_context(session_id)
         if session_ctx:
             augmented_message = (
-                f"[Conversation history]\n{session_ctx}\n\n"
+                f"[Conversation history — this session]\n{session_ctx}\n\n"
                 f"[Current message]\n{augmented_message}"
             )
     except Exception:
@@ -261,13 +265,14 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
 
     # ── 0c. Build capabilities-aware system prompts ───────────────────────────
     _caps = build_capabilities_block(_settings)
+    _learned = adapter.get_learned_context() or ""
     _system_claude = SYSTEM_PROMPT_CLAUDE.format(
         capabilities=_caps,
-        learned_context=adapter.get_learned_context() or "",
+        learned_context=_learned,
     )
     _system_haiku = SYSTEM_PROMPT_HAIKU.format(
         capabilities=_caps,
-        learned_context=adapter.get_learned_context() or "",
+        learned_context=_learned,
     )
 
     # ── 1. Safe word guard ────────────────────────────────────────────────────
@@ -350,13 +355,15 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
         insight_log.record(message, "HAIKU", response, "trivial", 1, session_id)
         adapter.tick()
         wisdom_store.record_outcome("HAIKU", "trivial/chat", response.startswith("["))
+        # Always store even trivial exchanges — they build up user context over time
+        store_memory(session_id, f"Q: {message[:300]} A: {response[:300]}")
         return _build_extended_result({
             "model_used": "HAIKU",
             "response": response,
             "routed_by": "trivial",
             "complexity": 1,
             "cache_hit": False,
-        })
+        }, memory_count=_memory_count)
 
     # ── 4. Complexity score ───────────────────────────────────────────────────
     complexity = score_complexity(message)
@@ -597,4 +604,5 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
         red_team_ran=rt_result["red_team_ran"],
         escalated=rt_result["escalated"],
         red_verdict=rt_result.get("red_verdict"),
+        memory_count=_memory_count,
     )

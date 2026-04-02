@@ -17,22 +17,8 @@
       flex-direction: column;
     }
 
-    /* ── Bridge logo glow animation ─────────────────────────────────────────── */
-    @keyframes logo-glow {
-      0%, 100% {
-        filter: drop-shadow(0 0 2px #c9a227)
-                drop-shadow(0 0 4px rgba(201,162,39,0.4));
-      }
-      50% {
-        filter: drop-shadow(0 0 3px #c9a227)
-                drop-shadow(0 0 8px rgba(201,162,39,0.25));
-      }
-    }
-
     .bridge-logo {
       display: block;
-      animation: logo-glow 2.4s ease-in-out infinite;
-      /* White background removal via canvas is applied in JS */
     }
 
     /* ── Login screen ─────────────────────────────────────────────────────── */
@@ -333,7 +319,7 @@
 <!-- ── Lock screen ──────────────────────────────────────────────────────────── -->
 <div id="lock-screen">
   <div class="lock-logo-wrap">
-    <img class="bridge-logo" id="lock-logo" src="/static/bridge.jpg" alt="Bridge" crossorigin="anonymous" />
+    <img class="bridge-logo" id="lock-logo" src="/static/bridge.png" alt="Bridge" onerror="this.onerror=null;this.src='/static/bridge.jpg'" />
   </div>
   <div class="lock-card">
     <h2>Super Agent</h2>
@@ -351,7 +337,7 @@
     <span id="session-label" style="font-size:12px;color:#666;">Session: default</span>
   </div>
   <div class="header-center">
-    <img class="bridge-logo" id="header-logo" src="/static/bridge.jpg" alt="Bridge" crossorigin="anonymous" />
+    <img class="bridge-logo" id="header-logo" src="/static/bridge.png" alt="Bridge" onerror="this.onerror=null;this.src='/static/bridge.jpg'" />
   </div>
   <div style="width:80px;"></div><!-- spacer to balance the left side -->
 </header>
@@ -611,7 +597,13 @@
               if (token === '[DONE]') break;
               if (token.startsWith('[Stream error')) { streamOk = false; break; }
               if (token.startsWith('[META:')) {
-                streamMeta = token.slice(6, -1).replace('·', ' · via ');
+                // Format: [META:MODEL·route·memCount]
+                const parts = token.slice(6, -1).split('·');
+                const model = parts[0] || 'AGENT';
+                const route = parts[1] || 'dispatcher';
+                const mem = parseInt(parts[2] || '0', 10);
+                const memBadge = mem > 0 ? ` · 🧠 ${mem} memories` : '';
+                streamMeta = `${model} · via ${route}${memBadge}`;
                 continue;
               }
               // Decode encoded newlines (\n literal) back to real newlines
@@ -651,7 +643,8 @@
           bubble.innerHTML = renderMarkdown(data.response);
           const meta = document.createElement('div');
           meta.className = 'meta';
-          meta.textContent = `${data.model_used} · via ${data.routed_by}`;
+          const memBadge = data.memory_count > 0 ? ` · 🧠 ${data.memory_count} memories` : '';
+          meta.textContent = `${data.model_used} · via ${data.routed_by}${memBadge}`;
           const sp = document.createElement('button');
           sp.className = 'speak-btn'; sp.title = 'Read aloud'; sp.textContent = '🔊';
           sp.onclick = () => speakText(data.response, sp);

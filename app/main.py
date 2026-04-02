@@ -303,10 +303,11 @@ def chat_stream(req: ChatRequest, request: Request):
                     buf = ""
             if buf.strip():
                 yield f"data: {buf.rstrip().replace(chr(10), chr(92) + 'n')}\n\n"
-            # Send routing metadata so the frontend can show the correct model/agent label
+            # Send routing metadata + memory count for the UI label
             _model = result.get("model_used", "AGENT")
             _route = result.get("routed_by", "dispatcher")
-            yield f"data: [META:{_model}·{_route}]\n\n"
+            _mem = result.get("memory_count", 0)
+            yield f"data: [META:{_model}·{_route}·{_mem}]\n\n"
             yield "data: [DONE]\n\n"
 
         return StreamingResponse(_generate_routed(), media_type="text/event-stream", headers=_SSE_HEADERS)
