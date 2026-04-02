@@ -8,7 +8,7 @@ the owner safe word — the dispatcher enforces this before calling this agent.
 from langgraph.prebuilt import create_react_agent
 from langchain_anthropic import ChatAnthropic
 from ..config import settings
-from .agent_planner import run_with_plan_and_recovery
+from .agent_planner import run_with_plan_and_recovery, extract_final_agent_text
 from ..tools.n8n_tools import (
     n8n_list_workflows,
     n8n_get_workflow,
@@ -134,15 +134,8 @@ def _invoke(message: str) -> str:
             {"role": "user", "content": message},
         ]
     })
-    for msg in reversed(result.get("messages", [])):
-        if hasattr(msg, "type") and msg.type in ("ai", "assistant"):
-            content = msg.content
-            if isinstance(content, list):
-                return " ".join(
-                    block.get("text", "") for block in content if isinstance(block, dict)
-                ).strip()
-            return str(content).strip()
-    return "[n8n agent: no response]"
+    text = extract_final_agent_text(result)
+    return text or "[n8n agent: no response]"
 
 
 def run_n8n_agent(message: str) -> str:

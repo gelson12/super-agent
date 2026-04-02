@@ -30,13 +30,20 @@ def _is_read_only(command: str) -> bool:
 
 
 def _run(command: str, cwd: str, timeout: int) -> str:
+    """
+    Run a shell command. Always uses shell=True so that operators like >, |, &&,
+    heredocs (<<), and pipelines work correctly. shlex.split() was intentionally
+    removed — it broke any command containing shell operators.
+    """
     try:
         result = subprocess.run(
-            shlex.split(command),
+            command,
+            shell=True,
             capture_output=True,
             text=True,
             timeout=timeout,
             cwd=cwd,
+            executable="/bin/bash",
         )
         output = result.stdout.strip() or result.stderr.strip()
         return output or "(no output)"
@@ -80,8 +87,36 @@ def run_authorized_shell_command(command: str) -> str:
     Run any shell command in the workspace — including writes, git push, git commit, etc.
     Only callable after the dispatcher has verified the owner safe word.
     Build commands (flutter, gradle, npm, pip install) automatically get a 10-minute timeout.
+    Supports all shell operators: >, >>, |, &&, heredocs (<<), etc.
     """
     return _run(command, _WORKSPACE, timeout=_build_timeout(command))
+
+
+@tool
+def write_workspace_file(file_path: str, content: str) -> str:
+    """
+    Write content directly to a file in /workspace using Python file I/O.
+    Use this instead of shell heredoc (cat > file << 'EOF') for ANY file larger than
+    a few lines — heredocs break with special characters, long content, or shell operators.
+
+    file_path: path relative to /workspace (e.g. 'super_agent_voice/lib/main.dart')
+               OR an absolute path starting with /workspace or /opt.
+    content: the full file content to write (UTF-8).
+
+    Returns confirmation with byte count written.
+    """
+    from pathlib import Path as _Path
+    try:
+        if file_path.startswith("/"):
+            fp = _Path(file_path)
+        else:
+            fp = _Path(_WORKSPACE) / file_path
+        fp.parent.mkdir(parents=True, exist_ok=True)
+        fp.write_text(content, encoding="utf-8")
+        size = fp.stat().st_size
+        return f"Written {size} bytes to {fp}"
+    except Exception as e:
+        return f"[write_workspace_file error] {e}"
 
 
 @tool

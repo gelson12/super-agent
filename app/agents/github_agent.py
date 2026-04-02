@@ -1,7 +1,7 @@
 from langgraph.prebuilt import create_react_agent
 from langchain_anthropic import ChatAnthropic
 from ..config import settings
-from .agent_planner import run_with_plan_and_recovery
+from .agent_planner import run_with_plan_and_recovery, extract_final_agent_text
 from ..tools.github_tools import (
     github_list_repos,
     github_list_files,
@@ -103,15 +103,8 @@ def _invoke(message: str) -> str:
             {"role": "user", "content": message},
         ]
     })
-    for msg in reversed(result.get("messages", [])):
-        if hasattr(msg, "type") and msg.type in ("ai", "assistant"):
-            content = msg.content
-            if isinstance(content, list):
-                return " ".join(
-                    block.get("text", "") for block in content if isinstance(block, dict)
-                ).strip()
-            return str(content).strip()
-    return "[GitHub agent: no response]"
+    text = extract_final_agent_text(result)
+    return text or "[GitHub agent: no response]"
 
 
 def run_github_agent(message: str) -> str:

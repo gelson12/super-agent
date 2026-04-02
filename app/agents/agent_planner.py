@@ -22,6 +22,45 @@ from ..learning.insight_log import insight_log
 
 MAX_RETRIES = 3
 
+
+def extract_final_agent_text(result: dict) -> str:
+    """
+    Extract the final human-readable text response from a LangGraph agent result.
+
+    Problem this solves: LangGraph AI messages alternate between tool-calling turns
+    (content is a list with {"type":"tool_use",...} blocks mixed with {"type":"text",...})
+    and final answer turns (content is a plain string or a list with only text blocks).
+    The old code returned the first AI message in reverse — which is usually the LAST
+    message chronologically — but that message sometimes still contained tool-use JSON,
+    causing raw {"name":"shell","parameters":{...}} to bleed into the user-facing response.
+
+    Fix: walk messages in reverse, skip any AI message that contains a tool_use block,
+    return the first AI message that is pure text.
+    """
+    for msg in reversed(result.get("messages", [])):
+        if not (hasattr(msg, "type") and msg.type in ("ai", "assistant")):
+            continue
+        content = msg.content
+        if isinstance(content, list):
+            # Skip intermediate tool-calling turns
+            has_tool_use = any(
+                isinstance(b, dict) and b.get("type") == "tool_use"
+                for b in content
+            )
+            if has_tool_use:
+                continue
+            texts = [
+                b.get("text", "")
+                for b in content
+                if isinstance(b, dict) and b.get("type") == "text"
+            ]
+            combined = "\n".join(t for t in texts if t).strip()
+            if combined:
+                return combined
+        elif isinstance(content, str) and content.strip():
+            return content.strip()
+    return ""
+
 # ── Prompt templates ──────────────────────────────────────────────────────────
 
 _PLAN_PROMPT = """\

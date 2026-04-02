@@ -263,15 +263,33 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
 
     # ── 0b. Session history injection ─────────────────────────────────────────
     # Prepend compressed conversation history so models have full in-session context
+    _session_ctx = ""
     try:
-        session_ctx = get_compressed_context(session_id)
-        if session_ctx:
+        _session_ctx = get_compressed_context(session_id)
+        if _session_ctx:
             augmented_message = (
-                f"[Conversation history — this session]\n{session_ctx}\n\n"
+                f"[Conversation history — this session]\n{_session_ctx}\n\n"
                 f"[Current message]\n{augmented_message}"
             )
     except Exception:
         pass  # Never let session history crash dispatch
+
+    # ── 0c-extra. Continuation detection ─────────────────────────────────────
+    # Short follow-up messages ("nothing", "you didn't give", "what about",
+    # "fix that", "try again") have no keywords and get mis-routed to web_search.
+    # If the session has recent history AND the message is short + complaint-like,
+    # inject full session context and route to Claude directly rather than searching.
+    _CONTINUATION_PATTERNS = (
+        "didn't", "did not", "nothing", "no link", "no download", "failed",
+        "wrong", "incorrect", "try again", "retry", "what about", "and the",
+        "you forgot", "you missed", "you didn't", "fix that", "what happened",
+        "still", "but you", "you said", "as i said", "i said",
+    )
+    _is_short_followup = (
+        len(message.split()) <= 20
+        and _session_ctx
+        and any(p in message.lower() for p in _CONTINUATION_PATTERNS)
+    )
 
     # ── 0c. Build capabilities-aware system prompts ───────────────────────────
     _caps = build_capabilities_block(_settings)
@@ -371,6 +389,22 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
             "model_used": "HAIKU",
             "response": response,
             "routed_by": "trivial",
+            "complexity": 1,
+            "cache_hit": False,
+        }, memory_count=_memory_count)
+
+    # ── 3b. Continuation bypass ───────────────────────────────────────────────
+    # Short follow-up complaints/corrections with session history are handed directly
+    # to Claude with full context — prevents them from hitting web_search or trivial.
+    if _is_short_followup:
+        response = ask_claude(augmented_message, system=_system_claude)
+        store_memory(session_id, f"Q: {message[:300]} A: {response[:300]}")
+        insight_log.record(message, "CLAUDE", response, "continuation", 1, session_id)
+        adapter.tick()
+        return _build_extended_result({
+            "model_used": "CLAUDE",
+            "response": response,
+            "routed_by": "continuation",
             "complexity": 1,
             "cache_hit": False,
         }, memory_count=_memory_count)

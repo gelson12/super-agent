@@ -11,10 +11,11 @@ from langgraph.prebuilt import create_react_agent
 
 from ..config import settings
 from ..prompts import ISOLATION_DEBUG_PROMPT
-from .agent_planner import run_with_plan_and_recovery
+from .agent_planner import run_with_plan_and_recovery, extract_final_agent_text
 from ..tools.shell_tools import (
     run_shell_command,
     run_authorized_shell_command,
+    write_workspace_file,
     clone_repo,
     list_workspace,
     run_claude_cli,
@@ -84,6 +85,15 @@ Use supervisorctl, railway tools, and shell commands to investigate and fix auto
   • After a build, upload the APK to Cloudinary if the upload_build_artifact tool is available.
   • For write operations (git push, git commit, file writes): the owner safe word was already verified.
 
+## WRITING FILES — CRITICAL RULE
+  NEVER use shell heredoc (cat > file << 'EOF') for any file larger than 3 lines.
+  Heredocs break with Dart/Kotlin/YAML special characters and long content.
+  ALWAYS use write_workspace_file(file_path, content) for:
+    - Dart source files (main.dart, any .dart)
+    - pubspec.yaml, AndroidManifest.xml, build.gradle
+    - Any file with quotes, backslashes, or multiline strings
+  write_workspace_file writes via Python file I/O — it never fails on content length or special chars.
+
 ## DEBUGGING STANCE
   Isolate → Identify → Fix → Integrate. Never debug the whole system at once.
 
@@ -105,7 +115,7 @@ def run_shell_agent(message: str, authorized: bool = False, debug_mode: bool = F
         return "[Shell agent error: ANTHROPIC_API_KEY not set]"
 
     tools = [
-        run_shell_command, clone_repo, list_workspace, run_claude_cli,
+        run_shell_command, write_workspace_file, clone_repo, list_workspace, run_claude_cli,
         # Infrastructure visibility — always available for self-healing
         railway_list_services, railway_get_logs, railway_get_deployment_status,
         railway_list_variables,
@@ -131,11 +141,8 @@ def run_shell_agent(message: str, authorized: bool = False, debug_mode: bool = F
                 {"role": "user", "content": msg},
             ]
         })
-        for m in reversed(result.get("messages", [])):
-            text = getattr(m, "content", "")
-            if isinstance(text, str) and text.strip():
-                return text.strip()
-        return "[Shell agent returned no response]"
+        text = extract_final_agent_text(result)
+        return text or "[Shell agent returned no response]"
 
     return run_with_plan_and_recovery(
         agent_fn=_invoke,
