@@ -464,7 +464,14 @@
   }
 
   // ── Session / UI ────────────────────────────────────────────────────────────
-  const sessionId = 'web-' + Math.random().toString(36).slice(2, 9);
+  // Persist session ID in localStorage so the agent remembers the conversation
+  // across page refreshes, browser closes, and revisits on the same device.
+  // A new session starts only when the user explicitly clears the browser storage.
+  let sessionId = localStorage.getItem('sa_session_id');
+  if (!sessionId) {
+    sessionId = 'web-' + Math.random().toString(36).slice(2, 9);
+    localStorage.setItem('sa_session_id', sessionId);
+  }
   document.getElementById('session-label').textContent = 'Session: ' + sessionId;
 
   const chat = document.getElementById('chat');

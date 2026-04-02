@@ -73,15 +73,17 @@ def flutter_create_project(
 def flutter_build_apk(project_path: str) -> str:
     """
     Build a debug APK for the Flutter project at project_path.
-    Returns the path to the built APK and the build log.
-    APK is automatically signed with a debug key — no keystore needed.
+    Automatically uploads the APK to Cloudinary and returns a direct download URL.
+    APK is debug-signed — no keystore needed for testing.
     """
+    import json as _json
+
     path = Path(project_path)
     if not path.exists():
         return f"[error] Project not found at {project_path}"
 
     # Ensure dependencies are up to date
-    get_out = _run(f"{_FLUTTER_BIN} pub get", cwd=project_path, timeout=120)
+    _run(f"{_FLUTTER_BIN} pub get", cwd=project_path, timeout=120)
 
     # Build
     build_out = _run(
@@ -91,10 +93,38 @@ def flutter_build_apk(project_path: str) -> str:
     )
 
     apk = path / "build" / "app" / "outputs" / "flutter-apk" / "app-debug.apk"
-    if apk.exists():
-        size_mb = round(apk.stat().st_size / (1024 * 1024), 2)
-        return f"APK built: {apk}\nSize: {size_mb} MB\n\nBuild log:\n{build_out}"
-    return f"Build may have failed — APK not found at expected path.\n\n{get_out}\n{build_out}"
+    if not apk.exists():
+        return f"Build failed — APK not found at expected path.\n\n{build_out}"
+
+    size_mb = round(apk.stat().st_size / (1024 * 1024), 2)
+
+    # Auto-upload to Cloudinary for a permanent download link
+    project_name = Path(project_path).name
+    upload_result = upload_build_artifact.invoke({
+        "file_path": str(apk),
+        "filename": f"builds/{project_name}_{int(time.time())}",
+    })
+
+    try:
+        upload_data = _json.loads(upload_result)
+        download_url = upload_data.get("url", "")
+        return (
+            f"✅ APK built successfully!\n\n"
+            f"📦 Size: {size_mb} MB\n"
+            f"📥 Download URL: {download_url}\n\n"
+            f"Install instructions:\n"
+            f"1. On your Android device: Settings → Security → Unknown Sources → Enable\n"
+            f"2. Open {download_url} in your phone browser\n"
+            f"3. Tap the downloaded file → Install\n\n"
+            f"Build log:\n{build_out[-1000:]}"
+        )
+    except Exception:
+        # Upload failed — still return local path
+        return (
+            f"✅ APK built: {apk} ({size_mb} MB)\n"
+            f"⚠️ Cloudinary upload failed: {upload_result}\n\n"
+            f"Build log:\n{build_out[-1000:]}"
+        )
 
 
 @tool
