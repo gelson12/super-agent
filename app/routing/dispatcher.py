@@ -415,8 +415,17 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
     # ── 4c. Isolation debug routing ───────────────────────────────────────────
     if _is_debug_request(message):
         response = run_shell_agent(message, authorized=authorized, debug_mode=True)
+        # If shell debug itself errors, escalate straight to self-improve agent
+        if response.startswith("[") and any(k in response.lower() for k in ("error", "failed", "exception")):
+            response = run_self_improve_agent(
+                f"The shell debug agent failed. Original debug request: {message[:200]}\n"
+                f"Error: {response[:300]}\n\n"
+                f"Investigate railway logs, service status, and DB health autonomously.",
+                authorized=False,
+            )
         insight_log.record(message, "SHELL", response, "isolation_debug", complexity, session_id)
         adapter.tick()
+        store_memory(session_id, f"Q: {message[:300]} A: {response[:300]}")
         return _build_extended_result({
             "model_used": "SHELL",
             "response": response,
@@ -442,8 +451,49 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
         if _ai_conf >= 0.7 and _ai_route not in ("GENERAL", "SEARCH"):
             _kw_route = _ai_route
 
+    # ── Error-interception helper ─────────────────────────────────────────────
+    def _agent_response_is_error(resp: str) -> bool:
+        """
+        Detect when an agent returned a structural error string rather than a
+        real response. These start with [ and contain error/failed/error keywords.
+        We intercept these to trigger autonomous self-investigation before
+        surfacing the error to the user.
+        """
+        if not resp or not resp.startswith("["):
+            return False
+        lower = resp.lower()
+        return any(k in lower for k in (
+            "error", "failed", "not set", "unreachable", "refused",
+            "timeout", "not found", "unavailable", "could not", "exception",
+        ))
+
+    def _auto_investigate(failed_agent: str, original_msg: str, err_resp: str) -> str:
+        """
+        When an agent fails, autonomously route to self_improve_agent with a
+        diagnostic brief — it has full infrastructure access to find and fix the issue.
+        Only called once (no recursion) to avoid infinite loops.
+        """
+        brief = (
+            f"AUTONOMOUS INVESTIGATION REQUIRED — {failed_agent} agent just failed.\n"
+            f"User's original request: {original_msg[:200]}\n"
+            f"Error returned: {err_resp[:300]}\n\n"
+            f"Immediately investigate using your tools:\n"
+            f"1. railway_get_logs + railway_get_deployment_status\n"
+            f"2. db_health_check + db_get_failure_patterns\n"
+            f"3. Check if the relevant service is running (n8n, code-server, uvicorn)\n"
+            f"4. Apply a SAFE fix autonomously if possible\n"
+            f"5. Report exactly what you found and what you did\n"
+            f"Do NOT ask the user for context — you have the full error above."
+        )
+        try:
+            return run_self_improve_agent(brief, authorized=False)
+        except Exception as _e:
+            return f"{err_resp}\n\n[Auto-investigation also failed: {_e}]"
+
     if _kw_route == "SHELL":
         response = run_shell_agent(augmented_message, authorized=authorized)
+        if _agent_response_is_error(response):
+            response = _auto_investigate("SHELL", message, response)
         store_memory(session_id, f"Q: {message[:300]} A: {response[:300]}")
         insight_log.record(message, "SHELL", response, "shell_keywords", complexity, session_id)
         adapter.tick()
@@ -457,6 +507,8 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
 
     if _kw_route == "GITHUB":
         response = run_github_agent(augmented_message)
+        if _agent_response_is_error(response):
+            response = _auto_investigate("GITHUB", message, response)
         store_memory(session_id, f"Q: {message[:300]} A: {response[:300]}")
         insight_log.record(message, "GITHUB", response, "github_keywords", complexity, session_id)
         adapter.tick()
@@ -470,6 +522,8 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
 
     if _kw_route == "N8N":
         response = run_n8n_agent(augmented_message)
+        if _agent_response_is_error(response):
+            response = _auto_investigate("N8N", message, response)
         store_memory(session_id, f"Q: {message[:300]} A: {response[:300]}")
         insight_log.record(message, "N8N", response, "n8n_keywords", complexity, session_id)
         adapter.tick()

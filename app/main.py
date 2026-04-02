@@ -61,12 +61,21 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
 
 def _scheduled_health_check() -> None:
-    """Feature 3: Proactive daily self-diagnosis — auto-fix SAFE issues."""
+    """
+    Runs every 2 hours — full autonomous infrastructure health check across ALL services.
+    Self-improve agent investigates and fixes SAFE issues without user intervention.
+    """
     try:
         from .routing.dispatcher import dispatch as _dispatch
         _dispatch(
-            "run full health check: check DB health, Railway logs, failure patterns, "
-            "and auto-fix any SAFE issues you find",
+            "SCHEDULED HEALTH CHECK — investigate ALL services autonomously:\n"
+            "1. railway_get_deployment_status + railway_get_logs — is everything deployed?\n"
+            "2. db_health_check + db_get_failure_patterns — DB healthy? Any recurring errors?\n"
+            "3. n8n_list_workflows — is n8n reachable? How many active workflows?\n"
+            "4. run_shell_command('supervisorctl status') — are nginx, uvicorn, code-server running?\n"
+            "5. run_shell_command('curl -s http://127.0.0.1:3001/') — is VS Code reachable?\n"
+            "6. db_get_error_stats — which models are failing most?\n"
+            "Auto-fix any SAFE issues found. Log what you checked and what state everything is in.",
             session_id="scheduler",
         )
     except Exception:
@@ -83,8 +92,8 @@ async def _lifespan(app: FastAPI):
     scheduler.add_job(
         _scheduled_health_check,
         "interval",
-        hours=24,
-        id="daily_health_check",
+        hours=2,
+        id="health_check",
         replace_existing=True,
     )
     scheduler.add_job(

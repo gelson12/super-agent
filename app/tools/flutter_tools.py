@@ -139,46 +139,128 @@ def flutter_test(project_path: str) -> str:
     return _run(f"{_FLUTTER_BIN} test", cwd=project_path, timeout=300)
 
 
+def _github_release_upload(fp: Path, project_name: str) -> str | None:
+    """
+    Fallback: create a GitHub Release on gelson12/super-agent and upload the APK as a release asset.
+    Returns the browser_download_url on success, None on failure.
+    """
+    import json
+    import urllib.request
+    pat = os.environ.get("GITHUB_PAT", "")
+    if not pat:
+        return None
+    tag = f"apk-{project_name}-{int(time.time())}"
+    headers = {
+        "Authorization": f"token {pat}",
+        "Accept": "application/vnd.github.v3+json",
+        "Content-Type": "application/json",
+    }
+    # Create a release
+    try:
+        payload = json.dumps({
+            "tag_name": tag,
+            "name": f"APK Build — {project_name}",
+            "body": f"Automated APK build by Super Agent for project '{project_name}'.",
+            "draft": False,
+            "prerelease": True,
+        }).encode()
+        req = urllib.request.Request(
+            "https://api.github.com/repos/gelson12/super-agent/releases",
+            data=payload,
+            headers=headers,
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            release_data = json.loads(resp.read())
+        upload_url = release_data["upload_url"].split("{")[0]  # strip {?name,label} template
+        release_id = release_data["id"]
+    except Exception as e:
+        print(f"[github_release_upload] create release failed: {e}")
+        return None
+
+    # Upload the APK as an asset
+    try:
+        with fp.open("rb") as f:
+            apk_bytes = f.read()
+        asset_req = urllib.request.Request(
+            f"{upload_url}?name={fp.name}",
+            data=apk_bytes,
+            headers={
+                "Authorization": f"token {pat}",
+                "Content-Type": "application/vnd.android.package-archive",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(asset_req, timeout=120) as resp:
+            asset_data = json.loads(resp.read())
+        return asset_data["browser_download_url"]
+    except Exception as e:
+        print(f"[github_release_upload] upload asset failed: {e}")
+        return None
+
+
 @tool
 def upload_build_artifact(file_path: str, filename: str = "") -> str:
     """
-    Upload an APK or IPA file to Cloudinary and return a download URL.
+    Upload an APK or IPA file to Cloudinary (primary) or GitHub Releases (fallback).
     file_path: absolute path to the APK/IPA file.
     filename: optional public_id override for the Cloudinary asset.
-    Returns JSON with: url, public_id, size_mb.
+    Returns JSON with: url, public_id, size_mb, source (cloudinary|github_releases).
     """
     import json
-    from ...config import settings
+    from ..config import settings
 
     fp = Path(file_path)
     if not fp.exists():
         return f"[error] File not found: {file_path}"
 
-    try:
-        import cloudinary
-        import cloudinary.uploader
+    size_mb = round(fp.stat().st_size / (1024 * 1024), 2)
+    project_name = fp.stem.split("_")[0] if "_" in fp.stem else fp.stem
 
-        cloudinary.config(
-            cloud_name=settings.cloudinary_cloud_name,
-            api_key=settings.cloudinary_api_key,
-            api_secret=settings.cloudinary_api_secret,
-        )
+    # ── Primary: Cloudinary ──────────────────────────────────────────────────
+    cloudinary_ok = all([
+        settings.cloudinary_cloud_name,
+        settings.cloudinary_api_key,
+        settings.cloudinary_api_secret,
+    ])
+    if cloudinary_ok:
+        try:
+            import cloudinary
+            import cloudinary.uploader
 
-        public_id = filename or f"builds/{fp.stem}_{int(time.time())}"
-        result = cloudinary.uploader.upload(
-            str(fp),
-            resource_type="raw",
-            public_id=public_id,
-            overwrite=True,
-        )
-        size_mb = round(fp.stat().st_size / (1024 * 1024), 2)
+            cloudinary.config(
+                cloud_name=settings.cloudinary_cloud_name,
+                api_key=settings.cloudinary_api_key,
+                api_secret=settings.cloudinary_api_secret,
+            )
+
+            public_id = filename or f"builds/{fp.stem}_{int(time.time())}"
+            result = cloudinary.uploader.upload(
+                str(fp),
+                resource_type="raw",
+                public_id=public_id,
+                overwrite=True,
+            )
+            return json.dumps({
+                "url": result["secure_url"],
+                "public_id": result["public_id"],
+                "size_mb": size_mb,
+                "source": "cloudinary",
+            })
+        except Exception as _cl_err:
+            print(f"[upload_build_artifact] Cloudinary failed: {_cl_err} — trying GitHub Releases")
+
+    # ── Fallback: GitHub Releases ────────────────────────────────────────────
+    gh_url = _github_release_upload(fp, project_name)
+    if gh_url:
         return json.dumps({
-            "url": result["secure_url"],
-            "public_id": result["public_id"],
+            "url": gh_url,
+            "public_id": f"github-release/{project_name}",
             "size_mb": size_mb,
+            "source": "github_releases",
         })
-    except Exception as e:
-        return f"[cloudinary error] {e}"
+
+    return f"[upload error] Both Cloudinary and GitHub Releases upload failed for {file_path}"
 
 
 @tool

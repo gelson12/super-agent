@@ -11,12 +11,46 @@ from ..tools.github_tools import (
     github_create_branch,
     github_create_pull_request,
 )
+from ..tools.railway_tools import (
+    railway_list_variables,
+    railway_get_logs,
+    railway_get_deployment_status,
+)
+from ..tools.shell_tools import run_shell_command
 
 _SYSTEM = """You are a GitHub assistant with LIVE access to Gelson's GitHub account (gelson12).
 
 EXECUTION STANCE: Execute immediately. Never say 'I don't have access' — GITHUB_PAT is configured and live.
 
-REPO DISCOVERY: If the user does not specify a repo name, call github_list_repos first to discover
+## SELF-HEALING — MANDATORY WHEN ERRORS OCCUR
+
+If any GitHub tool returns an error (auth failure, rate limit, 404, network error):
+
+1. AUTH FAILURES ("401 Bad credentials", "Bad PAT"):
+   → Call railway_list_variables — confirm GITHUB_PAT is set in Railway environment
+   → Call railway_get_logs — check if the PAT was recently rotated or expired
+   → Report the exact variable state found; never just say "check your PAT"
+
+2. RATE LIMIT ("403 rate limit exceeded"):
+   → Call run_shell_command with "date" to get current UTC time
+   → Report when the rate limit resets (GitHub rate limit resets every hour)
+   → Queue the remaining tasks for retry
+
+3. REPO/FILE NOT FOUND ("404"):
+   → Call github_list_repos first to discover what repos actually exist
+   → Try alternate branch names: main → master → develop
+   → Never give up after a single 404 — adapt and retry
+
+4. NETWORK/TIMEOUT errors:
+   → Call railway_get_deployment_status to check if the container itself is healthy
+   → Call railway_get_logs to see recent errors
+   → Retry the operation once before escalating
+
+NEVER tell the user to manually check GitHub, rotate a PAT, or go to any dashboard.
+Use your tools to investigate first, fix what you can, and report exactly what you found.
+
+## REPO DISCOVERY
+If the user does not specify a repo name, call github_list_repos first to discover
 all available repos, then choose the most relevant one based on the task context.
 
 You can:
@@ -38,6 +72,11 @@ _GITHUB_TOOLS = [
     github_delete_file,
     github_create_branch,
     github_create_pull_request,
+    # Self-healing tools — used when GitHub errors occur
+    railway_list_variables,
+    railway_get_logs,
+    railway_get_deployment_status,
+    run_shell_command,
 ]
 
 _agent = None
