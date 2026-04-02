@@ -18,6 +18,9 @@ _READ_ONLY_PREFIXES = (
     "git status", "git diff", "git branch", "git remote", "git show",
     "pwd", "echo", "env", "which", "whoami", "df", "du", "ps",
     "wc ", "sort", "uniq", "tree", "file ", "stat ",
+    # Flutter/Dart inspection commands (read-only)
+    "flutter doctor", "flutter --version", "flutter devices", "flutter pub get",
+    "dart --version",
 )
 
 
@@ -60,13 +63,25 @@ def run_shell_command(command: str) -> str:
     return _run(command, _WORKSPACE, timeout=30)
 
 
+_BUILD_PREFIXES = ("flutter ", "gradle", "dart ", "npm ", "npx ", "pip install", "apt-get")
+
+
+def _build_timeout(command: str) -> int:
+    """Return a longer timeout for commands known to be slow (builds, installs)."""
+    stripped = command.strip().lower()
+    if any(stripped.startswith(p) for p in _BUILD_PREFIXES):
+        return 600  # 10 minutes for build/install commands
+    return 60
+
+
 @tool
 def run_authorized_shell_command(command: str) -> str:
     """
     Run any shell command in the workspace — including writes, git push, git commit, etc.
     Only callable after the dispatcher has verified the owner safe word.
+    Build commands (flutter, gradle, npm, pip install) automatically get a 10-minute timeout.
     """
-    return _run(command, _WORKSPACE, timeout=60)
+    return _run(command, _WORKSPACE, timeout=_build_timeout(command))
 
 
 @tool

@@ -247,10 +247,62 @@ def chat(req: ChatRequest, request: Request):
 @limiter.limit("30/minute")
 def chat_stream(req: ChatRequest, request: Request):
     """
-    Feature 2: Stream Claude's response token-by-token via Server-Sent Events.
-    The frontend reads the stream and renders tokens as they arrive.
-    Falls back gracefully — if streaming fails, use POST /chat instead.
+    Stream endpoint with full dispatcher routing.
+
+    - Action requests (GitHub, shell, Flutter/APK builds, n8n, self-improve,
+      debug) are routed through the same dispatcher as POST /chat.
+      Their full response is then SSE-streamed as chunks.
+    - Conversational requests stream token-by-token directly from Claude
+      with the proper Super Agent system prompt.
     """
+    from .routing.dispatcher import (
+        dispatch,
+        _is_github_request,
+        _is_shell_request,
+        _is_n8n_request,
+        _is_self_improve_request,
+        _is_debug_request,
+        _is_search_request,
+    )
+    from .prompts import SYSTEM_PROMPT_CLAUDE
+    from .learning.adapter import adapter as _adapter
+
+    _SSE_HEADERS = {
+        "Cache-Control": "no-cache",
+        "X-Accel-Buffering": "no",
+    }
+
+    # Detect whether this message needs tool routing
+    msg = req.message
+    _needs_routing = (
+        _is_github_request(msg)
+        or _is_shell_request(msg)
+        or _is_n8n_request(msg)
+        or _is_self_improve_request(msg)
+        or _is_debug_request(msg)
+        or _is_search_request(msg)
+    )
+
+    if _needs_routing:
+        # Run the full dispatcher (agents, tools, routing) synchronously,
+        # then SSE the complete response in chunks so the UI still streams.
+        result = dispatch(msg, session_id=req.session_id)
+        response_text = result["response"]
+        if not response_text.startswith("["):
+            append_exchange(req.session_id, msg, response_text)
+
+        def _generate_routed():
+            chunk_size = 80
+            for i in range(0, len(response_text), chunk_size):
+                yield f"data: {response_text[i:i+chunk_size].replace(chr(10), ' ')}\n\n"
+            yield "data: [DONE]\n\n"
+
+        return StreamingResponse(_generate_routed(), media_type="text/event-stream", headers=_SSE_HEADERS)
+
+    # Conversational — stream token-by-token with proper system prompt
+    learned_context = _adapter.get_learned_context()
+    system = SYSTEM_PROMPT_CLAUDE.format(learned_context=learned_context or "")
+
     client = _anthropic.Anthropic(api_key=settings.anthropic_api_key)
 
     def _generate():
@@ -258,10 +310,10 @@ def chat_stream(req: ChatRequest, request: Request):
             with client.messages.stream(
                 model="claude-sonnet-4-6",
                 max_tokens=settings.max_tokens_claude,
-                messages=[{"role": "user", "content": req.message}],
+                system=system,
+                messages=[{"role": "user", "content": msg}],
             ) as stream:
                 for text in stream.text_stream:
-                    # Escape newlines so each SSE data line stays intact
                     yield f"data: {text.replace(chr(10), ' ')}\n\n"
             yield "data: [DONE]\n\n"
         except Exception as e:
@@ -271,10 +323,7 @@ def chat_stream(req: ChatRequest, request: Request):
     return StreamingResponse(
         _generate(),
         media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",  # disable nginx buffering
-        },
+        headers=_SSE_HEADERS,
     )
 
 

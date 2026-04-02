@@ -37,6 +37,9 @@ _SHELL_KEYWORDS = {
     "clone repo", "clone the repo", "list workspace", "ls /", "git clone",
     "fix the code", "auto fix", "autofix", "run the tests", "install package",
     "claude cli", "run claude",
+    # Flutter / mobile build
+    "flutter", "apk", "build apk", "build android", "build the app",
+    "build app", "android app", "mobile app", "dart",
 }
 
 _DEBUG_KEYWORDS = {
