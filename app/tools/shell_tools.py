@@ -87,8 +87,23 @@ def run_authorized_shell_command(command: str) -> str:
     Run any shell command in the workspace — including writes, git push, git commit, etc.
     Only callable after the dispatcher has verified the owner safe word.
     Build commands (flutter, gradle, npm, pip install) automatically get a 10-minute timeout.
-    Supports all shell operators: >, >>, |, &&, heredocs (<<), etc.
+    Supports all shell operators: >, >>, |, &&, etc.
+
+    IMPORTANT: Heredoc syntax (<<) is BLOCKED for writing Dart/YAML/XML/JSON files.
+    Use write_workspace_file(file_path, content) for ANY file write with multi-line content.
+    Heredoc breaks on Dart's $, {}, and single-quote characters.
     """
+    # Block heredoc usage for file writing — it silently corrupts Dart/YAML content
+    cmd_lower = command.strip().lower()
+    if "<<" in command and any(ext in cmd_lower for ext in (
+        ".dart", "pubspec", ".yaml", ".yml", ".xml", "manifest", ".gradle", ".json", ".kt"
+    )):
+        return (
+            "[BLOCKED] Do NOT use heredoc (<<) to write source files — it corrupts Dart/YAML/XML content.\n"
+            "Use write_workspace_file(file_path, content) instead. Example:\n"
+            "  write_workspace_file('super_agent_voice/lib/main.dart', '<full dart code here>')\n"
+            "write_workspace_file writes via Python file I/O and handles all special characters correctly."
+        )
     return _run(command, _WORKSPACE, timeout=_build_timeout(command))
 
 

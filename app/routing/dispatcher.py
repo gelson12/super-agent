@@ -43,6 +43,11 @@ _SHELL_KEYWORDS = {
     # Flutter / mobile build
     "flutter", "apk", "build apk", "build android", "build the app",
     "build app", "android app", "mobile app", "dart",
+    # Voice app specific
+    "voice app", "voice chat", "voice android", "build voice", "build and deliver",
+    "speech to text", "flutter android", "install on android", "sideload",
+    "download link", "apk download", "download apk", "install the app",
+    "build it and package", "build and package",
 }
 
 _DEBUG_KEYWORDS = {
@@ -284,9 +289,17 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
         "wrong", "incorrect", "try again", "retry", "what about", "and the",
         "you forgot", "you missed", "you didn't", "fix that", "what happened",
         "still", "but you", "you said", "as i said", "i said",
+        # Phase/progress follow-ups
+        "what phase", "which phase", "where is", "where's the", "where is the link",
+        "download link", "the link", "whats happening", "what's happening",
+        "so what", "any update", "status", "progress", "are you done",
+        "did you finish", "is it ready", "still building", "still working",
+        "continue", "keep going", "go on", "proceed", "next step",
+        "it failed", "it didn't", "it did not", "not working", "broken",
+        "missing", "incomplete", "you stopped", "you didn't finish",
     )
     _is_short_followup = (
-        len(message.split()) <= 20
+        len(message.split()) <= 25
         and _session_ctx
         and any(p in message.lower() for p in _CONTINUATION_PATTERNS)
     )
@@ -394,9 +407,40 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
         }, memory_count=_memory_count)
 
     # ── 3b. Continuation bypass ───────────────────────────────────────────────
-    # Short follow-up complaints/corrections with session history are handed directly
-    # to Claude with full context — prevents them from hitting web_search or trivial.
+    # Short follow-up complaints/corrections with session history skip web_search.
+    # If the session context mentions a build/APK task that is incomplete,
+    # re-trigger the shell agent so it continues the work rather than just explaining.
     if _is_short_followup:
+        _BUILD_CONTINUATION_HINTS = (
+            "apk", "flutter", "build", "voice app", "download", "phase",
+            "scaffold", "pubspec", "main.dart", "upload", "cloudinary", "github release",
+        )
+        _ctx_lower = _session_ctx.lower()
+        _is_build_continuation = any(h in _ctx_lower for h in _BUILD_CONTINUATION_HINTS)
+
+        if _is_build_continuation:
+            # Re-route to shell agent with session context so it resumes the build
+            _resume_msg = (
+                f"[CONTINUATION — user is following up on an incomplete build task]\n"
+                f"User said: '{message}'\n\n"
+                f"Session context shows a Flutter/APK build was in progress. "
+                f"Resume immediately — check /workspace for project state, "
+                f"determine what step was last completed, and continue from there. "
+                f"If workspace is empty, call build_flutter_voice_app() to rebuild from scratch. "
+                f"Deliver the APK download link when done."
+            )
+            response = run_shell_agent(_resume_msg + "\n\n" + augmented_message, authorized=authorized)
+            store_memory(session_id, f"Q: {message[:300]} A: {response[:300]}")
+            insight_log.record(message, "SHELL", response, "build_continuation", 1, session_id)
+            adapter.tick()
+            return _build_extended_result({
+                "model_used": "SHELL",
+                "response": response,
+                "routed_by": "build_continuation",
+                "complexity": 2,
+                "cache_hit": False,
+            }, memory_count=_memory_count)
+
         response = ask_claude(augmented_message, system=_system_claude)
         store_memory(session_id, f"Q: {message[:300]} A: {response[:300]}")
         insight_log.record(message, "CLAUDE", response, "continuation", 1, session_id)

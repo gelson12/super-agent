@@ -20,6 +20,14 @@ from ..tools.shell_tools import (
     list_workspace,
     run_claude_cli,
 )
+from ..tools.flutter_tools import (
+    build_flutter_voice_app,
+    flutter_create_project,
+    flutter_build_apk,
+    upload_build_artifact,
+    flutter_git_push,
+    flutter_test,
+)
 from ..tools.railway_tools import (
     railway_list_services,
     railway_get_logs,
@@ -80,8 +88,12 @@ Use supervisorctl, railway tools, and shell commands to investigate and fix auto
 
 ## EXECUTION STANCE
   • Execute immediately — never ask "do I have tool access?", you always do.
-  • For APK builds: clone repo → flutter pub get → flutter build apk --debug
-  • APK output: <project>/build/app/outputs/flutter-apk/app-debug.apk
+  • For voice app / Super Agent Android app requests: call build_flutter_voice_app() FIRST.
+    This tool handles the ENTIRE pipeline in one call: scaffold → write files → pub get →
+    build APK → upload → push to GitHub → returns download URL + install instructions.
+    Do NOT manually scaffold, write pubspec, write main.dart separately when this tool exists.
+  • For other APK builds: flutter_create_project → write_workspace_file for .dart/.yaml files
+    → flutter_build_apk → upload_build_artifact
   • After a build, upload the APK to Cloudinary if the upload_build_artifact tool is available.
   • For write operations (git push, git commit, file writes): the owner safe word was already verified.
 
@@ -116,6 +128,9 @@ def run_shell_agent(message: str, authorized: bool = False, debug_mode: bool = F
 
     tools = [
         run_shell_command, write_workspace_file, clone_repo, list_workspace, run_claude_cli,
+        # Flutter build pipeline — use build_flutter_voice_app for voice app requests
+        build_flutter_voice_app, flutter_create_project, flutter_build_apk,
+        upload_build_artifact, flutter_git_push, flutter_test,
         # Infrastructure visibility — always available for self-healing
         railway_list_services, railway_get_logs, railway_get_deployment_status,
         railway_list_variables,
