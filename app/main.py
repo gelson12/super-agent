@@ -712,6 +712,118 @@ def reload_algorithms():
         raise HTTPException(status_code=500, detail=f"Reload failed: {e}")
 
 
+@app.get("/build/stream", tags=["build"])
+def build_stream():
+    """
+    SSE stream of the current Flutter build progress.
+    Tails /workspace/build_progress.log in real-time — subscribe while a build is running
+    to see exactly what step is executing instead of a blank 'Thinking...' spinner.
+    Closes automatically when the build finishes (detects '🏁 Build pipeline complete').
+    """
+    from .tools.flutter_tools import BUILD_PROGRESS_LOG
+    import time as _time
+
+    _SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+
+    def _tail():
+        pos = 0
+        deadline = _time.time() + 900  # max 15 min stream
+        yield "data: [BUILD_STREAM_START]\n\n"
+        while _time.time() < deadline:
+            try:
+                if BUILD_PROGRESS_LOG.exists():
+                    text = BUILD_PROGRESS_LOG.read_text(encoding="utf-8")
+                    if len(text) > pos:
+                        new_lines = text[pos:]
+                        pos = len(text)
+                        for line in new_lines.splitlines():
+                            if line.strip():
+                                yield f"data: {line.strip().replace(chr(10), ' ')}\n\n"
+                        if "Build pipeline complete" in new_lines or "FAILED" in new_lines:
+                            yield "data: [BUILD_STREAM_END]\n\n"
+                            return
+            except Exception:
+                pass
+            _time.sleep(1)
+        yield "data: [BUILD_STREAM_TIMEOUT]\n\n"
+
+    return StreamingResponse(_tail(), media_type="text/event-stream", headers=_SSE_HEADERS)
+
+
+@app.get("/build/status", tags=["build"])
+def build_status():
+    """
+    Return the current build progress log as JSON.
+    Useful for polling — returns last 50 lines of /workspace/build_progress.log.
+    """
+    from .tools.flutter_tools import BUILD_PROGRESS_LOG
+    try:
+        if not BUILD_PROGRESS_LOG.exists():
+            return {"running": False, "lines": [], "last": "No build started yet"}
+        lines = BUILD_PROGRESS_LOG.read_text(encoding="utf-8").splitlines()
+        last_50 = lines[-50:] if len(lines) > 50 else lines
+        last = lines[-1] if lines else ""
+        running = bool(lines) and "Build pipeline complete" not in last and "FAILED" not in last
+        return {"running": running, "lines": last_50, "last": last, "total_lines": len(lines)}
+    except Exception as e:
+        return {"running": False, "lines": [], "last": f"Error: {e}"}
+
+
+@app.get("/admin/live-log", tags=["admin"])
+def admin_live_log(lines: int = 100):
+    """
+    Return recent activity across all Super Agent logs for external monitoring.
+    Shows: build progress, insight log summary, recent errors, Railway status.
+    Use this endpoint to monitor what Super Agent is doing from outside the container.
+    """
+    import json as _json
+    from .tools.flutter_tools import BUILD_PROGRESS_LOG
+    from .learning.insight_log import LOG_PATH as _INSIGHT_LOG
+
+    report: dict = {}
+
+    # Build progress
+    try:
+        if BUILD_PROGRESS_LOG.exists():
+            blines = BUILD_PROGRESS_LOG.read_text(encoding="utf-8").splitlines()
+            report["build_progress"] = blines[-lines:] if len(blines) > lines else blines
+        else:
+            report["build_progress"] = []
+    except Exception as e:
+        report["build_progress"] = [f"Error reading: {e}"]
+
+    # Recent insight log entries (last 20 interactions)
+    try:
+        if os.path.exists(_INSIGHT_LOG):
+            with open(_INSIGHT_LOG) as f:
+                entries = _json.load(f)
+            recent = entries[-20:] if len(entries) > 20 else entries
+            report["recent_interactions"] = [
+                {"model": e.get("model"), "route": e.get("routed_by"),
+                 "error": e.get("error", False), "ts": e.get("timestamp", "")}
+                for e in recent
+            ]
+            report["total_interactions"] = len(entries)
+            errors = sum(1 for e in entries if e.get("error"))
+            report["error_rate_pct"] = round(errors / len(entries) * 100, 1) if entries else 0
+        else:
+            report["recent_interactions"] = []
+    except Exception as e:
+        report["recent_interactions"] = [f"Error: {e}"]
+
+    # Memory store size
+    try:
+        mem_log = os.path.join("/workspace", "agent_memories.jsonl")
+        if os.path.exists(mem_log):
+            with open(mem_log) as f:
+                count = sum(1 for _ in f)
+            report["memory_records"] = count
+    except Exception:
+        report["memory_records"] = "unknown"
+
+    return report
+
+
 @app.get("/storage/status", tags=["storage"])
 def storage_status():
     """Show current Cloudinary storage usage and quota."""

@@ -547,6 +547,55 @@
     window.speechSynthesis.speak(utt);
   }
 
+  // ── Live build progress subscription ────────────────────────────────────────
+  let _buildProgressReader = null;
+
+  function _startBuildProgressStream(bubble) {
+    if (_buildProgressReader) return; // already streaming
+    const res = fetch('/build/stream', { headers: authHeaders() });
+    res.then(r => {
+      if (!r.ok || !r.body) return;
+      const reader = r.body.getReader();
+      const dec = new TextDecoder();
+      _buildProgressReader = reader;
+      let buf = '';
+      const pump = () => reader.read().then(({ done, value }) => {
+        if (done) { _buildProgressReader = null; return; }
+        buf += dec.decode(value, { stream: true });
+        const events = buf.split('\n\n'); buf = events.pop();
+        for (const ev of events) {
+          for (const line of ev.split('\n')) {
+            if (!line.startsWith('data: ')) continue;
+            const token = line.slice(6).trim();
+            if (token === '[BUILD_STREAM_END]' || token === '[BUILD_STREAM_TIMEOUT]') {
+              _buildProgressReader = null; return;
+            }
+            if (token === '[BUILD_STREAM_START]') continue;
+            // Append progress line to the bubble (only if bubble still shows spinner)
+            if (bubble && !bubble.dataset.done) {
+              const existing = bubble.innerText;
+              // Keep last 8 progress lines to avoid flooding
+              const lines = existing === '▍' ? [] : existing.split('\n').filter(Boolean);
+              lines.push(token);
+              const display = lines.slice(-8).join('\n');
+              bubble.textContent = display + '\n▍';
+              chat.scrollTop = chat.scrollHeight;
+            }
+          }
+        }
+        pump();
+      }).catch(() => { _buildProgressReader = null; });
+      pump();
+    }).catch(() => {});
+  }
+
+  function _stopBuildProgressStream() {
+    if (_buildProgressReader) {
+      try { _buildProgressReader.cancel(); } catch (_) {}
+      _buildProgressReader = null;
+    }
+  }
+
   // ── Text chat (streaming, falls back to JSON) ───────────────────────────────
   async function sendMessage() {
     const text = input.value.trim();
@@ -568,6 +617,12 @@
 
     let fullText = '';
     let streamOk = false;
+
+    // Start build progress sidebar after 3s if chat stream hasn't sent tokens yet
+    // (detects long-running builds — flutter compile takes 5-10 min)
+    let _buildTimer = setTimeout(() => {
+      if (fullText === '') _startBuildProgressStream(bubble);
+    }, 3000);
 
     try {
       const res = await fetch('/chat/stream', {
@@ -614,6 +669,9 @@
           }
         }
         // Remove cursor, render final markdown
+        clearTimeout(_buildTimer);
+        _stopBuildProgressStream();
+        bubble.dataset.done = '1';
         bubble.innerHTML = renderMarkdown(fullText);
         const meta = document.createElement('div');
         meta.className = 'meta';
@@ -625,6 +683,8 @@
         msgDiv.appendChild(meta);
       }
     } catch (_) { streamOk = false; }
+    clearTimeout(_buildTimer);
+    _stopBuildProgressStream();
 
     // Fallback to regular /chat if streaming failed
     if (!streamOk) {

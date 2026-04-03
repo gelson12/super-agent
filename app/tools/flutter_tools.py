@@ -300,57 +300,96 @@ _VOICE_APP_MANIFEST_PERMISSIONS = """\
 """
 
 
+# ── Build progress log — readable by the /build/stream SSE endpoint ──────────
+BUILD_PROGRESS_LOG = Path("/workspace/build_progress.log")
+
+
+def _progress(msg: str) -> None:
+    """
+    Write a timestamped progress line to BUILD_PROGRESS_LOG.
+    The /build/stream SSE endpoint tails this file and streams it live to the UI,
+    so the user sees exactly what step is running instead of a blank 'Thinking...'.
+    """
+    from datetime import datetime
+    line = f"[{datetime.utcnow().strftime('%H:%M:%S')}] {msg}\n"
+    try:
+        with BUILD_PROGRESS_LOG.open("a", encoding="utf-8") as f:
+            f.write(line)
+    except Exception:
+        pass  # never block the build on log failure
+
+
 @tool
 def build_flutter_voice_app(dummy: str = "") -> str:
     """
     Build the complete Super Agent Voice Android app in one atomic pipeline.
-    This tool handles EVERYTHING in Python — no heredocs, no LLM decisions mid-build:
+    Writes live progress to /workspace/build_progress.log — visible via /build/stream.
+    Steps:
       1. Scaffold Flutter project (or reuse existing)
       2. Write pubspec.yaml via Python file I/O
       3. Write lib/main.dart via Python file I/O (handles all Dart special chars)
       4. Patch AndroidManifest.xml with microphone + internet permissions
       5. flutter pub get
-      6. flutter build apk --debug
+      6. flutter build apk --debug  ← takes 5-10 min, progress logged live
       7. Upload APK to Cloudinary (fallback: GitHub Releases)
       8. Push source to github.com/gelson12/super_agent_voice
     Returns a complete report with download URL and install instructions.
     """
     import json as _json
-    from ..config import settings as _settings
+
+    # Clear + start the progress log
+    try:
+        BUILD_PROGRESS_LOG.write_text("", encoding="utf-8")
+    except Exception:
+        pass
+
+    _progress("🚀 Starting Super Agent Voice App build pipeline")
 
     proj = _WORKSPACE / "super_agent_voice"
     log = []
 
     # ── Step 1: Scaffold if not exists ───────────────────────────────────────
+    _progress("📁 Step 1/8 — Checking/scaffolding Flutter project...")
     if not proj.exists():
+        _progress("  → Scaffolding new Flutter project (super_agent_voice)...")
         out = _run(
             f"{_FLUTTER_BIN} create super_agent_voice --org com.superagent --platforms android",
             str(_WORKSPACE), timeout=180,
         )
         log.append(f"[scaffold] {out[-300:]}")
+        _progress(f"  → Scaffold complete: {out[-100:]}")
     else:
+        _progress("  → Reusing existing /workspace/super_agent_voice")
         log.append("[scaffold] reusing existing /workspace/super_agent_voice")
 
     if not proj.exists():
+        _progress("❌ FAILED: could not scaffold project")
         return f"[build_flutter_voice_app] FAILED: could not scaffold project\n" + "\n".join(log)
 
     # ── Step 2: Write pubspec.yaml ────────────────────────────────────────────
+    _progress("📝 Step 2/8 — Writing pubspec.yaml with voice dependencies...")
     try:
         (proj / "pubspec.yaml").write_text(_VOICE_APP_PUBSPEC, encoding="utf-8")
         log.append("[pubspec] written OK")
+        _progress("  → pubspec.yaml written (speech_to_text, flutter_tts, http, permission_handler)")
     except Exception as e:
+        _progress(f"❌ FAILED writing pubspec: {e}")
         return f"[build_flutter_voice_app] FAILED writing pubspec: {e}"
 
     # ── Step 3: Write lib/main.dart ───────────────────────────────────────────
+    _progress("📝 Step 3/8 — Writing lib/main.dart (voice chat UI)...")
     try:
         lib_dir = proj / "lib"
         lib_dir.mkdir(exist_ok=True)
         (lib_dir / "main.dart").write_text(_VOICE_APP_MAIN_DART.lstrip(), encoding="utf-8")
         log.append(f"[main.dart] written OK ({len(_VOICE_APP_MAIN_DART)} chars)")
+        _progress(f"  → main.dart written ({len(_VOICE_APP_MAIN_DART)} chars — gold/black UI, mic button, TTS)")
     except Exception as e:
+        _progress(f"❌ FAILED writing main.dart: {e}")
         return f"[build_flutter_voice_app] FAILED writing main.dart: {e}"
 
     # ── Step 4: Patch AndroidManifest.xml ────────────────────────────────────
+    _progress("🔐 Step 4/8 — Patching AndroidManifest.xml (microphone + internet permissions)...")
     try:
         manifest_path = proj / "android" / "app" / "src" / "main" / "AndroidManifest.xml"
         if manifest_path.exists():
@@ -363,28 +402,41 @@ def build_flutter_voice_app(dummy: str = "") -> str:
                 )
                 manifest_path.write_text(manifest, encoding="utf-8")
                 log.append("[manifest] permissions patched")
+                _progress("  → Permissions patched: RECORD_AUDIO, INTERNET, BLUETOOTH")
             else:
                 log.append("[manifest] permissions already present")
+                _progress("  → Permissions already present")
     except Exception as e:
         log.append(f"[manifest] WARNING: {e}")
+        _progress(f"  ⚠️ Manifest warning: {e}")
 
     # ── Step 5: flutter pub get ───────────────────────────────────────────────
+    _progress("📦 Step 5/8 — Running flutter pub get (downloading packages)...")
+    _progress("  → This downloads speech_to_text, flutter_tts, http (~30-60s)...")
     pub_out = _run(f"{_FLUTTER_BIN} pub get", str(proj), timeout=180)
     log.append(f"[pub get] {pub_out[-300:]}")
     if "[exit" in pub_out and "error" in pub_out.lower():
+        _progress(f"❌ FAILED at pub get: {pub_out[-200:]}")
         return "[build_flutter_voice_app] FAILED at pub get:\n" + pub_out + "\n\nLog:\n" + "\n".join(log)
+    _progress(f"  → pub get complete")
 
     # ── Step 6: flutter build apk ─────────────────────────────────────────────
+    _progress("🔨 Step 6/8 — Building APK (flutter build apk --debug)...")
+    _progress("  → This is the slowest step — compiles Dart → native Android code (~5-10 min)")
+    _progress("  → You will see this message while Gradle compiles in the background...")
     build_out = _run(f"{_FLUTTER_BIN} build apk --debug", str(proj), timeout=600)
     log.append(f"[build apk] {build_out[-400:]}")
     apk = proj / "build" / "app" / "outputs" / "flutter-apk" / "app-debug.apk"
     if not apk.exists():
+        _progress(f"❌ FAILED: APK not found. Build output: {build_out[-300:]}")
         return "[build_flutter_voice_app] FAILED: APK not found after build.\n\nBuild output:\n" + build_out
 
     size_mb = round(apk.stat().st_size / (1024 * 1024), 2)
     log.append(f"[apk] {apk} ({size_mb} MB)")
+    _progress(f"  ✅ APK built successfully! Size: {size_mb} MB")
 
     # ── Step 7: Upload APK ────────────────────────────────────────────────────
+    _progress("☁️ Step 7/8 — Uploading APK to Cloudinary (fallback: GitHub Releases)...")
     upload_result = upload_build_artifact.invoke({
         "file_path": str(apk),
         "filename": f"builds/super_agent_voice_{int(time.time())}",
@@ -394,11 +446,14 @@ def build_flutter_voice_app(dummy: str = "") -> str:
         download_url = upload_data["url"]
         upload_source = upload_data.get("source", "unknown")
         log.append(f"[upload] {upload_source} → {download_url}")
+        _progress(f"  ✅ Upload complete via {upload_source}: {download_url}")
     except Exception:
         download_url = None
         log.append(f"[upload] failed: {upload_result}")
+        _progress(f"  ⚠️ Upload failed: {upload_result[:100]}")
 
     # ── Step 8: Push source to GitHub ─────────────────────────────────────────
+    _progress("📤 Step 8/8 — Pushing source code to github.com/gelson12/super_agent_voice...")
     pat = os.environ.get("GITHUB_PAT", "")
     repo_url = "https://github.com/gelson12/super_agent_voice"
     if pat:
@@ -408,11 +463,15 @@ def build_flutter_voice_app(dummy: str = "") -> str:
             "commit_message": "Super Agent Voice Chat app — built by Super Agent",
         })
         log.append(f"[git push] {push_result[:200]}")
+        _progress(f"  ✅ Code pushed to GitHub: {repo_url}")
     else:
         log.append("[git push] skipped — GITHUB_PAT not set")
+        _progress("  ⚠️ Git push skipped — GITHUB_PAT not set")
 
     # ── Final report ──────────────────────────────────────────────────────────
+    _progress("🏁 Build pipeline complete!")
     if not download_url:
+        _progress(f"⚠️ APK built but upload failed. APK at: {apk}")
         return (
             f"✅ APK built ({size_mb} MB) but upload failed.\n"
             f"APK is at: {apk}\n\n"
