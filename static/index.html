@@ -202,6 +202,14 @@
       border: 1px solid #2a2a2a;
       border-bottom-left-radius: 4px;
     }
+    /* Applied while build progress is streaming — keeps each log line on its own row */
+    .bubble.progress-log {
+      white-space: pre-wrap;
+      font-family: "Fira Mono", "Courier New", monospace;
+      font-size: 12px;
+      line-height: 1.5;
+      color: #b0c4b0;
+    }
 
     .meta {
       font-size: 11px;
@@ -573,16 +581,12 @@
             if (token === '[BUILD_STREAM_START]') continue;
             // Append progress line to the bubble (only if bubble still shows spinner)
             if (bubble && !bubble.dataset.done) {
-              // Enable pre-wrap so \n characters show as actual line breaks
-              bubble.style.whiteSpace = 'pre-wrap';
-              bubble.style.fontFamily = 'monospace';
-              bubble.style.fontSize = '12px';
-              const existing = bubble.innerText;
-              // Keep last 10 progress lines to avoid flooding
-              const lines = existing === '▍' ? [] : existing.split('\n').filter(l => l && l !== '▍');
+              bubble.classList.add('progress-log');
+              const existing = bubble.textContent;
+              // Keep last 10 progress lines
+              const lines = existing === '▍' ? [] : existing.split('\n').filter(l => l.trim() && l.trim() !== '▍');
               lines.push(token);
-              const display = lines.slice(-10).join('\n');
-              bubble.textContent = display + '\n▍';
+              bubble.textContent = lines.slice(-10).join('\n') + '\n▍';
               chat.scrollTop = chat.scrollHeight;
             }
           }
@@ -628,15 +632,30 @@
       if (fullText === '') _startBuildProgressStream(bubble);
     }, 3000);
 
-    try {
+    // Attempt the stream. If the server is still booting (Railway redeploy window),
+    // the first attempt may fail with a network error or non-OK status. We retry
+    // once after a 4-second delay before giving up and falling back to /chat.
+    const _doStream = async () => {
       const res = await fetch('/chat/stream', {
         method: 'POST',
         headers: authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ message: text, session_id: sessionId }),
       });
+      return res;
+    };
+
+    try {
+      let res = await _doStream();
+      // If server not ready, wait 4s and retry once
+      if (!res.ok) {
+        bubble.textContent = '⏳ Server starting up — retrying…';
+        await new Promise(r => setTimeout(r, 4000));
+        res = await _doStream();
+      }
 
       if (res.ok && res.body) {
         streamOk = true;
+        bubble.textContent = '▍';
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
 
@@ -672,13 +691,11 @@
             }
           }
         }
-        // Remove cursor, reset progress styles, render final markdown
+        // Remove cursor, drop progress-log class, render final markdown
         clearTimeout(_buildTimer);
         _stopBuildProgressStream();
         bubble.dataset.done = '1';
-        bubble.style.whiteSpace = '';
-        bubble.style.fontFamily = '';
-        bubble.style.fontSize = '';
+        bubble.classList.remove('progress-log');
         bubble.innerHTML = renderMarkdown(fullText);
         const meta = document.createElement('div');
         meta.className = 'meta';
@@ -695,9 +712,7 @@
 
     // Fallback to regular /chat if streaming failed
     if (!streamOk) {
-      bubble.style.whiteSpace = '';
-      bubble.style.fontFamily = '';
-      bubble.style.fontSize = '';
+      bubble.classList.remove('progress-log');
       bubble.textContent = 'Thinking…';
       msgDiv.classList.add('typing');
       try {
