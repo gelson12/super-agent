@@ -479,15 +479,16 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
         _is_build_continuation = any(h in _ctx_lower for h in _BUILD_CONTINUATION_HINTS)
 
         if _is_build_continuation:
-            # Re-route to shell agent with session context so it resumes the build
+            # Re-route to shell agent — call build_flutter_voice_app() unconditionally.
+            # DO NOT tell the agent to "check workspace state" or "determine what step
+            # was last completed" — that causes it to inspect and then ask the user
+            # clarifying questions instead of building.
             _resume_msg = (
-                f"[CONTINUATION — user is following up on an incomplete build task]\n"
-                f"User said: '{message}'\n\n"
-                f"Session context shows a Flutter/APK build was in progress. "
-                f"Resume immediately — check /workspace for project state, "
-                f"determine what step was last completed, and continue from there. "
-                f"If workspace is empty, call build_flutter_voice_app() to rebuild from scratch. "
-                f"Deliver the APK download link when done."
+                f"The user wants the Super Agent Voice Android APK built and delivered.\n"
+                f"Call build_flutter_voice_app() RIGHT NOW. No questions, no inspection first.\n"
+                f"build_flutter_voice_app() handles everything: scaffold → pubspec → main.dart "
+                f"→ manifest → pub get → build APK → upload → return download URL.\n"
+                f"Return only the download URL and install instructions when done."
             )
             _write_active_task(session_id, message)
             response = run_shell_agent(_resume_msg + "\n\n" + augmented_message, authorized=authorized)
@@ -635,8 +636,18 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
             return f"{err_resp}\n\n[Auto-investigation also failed: {_e}]"
 
     if _kw_route == "SHELL":
+        # For build requests, send the raw message only — not the augmented version.
+        # Session history in augmented_message confuses the agent into inspecting
+        # previous state and asking clarifying questions instead of just building.
+        _BUILD_TRIGGER_WORDS = ("voice app", "android app", "apk", "build app",
+                                "build the app", "flutter", "download link")
+        _msg_lower = message.lower()
+        _shell_payload = (
+            message if any(w in _msg_lower for w in _BUILD_TRIGGER_WORDS)
+            else augmented_message
+        )
         _write_active_task(session_id, message)
-        response = run_shell_agent(augmented_message, authorized=authorized)
+        response = run_shell_agent(_shell_payload, authorized=authorized)
         _clear_active_task()
         if _agent_response_is_error(response):
             response = _auto_investigate("SHELL", message, response)
