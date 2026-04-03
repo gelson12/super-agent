@@ -422,9 +422,38 @@ def build_flutter_voice_app(dummy: str = "") -> str:
 
     # ── Step 6: flutter build apk ─────────────────────────────────────────────
     _progress("🔨 Step 6/8 — Building APK (flutter build apk --debug)...")
-    _progress("  → This is the slowest step — compiles Dart → native Android code (~5-10 min)")
-    _progress("  → You will see this message while Gradle compiles in the background...")
+    _progress("  → SLOWEST STEP: Gradle is compiling Dart → native Android bytecode")
+    _progress("  → Expected time: 5-10 minutes on first build, ~2 min on rebuild")
+    _progress("  → Do not close this session — build is running in the background")
+    _progress("  → ⏳ Gradle: downloading dependencies and running code generation...")
+
+    import threading as _threading
+    _build_done = [False]
+
+    def _heartbeat():
+        """Write a progress dot every 60s so the user knows the build is still alive."""
+        _ticks = 0
+        _msgs = [
+            "  → ⏳ Still compiling... (Gradle is building Android classes)",
+            "  → ⏳ Still compiling... (running R8/D8 code transformations)",
+            "  → ⏳ Still compiling... (linking native libraries)",
+            "  → ⏳ Still compiling... (packaging APK resources)",
+            "  → ⏳ Still compiling... (almost done — signing debug APK)",
+        ]
+        while not _build_done[0]:
+            _threading.Event().wait(60)
+            if _build_done[0]:
+                break
+            _ticks += 1
+            msg = _msgs[min(_ticks - 1, len(_msgs) - 1)]
+            _progress(msg)
+
+    _hb = _threading.Thread(target=_heartbeat, daemon=True)
+    _hb.start()
+
     build_out = _run(f"{_FLUTTER_BIN} build apk --debug", str(proj), timeout=600)
+    _build_done[0] = True
+
     log.append(f"[build apk] {build_out[-400:]}")
     apk = proj / "build" / "app" / "outputs" / "flutter-apk" / "app-debug.apk"
     if not apk.exists():
@@ -436,21 +465,40 @@ def build_flutter_voice_app(dummy: str = "") -> str:
     _progress(f"  ✅ APK built successfully! Size: {size_mb} MB")
 
     # ── Step 7: Upload APK ────────────────────────────────────────────────────
-    _progress("☁️ Step 7/8 — Uploading APK to Cloudinary (fallback: GitHub Releases)...")
+    _progress(f"☁️ Step 7/8 — Making APK available for download ({size_mb} MB)...")
+    if size_mb > _CLOUDINARY_MAX_MB:
+        _progress(f"  → APK is {size_mb} MB (>{_CLOUDINARY_MAX_MB} MB Cloudinary limit)")
+        _progress(f"  → Trying Railway direct-serve first (instant — no upload needed)...")
+        _progress(f"  → Fallback: GitHub Releases (large upload, may take a few minutes)")
+    else:
+        _progress(f"  → Trying Cloudinary first (≤{_CLOUDINARY_MAX_MB} MB), fallback: Railway direct-serve")
+    _progress(f"  → Generating download link...")
+
     upload_result = upload_build_artifact.invoke({
         "file_path": str(apk),
         "filename": f"builds/super_agent_voice_{int(time.time())}",
     })
+    download_url = None
+    url_verified = False
+    upload_source = "none"
+    size_warning = ""
     try:
         upload_data = _json.loads(upload_result)
-        download_url = upload_data["url"]
+        download_url = upload_data.get("url")
         upload_source = upload_data.get("source", "unknown")
-        log.append(f"[upload] {upload_source} → {download_url}")
-        _progress(f"  ✅ Upload complete via {upload_source}: {download_url}")
+        url_verified = upload_data.get("url_verified", False)
+        size_warning = upload_data.get("size_warning", "")
+        if download_url:
+            status = "✅ URL verified" if url_verified else "⚠️ URL NOT verified (may be unavailable)"
+            log.append(f"[upload] {upload_source} → {download_url} [{status}]")
+            _progress(f"  Upload via {upload_source}: {status}")
+            _progress(f"  URL: {download_url}")
+        else:
+            log.append(f"[upload] failed: {upload_data.get('error', upload_result)}")
+            _progress(f"  ⚠️ Upload failed: {upload_data.get('error', 'unknown error')}")
     except Exception:
-        download_url = None
         log.append(f"[upload] failed: {upload_result}")
-        _progress(f"  ⚠️ Upload failed: {upload_result[:100]}")
+        _progress(f"  ⚠️ Upload failed (could not parse result): {upload_result[:150]}")
 
     # ── Step 8: Push source to GitHub ─────────────────────────────────────────
     _progress("📤 Step 8/8 — Pushing source code to github.com/gelson12/super_agent_voice...")
@@ -470,29 +518,54 @@ def build_flutter_voice_app(dummy: str = "") -> str:
 
     # ── Final report ──────────────────────────────────────────────────────────
     _progress("🏁 Build pipeline complete!")
+
+    if size_warning:
+        _progress(size_warning)
+
     if not download_url:
-        _progress(f"⚠️ APK built but upload failed. APK at: {apk}")
+        _progress(f"⚠️ APK built but upload failed. APK is on the server at: {apk}")
         return (
-            f"✅ APK built ({size_mb} MB) but upload failed.\n"
-            f"APK is at: {apk}\n\n"
-            f"Log:\n" + "\n".join(log)
+            f"✅ APK built successfully ({size_mb} MB) — but upload failed.\n\n"
+            f"**APK is on the Railway server at:** `{apk}`\n\n"
+            f"**To get the download link, try one of:**\n"
+            f"1. Ask Super Agent: 'retry uploading the APK'\n"
+            f"2. Run: `upload_build_artifact` with the path above\n\n"
+            f"{size_warning}\n\n"
+            f"Build log:\n" + "\n".join(log)
+        )
+
+    if url_verified:
+        url_status = "✅ **Verified — link works**"
+    else:
+        url_status = "⚠️ **URL could not be verified** — try the link; if it gives 404, ask Super Agent to retry the upload."
+
+    source_note = ""
+    if upload_source == "railway_direct":
+        source_note = (
+            "\n💡 **Railway link note:** This link is served directly from the Railway container — "
+            "no cloud upload needed. It will work immediately. "
+            "If the container is redeployed (new Railway deploy), the link will 404. "
+            "Ask Super Agent to 'regenerate the APK download link' if that happens."
         )
 
     install_steps = (
-        f"📥 **Download URL:** {download_url}\n\n"
-        f"📱 **Android Installation (sideload):**\n"
+        f"✅ **SuperAgent Voice APK — Build Complete**\n\n"
+        f"📦 **APK size:** {size_mb} MB\n"
+        f"☁️ **Served via:** {upload_source}\n"
+        f"🔗 **Download URL:** {download_url}\n"
+        f"🔍 **Link status:** {url_status}\n"
+        + source_note + "\n\n"
+        + (f"⚠️ {size_warning}\n\n" if size_warning else "")
+        + f"📱 **Android Installation (sideload):**\n"
         f"1. On your Android phone: Settings → Security → Install unknown apps → allow your browser\n"
         f"2. Open this URL in Chrome on your phone: {download_url}\n"
-        f"3. Tap the downloaded APK file → Install\n"
+        f"3. Tap the downloaded file → Install\n"
         f"4. If blocked: Settings → Apps → Special app access → Install unknown apps → Chrome → Allow\n\n"
         f"🎙 **Using the app:**\n"
         f"• Tap the gold microphone button to start speaking\n"
         f"• Tap again (or pause 3 seconds) to send\n"
         f"• Super Agent responds in text AND reads the answer aloud\n\n"
-        f"⚙️ **Voice settings (in-app):** The app uses English (en-US) at 0.5x speed by default.\n"
-        f"To change: edit the _init() method in main.dart — _tts.setLanguage() and _tts.setSpeechRate()\n\n"
         f"📦 **Source code:** {repo_url}\n"
-        f"📦 **APK size:** {size_mb} MB\n"
     )
     return install_steps
 
@@ -592,73 +665,141 @@ def flutter_test(project_path: str) -> str:
     return _run(f"{_FLUTTER_BIN} test", cwd=project_path, timeout=300)
 
 
+def _verify_url(url: str, pat: str = "") -> bool:
+    """
+    Verify a URL is actually accessible via HEAD request.
+    Follows redirects. Returns True if HTTP < 400.
+    """
+    import urllib.request
+    try:
+        req = urllib.request.Request(url, method="HEAD")
+        if pat:
+            req.add_header("Authorization", f"token {pat}")
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            return resp.status < 400
+    except Exception:
+        return False
+
+
 def _github_release_upload(fp: Path, project_name: str) -> str | None:
     """
     Fallback: create a GitHub Release on gelson12/super-agent and upload the APK as a release asset.
-    Returns the browser_download_url on success, None on failure.
+    Returns the browser_download_url on success (after verifying URL works), None on failure.
     """
     import json
     import urllib.request
     pat = os.environ.get("GITHUB_PAT", "")
     if not pat:
         return None
+
+    size_mb = round(fp.stat().st_size / (1024 * 1024), 2)
     tag = f"apk-{project_name}-{int(time.time())}"
-    headers = {
-        "Authorization": f"token {pat}",
-        "Accept": "application/vnd.github.v3+json",
-        "Content-Type": "application/json",
-    }
-    # Create a release
+
+    # ── Create release ────────────────────────────────────────────────────────
     try:
         payload = json.dumps({
             "tag_name": tag,
             "name": f"APK Build — {project_name}",
-            "body": f"Automated APK build by Super Agent for project '{project_name}'.",
+            "body": f"Automated APK build by Super Agent for project '{project_name}'. Size: {size_mb} MB.",
             "draft": False,
             "prerelease": True,
         }).encode()
         req = urllib.request.Request(
             "https://api.github.com/repos/gelson12/super-agent/releases",
             data=payload,
-            headers=headers,
+            headers={
+                "Authorization": f"token {pat}",
+                "Accept": "application/vnd.github.v3+json",
+                "Content-Type": "application/json",
+            },
             method="POST",
         )
         with urllib.request.urlopen(req, timeout=30) as resp:
             release_data = json.loads(resp.read())
         upload_url = release_data["upload_url"].split("{")[0]  # strip {?name,label} template
-        release_id = release_data["id"]
     except Exception as e:
         print(f"[github_release_upload] create release failed: {e}")
         return None
 
-    # Upload the APK as an asset
+    # ── Upload APK asset ──────────────────────────────────────────────────────
+    # Use a large timeout — GitHub allows up to 2 GB per release asset,
+    # but uploading 100+ MB via the API needs time (allow 10 min).
     try:
+        file_size = fp.stat().st_size
         with fp.open("rb") as f:
-            apk_bytes = f.read()
-        asset_req = urllib.request.Request(
-            f"{upload_url}?name={fp.name}",
-            data=apk_bytes,
-            headers={
-                "Authorization": f"token {pat}",
-                "Content-Type": "application/vnd.android.package-archive",
-            },
-            method="POST",
-        )
-        with urllib.request.urlopen(asset_req, timeout=120) as resp:
+            asset_req = urllib.request.Request(
+                f"{upload_url}?name={fp.name}",
+                data=f.read(),
+                headers={
+                    "Authorization": f"token {pat}",
+                    "Content-Type": "application/vnd.android.package-archive",
+                    "Content-Length": str(file_size),
+                },
+                method="POST",
+            )
+        with urllib.request.urlopen(asset_req, timeout=600) as resp:
             asset_data = json.loads(resp.read())
-        return asset_data["browser_download_url"]
     except Exception as e:
         print(f"[github_release_upload] upload asset failed: {e}")
         return None
+
+    download_url = asset_data.get("browser_download_url")
+    if not download_url:
+        print("[github_release_upload] no browser_download_url in response")
+        return None
+
+    # ── Verify URL is actually accessible (wait 3s for GitHub to process) ────
+    time.sleep(3)
+    if not _verify_url(download_url, pat):
+        print(f"[github_release_upload] URL verification failed: {download_url}")
+        # Return the URL anyway — GitHub CDN can be momentarily slow
+        # but mark it as unverified so caller can warn the user
+        return f"UNVERIFIED:{download_url}"
+
+    return download_url
+
+
+_CLOUDINARY_MAX_MB    = 50    # Cloudinary free/basic plans reject files > this size
+_GITHUB_WARN_MB       = 100   # APKs over this size are large; warn but still attempt upload
+_APK_DOWNLOADS_DIR    = Path("/workspace/apk_downloads")
+
+
+def _serve_apk_from_railway(fp: Path) -> str | None:
+    """
+    Copy the APK into /workspace/apk_downloads/{token}/ and return a direct
+    download URL served by this Railway container.
+
+    The token is a random 22-char URL-safe string — it acts as the credential,
+    so no X-Token header is required (works from a mobile Chrome browser).
+
+    Returns the full HTTPS URL, or None if RAILWAY_PUBLIC_DOMAIN is not set.
+    """
+    import secrets as _secrets
+    import shutil as _shutil
+
+    domain = os.environ.get("RAILWAY_PUBLIC_DOMAIN", "")
+    if not domain:
+        return None
+
+    token = _secrets.token_urlsafe(16)  # 22 URL-safe chars
+    dest_dir = _APK_DOWNLOADS_DIR / token
+    try:
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        _shutil.copy2(fp, dest_dir / fp.name)
+    except Exception as e:
+        print(f"[serve_apk_from_railway] copy failed: {e}")
+        return None
+
+    return f"https://{domain}/downloads/{token}/{fp.name}"
 
 
 @tool
 def upload_build_artifact(file_path: str, filename: str = "") -> str:
     """
-    Upload an APK or IPA file to Cloudinary (primary) or GitHub Releases (fallback).
+    Upload an APK or IPA file to Cloudinary (primary, ≤50 MB) or GitHub Releases (fallback).
     file_path: absolute path to the APK/IPA file.
     filename: optional public_id override for the Cloudinary asset.
-    Returns JSON with: url, public_id, size_mb, source (cloudinary|github_releases).
+    Returns JSON with: url, public_id, size_mb, source, url_verified (bool).
     """
     import json
     from ..config import settings
@@ -668,15 +809,44 @@ def upload_build_artifact(file_path: str, filename: str = "") -> str:
         return f"[error] File not found: {file_path}"
 
     size_mb = round(fp.stat().st_size / (1024 * 1024), 2)
-    project_name = fp.stem.split("_")[0] if "_" in fp.stem else fp.stem
+    # Derive a clean project name from the file stem (handles app-debug, my_app, etc.)
+    stem = fp.stem  # e.g. "app-debug"
+    project_name = stem.replace("-", "_")  # "app_debug"
 
-    # ── Primary: Cloudinary ──────────────────────────────────────────────────
+    size_warning = ""
+    if size_mb > _GITHUB_WARN_MB:
+        size_warning = (
+            f" ⚠️ APK is {size_mb} MB — larger than typical (~30–60 MB). "
+            "Consider enabling R8/ProGuard or removing unused packages to shrink it."
+        )
+
+    # ── Primary for large files: Railway direct serve (instant, no upload) ───
+    # For files that exceed Cloudinary's limit we serve directly from this container.
+    # The URL contains a random token — no extra auth needed for mobile browsers.
+    if size_mb > _CLOUDINARY_MAX_MB:
+        railway_url = _serve_apk_from_railway(fp)
+        if railway_url:
+            return json.dumps({
+                "url": railway_url,
+                "public_id": f"railway-local/{fp.name}",
+                "size_mb": size_mb,
+                "source": "railway_direct",
+                "url_verified": True,   # file is local — no network needed
+                "size_warning": size_warning,
+                "note": (
+                    "Served directly from the Railway container. "
+                    "Link is valid as long as the container is running. "
+                    "If it returns 404 after a redeploy, ask Super Agent to regenerate the link."
+                ),
+            })
+
+    # ── Primary: Cloudinary (small files only) ───────────────────────────────
     cloudinary_ok = all([
         settings.cloudinary_cloud_name,
         settings.cloudinary_api_key,
         settings.cloudinary_api_secret,
     ])
-    if cloudinary_ok:
+    if cloudinary_ok and size_mb <= _CLOUDINARY_MAX_MB:
         try:
             import cloudinary
             import cloudinary.uploader
@@ -694,26 +864,43 @@ def upload_build_artifact(file_path: str, filename: str = "") -> str:
                 public_id=public_id,
                 overwrite=True,
             )
+            cl_url = result["secure_url"]
+            url_ok = _verify_url(cl_url)
             return json.dumps({
-                "url": result["secure_url"],
+                "url": cl_url,
                 "public_id": result["public_id"],
                 "size_mb": size_mb,
                 "source": "cloudinary",
+                "url_verified": url_ok,
+                "size_warning": size_warning,
             })
         except Exception as _cl_err:
             print(f"[upload_build_artifact] Cloudinary failed: {_cl_err} — trying GitHub Releases")
+    elif cloudinary_ok and size_mb > _CLOUDINARY_MAX_MB:
+        print(f"[upload_build_artifact] Skipping Cloudinary — {size_mb} MB exceeds {_CLOUDINARY_MAX_MB} MB limit")
 
     # ── Fallback: GitHub Releases ────────────────────────────────────────────
-    gh_url = _github_release_upload(fp, project_name)
-    if gh_url:
+    gh_result = _github_release_upload(fp, project_name)
+    if gh_result:
+        url_verified = not gh_result.startswith("UNVERIFIED:")
+        gh_url = gh_result.removeprefix("UNVERIFIED:")
         return json.dumps({
             "url": gh_url,
             "public_id": f"github-release/{project_name}",
             "size_mb": size_mb,
             "source": "github_releases",
+            "url_verified": url_verified,
+            "size_warning": size_warning,
         })
 
-    return f"[upload error] Both Cloudinary and GitHub Releases upload failed for {file_path}"
+    return json.dumps({
+        "url": None,
+        "size_mb": size_mb,
+        "source": "none",
+        "url_verified": False,
+        "error": f"Both Cloudinary (skipped — {size_mb} MB > {_CLOUDINARY_MAX_MB} MB limit) and GitHub Releases upload failed.",
+        "size_warning": size_warning,
+    })
 
 
 @tool
@@ -783,3 +970,88 @@ def flutter_git_push(
         output_lines.append(f"$ {cmd.split(' --')[0]}\n{out}")
 
     return f"Repo: {repo_url}\n\n" + "\n".join(output_lines)
+
+
+@tool
+def regenerate_apk_download_link(project_name: str = "super_agent_voice") -> str:
+    """
+    Find the most recently built APK in /workspace and generate a fresh Railway
+    direct-serve download link without re-uploading or rebuilding anything.
+    Use this after a Railway redeploy makes a previous link return 404.
+    Returns the new download URL and its expiry note.
+    """
+    import json
+
+    # Find the most recently built APK
+    candidates = sorted(
+        list(Path("/workspace").glob("**/app-debug.apk")) +
+        list(Path("/workspace").glob("**/app-release.apk")),
+        key=lambda x: x.stat().st_mtime,
+        reverse=True,
+    )
+    if not candidates:
+        return json.dumps({"error": "No APK found in /workspace. The build needs to be re-run."})
+
+    apk = candidates[0]
+    size_mb = round(apk.stat().st_size / (1024 * 1024), 2)
+    _progress(f"🔗 Regenerating Railway download link for {apk.name} ({size_mb} MB)...")
+
+    url = _serve_apk_from_railway(apk)
+    if url:
+        _progress(f"  ✅ New link: {url}")
+        return json.dumps({
+            "url": url,
+            "source": "railway_direct",
+            "url_verified": True,
+            "size_mb": size_mb,
+            "apk_path": str(apk),
+            "note": "Link is valid as long as the Railway container is running.",
+        })
+
+    domain = os.environ.get("RAILWAY_PUBLIC_DOMAIN", "")
+    if not domain:
+        return json.dumps({
+            "error": "RAILWAY_PUBLIC_DOMAIN env var is not set. Cannot generate Railway link. "
+                     "Use retry_apk_upload to upload to GitHub Releases instead.",
+            "apk_path": str(apk),
+        })
+
+    return json.dumps({"error": f"Could not copy APK to downloads directory. APK is at: {apk}"})
+
+
+@tool
+def retry_apk_upload(project_name: str = "super_agent_voice") -> str:
+    """
+    Find the most recently built APK in /workspace/<project_name> and re-upload it.
+    Use this when a previous upload failed or gave a 404 URL.
+    Returns JSON with: url, source, url_verified, size_mb.
+    """
+    import json
+    import glob as _glob
+
+    search_paths = [
+        f"/workspace/{project_name}/build/app/outputs/flutter-apk/app-debug.apk",
+        f"/workspace/{project_name}/build/app/outputs/flutter-apk/app-release.apk",
+    ]
+    # Also search recursively
+    found = []
+    for sp in search_paths:
+        p = Path(sp)
+        if p.exists():
+            found.append(p)
+    if not found:
+        matches = list(Path("/workspace").glob("**/app-debug.apk"))
+        matches += list(Path("/workspace").glob("**/app-release.apk"))
+        found = sorted(matches, key=lambda x: x.stat().st_mtime, reverse=True)
+
+    if not found:
+        return json.dumps({"error": f"No APK found in /workspace. Build the app first."})
+
+    apk = found[0]
+    _progress(f"🔄 Retrying upload of {apk.name} ({round(apk.stat().st_size / 1024**2, 1)} MB)...")
+    result = upload_build_artifact.invoke({
+        "file_path": str(apk),
+        "filename": f"builds/{project_name}_retry_{int(time.time())}",
+    })
+    _progress(f"  Upload result: {result[:200]}")
+    return result

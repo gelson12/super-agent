@@ -62,5 +62,10 @@ class Settings(BaseSettings):
     # Tavily web search (optional upgrade from DuckDuckGo — higher quality results)
     tavily_api_key: str = ""
 
+    # Railway public URL — Railway auto-injects RAILWAY_PUBLIC_DOMAIN (no protocol prefix).
+    # Used to build direct APK download links served from this container.
+    # e.g. RAILWAY_PUBLIC_DOMAIN=super-agent-production.up.railway.app
+    railway_public_domain: str = ""
+
 
 settings = Settings()

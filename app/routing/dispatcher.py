@@ -1,3 +1,7 @@
+import os as _os
+import time as _time
+from pathlib import Path as _Path
+
 from .classifier import classify_request
 from .preprocessor import detect_trivial, score_complexity, model_for_complexity
 from ..models.claude import ask_claude, ask_claude_haiku
@@ -17,9 +21,52 @@ from ..learning.ensemble import ensemble_voter
 from ..learning.red_team import red_team
 from ..learning.cot_handoff import cot_handoff
 from ..memory.vector_memory import get_memory_context, store_memory
-from ..memory.session import get_compressed_context
+from ..memory.session import get_compressed_context, append_exchange
 from ..prompts import build_capabilities_block, SYSTEM_PROMPT_CLAUDE, SYSTEM_PROMPT_HAIKU
 from ..config import settings as _settings
+
+# ── Active task tracker ───────────────────────────────────────────────────────
+# Written before any long-running agent call so follow-up queries always know
+# what was being worked on, even before append_exchange fires (which only
+# happens after the agent COMPLETES — potentially 10+ minutes later).
+
+_ACTIVE_TASK_FILE = _Path("/workspace/.active_task.txt") if _os.access("/workspace", _os.W_OK) else _Path("./.active_task.txt")
+_ACTIVE_TASK_TIMEOUT = 1200  # 20 minutes
+
+
+def _write_active_task(session_id: str, task: str) -> None:
+    try:
+        _ACTIVE_TASK_FILE.write_text(
+            f"{_time.time()}\n{session_id}\n{task[:500]}",
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
+
+
+def _read_active_task() -> tuple[bool, str, str]:
+    """Returns (is_active, session_id, task_description)."""
+    try:
+        if not _ACTIVE_TASK_FILE.exists():
+            return False, "", ""
+        parts = _ACTIVE_TASK_FILE.read_text(encoding="utf-8").split("\n", 2)
+        if len(parts) < 3:
+            return False, "", ""
+        ts, sid, task = float(parts[0]), parts[1], parts[2]
+        if _time.time() - ts > _ACTIVE_TASK_TIMEOUT:
+            _clear_active_task()
+            return False, "", ""
+        return True, sid, task
+    except Exception:
+        return False, "", ""
+
+
+def _clear_active_task() -> None:
+    try:
+        if _ACTIVE_TASK_FILE.exists():
+            _ACTIVE_TASK_FILE.unlink()
+    except Exception:
+        pass
 
 _HANDLERS = {
     "GEMINI":   ask_gemini,
@@ -298,11 +345,22 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
         "it failed", "it didn't", "it did not", "not working", "broken",
         "missing", "incomplete", "you stopped", "you didn't finish",
     )
+    _active_task_exists, _active_task_sid, _active_task_desc = _read_active_task()
     _is_short_followup = (
         len(message.split()) <= 25
-        and _session_ctx
+        and (_session_ctx or _active_task_exists)
         and any(p in message.lower() for p in _CONTINUATION_PATTERNS)
     )
+
+    # If an active task is running but session history isn't stored yet
+    # (append_exchange fires only after completion), inject the task description
+    # so follow-up messages always have context about what's being worked on.
+    if _active_task_exists and not _session_ctx:
+        augmented_message = (
+            f"[ACTIVE TASK — Super Agent is currently working on this]\n"
+            f"{_active_task_desc}\n\n"
+            f"[Current message]\n{augmented_message}"
+        )
 
     # ── 0c. Build capabilities-aware system prompts ───────────────────────────
     _caps = build_capabilities_block(_settings)
@@ -331,7 +389,9 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
     if force_model:
         model = force_model.upper()
         if model == "SHELL":
+            _write_active_task(session_id, message)
             response = run_shell_agent(message, authorized=authorized)
+            _clear_active_task()
             insight_log.record(message, "SHELL", response, "forced", 3, session_id)
             adapter.tick()
             return _build_extended_result({
@@ -415,7 +475,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
             "apk", "flutter", "build", "voice app", "download", "phase",
             "scaffold", "pubspec", "main.dart", "upload", "cloudinary", "github release",
         )
-        _ctx_lower = _session_ctx.lower()
+        _ctx_lower = (_session_ctx + " " + _active_task_desc).lower()
         _is_build_continuation = any(h in _ctx_lower for h in _BUILD_CONTINUATION_HINTS)
 
         if _is_build_continuation:
@@ -429,7 +489,9 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
                 f"If workspace is empty, call build_flutter_voice_app() to rebuild from scratch. "
                 f"Deliver the APK download link when done."
             )
+            _write_active_task(session_id, message)
             response = run_shell_agent(_resume_msg + "\n\n" + augmented_message, authorized=authorized)
+            _clear_active_task()
             store_memory(session_id, f"Q: {message[:300]} A: {response[:300]}")
             insight_log.record(message, "SHELL", response, "build_continuation", 1, session_id)
             adapter.tick()
@@ -479,7 +541,9 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
 
     # ── 4b. Self-improvement routing (highest priority after debug) ──────────
     if _is_self_improve_request(message):
+        _write_active_task(session_id, message)
         response = run_self_improve_agent(message, authorized=authorized)
+        _clear_active_task()
         insight_log.record(message, "SELF_IMPROVE", response, "self_improve", complexity, session_id)
         adapter.tick()
         return _build_extended_result({
@@ -492,6 +556,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
 
     # ── 4c. Isolation debug routing ───────────────────────────────────────────
     if _is_debug_request(message):
+        _write_active_task(session_id, message)
         response = run_shell_agent(message, authorized=authorized, debug_mode=True)
         # If shell debug itself errors, escalate straight to self-improve agent
         if response.startswith("[") and any(k in response.lower() for k in ("error", "failed", "exception")):
@@ -501,6 +566,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
                 f"Investigate railway logs, service status, and DB health autonomously.",
                 authorized=False,
             )
+        _clear_active_task()
         insight_log.record(message, "SHELL", response, "isolation_debug", complexity, session_id)
         adapter.tick()
         store_memory(session_id, f"Q: {message[:300]} A: {response[:300]}")
@@ -569,7 +635,9 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
             return f"{err_resp}\n\n[Auto-investigation also failed: {_e}]"
 
     if _kw_route == "SHELL":
+        _write_active_task(session_id, message)
         response = run_shell_agent(augmented_message, authorized=authorized)
+        _clear_active_task()
         if _agent_response_is_error(response):
             response = _auto_investigate("SHELL", message, response)
         store_memory(session_id, f"Q: {message[:300]} A: {response[:300]}")
@@ -584,7 +652,9 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
         })
 
     if _kw_route == "GITHUB":
+        _write_active_task(session_id, message)
         response = run_github_agent(augmented_message)
+        _clear_active_task()
         if _agent_response_is_error(response):
             response = _auto_investigate("GITHUB", message, response)
         store_memory(session_id, f"Q: {message[:300]} A: {response[:300]}")
@@ -599,7 +669,9 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
         })
 
     if _kw_route == "N8N":
+        _write_active_task(session_id, message)
         response = run_n8n_agent(augmented_message)
+        _clear_active_task()
         if _agent_response_is_error(response):
             response = _auto_investigate("N8N", message, response)
         store_memory(session_id, f"Q: {message[:300]} A: {response[:300]}")

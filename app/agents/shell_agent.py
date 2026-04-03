@@ -27,6 +27,8 @@ from ..tools.flutter_tools import (
     upload_build_artifact,
     flutter_git_push,
     flutter_test,
+    retry_apk_upload,
+    regenerate_apk_download_link,
 )
 from ..tools.railway_tools import (
     railway_list_services,
@@ -131,6 +133,7 @@ def run_shell_agent(message: str, authorized: bool = False, debug_mode: bool = F
         # Flutter build pipeline — use build_flutter_voice_app for voice app requests
         build_flutter_voice_app, flutter_create_project, flutter_build_apk,
         upload_build_artifact, flutter_git_push, flutter_test,
+        retry_apk_upload, regenerate_apk_download_link,
         # Infrastructure visibility — always available for self-healing
         railway_list_services, railway_get_logs, railway_get_deployment_status,
         railway_list_variables,

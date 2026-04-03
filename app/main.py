@@ -44,7 +44,7 @@ limiter = Limiter(key_func=get_remote_address)
 # If UI_PASSWORD is not set, auth is disabled.
 
 _OPEN_PATHS = {"/", "/health", "/auth"}
-_OPEN_PREFIXES = ("/static",)
+_OPEN_PREFIXES = ("/static", "/downloads")  # /downloads uses token-in-URL auth
 
 
 class AuthMiddleware(BaseHTTPMiddleware):
@@ -713,19 +713,21 @@ def reload_algorithms():
 
 
 @app.get("/build/stream", tags=["build"])
-def build_stream():
+async def build_stream():
     """
     SSE stream of the current Flutter build progress.
     Tails /workspace/build_progress.log in real-time — subscribe while a build is running
     to see exactly what step is executing instead of a blank 'Thinking...' spinner.
     Closes automatically when the build finishes (detects '🏁 Build pipeline complete').
+    Uses async sleep — does NOT block the event loop.
     """
     from .tools.flutter_tools import BUILD_PROGRESS_LOG
+    import asyncio
     import time as _time
 
     _SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
 
-    def _tail():
+    async def _tail():
         pos = 0
         deadline = _time.time() + 900  # max 15 min stream
         yield "data: [BUILD_STREAM_START]\n\n"
@@ -738,16 +740,63 @@ def build_stream():
                         pos = len(text)
                         for line in new_lines.splitlines():
                             if line.strip():
+                                # Escape any newlines inside a single log line
                                 yield f"data: {line.strip().replace(chr(10), ' ')}\n\n"
                         if "Build pipeline complete" in new_lines or "FAILED" in new_lines:
                             yield "data: [BUILD_STREAM_END]\n\n"
                             return
             except Exception:
                 pass
-            _time.sleep(1)
+            await asyncio.sleep(1)   # non-blocking — other requests still served
         yield "data: [BUILD_STREAM_TIMEOUT]\n\n"
 
     return StreamingResponse(_tail(), media_type="text/event-stream", headers=_SSE_HEADERS)
+
+
+@app.get("/downloads/{token}/{filename}", tags=["build"])
+async def download_artifact(token: str, filename: str):
+    """
+    Serve a build artifact (APK) directly from the Railway container filesystem.
+
+    URL structure: /downloads/{token}/{filename.apk}
+    - token: a random 22-char URL-safe string generated at upload time.
+              It acts as the access credential — no X-Token header needed
+              (so it works from a mobile Chrome browser).
+    - filename: the original APK filename (e.g. app-debug.apk).
+
+    The file is stored at /workspace/apk_downloads/{token}/{filename}.
+    Links are temporary: they survive container restarts only if the volume persists.
+    """
+    from pathlib import Path as _Path
+    import re
+
+    # Sanitise inputs — prevent path traversal
+    if not re.match(r'^[A-Za-z0-9_\-]{10,64}$', token):
+        raise HTTPException(status_code=400, detail="Invalid token")
+    if not re.match(r'^[A-Za-z0-9_\-\.]{1,64}$', filename):
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    if ".." in filename or "/" in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
+    file_path = _Path("/workspace/apk_downloads") / token / filename
+    if not file_path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                "File not found. Railway container may have been redeployed since this link was created. "
+                "Ask Super Agent to retry the upload or rebuild the APK."
+            ),
+        )
+
+    return FileResponse(
+        path=str(file_path),
+        media_type="application/vnd.android.package-archive",
+        filename=filename,
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 @app.get("/build/status", tags=["build"])
