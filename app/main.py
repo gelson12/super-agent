@@ -902,7 +902,6 @@ def _get_db_conn():
     raw = settings.database_url
     if not raw:
         return None
-    # Railway injects "postgres://..." — psycopg2 needs "postgresql://..."
     url = raw.replace("postgres://", "postgresql://", 1)
     return psycopg2.connect(url)
 
@@ -917,27 +916,59 @@ def _ensure_bridge_tables():
             with conn.cursor() as cur:
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS bridge_leads (
-                        id SERIAL PRIMARY KEY,
-                        name TEXT,
-                        email TEXT,
-                        company TEXT,
-                        service TEXT,
-                        message TEXT,
-                        language TEXT DEFAULT 'en',
-                        timestamp TEXT,
-                        created_at TIMESTAMPTZ DEFAULT NOW()
+                        id          SERIAL PRIMARY KEY,
+                        first_name  TEXT,
+                        last_name   TEXT,
+                        email       TEXT,
+                        phone       TEXT,
+                        company     TEXT,
+                        service     TEXT,
+                        message     TEXT,
+                        language    TEXT DEFAULT 'en',
+                        timestamp   TEXT,
+                        created_at  TIMESTAMPTZ DEFAULT NOW()
                     )
                 """)
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS bridge_newsletter (
-                        id SERIAL PRIMARY KEY,
-                        email TEXT UNIQUE,
-                        timestamp TEXT,
-                        created_at TIMESTAMPTZ DEFAULT NOW()
+                        id          SERIAL PRIMARY KEY,
+                        email       TEXT UNIQUE,
+                        timestamp   TEXT,
+                        created_at  TIMESTAMPTZ DEFAULT NOW()
                     )
                 """)
     finally:
         conn.close()
+
+
+def _send_email(subject: str, body: str) -> None:
+    """Send a plain-text notification email via Gmail SMTP.
+
+    Requires Railway env vars SMTP_USER and SMTP_PASSWORD (Gmail App Password).
+    Silently skips if credentials are not configured.
+    """
+    import smtplib
+    from email.mime.text import MIMEText
+
+    sender = settings.smtp_user
+    password = settings.smtp_password
+    recipient = settings.notify_email
+
+    if not sender or not password:
+        return  # SMTP not configured yet — skip silently
+
+    msg = MIMEText(body, "plain", "utf-8")
+    msg["Subject"] = subject
+    msg["From"] = f"Bridge Website <{sender}>"
+    msg["To"] = recipient
+
+    try:
+        with smtplib.SMTP("smtp.gmail.com", 587, timeout=10) as smtp:
+            smtp.starttls()
+            smtp.login(sender, password)
+            smtp.sendmail(sender, recipient, msg.as_string())
+    except Exception:
+        pass  # never let email failure break the form response
 
 
 # Run once at startup
@@ -948,8 +979,10 @@ except Exception:
 
 
 class LeadRequest(BaseModel):
-    name: str = ""
+    firstName: str = ""
+    lastName: str = ""
     email: str = ""
+    phone: str = ""
     company: str = ""
     service: str = ""
     message: str = ""
@@ -964,36 +997,57 @@ class NewsletterRequest(BaseModel):
 
 @app.post("/leads", tags=["website"])
 def submit_lead(req: LeadRequest):
-    """Store a contact form submission from the Bridge commercial website."""
+    """Store a contact form submission and email bridge.digital.solution@gmail.com."""
     import json as _json
     from pathlib import Path as _Path
 
-    data = req.model_dump()
-
     # Primary: PostgreSQL
     conn = _get_db_conn()
+    storage = "file"
     if conn:
         try:
             with conn:
                 with conn.cursor() as cur:
                     cur.execute(
                         """INSERT INTO bridge_leads
-                           (name, email, company, service, message, language, timestamp)
-                           VALUES (%(name)s, %(email)s, %(company)s, %(service)s,
-                                   %(message)s, %(language)s, %(timestamp)s)""",
-                        data,
+                           (first_name, last_name, email, phone, company,
+                            service, message, language, timestamp)
+                           VALUES (%(firstName)s, %(lastName)s, %(email)s, %(phone)s,
+                                   %(company)s, %(service)s, %(message)s,
+                                   %(language)s, %(timestamp)s)""",
+                        req.model_dump(),
                     )
-            return {"ok": True, "storage": "postgres"}
+            storage = "postgres"
         finally:
             conn.close()
+    else:
+        try:
+            with _Path("/workspace/bridge_leads.jsonl").open("a") as f:
+                f.write(_json.dumps(req.model_dump()) + "\n")
+        except Exception:
+            pass
 
-    # Fallback: JSONL file
-    try:
-        with _Path("/workspace/bridge_leads.jsonl").open("a") as f:
-            f.write(_json.dumps(data) + "\n")
-    except Exception:
-        pass
-    return {"ok": True, "storage": "file"}
+    # Email notification
+    full_name = f"{req.firstName} {req.lastName}".strip()
+    _send_email(
+        subject=f"[Bridge] New enquiry from {full_name or req.email}",
+        body=(
+            f"New contact form submission on Bridge website\n"
+            f"{'=' * 48}\n\n"
+            f"Name:     {full_name}\n"
+            f"Email:    {req.email}\n"
+            f"Phone:    {req.phone or '—'}\n"
+            f"Company:  {req.company or '—'}\n"
+            f"Service:  {req.service or '—'}\n"
+            f"Language: {req.language}\n"
+            f"Time:     {req.timestamp}\n\n"
+            f"Message\n"
+            f"-------\n"
+            f"{req.message or '(no message)'}\n"
+        ),
+    )
+
+    return {"ok": True, "storage": storage}
 
 
 @app.get("/leads", tags=["website"])
@@ -1005,7 +1059,8 @@ def list_leads():
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT id, name, email, company, service, message, language, timestamp, created_at "
+                "SELECT id, first_name, last_name, email, phone, company, "
+                "service, message, language, timestamp, created_at "
                 "FROM bridge_leads ORDER BY created_at DESC LIMIT 500"
             )
             cols = [d[0] for d in cur.description]
@@ -1017,13 +1072,11 @@ def list_leads():
 
 @app.post("/newsletter", tags=["website"])
 def submit_newsletter(req: NewsletterRequest):
-    """Store a newsletter signup from the Bridge commercial website."""
+    """Store a newsletter signup and email bridge.digital.solution@gmail.com."""
     import json as _json
     from pathlib import Path as _Path
 
-    data = req.model_dump()
-
-    # Primary: PostgreSQL
+    storage = "file"
     conn = _get_db_conn()
     if conn:
         try:
@@ -1033,19 +1086,30 @@ def submit_newsletter(req: NewsletterRequest):
                         """INSERT INTO bridge_newsletter (email, timestamp)
                            VALUES (%(email)s, %(timestamp)s)
                            ON CONFLICT (email) DO NOTHING""",
-                        data,
+                        req.model_dump(),
                     )
-            return {"ok": True, "storage": "postgres"}
+            storage = "postgres"
         finally:
             conn.close()
+    else:
+        try:
+            with _Path("/workspace/bridge_newsletter.jsonl").open("a") as f:
+                f.write(_json.dumps(req.model_dump()) + "\n")
+        except Exception:
+            pass
 
-    # Fallback: JSONL file
-    try:
-        with _Path("/workspace/bridge_newsletter.jsonl").open("a") as f:
-            f.write(_json.dumps(data) + "\n")
-    except Exception:
-        pass
-    return {"ok": True, "storage": "file"}
+    # Email notification
+    _send_email(
+        subject=f"[Bridge] New newsletter signup — {req.email}",
+        body=(
+            f"New newsletter subscription on Bridge website\n"
+            f"{'=' * 48}\n\n"
+            f"Email: {req.email}\n"
+            f"Time:  {req.timestamp}\n"
+        ),
+    )
+
+    return {"ok": True, "storage": storage}
 
 
 @app.get("/newsletter", tags=["website"])

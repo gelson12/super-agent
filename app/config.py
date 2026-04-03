@@ -67,5 +67,13 @@ class Settings(BaseSettings):
     # e.g. RAILWAY_PUBLIC_DOMAIN=super-agent-production.up.railway.app
     railway_public_domain: str = ""
 
+    # Bridge website — email notifications for form submissions
+    # Use a Gmail App Password (not your regular Gmail password):
+    #   Google Account → Security → 2-Step Verification → App passwords
+    # Set these in Railway env vars: SMTP_USER, SMTP_PASSWORD, NOTIFY_EMAIL
+    smtp_user: str = ""        # e.g. bridge.digital.solution@gmail.com
+    smtp_password: str = ""    # 16-char Gmail App Password
+    notify_email: str = "bridge.digital.solution@gmail.com"  # recipient
+
 
 settings = Settings()
