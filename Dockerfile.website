@@ -3,9 +3,9 @@ FROM nginx:alpine
 # Copy Bridge commercial website static files
 COPY website/ /usr/share/nginx/html/
 
-# Custom nginx config (serves on port 8080 — Railway default)
-COPY nginx-website.conf /etc/nginx/conf.d/default.conf
+# Copy nginx config template — PORT will be substituted at container start
+COPY nginx-website.conf /etc/nginx/conf.d/default.conf.template
 
+# Railway injects $PORT dynamically; substitute it into the nginx config then start
 EXPOSE 8080
-
-CMD ["nginx", "-g", "daemon off;"]
+CMD ["/bin/sh", "-c", "envsubst '$PORT' < /etc/nginx/conf.d/default.conf.template > /etc/nginx/conf.d/default.conf && nginx -g 'daemon off;'"]
