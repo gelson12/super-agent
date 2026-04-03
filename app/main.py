@@ -896,6 +896,57 @@ def storage_upload(req: UploadRequest):
 
 # ── Bridge website form endpoints ────────────────────────────────────────────
 
+def _get_db_conn():
+    """Return a psycopg2 connection using DATABASE_URL, or None if not configured."""
+    import psycopg2
+    raw = settings.database_url
+    if not raw:
+        return None
+    # Railway injects "postgres://..." — psycopg2 needs "postgresql://..."
+    url = raw.replace("postgres://", "postgresql://", 1)
+    return psycopg2.connect(url)
+
+
+def _ensure_bridge_tables():
+    """Create bridge_leads and bridge_newsletter tables if they don't exist."""
+    conn = _get_db_conn()
+    if conn is None:
+        return
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS bridge_leads (
+                        id SERIAL PRIMARY KEY,
+                        name TEXT,
+                        email TEXT,
+                        company TEXT,
+                        service TEXT,
+                        message TEXT,
+                        language TEXT DEFAULT 'en',
+                        timestamp TEXT,
+                        created_at TIMESTAMPTZ DEFAULT NOW()
+                    )
+                """)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS bridge_newsletter (
+                        id SERIAL PRIMARY KEY,
+                        email TEXT UNIQUE,
+                        timestamp TEXT,
+                        created_at TIMESTAMPTZ DEFAULT NOW()
+                    )
+                """)
+    finally:
+        conn.close()
+
+
+# Run once at startup
+try:
+    _ensure_bridge_tables()
+except Exception:
+    pass  # DB not yet available — Railway provisions it async
+
+
 class LeadRequest(BaseModel):
     name: str = ""
     email: str = ""
@@ -916,13 +967,52 @@ def submit_lead(req: LeadRequest):
     """Store a contact form submission from the Bridge commercial website."""
     import json as _json
     from pathlib import Path as _Path
-    leads_file = _Path("/workspace/bridge_leads.jsonl")
+
+    data = req.model_dump()
+
+    # Primary: PostgreSQL
+    conn = _get_db_conn()
+    if conn:
+        try:
+            with conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """INSERT INTO bridge_leads
+                           (name, email, company, service, message, language, timestamp)
+                           VALUES (%(name)s, %(email)s, %(company)s, %(service)s,
+                                   %(message)s, %(language)s, %(timestamp)s)""",
+                        data,
+                    )
+            return {"ok": True, "storage": "postgres"}
+        finally:
+            conn.close()
+
+    # Fallback: JSONL file
     try:
-        with leads_file.open("a") as f:
-            f.write(_json.dumps(req.model_dump()) + "\n")
+        with _Path("/workspace/bridge_leads.jsonl").open("a") as f:
+            f.write(_json.dumps(data) + "\n")
     except Exception:
-        pass  # graceful fallback if /workspace not writable
-    return {"ok": True}
+        pass
+    return {"ok": True, "storage": "file"}
+
+
+@app.get("/leads", tags=["website"])
+def list_leads():
+    """Return all Bridge contact form submissions (PostgreSQL only)."""
+    conn = _get_db_conn()
+    if conn is None:
+        return {"ok": False, "error": "DATABASE_URL not configured"}
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, name, email, company, service, message, language, timestamp, created_at "
+                "FROM bridge_leads ORDER BY created_at DESC LIMIT 500"
+            )
+            cols = [d[0] for d in cur.description]
+            rows = [dict(zip(cols, r)) for r in cur.fetchall()]
+        return {"ok": True, "leads": rows}
+    finally:
+        conn.close()
 
 
 @app.post("/newsletter", tags=["website"])
@@ -930,13 +1020,51 @@ def submit_newsletter(req: NewsletterRequest):
     """Store a newsletter signup from the Bridge commercial website."""
     import json as _json
     from pathlib import Path as _Path
-    nl_file = _Path("/workspace/bridge_newsletter.jsonl")
+
+    data = req.model_dump()
+
+    # Primary: PostgreSQL
+    conn = _get_db_conn()
+    if conn:
+        try:
+            with conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """INSERT INTO bridge_newsletter (email, timestamp)
+                           VALUES (%(email)s, %(timestamp)s)
+                           ON CONFLICT (email) DO NOTHING""",
+                        data,
+                    )
+            return {"ok": True, "storage": "postgres"}
+        finally:
+            conn.close()
+
+    # Fallback: JSONL file
     try:
-        with nl_file.open("a") as f:
-            f.write(_json.dumps(req.model_dump()) + "\n")
+        with _Path("/workspace/bridge_newsletter.jsonl").open("a") as f:
+            f.write(_json.dumps(data) + "\n")
     except Exception:
         pass
-    return {"ok": True}
+    return {"ok": True, "storage": "file"}
+
+
+@app.get("/newsletter", tags=["website"])
+def list_newsletter():
+    """Return all Bridge newsletter signups (PostgreSQL only)."""
+    conn = _get_db_conn()
+    if conn is None:
+        return {"ok": False, "error": "DATABASE_URL not configured"}
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, email, timestamp, created_at "
+                "FROM bridge_newsletter ORDER BY created_at DESC LIMIT 500"
+            )
+            cols = [d[0] for d in cur.description]
+            rows = [dict(zip(cols, r)) for r in cur.fetchall()]
+        return {"ok": True, "signups": rows}
+    finally:
+        conn.close()
 
 
 # ── Multimodal ────────────────────────────────────────────────────────────────
