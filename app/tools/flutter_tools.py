@@ -292,11 +292,41 @@ class _VoiceChatScreenState extends State<VoiceChatScreen> {
 }
 """
 
-_VOICE_APP_MANIFEST_PERMISSIONS = """\
+_VOICE_APP_MANIFEST = """\
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
     <uses-permission android:name="android.permission.RECORD_AUDIO"/>
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.BLUETOOTH"/>
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT"/>
+
+    <application
+        android:label="Super Agent Voice"
+        android:name="${applicationName}"
+        android:icon="@mipmap/ic_launcher">
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:taskAffinity=""
+            android:theme="@style/LaunchTheme"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
+            android:hardwareAccelerated="true"
+            android:windowSoftInputMode="adjustResize">
+            <meta-data
+                android:name="io.flutter.embedding.android.NormalTheme"
+                android:resource="@style/NormalTheme"/>
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity>
+        <meta-data
+            android:name="flutterEmbedding"
+            android:value="2"/>
+    </application>
+</manifest>
 """
 
 
@@ -328,7 +358,7 @@ def build_flutter_voice_app(dummy: str = "") -> str:
       1. Scaffold Flutter project (or reuse existing)
       2. Write pubspec.yaml via Python file I/O
       3. Write lib/main.dart via Python file I/O (handles all Dart special chars)
-      4. Patch AndroidManifest.xml with microphone + internet permissions
+      4. Write complete valid AndroidManifest.xml (RECORD_AUDIO + INTERNET + BLUETOOTH)
       5. flutter pub get
       6. flutter build apk --debug  ← takes 5-10 min, progress logged live
       7. Upload APK to Cloudinary (fallback: GitHub Releases)
@@ -348,19 +378,26 @@ def build_flutter_voice_app(dummy: str = "") -> str:
     proj = _WORKSPACE / "super_agent_voice"
     log = []
 
-    # ── Step 1: Scaffold if not exists ───────────────────────────────────────
-    _progress("📁 Step 1/8 — Checking/scaffolding Flutter project...")
-    if not proj.exists():
-        _progress("  → Scaffolding new Flutter project (super_agent_voice)...")
-        out = _run(
-            f"{_FLUTTER_BIN} create super_agent_voice --org com.superagent --platforms android",
-            str(_WORKSPACE), timeout=180,
-        )
-        log.append(f"[scaffold] {out[-300:]}")
-        _progress(f"  → Scaffold complete: {out[-100:]}")
-    else:
-        _progress("  → Reusing existing /workspace/super_agent_voice")
-        log.append("[scaffold] reusing existing /workspace/super_agent_voice")
+    # ── Step 1: Scaffold (always fresh — wipe prior broken build) ────────────
+    _progress("📁 Step 1/8 — Scaffolding Flutter project (fresh)...")
+    if proj.exists():
+        _progress("  → Removing previous build directory to avoid stale state...")
+        import shutil as _shutil
+        try:
+            _shutil.rmtree(str(proj))
+            log.append("[scaffold] removed previous project directory")
+            _progress("  → Previous directory removed")
+        except Exception as _rm_err:
+            log.append(f"[scaffold] WARNING: could not remove previous dir: {_rm_err}")
+            _progress(f"  ⚠️ Could not remove previous dir: {_rm_err}")
+
+    _progress("  → Scaffolding new Flutter project (super_agent_voice)...")
+    out = _run(
+        f"{_FLUTTER_BIN} create super_agent_voice --org com.superagent --platforms android",
+        str(_WORKSPACE), timeout=180,
+    )
+    log.append(f"[scaffold] {out[-300:]}")
+    _progress(f"  → Scaffold complete")
 
     if not proj.exists():
         _progress("❌ FAILED: could not scaffold project")
@@ -388,27 +425,19 @@ def build_flutter_voice_app(dummy: str = "") -> str:
         _progress(f"❌ FAILED writing main.dart: {e}")
         return f"[build_flutter_voice_app] FAILED writing main.dart: {e}"
 
-    # ── Step 4: Patch AndroidManifest.xml ────────────────────────────────────
-    _progress("🔐 Step 4/8 — Patching AndroidManifest.xml (microphone + internet permissions)...")
+    # ── Step 4: Write complete AndroidManifest.xml ───────────────────────────
+    # We always write the full manifest from a Python constant — never patch.
+    # Patching is fragile: inserting before <manifest puts elements outside the
+    # XML root, producing invalid XML that breaks the Gradle build.
+    _progress("🔐 Step 4/8 — Writing AndroidManifest.xml (RECORD_AUDIO + INTERNET + BLUETOOTH)...")
     try:
         manifest_path = proj / "android" / "app" / "src" / "main" / "AndroidManifest.xml"
-        if manifest_path.exists():
-            manifest = manifest_path.read_text(encoding="utf-8")
-            if "RECORD_AUDIO" not in manifest:
-                manifest = manifest.replace(
-                    "<manifest",
-                    _VOICE_APP_MANIFEST_PERMISSIONS + "<manifest",
-                    1,
-                )
-                manifest_path.write_text(manifest, encoding="utf-8")
-                log.append("[manifest] permissions patched")
-                _progress("  → Permissions patched: RECORD_AUDIO, INTERNET, BLUETOOTH")
-            else:
-                log.append("[manifest] permissions already present")
-                _progress("  → Permissions already present")
+        manifest_path.write_text(_VOICE_APP_MANIFEST, encoding="utf-8")
+        log.append("[manifest] written OK (complete valid XML)")
+        _progress("  → AndroidManifest.xml written — permissions: RECORD_AUDIO, INTERNET, BLUETOOTH")
     except Exception as e:
-        log.append(f"[manifest] WARNING: {e}")
-        _progress(f"  ⚠️ Manifest warning: {e}")
+        _progress(f"❌ FAILED writing manifest: {e}")
+        return f"[build_flutter_voice_app] FAILED writing AndroidManifest.xml: {e}"
 
     # ── Step 5: flutter pub get ───────────────────────────────────────────────
     _progress("📦 Step 5/8 — Running flutter pub get (downloading packages)...")

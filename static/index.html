@@ -573,11 +573,15 @@
             if (token === '[BUILD_STREAM_START]') continue;
             // Append progress line to the bubble (only if bubble still shows spinner)
             if (bubble && !bubble.dataset.done) {
+              // Enable pre-wrap so \n characters show as actual line breaks
+              bubble.style.whiteSpace = 'pre-wrap';
+              bubble.style.fontFamily = 'monospace';
+              bubble.style.fontSize = '12px';
               const existing = bubble.innerText;
-              // Keep last 8 progress lines to avoid flooding
-              const lines = existing === '▍' ? [] : existing.split('\n').filter(Boolean);
+              // Keep last 10 progress lines to avoid flooding
+              const lines = existing === '▍' ? [] : existing.split('\n').filter(l => l && l !== '▍');
               lines.push(token);
-              const display = lines.slice(-8).join('\n');
+              const display = lines.slice(-10).join('\n');
               bubble.textContent = display + '\n▍';
               chat.scrollTop = chat.scrollHeight;
             }
@@ -668,10 +672,13 @@
             }
           }
         }
-        // Remove cursor, render final markdown
+        // Remove cursor, reset progress styles, render final markdown
         clearTimeout(_buildTimer);
         _stopBuildProgressStream();
         bubble.dataset.done = '1';
+        bubble.style.whiteSpace = '';
+        bubble.style.fontFamily = '';
+        bubble.style.fontSize = '';
         bubble.innerHTML = renderMarkdown(fullText);
         const meta = document.createElement('div');
         meta.className = 'meta';
@@ -688,6 +695,9 @@
 
     // Fallback to regular /chat if streaming failed
     if (!streamOk) {
+      bubble.style.whiteSpace = '';
+      bubble.style.fontFamily = '';
+      bubble.style.fontSize = '';
       bubble.textContent = 'Thinking…';
       msgDiv.classList.add('typing');
       try {
