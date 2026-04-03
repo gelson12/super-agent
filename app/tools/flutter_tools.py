@@ -439,6 +439,51 @@ def build_flutter_voice_app(dummy: str = "") -> str:
         _progress(f"❌ FAILED writing manifest: {e}")
         return f"[build_flutter_voice_app] FAILED writing AndroidManifest.xml: {e}"
 
+    # ── Step 4b: Patch android/app/build.gradle ──────────────────────────────
+    # speech_to_text and permission_handler both require minSdkVersion >= 21.
+    # Flutter's default is flutter.minSdkVersion which resolves to 16 — too low.
+    # We also ensure a namespace is declared (required by AGP 8.x+).
+    _progress("🔧 Step 4b — Patching build.gradle (minSdkVersion 21, namespace)...")
+    try:
+        gradle_path = proj / "android" / "app" / "build.gradle"
+        if gradle_path.exists():
+            gradle = gradle_path.read_text(encoding="utf-8")
+            changed = False
+
+            # Set minSdkVersion 21 — replace any existing value or flutter placeholder
+            import re as _re
+            if _re.search(r'minSdkVersion\s+(?:flutter\.minSdkVersion|\d+)', gradle):
+                gradle = _re.sub(
+                    r'minSdkVersion\s+(?:flutter\.minSdkVersion|\d+)',
+                    'minSdkVersion 21',
+                    gradle,
+                )
+                changed = True
+                _progress("  → minSdkVersion set to 21")
+
+            # Add namespace if missing (AGP 8.x requires it)
+            if 'namespace' not in gradle:
+                gradle = gradle.replace(
+                    'android {',
+                    'android {\n    namespace "com.superagent.super_agent_voice"',
+                    1,
+                )
+                changed = True
+                _progress("  → namespace added: com.superagent.super_agent_voice")
+
+            if changed:
+                gradle_path.write_text(gradle, encoding="utf-8")
+                log.append("[build.gradle] patched — minSdkVersion 21 + namespace")
+            else:
+                _progress("  → build.gradle already correct, no changes needed")
+                log.append("[build.gradle] no changes needed")
+        else:
+            _progress("  ⚠️ build.gradle not found — skipping patch")
+            log.append("[build.gradle] not found — skipping")
+    except Exception as e:
+        log.append(f"[build.gradle] WARNING: {e}")
+        _progress(f"  ⚠️ build.gradle patch warning: {e}")
+
     # ── Step 5: flutter pub get ───────────────────────────────────────────────
     _progress("📦 Step 5/8 — Running flutter pub get (downloading packages)...")
     _progress("  → This downloads speech_to_text, flutter_tts, http (~30-60s)...")
@@ -483,10 +528,15 @@ def build_flutter_voice_app(dummy: str = "") -> str:
     build_out = _run(f"{_FLUTTER_BIN} build apk --debug", str(proj), timeout=600)
     _build_done[0] = True
 
-    log.append(f"[build apk] {build_out[-400:]}")
+    log.append(f"[build apk] {build_out[-800:]}")
     apk = proj / "build" / "app" / "outputs" / "flutter-apk" / "app-debug.apk"
     if not apk.exists():
-        _progress(f"❌ FAILED: APK not found. Build output: {build_out[-300:]}")
+        # Write the full error to the progress log — every line separately so
+        # the user can read exactly what Gradle rejected, not a truncated blob.
+        _progress("❌ BUILD FAILED — full Gradle output:")
+        for _err_line in build_out.splitlines()[-40:]:
+            if _err_line.strip():
+                _progress(f"  {_err_line.strip()}")
         return "[build_flutter_voice_app] FAILED: APK not found after build.\n\nBuild output:\n" + build_out
 
     size_mb = round(apk.stat().st_size / (1024 * 1024), 2)
