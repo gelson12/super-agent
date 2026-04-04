@@ -532,13 +532,35 @@ def build_flutter_voice_app(dummy: str = "") -> str:
     log.append(f"[build apk] {build_out[-800:]}")
     apk = proj / "build" / "app" / "outputs" / "flutter-apk" / "app-debug.apk"
     if not apk.exists():
-        # Write the full error to the progress log — every line separately so
-        # the user can read exactly what Gradle rejected, not a truncated blob.
-        _progress("❌ BUILD FAILED — full Gradle output:")
-        for _err_line in build_out.splitlines()[-40:]:
-            if _err_line.strip():
-                _progress(f"  {_err_line.strip()}")
-        return "[build_flutter_voice_app] FAILED: APK not found after build.\n\nBuild output:\n" + build_out
+        # ── Auto-repair: parse the error and retry once ───────────────────────
+        # Never fail twice on the same known error. The repair module maps
+        # Gradle error patterns to targeted fixes applied before the retry.
+        _progress("❌ Build failed — running auto-repair analysis...")
+        from .build_repair import attempt_auto_repair
+        _repaired, _fixes = attempt_auto_repair(build_out, proj)
+        if _repaired:
+            for _fix_desc in _fixes:
+                _progress(f"  🔧 Auto-fix applied: {_fix_desc}")
+            _progress("  🔄 Retrying build with fixes applied...")
+            _build_done[0] = False
+            _hb2 = _threading.Thread(target=_heartbeat, daemon=True)
+            _hb2.start()
+            build_out = _run(f"{_FLUTTER_BIN} build apk --debug", str(proj), timeout=600)
+            _build_done[0] = True
+            log.append(f"[build apk retry] {build_out[-800:]}")
+            if not apk.exists():
+                _progress("❌ Retry also failed — full Gradle output:")
+                for _err_line in build_out.splitlines()[-40:]:
+                    if _err_line.strip():
+                        _progress(f"  {_err_line.strip()}")
+                return "[build_flutter_voice_app] FAILED after auto-repair retry.\n\nBuild output:\n" + build_out
+            _progress("  ✅ Auto-repair succeeded — build passed on retry!")
+        else:
+            _progress("❌ BUILD FAILED — no known auto-fix for this error. Full output:")
+            for _err_line in build_out.splitlines()[-40:]:
+                if _err_line.strip():
+                    _progress(f"  {_err_line.strip()}")
+            return "[build_flutter_voice_app] FAILED: APK not found after build.\n\nBuild output:\n" + build_out
 
     size_mb = round(apk.stat().st_size / (1024 * 1024), 2)
     log.append(f"[apk] {apk} ({size_mb} MB)")

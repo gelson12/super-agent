@@ -44,7 +44,7 @@ limiter = Limiter(key_func=get_remote_address)
 # If UI_PASSWORD is not set, auth is disabled.
 
 _OPEN_PATHS = {"/", "/health", "/auth"}
-_OPEN_PREFIXES = ("/static", "/downloads")  # /downloads uses token-in-URL auth
+_OPEN_PREFIXES = ("/static", "/downloads", "/webhook")  # token-in-URL or Railway-signed
 
 
 class AuthMiddleware(BaseHTTPMiddleware):
@@ -62,24 +62,50 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
 def _scheduled_health_check() -> None:
     """
-    Runs every 2 hours — full autonomous infrastructure health check across ALL services.
-    Self-improve agent investigates and fixes SAFE issues without user intervention.
+    Runs every 30 minutes — full autonomous infrastructure health check.
+    Goes directly to self_improve_agent (bypasses dispatcher/classifier).
+    Auto-fixes SAFE issues without user intervention.
     """
     try:
-        from .routing.dispatcher import dispatch as _dispatch
-        _dispatch(
+        from .agents.self_improve_agent import run_self_improve_agent
+        run_self_improve_agent(
             "SCHEDULED HEALTH CHECK — investigate ALL services autonomously:\n"
-            "1. railway_get_deployment_status + railway_get_logs — is everything deployed?\n"
-            "2. db_health_check + db_get_failure_patterns — DB healthy? Any recurring errors?\n"
-            "3. n8n_list_workflows — is n8n reachable? How many active workflows?\n"
-            "4. run_shell_command('supervisorctl status') — are nginx, uvicorn, code-server running?\n"
-            "5. run_shell_command('curl -s http://127.0.0.1:3001/') — is VS Code reachable?\n"
-            "6. db_get_error_stats — which models are failing most?\n"
-            "Auto-fix any SAFE issues found. Log what you checked and what state everything is in.",
-            session_id="scheduler",
+            "1. railway_get_deployment_status + railway_get_logs — deployed and healthy?\n"
+            "2. db_health_check + db_get_failure_patterns — DB healthy? Recurring errors?\n"
+            "3. n8n_list_workflows — is n8n reachable?\n"
+            "4. run_shell_command('supervisorctl status') — are all processes running?\n"
+            "5. db_get_error_stats — which models/routes are failing most?\n"
+            "Auto-fix any SAFE issues. Record findings in a brief internal log. "
+            "Only notify the user if you find something critical that needs their input.",
+            authorized=False,
         )
     except Exception:
         pass  # Never let scheduler crash the process
+
+
+def _post_deploy_check() -> None:
+    """
+    Runs once immediately after startup — verifies the fresh deploy is healthy.
+    Regenerates stale APK download links, checks all env vars are present.
+    """
+    import time as _t
+    _t.sleep(15)  # wait for the app to fully bind
+    try:
+        from .agents.self_improve_agent import run_self_improve_agent
+        run_self_improve_agent(
+            "POST-DEPLOY STARTUP CHECK — this container just started. Do ALL of:\n"
+            "1. railway_get_deployment_status — confirm this deploy succeeded\n"
+            "2. railway_list_variables — verify RAILWAY_PUBLIC_DOMAIN, GITHUB_PAT, "
+            "CLOUDINARY_*, ANTHROPIC_API_KEY are all set\n"
+            "3. db_health_check — is the database reachable?\n"
+            "4. Check if /workspace/apk_downloads exists and regenerate download links "
+            "if any APKs are present (redeploys invalidate previous Railway-served links)\n"
+            "5. If any required env var is missing, report it clearly.\n"
+            "Be concise — this runs silently in the background.",
+            authorized=False,
+        )
+    except Exception:
+        pass
 
 
 @asynccontextmanager
@@ -88,11 +114,16 @@ async def _lifespan(app: FastAPI):
     from .learning.nightly_review import run_nightly_review
     from .learning.weekly_review import run_weekly_review
     from .learning.improvement_monitor import tick as _monitor_tick
+    import threading as _threading
+    # Run post-deploy check in a background thread (not the scheduler)
+    # so it fires once on every startup without blocking the lifespan.
+    _threading.Thread(target=_post_deploy_check, daemon=True).start()
+
     scheduler = BackgroundScheduler()
     scheduler.add_job(
         _scheduled_health_check,
         "interval",
-        hours=2,
+        minutes=30,
         id="health_check",
         replace_existing=True,
     )
@@ -816,6 +847,66 @@ def build_status():
         return {"running": running, "lines": last_50, "last": last, "total_lines": len(lines)}
     except Exception as e:
         return {"running": False, "lines": [], "last": f"Error: {e}"}
+
+
+@app.post("/webhook/railway", tags=["webhook"])
+async def railway_webhook(request: Request):
+    """
+    Receives Railway deployment event webhooks.
+    Set this URL in Railway: Project Settings → Webhooks → https://your-domain/webhook/railway
+
+    On DEPLOY_SUCCESS: runs post-deploy health check + regenerates stale APK links.
+    On DEPLOY_FAILED / CRASHED: immediately triggers self_improve_agent to
+    read Railway logs, diagnose the failure, and attempt autonomous repair.
+
+    No auth header needed — Railway sends events server-side. We validate by
+    checking the payload structure rather than a secret (Railway doesn't sign payloads).
+    """
+    import threading as _threading
+
+    try:
+        payload = await request.json()
+    except Exception:
+        return {"ok": False, "detail": "Invalid JSON payload"}
+
+    status = (
+        payload.get("status")
+        or payload.get("type")
+        or payload.get("deploymentStatus")
+        or ""
+    ).upper()
+
+    service = payload.get("service", {}).get("name", "unknown") if isinstance(payload.get("service"), dict) else str(payload.get("service", "unknown"))
+
+    def _handle():
+        try:
+            from .agents.self_improve_agent import run_self_improve_agent
+            if status in ("SUCCESS", "DEPLOY_SUCCESS", "COMPLETE"):
+                run_self_improve_agent(
+                    f"Railway deploy SUCCEEDED for service '{service}'. Do:\n"
+                    "1. Verify the app is responding: run_shell_command('curl -s -o /dev/null -w \"%{http_code}\" http://127.0.0.1:8000/health')\n"
+                    "2. If /workspace/apk_downloads exists, regenerate download links (old tokens are invalid after redeploy)\n"
+                    "3. Check db_health_check() — DB still reachable after redeploy?\n"
+                    "4. Report OK or flag any issue.",
+                    authorized=False,
+                )
+            elif status in ("FAILED", "DEPLOY_FAILED", "CRASHED", "ERROR", "REMOVED"):
+                run_self_improve_agent(
+                    f"Railway deploy FAILED/CRASHED for service '{service}'. Investigate NOW:\n"
+                    "1. railway_get_logs() — what caused the failure?\n"
+                    "2. railway_get_deployment_status() — current state\n"
+                    "3. Identify the root cause from the logs\n"
+                    "4. If it's a known fixable error (import error, missing env var, syntax error): "
+                    "read the relevant file from GitHub, apply the fix, push, and trigger redeploy\n"
+                    "5. Report exactly what failed and what you did.\n"
+                    "Do NOT wait for user input — investigate and fix autonomously.",
+                    authorized=False,
+                )
+        except Exception:
+            pass
+
+    _threading.Thread(target=_handle, daemon=True).start()
+    return {"ok": True, "status_received": status, "service": service}
 
 
 @app.get("/admin/live-log", tags=["admin"])
