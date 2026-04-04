@@ -440,26 +440,27 @@ def build_flutter_voice_app(dummy: str = "") -> str:
         return f"[build_flutter_voice_app] FAILED writing AndroidManifest.xml: {e}"
 
     # ── Step 4b: Patch android/app/build.gradle ──────────────────────────────
-    # speech_to_text and permission_handler both require minSdkVersion >= 21.
-    # Flutter's default is flutter.minSdkVersion which resolves to 16 — too low.
+    # flutter_tts ^4.x requires minSdkVersion >= 24.
+    # speech_to_text and permission_handler require >= 21.
+    # Flutter's default resolves to 16 — too low for all three packages.
     # We also ensure a namespace is declared (required by AGP 8.x+).
-    _progress("🔧 Step 4b — Patching build.gradle (minSdkVersion 21, namespace)...")
+    _progress("🔧 Step 4b — Patching build.gradle (minSdkVersion 24, namespace)...")
     try:
         gradle_path = proj / "android" / "app" / "build.gradle"
         if gradle_path.exists():
             gradle = gradle_path.read_text(encoding="utf-8")
             changed = False
 
-            # Set minSdkVersion 21 — replace any existing value or flutter placeholder
+            # Set minSdkVersion 24 — flutter_tts 4.x hard-requires it
             import re as _re
             if _re.search(r'minSdkVersion\s+(?:flutter\.minSdkVersion|\d+)', gradle):
                 gradle = _re.sub(
                     r'minSdkVersion\s+(?:flutter\.minSdkVersion|\d+)',
-                    'minSdkVersion 21',
+                    'minSdkVersion 24',
                     gradle,
                 )
                 changed = True
-                _progress("  → minSdkVersion set to 21")
+                _progress("  → minSdkVersion set to 24 (required by flutter_tts 4.x)")
 
             # Add namespace if missing (AGP 8.x requires it)
             if 'namespace' not in gradle:
