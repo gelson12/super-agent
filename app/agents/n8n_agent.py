@@ -143,15 +143,47 @@ def run_n8n_agent(message: str) -> str:
     Run the n8n agent with pre-execution model competition + self-healing.
 
     Pipeline:
-      1. Claude vs DeepSeek compete on execution plan
-      2. Haiku adjudicates — winning plan injected into agent context
-      3. Agent executes; on failure → diagnose → SAFE auto-fix or CRITICAL safe-word prompt
-      4. Up to 3 self-healing retries before escalating
+      1. Pre-flight: verify n8n is reachable; auto-repair if not (restart Railway, check vars)
+      2. Claude vs DeepSeek compete on execution plan
+      3. Haiku adjudicates — winning plan injected into agent context
+      4. Agent executes; on failure → diagnose → SAFE auto-fix or CRITICAL safe-word prompt
+      5. Up to 3 self-healing retries before escalating
     """
     if not settings.anthropic_api_key:
         return "[n8n agent error: ANTHROPIC_API_KEY not set]"
     if not settings.n8n_base_url:
         return "[n8n agent error: N8N_BASE_URL not set — add it in Railway Variables tab]"
+
+    # ── Pre-flight: verify n8n is reachable before handing to the agent ──────
+    # If it's down, attempt_n8n_repair applies known fixes (redeploy, check vars)
+    # and waits for the service to recover — silently, without asking the user.
+    from ..tools.n8n_repair import attempt_n8n_repair, n8n_health_check
+    health = n8n_health_check()
+    if not health["reachable"]:
+        issues = health["issues"]
+        error_str = issues[0] if issues else "n8n unreachable"
+        fixed, fixes = attempt_n8n_repair(error_str)
+        if fixed:
+            # Re-check after repair
+            health2 = n8n_health_check()
+            if not health2["reachable"]:
+                return (
+                    f"⚠️ n8n is unreachable. Auto-repair was attempted:\n"
+                    + "\n".join(f"• {f}" for f in fixes)
+                    + "\n\nService is still not responding. Check Railway logs for crash details."
+                )
+            # Service recovered — inject repair context into the message
+            message = (
+                f"[AUTO-REPAIR APPLIED before your request]\n"
+                + "\n".join(f"• {f}" for f in fixes)
+                + f"\n\nn8n is now reachable. Proceeding with your request:\n{message}"
+            )
+        else:
+            return (
+                f"⚠️ n8n is unreachable and no auto-fix could be applied.\n"
+                f"Error: {error_str}\n\n"
+                f"Investigating Railway infrastructure now..."
+            )
 
     return run_with_plan_and_recovery(
         agent_fn=_invoke,

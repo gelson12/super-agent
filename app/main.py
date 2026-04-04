@@ -92,11 +92,18 @@ def _post_deploy_check() -> None:
     _t.sleep(15)  # wait for the app to fully bind
     try:
         from .agents.self_improve_agent import run_self_improve_agent
+        # Run n8n health check separately (fast, no LLM call)
+        try:
+            from .tools.n8n_repair import monitor_n8n
+            monitor_n8n()
+        except Exception:
+            pass
+
         run_self_improve_agent(
             "POST-DEPLOY STARTUP CHECK — this container just started. Do ALL of:\n"
             "1. railway_get_deployment_status — confirm this deploy succeeded\n"
             "2. railway_list_variables — verify RAILWAY_PUBLIC_DOMAIN, GITHUB_PAT, "
-            "CLOUDINARY_*, ANTHROPIC_API_KEY are all set\n"
+            "CLOUDINARY_*, ANTHROPIC_API_KEY, N8N_BASE_URL, N8N_API_KEY are all set\n"
             "3. db_health_check — is the database reachable?\n"
             "4. Check if /workspace/apk_downloads exists and regenerate download links "
             "if any APKs are present (redeploys invalidate previous Railway-served links)\n"
@@ -151,6 +158,23 @@ async def _lifespan(app: FastAPI):
         id="improvement_monitor",
         replace_existing=True,
     )
+
+    # n8n autonomous monitor — checks every 15 minutes, auto-repairs detected issues
+    def _n8n_monitor_job():
+        try:
+            from .tools.n8n_repair import monitor_n8n
+            monitor_n8n()
+        except Exception:
+            pass
+
+    scheduler.add_job(
+        _n8n_monitor_job,
+        "interval",
+        minutes=15,
+        id="n8n_monitor",
+        replace_existing=True,
+    )
+
     scheduler.start()
     yield
     scheduler.shutdown(wait=False)
