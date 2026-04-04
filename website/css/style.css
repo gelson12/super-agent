@@ -97,10 +97,11 @@ body {
 }
 
 .preloader-bridge-icon {
-  width: 240px; height: auto;
+  width: 200px; height: auto;
   animation: preloaderPulse 1.5s ease-in-out infinite;
-  mix-blend-mode: screen;
-  filter: drop-shadow(0 0 24px rgba(218,165,32,0.6));
+  mix-blend-mode: normal;
+  border-radius: 12px;
+  overflow: hidden;
 }
 
 @keyframes preloaderPulse {
@@ -299,15 +300,17 @@ h1, h2, h3, h4, h5 {
   text-decoration: none; flex-shrink: 0;
 }
 .logo-img {
-  height: 64px; width: auto;
+  height: 52px; width: auto;
+  max-width: 160px;
   object-fit: contain;
-  mix-blend-mode: screen;
-  filter: drop-shadow(0 0 10px rgba(218,165,32,0.4));
-  transition: filter 0.3s, transform 0.3s;
+  mix-blend-mode: normal;
+  border-radius: 8px;
+  display: block;
+  transition: transform 0.3s, opacity 0.3s;
 }
 .nav-logo:hover .logo-img {
-  filter: drop-shadow(0 0 20px rgba(255,215,0,0.7));
   transform: scale(1.04);
+  opacity: 0.9;
 }
 .logo-text {
   font-family: 'Playfair Display', serif;
@@ -1247,14 +1250,16 @@ h1, h2, h3, h4, h5 {
   text-decoration: none; margin-bottom: 16px;
 }
 .footer-logo-img {
-  height: 84px; width: auto;
+  height: 72px; width: auto;
+  max-width: 200px;
   object-fit: contain;
-  mix-blend-mode: screen;
-  filter: drop-shadow(0 0 10px rgba(218,165,32,0.4));
-  transition: filter 0.3s;
+  mix-blend-mode: normal;
+  border-radius: 8px;
+  display: block;
+  transition: opacity 0.3s;
 }
 .footer-logo:hover .footer-logo-img {
-  filter: drop-shadow(0 0 22px rgba(255,215,0,0.65));
+  opacity: 0.85;
 }
 
 .footer-tagline {

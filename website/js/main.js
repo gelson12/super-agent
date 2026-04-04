@@ -380,7 +380,7 @@ contactForm?.addEventListener('submit', async (e) => {
 
   try {
     // Save to table API
-    await fetch('https://super-agent-production.up.railway.app/leads', {
+    await fetch('tables/bridge_leads', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(formData)
@@ -412,7 +412,7 @@ document.getElementById('newsletterForm')?.addEventListener('submit', async (e) 
   btn.style.background = 'rgba(218,165,32,0.8)';
 
   try {
-    await fetch('https://super-agent-production.up.railway.app/newsletter', {
+    await fetch('tables/bridge_newsletter', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email: emailInput.value, timestamp: new Date().toISOString() })
