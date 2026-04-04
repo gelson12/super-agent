@@ -1,6 +1,6 @@
 FROM nginx:alpine
 
-# Copy Bridge commercial website static files
+# Copy Bridge commercial website static files (v2)
 COPY website/ /usr/share/nginx/html/
 
 # Copy nginx config — nginx listens on 8080, set PORT=8080 in Railway Variables
