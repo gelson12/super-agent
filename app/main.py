@@ -44,7 +44,7 @@ limiter = Limiter(key_func=get_remote_address)
 # If UI_PASSWORD is not set, auth is disabled.
 
 _OPEN_PATHS = {"/", "/health", "/auth"}
-_OPEN_PREFIXES = ("/static", "/downloads", "/webhook")  # token-in-URL or Railway-signed
+_OPEN_PREFIXES = ("/static", "/downloads", "/webhook", "/n8n/connection-info")  # token-in-URL or public info
 
 
 class AuthMiddleware(BaseHTTPMiddleware):
@@ -871,6 +871,41 @@ def build_status():
         return {"running": running, "lines": last_50, "last": last, "total_lines": len(lines)}
     except Exception as e:
         return {"running": False, "lines": [], "last": f"Error: {e}"}
+
+
+@app.get("/n8n/connection-info", tags=["n8n"])
+async def n8n_connection_info(request: Request):
+    """
+    Returns the pre-filled HTTP Request node configuration for calling Super Agent from n8n.
+    Use this instead of the Anthropic credential node — Super Agent already has Claude
+    configured, handles routing/memory, and costs nothing extra per call.
+
+    Public endpoint — no X-Token required (contains no secrets, just field names).
+    """
+    domain = settings.railway_public_domain or str(request.base_url).rstrip("/")
+    base = f"https://{domain}" if not domain.startswith("http") else domain.rstrip("/")
+    return {
+        "description": "Use an HTTP Request node in n8n with these settings to call Super Agent as your AI.",
+        "method": "POST",
+        "url": f"{base}/chat",
+        "headers": {
+            "Content-Type": "application/json",
+            "X-Token": "<<your UI_PASSWORD from Railway Variables>>",
+        },
+        "body_example": {
+            "message": "{{ $json.input }}",
+            "session_id": "n8n-{{ $workflow.id }}",
+        },
+        "response_field": "response",
+        "all_response_fields": ["response", "model_used", "routed_by", "session_id", "confidence_score"],
+        "tips": [
+            "Map {{ $json.response }} to get the AI reply text.",
+            "Use a unique session_id per workflow to keep conversation history separate.",
+            "The X-Token value is your UI_PASSWORD Railway variable — check Railway → Variables.",
+            "Leave X-Token header out entirely if UI_PASSWORD is not set on your deployment.",
+        ],
+        "streaming_url": f"{base}/chat/stream",
+    }
 
 
 @app.post("/webhook/railway", tags=["webhook"])

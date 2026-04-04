@@ -107,11 +107,24 @@ _DEBUG_KEYWORDS = {
 }
 
 _N8N_KEYWORDS = {
+    # Direct n8n references
     "n8n", "workflow", "workflows", "automation", "trigger",
     "webhook", "execution", "executions",
     "create workflow", "update workflow", "activate workflow",
     "deactivate workflow", "run workflow", "debug workflow",
     "list workflows", "get workflow",
+    # Natural language workflow building
+    "make a workflow", "make me a workflow", "build a workflow",
+    "build an automation", "create an automation", "create a automation",
+    "set up a trigger", "set up an automation", "set up a workflow",
+    "i want n8n", "use n8n", "automate this", "automate the",
+    "send an email when", "notify me when", "when this happens",
+    "schedule a task", "run every day", "run every hour", "run every week",
+    "connect to slack", "post to slack", "send to slack",
+    "pipe data", "sync data", "sync between", "build an integration",
+    "make it automatic", "do it automatically", "do this automatically",
+    "when someone", "whenever someone", "every time someone",
+    "connect these", "link these", "integrate with",
 }
 
 _SELF_IMPROVE_KEYWORDS = {

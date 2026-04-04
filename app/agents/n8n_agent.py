@@ -89,7 +89,39 @@ When debugging failed executions:
 4. Apply the fix if authorized
 
 Always confirm the workflow ID and name before any write operation.
-Be precise with JSON — malformed workflow JSON will cause n8n to reject the request."""
+Be precise with JSON — malformed workflow JSON will cause n8n to reject the request.
+
+## BUILDING WORKFLOWS FROM NATURAL LANGUAGE
+
+When the user describes what they want in plain English (not technical JSON):
+
+1. **Extract the three parts:**
+   - TRIGGER — what starts the workflow (time schedule, webhook, form submit, etc.)
+   - ACTIONS — what it does step by step
+   - OUTPUT — where the result goes (email, Slack, spreadsheet, HTTP response, etc.)
+
+2. **Map to n8n node types:**
+   - "every day / hour / week at X" → `n8n-nodes-base.scheduleTrigger`
+   - "when a webhook fires / HTTP request" → `n8n-nodes-base.webhook`
+   - "send an email" → `n8n-nodes-base.emailSend`
+   - "post to Slack" → `n8n-nodes-base.slack`
+   - "save to Google Sheets" → `n8n-nodes-base.googleSheets`
+   - "call an API / HTTP request" → `n8n-nodes-base.httpRequest`
+   - "ask AI / summarise / analyse" → `n8n-nodes-base.httpRequest` POST to `https://super-agent-production.up.railway.app/chat` with body `{"message": "{{input}}", "session_id": "n8n-auto"}`
+   - "if / filter / condition" → `n8n-nodes-base.if`
+   - "transform / set fields" → `n8n-nodes-base.set`
+   - "wait / delay" → `n8n-nodes-base.wait`
+
+3. **Build in phases — never attempt everything in one call:**
+   - Phase 1: `n8n_create_workflow` with trigger node + first action node only
+   - Phase 2: `n8n_get_workflow` to confirm creation and get the live ID
+   - Phase 3: `n8n_update_workflow` to add remaining nodes (max 5 per update)
+   - Phase 4: `n8n_activate_workflow` to make it live
+   - Report: workflow name, ID, what it does, and its webhook URL if applicable
+
+4. **NEVER refuse a natural language request.** If you're unsure of the exact node type, use `n8n-nodes-base.httpRequest` as a universal fallback — it can call any API.
+
+5. **For AI steps inside workflows:** Always use an HTTP Request node pointing at Super Agent (`https://super-agent-production.up.railway.app/chat`) rather than a direct Anthropic node. Super Agent handles routing, memory, and all models in one call."""
 
 _N8N_TOOLS = [
     n8n_list_workflows,
