@@ -274,6 +274,7 @@ h1, h2, h3, h4, h5 {
 .navbar {
   position: fixed; top: 0; left: 0; right: 0; z-index: 1000;
   height: var(--nav-h);
+  overflow: hidden;
   transition: all 0.4s var(--ease);
 }
 
