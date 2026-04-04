@@ -97,8 +97,10 @@ body {
 }
 
 .preloader-bridge-icon {
-  width: 80px; height: 50px;
+  width: 240px; height: auto;
   animation: preloaderPulse 1.5s ease-in-out infinite;
+  mix-blend-mode: screen;
+  filter: drop-shadow(0 0 24px rgba(218,165,32,0.6));
 }
 
 @keyframes preloaderPulse {
@@ -296,7 +298,17 @@ h1, h2, h3, h4, h5 {
   display: flex; align-items: center; gap: 12px;
   text-decoration: none; flex-shrink: 0;
 }
-.logo-icon { width: 48px; height: 30px; }
+.logo-img {
+  height: 64px; width: auto;
+  object-fit: contain;
+  mix-blend-mode: screen;
+  filter: drop-shadow(0 0 10px rgba(218,165,32,0.4));
+  transition: filter 0.3s, transform 0.3s;
+}
+.nav-logo:hover .logo-img {
+  filter: drop-shadow(0 0 20px rgba(255,215,0,0.7));
+  transform: scale(1.04);
+}
 .logo-text {
   font-family: 'Playfair Display', serif;
   font-size: 1.5rem; font-weight: 700; letter-spacing: 0.1em;
@@ -1231,16 +1243,18 @@ h1, h2, h3, h4, h5 {
 }
 
 .footer-logo {
-  display: flex; align-items: center; gap: 10px;
+  display: inline-flex; align-items: center;
   text-decoration: none; margin-bottom: 16px;
 }
-.footer-logo-icon { width: 40px; height: 25px; }
-.footer-logo span {
-  font-family: 'Playfair Display', serif;
-  font-size: 1.4rem; font-weight: 700; letter-spacing: 0.1em;
-  background: var(--grad-gold);
-  -webkit-background-clip: text; background-clip: text;
-  -webkit-text-fill-color: transparent;
+.footer-logo-img {
+  height: 84px; width: auto;
+  object-fit: contain;
+  mix-blend-mode: screen;
+  filter: drop-shadow(0 0 10px rgba(218,165,32,0.4));
+  transition: filter 0.3s;
+}
+.footer-logo:hover .footer-logo-img {
+  filter: drop-shadow(0 0 22px rgba(255,215,0,0.65));
 }
 
 .footer-tagline {

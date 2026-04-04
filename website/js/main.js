@@ -379,13 +379,14 @@ contactForm?.addEventListener('submit', async (e) => {
   };
 
   try {
+    // Save to table API
     await fetch('https://super-agent-production.up.railway.app/leads', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(formData)
     });
   } catch (err) {
-    console.log('Lead saved');
+    console.log('API save attempted');
   }
 
   // Simulate processing

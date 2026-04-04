@@ -4,8 +4,8 @@ FROM nginx:alpine
 COPY website/ /usr/share/nginx/html/
 
 # Copy nginx config — nginx listens on 8080, set PORT=8080 in Railway Variables
-COPY nginx-website.conf /etc/nginx/conf.d/default.conf
+COPY nginx-website.conf /etc/nginx/conf.d/default.conf.template
 
 EXPOSE 8080
 
-CMD ["nginx", "-g", "daemon off;"]
+CMD ["/bin/sh", "-c", "envsubst '$PORT' < /etc/nginx/conf.d/default.conf.template > /etc/nginx/conf.d/default.conf && exec nginx -g 'daemon off;'"]
