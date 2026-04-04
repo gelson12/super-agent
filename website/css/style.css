@@ -97,11 +97,9 @@ body {
 }
 
 .preloader-bridge-icon {
-  width: 200px; height: auto;
+  width: 220px; height: auto;
   animation: preloaderPulse 1.5s ease-in-out infinite;
-  mix-blend-mode: normal;
-  border-radius: 12px;
-  overflow: hidden;
+  filter: drop-shadow(0 0 20px rgba(184,134,11,0.5));
 }
 
 @keyframes preloaderPulse {
@@ -303,9 +301,8 @@ h1, h2, h3, h4, h5 {
   height: 52px; width: auto;
   max-width: 160px;
   object-fit: contain;
-  mix-blend-mode: normal;
-  border-radius: 8px;
   display: block;
+  filter: drop-shadow(0 0 6px rgba(184,134,11,0.35));
   transition: transform 0.3s, opacity 0.3s;
 }
 .nav-logo:hover .logo-img {
@@ -1250,13 +1247,12 @@ h1, h2, h3, h4, h5 {
   text-decoration: none; margin-bottom: 16px;
 }
 .footer-logo-img {
-  height: 72px; width: auto;
-  max-width: 200px;
+  height: 80px; width: auto;
+  max-width: 220px;
   object-fit: contain;
-  mix-blend-mode: normal;
-  border-radius: 8px;
   display: block;
-  transition: opacity 0.3s;
+  filter: drop-shadow(0 0 10px rgba(184,134,11,0.5)) brightness(1.1);
+  transition: opacity 0.3s, filter 0.3s;
 }
 .footer-logo:hover .footer-logo-img {
   opacity: 0.85;
