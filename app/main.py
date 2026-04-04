@@ -26,6 +26,7 @@ import anthropic as _anthropic
 
 from .routing.dispatcher import dispatch
 from .memory.session import append_exchange, get_messages, clear_session
+from .activity_log import bg_log, recent_lines as _activity_recent_lines, ACTIVITY_LOG
 from .storage.cloudinary_manager import get_storage_status, upload_file
 from .models.claude import ask_claude_vision
 from .models.gemini import transcribe_audio
@@ -44,7 +45,7 @@ limiter = Limiter(key_func=get_remote_address)
 # If UI_PASSWORD is not set, auth is disabled.
 
 _OPEN_PATHS = {"/", "/health", "/auth"}
-_OPEN_PREFIXES = ("/static", "/downloads", "/webhook", "/n8n/connection-info")  # token-in-URL or public info
+_OPEN_PREFIXES = ("/static", "/downloads", "/webhook", "/n8n/connection-info", "/activity")  # token-in-URL or public info
 
 
 class AuthMiddleware(BaseHTTPMiddleware):
@@ -68,6 +69,7 @@ def _scheduled_health_check() -> None:
     """
     try:
         from .agents.self_improve_agent import run_self_improve_agent
+        bg_log("Scheduled health check starting — investigating all services autonomously", source="health_check")
         run_self_improve_agent(
             "SCHEDULED HEALTH CHECK — investigate ALL services autonomously:\n"
             "1. railway_get_deployment_status + railway_get_logs — deployed and healthy?\n"
@@ -79,8 +81,9 @@ def _scheduled_health_check() -> None:
             "Only notify the user if you find something critical that needs their input.",
             authorized=False,
         )
-    except Exception:
-        pass  # Never let scheduler crash the process
+        bg_log("Scheduled health check complete", source="health_check")
+    except Exception as _e:
+        bg_log(f"Scheduled health check error: {_e}", source="health_check")
 
 
 def _post_deploy_check() -> None:
@@ -92,9 +95,11 @@ def _post_deploy_check() -> None:
     _t.sleep(15)  # wait for the app to fully bind
     try:
         from .agents.self_improve_agent import run_self_improve_agent
+        bg_log("Post-deploy startup check starting — verifying fresh deploy is healthy", source="post_deploy")
         # Run n8n health check separately (fast, no LLM call)
         try:
             from .tools.n8n_repair import monitor_n8n
+            bg_log("Post-deploy: running n8n health check", source="post_deploy")
             monitor_n8n()
         except Exception:
             pass
@@ -111,8 +116,9 @@ def _post_deploy_check() -> None:
             "Be concise — this runs silently in the background.",
             authorized=False,
         )
-    except Exception:
-        pass
+        bg_log("Post-deploy startup check complete", source="post_deploy")
+    except Exception as _e:
+        bg_log(f"Post-deploy check error: {_e}", source="post_deploy")
 
 
 @asynccontextmanager
@@ -163,9 +169,10 @@ async def _lifespan(app: FastAPI):
     def _n8n_monitor_job():
         try:
             from .tools.n8n_repair import monitor_n8n
+            bg_log("n8n monitor: running automated health check", source="n8n_monitor")
             monitor_n8n()
-        except Exception:
-            pass
+        except Exception as _e:
+            bg_log(f"n8n monitor error: {_e}", source="n8n_monitor")
 
     scheduler.add_job(
         _n8n_monitor_job,
@@ -808,6 +815,62 @@ async def build_stream():
     return StreamingResponse(_tail(), media_type="text/event-stream", headers=_SSE_HEADERS)
 
 
+@app.get("/activity/stream", tags=["activity"])
+async def activity_stream():
+    """
+    SSE stream of all background autonomous activity.
+
+    Subscribe to this endpoint to watch what Super Agent is doing in the background:
+    health checks, post-deploy validation, Railway webhook responses, n8n monitoring,
+    nightly review, weekly review, and any autonomous self-improvement actions.
+
+    Works exactly like /build/stream but for all background operations, not just builds.
+    Stream stays open; closes after 30 minutes of inactivity.
+    """
+    import asyncio
+    import time as _time
+
+    _SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+
+    async def _tail():
+        pos = 0
+        last_activity = _time.time()
+        deadline = _time.time() + 1800  # 30 min max
+        yield "data: [ACTIVITY_STREAM_START]\n\n"
+        while _time.time() < deadline:
+            try:
+                if ACTIVITY_LOG.exists():
+                    text = ACTIVITY_LOG.read_text(encoding="utf-8")
+                    if len(text) > pos:
+                        new_lines = text[pos:]
+                        pos = len(text)
+                        last_activity = _time.time()
+                        for line in new_lines.splitlines():
+                            if line.strip():
+                                yield f"data: {line.strip().replace(chr(10), ' ')}\n\n"
+            except Exception:
+                pass
+            await asyncio.sleep(2)
+        yield "data: [ACTIVITY_STREAM_TIMEOUT]\n\n"
+
+    return StreamingResponse(_tail(), media_type="text/event-stream", headers=_SSE_HEADERS)
+
+
+@app.get("/activity/recent", tags=["activity"])
+def activity_recent(lines: int = 50):
+    """
+    Return the most recent background activity log entries as JSON.
+    Useful for polling — shows the last N lines (default 50, max 200).
+    """
+    n = min(max(lines, 1), 200)
+    entries = _activity_recent_lines(n)
+    return {
+        "lines": entries,
+        "total_returned": len(entries),
+        "log_path": str(ACTIVITY_LOG),
+    }
+
+
 @app.get("/downloads/{token}/{filename}", tags=["build"])
 async def download_artifact(token: str, filename: str):
     """
@@ -940,6 +1003,7 @@ async def railway_webhook(request: Request):
     def _handle():
         try:
             from .agents.self_improve_agent import run_self_improve_agent
+            bg_log(f"Railway webhook received: {status} for service '{service}'", source="railway_webhook")
             if status in ("SUCCESS", "DEPLOY_SUCCESS", "COMPLETE"):
                 run_self_improve_agent(
                     f"Railway deploy SUCCEEDED for service '{service}'. Do:\n"
@@ -949,7 +1013,9 @@ async def railway_webhook(request: Request):
                     "4. Report OK or flag any issue.",
                     authorized=False,
                 )
+                bg_log(f"Railway webhook: post-deploy health check complete for '{service}'", source="railway_webhook")
             elif status in ("FAILED", "DEPLOY_FAILED", "CRASHED", "ERROR", "REMOVED"):
+                bg_log(f"Railway webhook: FAILURE detected for '{service}' — launching autonomous investigation", source="railway_webhook")
                 run_self_improve_agent(
                     f"Railway deploy FAILED/CRASHED for service '{service}'. Investigate NOW:\n"
                     "1. railway_get_logs() — what caused the failure?\n"
@@ -961,8 +1027,9 @@ async def railway_webhook(request: Request):
                     "Do NOT wait for user input — investigate and fix autonomously.",
                     authorized=False,
                 )
-        except Exception:
-            pass
+                bg_log(f"Railway webhook: autonomous investigation complete for '{service}'", source="railway_webhook")
+        except Exception as _e:
+            bg_log(f"Railway webhook handler error: {_e}", source="railway_webhook")
 
     _threading.Thread(target=_handle, daemon=True).start()
     return {"ok": True, "status_received": status, "service": service}

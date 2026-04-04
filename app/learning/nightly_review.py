@@ -19,6 +19,11 @@ import os
 import time
 import datetime
 from pathlib import Path
+from ..activity_log import bg_log as _bg_log
+
+
+def _log(msg: str) -> None:
+    _bg_log(msg, source="nightly_review")
 
 _REVIEW_DIR = Path("/workspace")
 _FALLBACK_DIR = Path(".")
@@ -223,10 +228,10 @@ def auto_apply_safe_suggestions(review: dict) -> list[dict]:
 
         if _is_low_auto_applicable(s):
             authorized = True
-            print(f"[nightly_review] LOW auto-apply: {feature_name}")
+            _log(f"LOW auto-apply: {feature_name}")
 
         elif _is_vote_eligible(s):
-            print(f"[nightly_review] {priority.upper()} — calling 5-model vote for: {feature_name}")
+            _log(f"{priority.upper()} — calling 5-model vote for: {feature_name}")
             try:
                 vote_result = vote_on_suggestion(s)
                 authorized = vote_result["approved"]
@@ -241,7 +246,7 @@ def auto_apply_safe_suggestions(review: dict) -> list[dict]:
                 continue
 
             if not authorized:
-                print(f"[nightly_review] VOTE REJECTED ({vote_result['yes_count']}/5): {feature_name}")
+                _log(f"VOTE REJECTED ({vote_result['yes_count']}/5): {feature_name}")
                 applied.append({
                     "feature_number": s.get("feature_number"),
                     "feature_name": feature_name,
@@ -251,11 +256,11 @@ def auto_apply_safe_suggestions(review: dict) -> list[dict]:
                 })
                 continue
 
-            print(f"[nightly_review] VOTE APPROVED ({vote_result['yes_count']}/5): {feature_name}")
+            _log(f"VOTE APPROVED ({vote_result['yes_count']}/5): {feature_name}")
 
         else:
             # Core file — skip regardless of priority
-            print(f"[nightly_review] SKIPPED (core file): {feature_name} → {file_to_change}")
+            _log(f"SKIPPED (core file): {feature_name} → {file_to_change}")
             continue
 
         # ── Build rollback branch name ─────────────────────────────────────────
@@ -299,7 +304,7 @@ def auto_apply_safe_suggestions(review: dict) -> list[dict]:
                 "status": "applied",
                 "vote_result": vote_result,
             })
-            print(f"[nightly_review] Applied + monitoring started: {feature_name}")
+            _log(f"Applied + monitoring started: {feature_name}")
 
         except Exception as e:
             applied.append({
@@ -310,7 +315,7 @@ def auto_apply_safe_suggestions(review: dict) -> list[dict]:
                 "error": str(e),
                 "vote_result": vote_result,
             })
-            print(f"[nightly_review] Apply error for {feature_name}: {e}")
+            _log(f"Apply error for {feature_name}: {e}")
 
     return applied
 
@@ -349,7 +354,7 @@ def apply_env_var_proposals(review: dict) -> list[dict]:
             "file_to_change": f"railway:{service}",  # signals it's an env change not a file
         }
 
-        print(f"[nightly_review] ENV VAR vote required for {var_name} on {service}")
+        _log(f"ENV VAR vote required for {var_name} on {service}")
         try:
             vote_result = vote_on_suggestion(vote_suggestion)
         except Exception as e:
@@ -357,11 +362,11 @@ def apply_env_var_proposals(review: dict) -> list[dict]:
             continue
 
         if not vote_result["approved"]:
-            print(f"[nightly_review] ENV VAR REJECTED ({vote_result['yes_count']}/5): {var_name}")
+            _log(f"ENV VAR REJECTED ({vote_result['yes_count']}/5): {var_name}")
             results.append({"variable_name": var_name, "service": service, "status": "vote_rejected", "vote_result": vote_result})
             continue
 
-        print(f"[nightly_review] ENV VAR APPROVED ({vote_result['yes_count']}/5): {var_name}")
+        _log(f"ENV VAR APPROVED ({vote_result['yes_count']}/5): {var_name}")
 
         # Apply — only set if a concrete value was suggested and it's not marked as secret
         if suggested_value and not is_secret:
@@ -371,13 +376,13 @@ def apply_env_var_proposals(review: dict) -> list[dict]:
                     "value": suggested_value,
                     "service_name": service,
                 })
-                print(f"[nightly_review] Set {var_name} on {service}: {set_result[:100]}")
+                _log(f"Set {var_name} on {service}: {set_result[:100]}")
 
                 # Redeploy the service once per service (not once per variable)
                 if service not in services_redeployed:
                     redeploy_result = railway_redeploy.invoke({"service_name": service})
                     services_redeployed.add(service)
-                    print(f"[nightly_review] Redeployed {service}: {redeploy_result[:100]}")
+                    _log(f"Redeployed {service}: {redeploy_result[:100]}")
                 else:
                     redeploy_result = "already redeployed this run"
 
@@ -400,7 +405,7 @@ def apply_env_var_proposals(review: dict) -> list[dict]:
                 "message": f"Approved by vote but requires a secret value — set {var_name} manually in Railway for {service}.",
                 "vote_result": vote_result,
             })
-            print(f"[nightly_review] {var_name} approved but is secret — human must set the value")
+            _log(f"{var_name} approved but is secret — human must set the value manually in Railway")
 
     return results
 
@@ -416,7 +421,7 @@ def run_nightly_review() -> dict:
     date_str = datetime.datetime.utcnow().strftime("%Y-%m-%d")
     out_path = _review_path(date_str)
 
-    print(f"[nightly_review] Starting review for {date_str}")
+    _log(f"Starting nightly review for {date_str}")
 
     try:
         data = _collect_todays_data()
@@ -449,7 +454,7 @@ def run_nightly_review() -> dict:
         }
 
         out_path.write_text(json.dumps(review, indent=2))
-        print(f"[nightly_review] Review written to {out_path}")
+        _log(f"Review written to {out_path}")
 
         # Auto-apply code suggestions (low → immediate, medium/high → vote)
         applied = auto_apply_safe_suggestions(review)
@@ -463,7 +468,7 @@ def run_nightly_review() -> dict:
 
         if applied or env_applied:
             out_path.write_text(json.dumps(review, indent=2))
-            print(f"[nightly_review] Applied {len(applied)} suggestion(s), {len(env_applied)} env var(s)")
+            _log(f"Applied {len(applied)} suggestion(s), {len(env_applied)} env var(s)")
 
         return review
 
@@ -477,7 +482,7 @@ def run_nightly_review() -> dict:
             out_path.write_text(json.dumps(error_doc, indent=2))
         except Exception:
             pass
-        print(f"[nightly_review] ERROR: {e}")
+        _log(f"ERROR: {e}")
         return error_doc
 
 

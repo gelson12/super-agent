@@ -26,6 +26,11 @@ import datetime
 from pathlib import Path
 
 from ..config import settings
+from ..activity_log import bg_log as _bg_log
+
+
+def _log(msg: str) -> None:
+    _bg_log(msg, source="weekly_review")
 
 _REVIEW_DIR = Path("/workspace")
 _FALLBACK_DIR = Path(".")
@@ -251,10 +256,10 @@ def _apply_suggestions(review: dict) -> list[dict]:
 
         if _is_low_auto_applicable(s):
             authorized = True
-            print(f"[weekly_review] LOW auto-apply: {feature_name}")
+            _log(f"LOW auto-apply: {feature_name}")
 
         elif _is_vote_eligible(s):
-            print(f"[weekly_review] {priority.upper()} — calling 5-model vote for: {feature_name}")
+            _log(f"{priority.upper()} — calling 5-model vote for: {feature_name}")
             try:
                 vote_result = vote_on_suggestion(s)
                 authorized = vote_result["approved"]
@@ -268,7 +273,7 @@ def _apply_suggestions(review: dict) -> list[dict]:
                 continue
 
             if not authorized:
-                print(f"[weekly_review] VOTE REJECTED ({vote_result['yes_count']}/5): {feature_name}")
+                _log(f"VOTE REJECTED ({vote_result['yes_count']}/5): {feature_name}")
                 applied.append({
                     "feature_name": feature_name,
                     "file_to_change": file_to_change,
@@ -277,10 +282,10 @@ def _apply_suggestions(review: dict) -> list[dict]:
                 })
                 continue
 
-            print(f"[weekly_review] VOTE APPROVED ({vote_result['yes_count']}/5): {feature_name}")
+            _log(f"VOTE APPROVED ({vote_result['yes_count']}/5): {feature_name}")
 
         else:
-            print(f"[weekly_review] SKIPPED (core file): {feature_name} → {file_to_change}")
+            _log(f"SKIPPED (core file): {feature_name} → {file_to_change}")
             continue
 
         ts_str = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H-%M")
@@ -318,7 +323,7 @@ def _apply_suggestions(review: dict) -> list[dict]:
                 "status": "applied",
                 "vote_result": vote_result,
             })
-            print(f"[weekly_review] Applied + monitoring started: {feature_name}")
+            _log(f"Applied + monitoring started: {feature_name}")
         except Exception as e:
             applied.append({
                 "feature_name": feature_name,
@@ -327,7 +332,7 @@ def _apply_suggestions(review: dict) -> list[dict]:
                 "error": str(e),
                 "vote_result": vote_result,
             })
-            print(f"[weekly_review] Apply error for {feature_name}: {e}")
+            _log(f"Apply error for {feature_name}: {e}")
 
     return applied
 
@@ -341,7 +346,7 @@ def run_weekly_review() -> dict:
     date_str = datetime.datetime.utcnow().strftime("%Y-%m-%d")
     out_path = _review_path(date_str)
 
-    print(f"[weekly_review] Starting Opus 4.6 weekly review for week ending {date_str}")
+    _log(f"Starting Opus 4.6 weekly review for week ending {date_str}")
 
     try:
         data = _collect_weeks_data()
@@ -372,7 +377,7 @@ def run_weekly_review() -> dict:
         }
 
         out_path.write_text(json.dumps(review, indent=2))
-        print(f"[weekly_review] Review written to {out_path}")
+        _log(f"Review written to {out_path}")
 
         # Apply code suggestions via same vote + monitor pipeline
         applied = _apply_suggestions(review)
@@ -387,7 +392,7 @@ def run_weekly_review() -> dict:
 
         if applied or env_applied:
             out_path.write_text(json.dumps(review, indent=2))
-            print(f"[weekly_review] Applied {len(applied)} suggestion(s), {len(env_applied)} env var(s)")
+            _log(f"Applied {len(applied)} suggestion(s), {len(env_applied)} env var(s)")
 
         return review
 
@@ -401,7 +406,7 @@ def run_weekly_review() -> dict:
             out_path.write_text(json.dumps(error_doc, indent=2))
         except Exception:
             pass
-        print(f"[weekly_review] ERROR: {e}")
+        _log(f"ERROR: {e}")
         return error_doc
 
 

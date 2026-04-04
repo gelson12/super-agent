@@ -209,21 +209,31 @@ def monitor_n8n() -> None:
     Called by the scheduler every 15 minutes.
     Checks n8n health and auto-repairs any detected issues.
     """
+    from ..activity_log import bg_log as _activity_log
+
     if not settings.n8n_base_url or not settings.n8n_api_key:
         return  # n8n not configured — skip silently
 
     health = n8n_health_check()
 
     if not health["issues"]:
+        _activity_log(
+            f"n8n healthy — active={health['active_workflows']} inactive={health['inactive_workflows']} "
+            f"recent_failures={health['recent_failures']}",
+            source="n8n_monitor",
+        )
         return  # all good — no action needed
 
     # Issues found — attempt auto-repair for each
     for issue in health["issues"]:
+        _activity_log(f"Issue detected: {issue[:200]}", source="n8n_monitor")
         fixed, fixes = attempt_n8n_repair(issue)
         if fixed:
             _log(f"Auto-repair resolved: {issue[:100]} → {fixes}")
+            _activity_log(f"Auto-repair applied: {'; '.join(fixes)[:300]}", source="n8n_monitor")
         else:
             # Can't auto-fix — escalate to self_improve_agent for autonomous investigation
+            _activity_log(f"Auto-repair had no fix for issue — escalating to self_improve_agent", source="n8n_monitor")
             try:
                 from ..agents.self_improve_agent import run_self_improve_agent
                 run_self_improve_agent(
