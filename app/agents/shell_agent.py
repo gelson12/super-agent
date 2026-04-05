@@ -146,7 +146,17 @@ def run_shell_agent(message: str, authorized: bool = False, debug_mode: bool = F
     )
     agent = create_react_agent(llm, tools)
 
-    user_content = f"{ISOLATION_DEBUG_PROMPT}\n\n---\n\n{message}" if debug_mode else message
+    # Inject winning build recipe if one exists — agent replays what worked last time
+    _recipe_hint = ""
+    if any(kw in message.lower() for kw in ("build", "apk", "flutter", "voice app")):
+        try:
+            from ..learning.build_recipes import build_context_hint
+            _recipe_hint = build_context_hint("super_agent_voice")
+        except Exception:
+            pass
+
+    base_content = f"{_recipe_hint}\n\n{message}".strip() if _recipe_hint else message
+    user_content = f"{ISOLATION_DEBUG_PROMPT}\n\n---\n\n{base_content}" if debug_mode else base_content
 
     def _invoke(msg: str) -> str:
         result = agent.invoke({

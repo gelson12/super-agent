@@ -35,8 +35,9 @@ from .cache.response_cache import cache
 from .learning.insight_log import insight_log
 from .learning.adapter import adapter
 from .learning.wisdom_store import wisdom_store
-# algorithm_store and algorithm_builder are imported lazily inside endpoints
-# to avoid any startup-time blocking that could cause Railway health check failures
+from .learning.metrics_store import collect_current_snapshot, record_snapshot, get_trends, METRICS_PATH
+from .learning.cost_ledger import record_call as _ledger_record, spend_summary as _spend_summary
+# algorithm_store, benchmark, build_recipes imported lazily inside endpoints
 
 limiter = Limiter(key_func=get_remote_address)
 
@@ -81,6 +82,16 @@ def _scheduled_health_check() -> None:
             "Only notify the user if you find something critical that needs their input.",
             authorized=False,
         )
+        # Record metrics snapshot for trend analysis
+        try:
+            snap = collect_current_snapshot()
+            record_snapshot(snap)
+            trends = get_trends(hours=24)
+            if trends.get("alert_count", 0) > 0:
+                for alert in trends["alerts"]:
+                    bg_log(f"TREND ALERT: {alert}", source="health_check")
+        except Exception:
+            pass
         bg_log("Scheduled health check complete", source="health_check")
     except Exception as _e:
         bg_log(f"Scheduled health check error: {_e}", source="health_check")
@@ -162,6 +173,24 @@ async def _lifespan(app: FastAPI):
         "interval",
         minutes=30,
         id="improvement_monitor",
+        replace_existing=True,
+    )
+
+    # Weekly benchmark — runs every Monday 01:00 UTC (day after weekly review)
+    def _benchmark_job():
+        try:
+            from .learning.benchmark import run_benchmark
+            run_benchmark()
+        except Exception as _e:
+            bg_log(f"Benchmark job error: {_e}", source="benchmark")
+
+    scheduler.add_job(
+        _benchmark_job,
+        "cron",
+        day_of_week="mon",
+        hour=1,
+        minute=0,
+        id="benchmark",
         replace_existing=True,
     )
 
@@ -311,6 +340,7 @@ def chat(req: ChatRequest, request: Request):
     result = dispatch(req.message, session_id=req.session_id)
     if not result["response"].startswith("["):
         append_exchange(req.session_id, req.message, result["response"])
+        _ledger_record(result.get("model_used", "UNKNOWN"), len(req.message), len(result["response"]))
     return _chat_response_from_result(result, req.session_id)
 
 
@@ -1014,6 +1044,22 @@ async def railway_webhook(request: Request):
                     authorized=False,
                 )
                 bg_log(f"Railway webhook: post-deploy health check complete for '{service}'", source="railway_webhook")
+                # Diff-aware instant review — review only what just changed
+                try:
+                    from .agents.self_improve_agent import run_self_improve_agent as _sia
+                    _sia(
+                        "DIFF-AWARE POST-DEPLOY REVIEW — a new commit was just deployed. Do:\n"
+                        "1. github_get_recent_commits(limit=1) — get the latest commit SHA and message\n"
+                        "2. github_get_diff(sha) — read the diff of that commit\n"
+                        "3. Review ONLY the changed lines: does this diff introduce a regression, "
+                        "a broken import, an unhandled exception path, or a logic error?\n"
+                        "4. If yes: describe the exact issue and the file+line. Do NOT fix — just report.\n"
+                        "5. If clean: write one line to activity log confirming the diff looks safe.\n"
+                        "Be fast — this runs on every deploy. Max 3 tool calls.",
+                        authorized=False,
+                    )
+                except Exception:
+                    pass
             elif status in ("FAILED", "DEPLOY_FAILED", "CRASHED", "ERROR", "REMOVED"):
                 bg_log(f"Railway webhook: FAILURE detected for '{service}' — launching autonomous investigation", source="railway_webhook")
                 run_self_improve_agent(
@@ -1411,6 +1457,144 @@ def list_newsletter():
         return {"ok": True, "signups": rows}
     finally:
         conn.close()
+
+
+# ── Status / Metrics / Benchmark / Cost / Recipes ────────────────────────────
+
+@app.get("/status/now", tags=["meta"])
+def status_now():
+    """
+    Live single-call dashboard — everything happening right now in one response.
+    Shows: active build progress, last 5 activity log lines, active task,
+    current Railway deployment, n8n status, cost today, trend alerts.
+    Poll every 10 seconds from the UI for a live status bar.
+    """
+    import time as _t
+    report: dict = {}
+
+    # Active build
+    try:
+        from .tools.flutter_tools import BUILD_PROGRESS_LOG
+        if BUILD_PROGRESS_LOG.exists():
+            blines = BUILD_PROGRESS_LOG.read_text(encoding="utf-8").splitlines()
+            last3 = [l for l in blines[-3:] if l.strip()]
+            last = blines[-1] if blines else ""
+            report["build"] = {
+                "running": bool(blines) and "complete" not in last.lower() and "FAILED" not in last,
+                "last_lines": last3,
+            }
+        else:
+            report["build"] = {"running": False, "last_lines": []}
+    except Exception:
+        report["build"] = {"running": False, "last_lines": []}
+
+    # Last 5 activity log lines
+    report["recent_activity"] = _activity_recent_lines(5)
+
+    # Active task tracker
+    try:
+        from .routing.dispatcher import _read_active_task
+        active, sid, task = _read_active_task()
+        report["active_task"] = {"running": active, "session": sid, "task": task[:200] if task else ""}
+    except Exception:
+        report["active_task"] = {"running": False}
+
+    # Trend alerts (from last snapshot — no live API call)
+    try:
+        trends = get_trends(hours=6)
+        report["trend_alerts"] = trends.get("alerts", [])
+        report["metrics_snapshot"] = {k: v["current"] for k, v in trends.get("metrics", {}).items()}
+    except Exception:
+        report["trend_alerts"] = []
+
+    # Cost today
+    try:
+        spend = _spend_summary()
+        report["cost_today"] = {
+            "usd": spend["today"]["total_usd"],
+            "budget_pct": spend["today"]["budget_pct_used"],
+            "over_budget": spend["over_budget"],
+        }
+    except Exception:
+        report["cost_today"] = {}
+
+    report["generated_at"] = _t.time()
+    return report
+
+
+@app.get("/metrics/trends", tags=["metrics"])
+def metrics_trends(hours: float = 24.0):
+    """
+    Trend analysis over the last N hours (default 24).
+    Shows slope per metric — positive slope on error_rate = things getting worse.
+    Includes alerts when thresholds are crossed.
+    """
+    return get_trends(hours=hours)
+
+
+@app.get("/metrics/history", tags=["metrics"])
+def metrics_history(hours: float = 48.0):
+    """Return raw metric snapshots from the last N hours (default 48)."""
+    from .learning.metrics_store import get_recent
+    snaps = get_recent(hours=hours)
+    return {"hours": hours, "count": len(snaps), "snapshots": snaps[-200:]}
+
+
+@app.get("/credits/spend", tags=["meta"])
+def credits_spend():
+    """
+    Token cost ledger — estimated API spend today, last 7 days, last 30 days.
+    Set DAILY_BUDGET_USD env var to enable budget alerts (default $5).
+    """
+    return _spend_summary()
+
+
+@app.get("/benchmark/latest", tags=["benchmark"])
+def benchmark_latest():
+    """Return the most recent benchmark report (runs every Monday 01:00 UTC)."""
+    from .learning.benchmark import get_latest_benchmark
+    result = get_latest_benchmark()
+    if result is None:
+        return {"message": "No benchmark run yet — first run Monday 01:00 UTC, or POST /benchmark/run"}
+    return result
+
+
+@app.post("/benchmark/run", tags=["benchmark"])
+@limiter.limit("2/hour")
+def benchmark_run(request: Request):  # noqa: ARG001
+    """
+    Manually trigger a benchmark run — calls all route types, scores with Haiku.
+    Takes 30-60 seconds. Returns the full report.
+    """
+    from .learning.benchmark import run_benchmark
+    try:
+        return run_benchmark()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Benchmark failed: {e}")
+
+
+@app.get("/benchmark/list", tags=["benchmark"])
+def benchmark_list():
+    """List all available benchmark dates."""
+    from .learning.benchmark import list_benchmark_dates
+    return {"dates": list_benchmark_dates()}
+
+
+@app.get("/build/recipes", tags=["build"])
+def build_recipes_list():
+    """Return all recorded successful build recipes."""
+    from .learning.build_recipes import list_recipes
+    return {"recipes": list_recipes()}
+
+
+@app.get("/build/recipes/{project_name}", tags=["build"])
+def build_recipe_get(project_name: str):
+    """Return the build recipe for a specific project, including the full step list."""
+    from .learning.build_recipes import get_recipe
+    recipe = get_recipe(project_name)
+    if recipe is None:
+        return {"found": False, "project_name": project_name}
+    return {"found": True, "recipe": recipe}
 
 
 # ── Multimodal ────────────────────────────────────────────────────────────────

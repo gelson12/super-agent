@@ -618,6 +618,27 @@ def build_flutter_voice_app(dummy: str = "") -> str:
         log.append("[git push] skipped — GITHUB_PAT not set")
         _progress("  ⚠️ Git push skipped — GITHUB_PAT not set")
 
+    # ── Save winning recipe so future builds replay what worked ───────────────
+    try:
+        from ..learning.build_recipes import save_recipe
+        save_recipe(
+            project_name="super_agent_voice",
+            steps=[
+                "flutter create super_agent_voice (wipe existing dir first)",
+                "write pubspec.yaml with speech_to_text ^6.6.0 + flutter_tts ^4.0.2",
+                "write complete AndroidManifest.xml (RECORD_AUDIO + INTERNET permissions)",
+                "patch android/app/build.gradle: minSdkVersion=24, namespace=com.superagent.voice",
+                "write lib/main.dart (voice chat UI)",
+                "flutter pub get",
+                "flutter build apk --debug",
+                f"upload APK via {upload_source} → {download_url}",
+                "flutter_git_push to GitHub",
+            ],
+            notes=f"minSdk=24 required by flutter_tts ^4.0.2. APK={size_mb}MB. Source={upload_source}.",
+        )
+    except Exception:
+        pass
+
     # ── Final report ──────────────────────────────────────────────────────────
     _progress("🏁 Build pipeline complete!")
 
