@@ -235,6 +235,9 @@ def auto_apply_safe_suggestions(review: dict) -> list[dict]:
             try:
                 vote_result = vote_on_suggestion(s)
                 authorized = vote_result["approved"]
+                # Each vote calls 5 models — record estimated cost
+                from ..learning.cost_ledger import record_call as _rc
+                _rc("CLAUDE", 800, 200, category="voting")
             except Exception as e:
                 applied.append({
                     "feature_number": s.get("feature_number"),
@@ -305,6 +308,11 @@ def auto_apply_safe_suggestions(review: dict) -> list[dict]:
                 "vote_result": vote_result,
             })
             _log(f"Applied + monitoring started: {feature_name}")
+            try:
+                from ..learning.cost_ledger import record_call as _rc
+                _rc("CLAUDE", 2000, 1000, category="improvement")
+            except Exception:
+                pass
 
         except Exception as e:
             applied.append({

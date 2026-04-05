@@ -36,7 +36,8 @@ from .learning.insight_log import insight_log
 from .learning.adapter import adapter
 from .learning.wisdom_store import wisdom_store
 from .learning.metrics_store import collect_current_snapshot, record_snapshot, get_trends, METRICS_PATH
-from .learning.cost_ledger import record_call as _ledger_record, spend_summary as _spend_summary
+from .learning.cost_ledger import record_call as _ledger_record, spend_summary as _spend_summary, get_breakdown as _cost_breakdown
+from .learning.credit_throttle import should_run as _should_run, health_check_uses_llm as _hc_uses_llm, get_status as _throttle_status
 # algorithm_store, benchmark, build_recipes imported lazily inside endpoints
 
 limiter = Limiter(key_func=get_remote_address)
@@ -64,13 +65,30 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
 def _scheduled_health_check() -> None:
     """
-    Runs every 30 minutes — full autonomous infrastructure health check.
-    Goes directly to self_improve_agent (bypasses dispatcher/classifier).
-    Auto-fixes SAFE issues without user intervention.
+    Runs on a dynamic interval (30min at full credit, 2hr at reduced, 4hr at minimal/critical).
+    At CRITICAL credit tier: takes a metrics snapshot only — no LLM call.
+    Throttled entirely only if credits are exhausted beyond all tiers (never for health).
     """
     try:
+        # Always record a metrics snapshot — free, no LLM
+        try:
+            snap = collect_current_snapshot()
+            record_snapshot(snap)
+            trends = get_trends(hours=24)
+            if trends.get("alert_count", 0) > 0:
+                for alert in trends["alerts"]:
+                    bg_log(f"TREND ALERT: {alert}", source="health_check")
+        except Exception:
+            pass
+
+        # LLM-based investigation only when credit allows
+        if not _hc_uses_llm():
+            bg_log("Health check: metrics snapshot taken (LLM skipped — critical credit tier)", source="health_check")
+            return
+
         from .agents.self_improve_agent import run_self_improve_agent
         bg_log("Scheduled health check starting — investigating all services autonomously", source="health_check")
+        _t0 = __import__("time").time()
         run_self_improve_agent(
             "SCHEDULED HEALTH CHECK — investigate ALL services autonomously:\n"
             "1. railway_get_deployment_status + railway_get_logs — deployed and healthy?\n"
@@ -82,17 +100,10 @@ def _scheduled_health_check() -> None:
             "Only notify the user if you find something critical that needs their input.",
             authorized=False,
         )
-        # Record metrics snapshot for trend analysis
-        try:
-            snap = collect_current_snapshot()
-            record_snapshot(snap)
-            trends = get_trends(hours=24)
-            if trends.get("alert_count", 0) > 0:
-                for alert in trends["alerts"]:
-                    bg_log(f"TREND ALERT: {alert}", source="health_check")
-        except Exception:
-            pass
-        bg_log("Scheduled health check complete", source="health_check")
+        _elapsed = __import__("time").time() - _t0
+        # Record cost estimate: health check uses ~3000 input + ~1000 output chars on average
+        _ledger_record("CLAUDE", 3000, 1000, category="health_check")
+        bg_log(f"Scheduled health check complete ({_elapsed:.0f}s)", source="health_check")
     except Exception as _e:
         bg_log(f"Scheduled health check error: {_e}", source="health_check")
 
@@ -127,6 +138,7 @@ def _post_deploy_check() -> None:
             "Be concise — this runs silently in the background.",
             authorized=False,
         )
+        _ledger_record("CLAUDE", 2000, 800, category="health_check")
         bg_log("Post-deploy startup check complete", source="post_deploy")
     except Exception as _e:
         bg_log(f"Post-deploy check error: {_e}", source="post_deploy")
@@ -144,6 +156,9 @@ async def _lifespan(app: FastAPI):
     _threading.Thread(target=_post_deploy_check, daemon=True).start()
 
     scheduler = BackgroundScheduler()
+    # Health check: starts at 30min, dynamically respected via _hc_uses_llm() inside the job.
+    # The interval itself stays at 30min but the job skips the LLM at reduced/critical tiers.
+    # This avoids needing to restart the scheduler when credit tier changes.
     scheduler.add_job(
         _scheduled_health_check,
         "interval",
@@ -151,8 +166,20 @@ async def _lifespan(app: FastAPI):
         id="health_check",
         replace_existing=True,
     )
+    def _nightly_review_job():
+        if not _should_run("nightly_review"):
+            return
+        run_nightly_review()
+        _ledger_record("CLAUDE", 5000, 3000, category="code_review")
+
+    def _weekly_review_job():
+        if not _should_run("weekly_review"):
+            return
+        run_weekly_review()
+        _ledger_record("OPUS", 8000, 6000, category="improvement")
+
     scheduler.add_job(
-        run_nightly_review,
+        _nightly_review_job,
         "cron",
         hour=23,
         minute=0,
@@ -160,7 +187,7 @@ async def _lifespan(app: FastAPI):
         replace_existing=True,
     )
     scheduler.add_job(
-        run_weekly_review,
+        _weekly_review_job,
         "cron",
         day_of_week="sun",
         hour=23,
@@ -178,9 +205,13 @@ async def _lifespan(app: FastAPI):
 
     # Weekly benchmark — runs every Monday 01:00 UTC (day after weekly review)
     def _benchmark_job():
+        if not _should_run("benchmark"):
+            bg_log("Benchmark skipped — credit throttle active", source="benchmark")
+            return
         try:
             from .learning.benchmark import run_benchmark
             run_benchmark()
+            _ledger_record("HAIKU", 10000, 5000, category="benchmark")
         except Exception as _e:
             bg_log(f"Benchmark job error: {_e}", source="benchmark")
 
@@ -340,7 +371,7 @@ def chat(req: ChatRequest, request: Request):
     result = dispatch(req.message, session_id=req.session_id)
     if not result["response"].startswith("["):
         append_exchange(req.session_id, req.message, result["response"])
-        _ledger_record(result.get("model_used", "UNKNOWN"), len(req.message), len(result["response"]))
+        _ledger_record(result.get("model_used", "UNKNOWN"), len(req.message), len(result["response"]), category="chat")
     return _chat_response_from_result(result, req.session_id)
 
 
@@ -1045,21 +1076,28 @@ async def railway_webhook(request: Request):
                 )
                 bg_log(f"Railway webhook: post-deploy health check complete for '{service}'", source="railway_webhook")
                 # Diff-aware instant review — review only what just changed
+                # Skipped when credit tier is reduced/minimal/critical (expensive per deploy)
                 try:
-                    from .agents.self_improve_agent import run_self_improve_agent as _sia
-                    _sia(
-                        "DIFF-AWARE POST-DEPLOY REVIEW — a new commit was just deployed. Do:\n"
-                        "1. github_get_recent_commits(limit=1) — get the latest commit SHA and message\n"
-                        "2. github_get_diff(sha) — read the diff of that commit\n"
-                        "3. Review ONLY the changed lines: does this diff introduce a regression, "
-                        "a broken import, an unhandled exception path, or a logic error?\n"
-                        "4. If yes: describe the exact issue and the file+line. Do NOT fix — just report.\n"
-                        "5. If clean: write one line to activity log confirming the diff looks safe.\n"
-                        "Be fast — this runs on every deploy. Max 3 tool calls.",
-                        authorized=False,
-                    )
+                    if not _should_run("diff_review"):
+                        bg_log("Diff review skipped — credit throttle active", source="railway_webhook")
+                    else:
+                        from .agents.self_improve_agent import run_self_improve_agent as _sia
+                        _sia(
+                            "DIFF-AWARE POST-DEPLOY REVIEW — a new commit was just deployed. Do:\n"
+                            "1. github_get_recent_commits(limit=1) — get the latest commit SHA and message\n"
+                            "2. github_get_diff(sha) — read the diff of that commit\n"
+                            "3. Review ONLY the changed lines: does this diff introduce a regression, "
+                            "a broken import, an unhandled exception path, or a logic error?\n"
+                            "4. If yes: describe the exact issue and the file+line. Do NOT fix — just report.\n"
+                            "5. If clean: write one line to activity log confirming the diff looks safe.\n"
+                            "Be fast — this runs on every deploy. Max 3 tool calls.",
+                            authorized=False,
+                        )
+                        _ledger_record("CLAUDE", 1500, 600, category="code_review")
                 except Exception:
                     pass
+                # Cost for success webhook handler
+                _ledger_record("CLAUDE", 1500, 500, category="health_check")
             elif status in ("FAILED", "DEPLOY_FAILED", "CRASHED", "ERROR", "REMOVED"):
                 bg_log(f"Railway webhook: FAILURE detected for '{service}' — launching autonomous investigation", source="railway_webhook")
                 run_self_improve_agent(
@@ -1074,6 +1112,7 @@ async def railway_webhook(request: Request):
                     authorized=False,
                 )
                 bg_log(f"Railway webhook: autonomous investigation complete for '{service}'", source="railway_webhook")
+                _ledger_record("CLAUDE", 2000, 1000, category="auto_fix")
         except Exception as _e:
             bg_log(f"Railway webhook handler error: {_e}", source="railway_webhook")
 
@@ -1547,6 +1586,30 @@ def credits_spend():
     Set DAILY_BUDGET_USD env var to enable budget alerts (default $5).
     """
     return _spend_summary()
+
+
+@app.get("/credits/breakdown", tags=["meta"])
+def credits_breakdown():
+    """
+    Per-category API spend breakdown — daily and weekly.
+
+    Shows exactly which autonomous functions are consuming credit:
+      chat, auto_fix, code_review, voting, improvement, health_check, n8n, benchmark, other
+
+    Also returns throttle tier and which jobs are currently active vs throttled.
+    Set DAILY_BUDGET_USD in Railway Variables to enable tier-based throttling.
+    """
+    return {
+        "breakdown": _cost_breakdown(),
+        "throttle": _throttle_status(),
+        "note": (
+            "Costs are estimates based on average token lengths per job type. "
+            "Set DAILY_BUDGET_USD in Railway Variables to activate throttling. "
+            "At <50% remaining: diff review paused, health_check LLM reduced. "
+            "At <25%: voting/improvement/benchmark paused. "
+            "At <10%: only n8n monitor + metrics snapshots run."
+        ),
+    }
 
 
 @app.get("/benchmark/latest", tags=["benchmark"])
