@@ -320,6 +320,42 @@
     ::-webkit-scrollbar { width: 6px; }
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: #2a2a2a; border-radius: 3px; }
+
+    /* ── Status bar ───────────────────────────────────────────────────────── */
+    #status-bar {
+      display: none; /* hidden until first /status/now response */
+      background: #0a0a0a;
+      border-bottom: 1px solid #1e1e1e;
+      padding: 5px 16px;
+      font-size: 11px;
+      color: #555;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      overflow: hidden;
+      height: 28px;
+      flex-shrink: 0;
+    }
+    #status-bar.has-alert { border-bottom-color: #7a3a00; background: #0f0800; }
+    #status-bar.building  { border-bottom-color: #1a4a1a; background: #080f08; }
+    .sb-pill {
+      display: flex; align-items: center; gap: 5px;
+      white-space: nowrap; flex-shrink: 0;
+    }
+    .sb-dot {
+      width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0;
+    }
+    .sb-dot.green  { background: #22c55e; box-shadow: 0 0 4px #22c55e; }
+    .sb-dot.amber  { background: #f59e0b; box-shadow: 0 0 4px #f59e0b; animation: sb-pulse 1.2s infinite; }
+    .sb-dot.red    { background: #ef4444; box-shadow: 0 0 4px #ef4444; }
+    .sb-dot.blue   { background: #3b82f6; box-shadow: 0 0 4px #3b82f6; animation: sb-pulse 1.2s infinite; }
+    @keyframes sb-pulse {
+      0%, 100% { opacity: 1; } 50% { opacity: 0.4; }
+    }
+    #sb-build   { color: #6ee7b7; }
+    #sb-activity{ color: #9ca3af; flex: 1; overflow: hidden; text-overflow: ellipsis; }
+    #sb-cost    { color: #9ca3af; flex-shrink: 0; }
+    #sb-alert   { color: #f59e0b; font-weight: 600; flex-shrink: 0; }
   </style>
 </head>
 <body>
@@ -349,6 +385,17 @@
   </div>
   <div style="width:80px;"></div><!-- spacer to balance the left side -->
 </header>
+
+<!-- ── Status bar ────────────────────────────────────────────────────────── -->
+<div id="status-bar">
+  <div class="sb-pill">
+    <div class="sb-dot green" id="sb-dot"></div>
+    <span id="sb-build">Idle</span>
+  </div>
+  <span id="sb-activity">Initialising...</span>
+  <span id="sb-cost"></span>
+  <span id="sb-alert"></span>
+</div>
 
 <div id="chat">
   <div class="empty-state" id="empty"></div>
@@ -436,6 +483,106 @@
   document.getElementById('pw-input').addEventListener('keydown', e => {
     if (e.key === 'Enter') submitPassword();
   });
+
+  // ── Status bar — polls /status/now every 10 seconds ──────────────────────
+  let _sbTimer = null;
+  let _sbFailures = 0;
+
+  function _truncate(str, max) {
+    if (!str) return '';
+    return str.length > max ? str.slice(0, max) + '…' : str;
+  }
+
+  async function _updateStatusBar() {
+    if (!accessToken) return; // not logged in yet
+    try {
+      const res = await fetch('/status/now', {
+        headers: accessToken ? { 'X-Token': accessToken } : {}
+      });
+      if (!res.ok) { _sbFailures++; return; }
+      _sbFailures = 0;
+      const d = await res.json();
+
+      const bar    = document.getElementById('status-bar');
+      const dot    = document.getElementById('sb-dot');
+      const build  = document.getElementById('sb-build');
+      const act    = document.getElementById('sb-activity');
+      const cost   = document.getElementById('sb-cost');
+      const alert  = document.getElementById('sb-alert');
+
+      bar.style.display = 'flex'; // show on first successful response
+
+      // ── Build state ───────────────────────────────────────────────────────
+      const bld = d.build || {};
+      if (bld.running) {
+        const lastLine = (bld.last_lines || []).filter(l => l.trim()).pop() || 'Building…';
+        build.textContent = '🔨 ' + _truncate(lastLine.replace(/^[\u{1F300}-\u{1FFFF}]+\s*/u, ''), 60);
+        dot.className = 'sb-dot blue';
+        bar.classList.add('building');
+        bar.classList.remove('has-alert');
+      } else {
+        // Active task (non-build agent)
+        const task = d.active_task || {};
+        if (task.running && task.task) {
+          build.textContent = '⚙️ ' + _truncate(task.task, 55);
+          dot.className = 'sb-dot amber';
+          bar.classList.remove('building', 'has-alert');
+        } else {
+          build.textContent = 'Idle';
+          dot.className = 'sb-dot green';
+          bar.classList.remove('building', 'has-alert');
+        }
+      }
+
+      // ── Last activity line ─────────────────────────────────────────────────
+      const lines = d.recent_activity || [];
+      if (lines.length) {
+        const last = lines[lines.length - 1];
+        // Strip timestamp prefix [YYYY-MM-DD HH:MM:SS UTC]
+        const stripped = last.replace(/^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} UTC\]\s*/, '');
+        act.textContent = _truncate(stripped, 90);
+      } else {
+        act.textContent = 'No recent activity';
+      }
+
+      // ── Cost ───────────────────────────────────────────────────────────────
+      const c = d.cost_today || {};
+      if (c.usd !== undefined) {
+        const overBudget = c.over_budget;
+        cost.textContent = `💰 $${(+c.usd).toFixed(3)} (${(+c.budget_pct || 0).toFixed(0)}%)`;
+        cost.style.color = overBudget ? '#ef4444' : c.budget_pct > 60 ? '#f59e0b' : '#555';
+      } else {
+        cost.textContent = '';
+      }
+
+      // ── Trend alerts ──────────────────────────────────────────────────────
+      const alerts = d.trend_alerts || [];
+      if (alerts.length) {
+        alert.textContent = '⚠️ ' + _truncate(alerts[0], 60);
+        bar.classList.add('has-alert');
+      } else {
+        alert.textContent = '';
+        if (!bld.running) bar.classList.remove('has-alert');
+      }
+
+    } catch (_) {
+      _sbFailures++;
+    }
+  }
+
+  function _startStatusBar() {
+    _updateStatusBar();
+    _sbTimer = setInterval(_updateStatusBar, 10000);
+  }
+
+  // Start polling after login
+  const _origSubmitPassword = submitPassword;
+  submitPassword = async function() {
+    await _origSubmitPassword();
+    if (accessToken) _startStatusBar();
+  };
+  // Also start immediately if already logged in (page refresh)
+  if (accessToken) _startStatusBar();
 
   // Auto-unlock if already have token
   (async () => {

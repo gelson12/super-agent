@@ -723,6 +723,17 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
         model = suggested
         routed_by = "complexity_score"
 
+    # ── 6a. Budget guard — downgrade to cheaper models when over 80% daily budget ─
+    # Only applies to non-agent conversational routes (agents need their own models).
+    # CLAUDE ($4.50/M) → HAIKU ($0.40/M). DEEPSEEK stays (already cheap).
+    try:
+        from ..learning.cost_ledger import is_over_budget as _over_budget
+        if model == "CLAUDE" and _over_budget():
+            model = "HAIKU"
+            routed_by = f"{routed_by}_budget_cap"
+    except Exception:
+        pass
+
     # ── 6b. Algorithm-store routing override ─────────────────────────────────
     # Lazy import — only loads algorithm_store after startup is complete.
     try:
