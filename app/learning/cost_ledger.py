@@ -44,7 +44,10 @@ _MAX_ENTRIES = 10000
 
 CATEGORIES = (
     "chat", "auto_fix", "code_review", "voting",
-    "improvement", "health_check", "n8n", "benchmark", "other",
+    "improvement", "health_check",
+    "n8n_workflow",   # n8n workflows calling Super Agent via HTTP (session_id: "n8n-*")
+    "n8n_build",      # user asking Super Agent to build/manage n8n workflows
+    "benchmark", "other",
 )
 
 

@@ -170,7 +170,7 @@ def _invoke(message: str) -> str:
     # Track n8n agent API cost separately so /credits/breakdown shows it clearly
     try:
         from ..learning.cost_ledger import record_call as _rc
-        _rc("CLAUDE", len(message), len(text or ""), category="n8n")
+        _rc("CLAUDE", len(message), len(text or ""), category="n8n_build")
     except Exception:
         pass
     return text or "[n8n agent: no response]"
