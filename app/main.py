@@ -371,7 +371,8 @@ def chat(req: ChatRequest, request: Request):
     result = dispatch(req.message, session_id=req.session_id)
     if not result["response"].startswith("["):
         append_exchange(req.session_id, req.message, result["response"])
-        _ledger_record(result.get("model_used", "UNKNOWN"), len(req.message), len(result["response"]), category="chat")
+        _cat = "n8n" if req.session_id.startswith("n8n") else "chat"
+        _ledger_record(result.get("model_used", "UNKNOWN"), len(req.message), len(result["response"]), category=_cat)
     return _chat_response_from_result(result, req.session_id)
 
 
@@ -431,6 +432,8 @@ def chat_stream(req: ChatRequest, request: Request):
         response_text = result["response"]
         if not response_text.startswith("["):
             append_exchange(req.session_id, msg, response_text)
+            _cat = "n8n" if req.session_id.startswith("n8n") else "chat"
+            _ledger_record(result.get("model_used", "UNKNOWN"), len(msg), len(response_text), category=_cat)
 
         def _generate_routed():
             # Normalize: replace bare newlines with space+newline+space so that
