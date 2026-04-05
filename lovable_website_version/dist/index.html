@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bridge — Bridging Business, Customers &amp; Technology</title>
+    <meta name="description" content="Bridge connects businesses, customers, and technology through digital marketing, software, automation, and visual media." />
+    <meta name="author" content="Bridge" />
+    <meta property="og:title" content="Bridge — Business Growth, Technology &amp; Media" />
+    <meta property="og:description" content="Bridge connects businesses, customers, and technology through digital marketing, software, automation, and visual media." />
+    <meta property="og:type" content="website" />
+    <script type="module" crossorigin src="/assets/index-aqi7jZpF.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-CXKl4Lfr.css">
+  </head>
+  <body>
+    <div id="root"></div>
+    <script>
+      // Intercept contact form and POST to super-agent backend
+      document.addEventListener('submit', async function(e) {
+        var form = e.target;
+        if (!form || form.tagName !== 'FORM') return;
+        var nameEl = form.querySelector('[name="name"]');
+        var msgEl  = form.querySelector('[name="message"]');
+        if (!nameEl || !msgEl) return;
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        var btn = form.querySelector('button[type="submit"]');
+        if (btn) btn.disabled = true;
+        var data = {
+          name:      nameEl.value.trim(),
+          email:     (form.querySelector('[name="email"]') || {value:''}).value.trim(),
+          company:   (form.querySelector('[name="company"]') || {value:''}).value.trim(),
+          message:   msgEl.value.trim(),
+          timestamp: new Date().toISOString()
+        };
+        try {
+          await fetch('https://super-agent-production.up.railway.app/contact', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(data)
+          });
+        } catch(err) {}
+        // Re-fire so React onSubmit runs (shows thank-you state)
+        form.dispatchEvent(new Event('submit', {bubbles:true, cancelable:true}));
+      }, true);
+    </script>
+  </body>
+</html>

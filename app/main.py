@@ -1287,6 +1287,71 @@ def list_leads():
         conn.close()
 
 
+class ContactRequest(BaseModel):
+    name: str = ""
+    email: str = ""
+    company: str = ""
+    message: str = ""
+    timestamp: str = ""
+
+
+@app.post("/contact", tags=["website"])
+def submit_contact(req: ContactRequest):
+    """Store a contact submission from the lovable website and email bridge.digital.solution@gmail.com."""
+    import json as _json
+    from pathlib import Path as _Path
+
+    # Ensure table exists
+    conn = _get_db_conn()
+    storage = "file"
+    if conn:
+        try:
+            with conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        CREATE TABLE IF NOT EXISTS bridge_contacts (
+                            id         SERIAL PRIMARY KEY,
+                            name       TEXT,
+                            email      TEXT,
+                            company    TEXT,
+                            message    TEXT,
+                            timestamp  TEXT,
+                            created_at TIMESTAMPTZ DEFAULT NOW()
+                        )
+                    """)
+                    cur.execute(
+                        """INSERT INTO bridge_contacts (name, email, company, message, timestamp)
+                           VALUES (%(name)s, %(email)s, %(company)s, %(message)s, %(timestamp)s)""",
+                        req.model_dump(),
+                    )
+            storage = "postgres"
+        finally:
+            conn.close()
+    else:
+        try:
+            with _Path("/workspace/bridge_contacts.jsonl").open("a") as f:
+                f.write(_json.dumps(req.model_dump()) + "\n")
+        except Exception:
+            pass
+
+    _send_email(
+        subject=f"[Bridge] New enquiry from {req.name or req.email}",
+        body=(
+            f"New contact form submission on Bridge website (v2)\n"
+            f"{'=' * 48}\n\n"
+            f"Name:    {req.name}\n"
+            f"Email:   {req.email}\n"
+            f"Company: {req.company or '—'}\n"
+            f"Time:    {req.timestamp}\n\n"
+            f"Message\n"
+            f"-------\n"
+            f"{req.message or '(no message)'}\n"
+        ),
+    )
+
+    return {"ok": True, "storage": storage}
+
+
 @app.post("/newsletter", tags=["website"])
 def submit_newsletter(req: NewsletterRequest):
     """Store a newsletter signup and email bridge.digital.solution@gmail.com."""
