@@ -1,8 +1,8 @@
-# Stage 1: make BRIDGE.png transparent via flood-fill (cache-bust: v3)
-FROM python:3.12-alpine AS logo-builder
+# Stage 1: make BRIDGE.png transparent via flood-fill
+FROM python:3.12-slim AS logo-builder
 WORKDIR /build
 RUN pip install --no-cache-dir pillow
-COPY static/BRIDGE.png .
+COPY website/images/BRIDGE.png .
 COPY make_transparent.py .
 RUN python make_transparent.py BRIDGE.png BRIDGE-transparent.png
 
