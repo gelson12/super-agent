@@ -278,6 +278,31 @@ async def _lifespan(app: FastAPI):
         replace_existing=True,
     )
 
+    # Gemini token keeper — runs daily at 04:00 UTC (1 hour after Claude keeper),
+    # pings the Gemini CLI, re-encodes credentials, and saves to Railway Variables.
+    def _gemini_token_keeper_job():
+        try:
+            from .learning.gemini_token_keeper import run_token_keeper as _gemini_keep
+            result = _gemini_keep()
+            status = "OK" if result.get("railway_ok") else "FAILED"
+            bg_log(
+                f"Gemini token keeper: {status} — ping={result.get('ping_ok')} "
+                f"railway={result.get('railway_ok')} via={result.get('method')} "
+                f"msg={result.get('message', '')[:120]}",
+                source="gemini_token_keeper",
+            )
+        except Exception as _e:
+            bg_log(f"Gemini token keeper job error: {_e}", source="gemini_token_keeper")
+
+    scheduler.add_job(
+        _gemini_token_keeper_job,
+        "cron",
+        hour=4,
+        minute=0,
+        id="gemini_token_keeper",
+        replace_existing=True,
+    )
+
     # n8n autonomous monitor — checks every 15 minutes, auto-repairs detected issues
     def _n8n_monitor_job():
         try:

@@ -36,6 +36,9 @@ RUN npm install -g @anthropic-ai/claude-code
 # ── Railway CLI ───────────────────────────────────────────────────────────────
 RUN npm install -g @railway/cli
 
+# ── Google Gemini CLI (free-tier backup for Claude Pro) ───────────────────────
+RUN npm install -g @google/gemini-cli
+
 # ── VS Code extensions (GitHub + GitLens + Claude) ────────────────────────────
 RUN code-server --install-extension GitHub.vscode-pull-request-github \
     && code-server --install-extension eamodio.gitlens \
@@ -103,7 +106,8 @@ COPY nginx.conf.template /app/nginx.conf.template
 
 # ── Workspace for cloned repos + code-server user dirs ───────────────────────
 RUN mkdir -p /workspace /workspace/.vscode /workspace/.vscode-ext /var/log/supervisor \
-    && mkdir -p /root/.claude && chmod 700 /root/.claude
+    && mkdir -p /root/.claude && chmod 700 /root/.claude \
+    && mkdir -p /root/.gemini && chmod 700 /root/.gemini
 
 # ── Entrypoint (strip Windows CRLF → LF, then make executable) ───────────────
 COPY entrypoint.sh /app/entrypoint.sh

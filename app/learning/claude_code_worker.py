@@ -41,6 +41,15 @@ def ask_claude_code(prompt: str) -> str:
     except Exception:
         pass
 
+    # ── Gemini fallback when Pro daily limit is hit ───────────────────────────
+    try:
+        from .pro_router import is_pro_available
+        if not is_pro_available():
+            from .gemini_cli_worker import ask_gemini_cli
+            return ask_gemini_cli(prompt)
+    except Exception:
+        pass
+
     # ── Subprocess call ───────────────────────────────────────────────────────
     try:
         result = subprocess.run(
@@ -69,6 +78,14 @@ def ask_claude_code(prompt: str) -> str:
 
         return output
     except subprocess.TimeoutExpired:
+        # Pro timed out — try Gemini as a fallback before giving up
+        try:
+            from .gemini_cli_worker import ask_gemini_cli
+            gemini_result = ask_gemini_cli(prompt)
+            if not gemini_result.startswith("["):
+                return gemini_result
+        except Exception:
+            pass
         return f"[claude_code: timed out after {_TIMEOUT}s]"
     except FileNotFoundError:
         return "[claude_code: claude CLI not found in container]"
