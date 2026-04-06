@@ -412,48 +412,6 @@
 </div>
 
 <script>
-  // ── Remove white background from logo images via canvas ──────────────────────
-  function removeWhiteBg(imgEl) {
-    if (!imgEl.complete || imgEl.naturalWidth === 0) return;
-    try {
-      const canvas = document.createElement('canvas');
-      canvas.width = imgEl.naturalWidth;
-      canvas.height = imgEl.naturalHeight;
-      const ctx = canvas.getContext('2d');
-      ctx.drawImage(imgEl, 0, 0);
-      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      const d = imageData.data;
-      for (let i = 0; i < d.length; i += 4) {
-        const r = d[i], g = d[i + 1], b = d[i + 2];
-        // Make near-white pixels fully transparent
-        if (r > 210 && g > 210 && b > 210) {
-          d[i + 3] = 0;
-        }
-        // Soft edge: slightly off-white pixels fade out
-        else if (r > 180 && g > 180 && b > 180) {
-          const whiteness = (r + g + b) / 3;
-          d[i + 3] = Math.round((1 - (whiteness - 180) / 30) * 255);
-        }
-      }
-      ctx.putImageData(imageData, 0, 0);
-      imgEl.src = canvas.toDataURL('image/png');
-    } catch (e) {
-      // CORS or tainted canvas — skip silently, logo still shows
-    }
-  }
-
-  // Apply white removal to all logo instances when they load
-  ['lock-logo', 'header-logo'].forEach(id => {
-    const el = document.getElementById(id);
-    if (el) {
-      if (el.complete && el.naturalWidth > 0) {
-        removeWhiteBg(el);
-      } else {
-        el.addEventListener('load', () => removeWhiteBg(el));
-      }
-    }
-  });
-
   // ── Auth ────────────────────────────────────────────────────────────────────
   let accessToken = sessionStorage.getItem('sa_token') || '';
 
