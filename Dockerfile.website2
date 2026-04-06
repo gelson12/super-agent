@@ -9,7 +9,7 @@ RUN python make_transparent.py logo.png logo-transparent.png
 # Stage 2: nginx static server
 FROM nginx:alpine
 COPY lovable_website_version/dist/ /usr/share/nginx/html/
-COPY --from=logo-builder /build/logo-transparent.png /usr/share/nginx/html/assets/logo.png
+COPY --from=logo-builder /build/logo-transparent.png /usr/share/nginx/html/assets/bridge-logo.png
 COPY nginx-website2.conf /etc/nginx/conf.d/default.conf.template
 EXPOSE 8080
 CMD ["/bin/sh", "-c", "envsubst '$PORT' < /etc/nginx/conf.d/default.conf.template > /etc/nginx/conf.d/default.conf && exec nginx -g 'daemon off;'"]
