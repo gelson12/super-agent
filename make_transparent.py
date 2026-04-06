@@ -1,6 +1,6 @@
 """
-PNG background removal using flood-fill from corners.
-Handles checkered (white + grey) transparency backgrounds.
+PNG background removal using flood-fill from all border pixels.
+Handles any shade of neutral grey/white checkerboard background.
 Usage: python make_transparent.py <input.png> <output.png>
 """
 from PIL import Image
@@ -14,18 +14,29 @@ def make_transparent(src, dst):
     pixels = img.load()
 
     def is_bg(r, g, b, a):
-        # Match white AND checkerboard grey squares (~204,204,204)
-        return (r > 175 and g > 175 and b > 175
-                and abs(int(r) - int(g)) < 30
-                and abs(int(g) - int(b)) < 30)
+        # Near-neutral (low colour variance) AND not very dark.
+        # Threshold 80 catches white (255) and any checkerboard grey down to ~80.
+        # Variance check 50 excludes gold, steel-blue and other logo colours.
+        brightness = (int(r) + int(g) + int(b)) / 3
+        variance = max(abs(int(r) - int(g)), abs(int(g) - int(b)), abs(int(r) - int(b)))
+        return brightness > 80 and variance < 50
 
     visited = bytearray(width * height)
     queue = deque()
 
-    for sx, sy in [(0, 0), (width - 1, 0), (0, height - 1), (width - 1, height - 1)]:
-        if not visited[sy * width + sx] and is_bg(*pixels[sx, sy]):
-            queue.append((sx, sy))
-            visited[sy * width + sx] = 1
+    def seed(x, y):
+        idx = y * width + x
+        if not visited[idx] and is_bg(*pixels[x, y]):
+            visited[idx] = 1
+            queue.append((x, y))
+
+    # Seed from ALL four edges, not just four corners
+    for x in range(width):
+        seed(x, 0)
+        seed(x, height - 1)
+    for y in range(height):
+        seed(0, y)
+        seed(width - 1, y)
 
     while queue:
         x, y = queue.popleft()
@@ -41,7 +52,7 @@ def make_transparent(src, dst):
                         queue.append((nx, ny))
 
     img.save(dst, 'PNG')
-    print(f"Done: {dst} ({width}x{height}, RGBA, flood-fill background removed)")
+    print(f"Done: {dst} ({width}x{height}, RGBA, background removed)")
 
 
 if __name__ == '__main__':

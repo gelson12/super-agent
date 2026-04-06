@@ -1,15 +1,15 @@
-# Stage 1: make BRIDGE.png transparent via flood-fill
+# Stage 1: make logo transparent via flood-fill
 FROM python:3.12-slim AS logo-builder
 WORKDIR /build
 RUN pip install --no-cache-dir pillow
-COPY website/images/BRIDGE.png .
+COPY lovable_website_version/src/assets/logo.png .
 COPY make_transparent.py .
-RUN python make_transparent.py BRIDGE.png BRIDGE-transparent.png
+RUN python make_transparent.py logo.png logo-transparent.png
 
 # Stage 2: nginx static server
 FROM nginx:alpine
 COPY lovable_website_version/dist/ /usr/share/nginx/html/
-COPY --from=logo-builder /build/BRIDGE-transparent.png /usr/share/nginx/html/assets/logo.png
+COPY --from=logo-builder /build/logo-transparent.png /usr/share/nginx/html/assets/logo.png
 COPY nginx-website2.conf /etc/nginx/conf.d/default.conf.template
 EXPOSE 8080
 CMD ["/bin/sh", "-c", "envsubst '$PORT' < /etc/nginx/conf.d/default.conf.template > /etc/nginx/conf.d/default.conf && exec nginx -g 'daemon off;'"]
