@@ -203,6 +203,96 @@ def reset_pro_flag() -> None:
             pass
 
 
+def verify_pro_auth() -> dict:
+    """
+    Run `claude auth status` and return the ACTUAL verified auth state.
+
+    Syncs CLI_DOWN flag based on real result so the system never reports
+    stale/assumed status.  Called by the health check (every 30 min) and
+    the /credits/pro-status endpoint.
+
+    Returns:
+        verified     — True if the check completed (regardless of result)
+        pro_valid    — True only if authMethod=claude.ai
+        logged_in    — True if any auth is present
+        auth_method  — "claude.ai" | "apiKey" | ""
+        subscription — e.g. "pro" | ""
+        message      — human-readable summary of what was found
+    Never raises.
+    """
+    import json as _json
+    import re as _re
+
+    try:
+        proc = subprocess.run(
+            ["claude", "auth", "status"],
+            capture_output=True, text=True, timeout=15,
+            env={**os.environ, "HOME": "/root"},
+        )
+        raw = (proc.stdout or proc.stderr or "").strip()
+
+        # Parse JSON output (claude auth status outputs JSON)
+        try:
+            data = _json.loads(raw)
+        except Exception:
+            # Fallback: regex scan for key fields in the raw text
+            data = {}
+            if '"loggedIn":true' in raw or '"loggedIn": true' in raw:
+                data["loggedIn"] = True
+            m = _re.search(r'"authMethod"\s*:\s*"([^"]*)"', raw)
+            if m:
+                data["authMethod"] = m.group(1)
+            m = _re.search(r'"subscriptionType"\s*:\s*"([^"]*)"', raw)
+            if m:
+                data["subscriptionType"] = m.group(1)
+
+        logged_in   = bool(data.get("loggedIn", False))
+        auth_method = data.get("authMethod", "")
+        subscription = data.get("subscriptionType", "")
+        is_pro      = logged_in and auth_method == "claude.ai"
+
+        if is_pro:
+            # Verified valid — clear CLI_DOWN if it was stale
+            clear_cli_down_flag()
+            msg = f"Claude Pro auth VERIFIED ✓ — authMethod=claude.ai subscription={subscription or 'unknown'}"
+            _log(f"verify_pro_auth: {msg}")
+            return {
+                "verified": True, "pro_valid": True,
+                "logged_in": True, "auth_method": auth_method,
+                "subscription": subscription, "message": msg,
+            }
+        elif logged_in:
+            msg = f"Logged in but not Pro (authMethod={auth_method or 'unknown'}) — API key mode only"
+            _log(f"verify_pro_auth: {msg}")
+            return {
+                "verified": True, "pro_valid": False,
+                "logged_in": True, "auth_method": auth_method,
+                "subscription": subscription, "message": msg,
+            }
+        else:
+            # Not authenticated — set CLI_DOWN so we stop wasting subprocess calls
+            _write_flag(_CLI_DOWN_FLAG, f"{datetime.datetime.utcnow().isoformat()}|{_CLI_DOWN_TTL}")
+            msg = "Not authenticated — CLI_DOWN flag set. Run 'claude login' in VS Code terminal to restore Pro."
+            _log(f"verify_pro_auth: {msg}")
+            return {
+                "verified": True, "pro_valid": False,
+                "logged_in": False, "auth_method": "",
+                "subscription": "", "message": msg,
+            }
+
+    except FileNotFoundError:
+        _write_flag(_CLI_DOWN_FLAG, f"{datetime.datetime.utcnow().isoformat()}|{_CLI_DOWN_TTL}")
+        msg = "claude CLI binary not found — CLI_DOWN flag set."
+        _log(f"verify_pro_auth: {msg}")
+        return {"verified": True, "pro_valid": False, "logged_in": False, "auth_method": "", "subscription": "", "message": msg}
+    except subprocess.TimeoutExpired:
+        msg = "claude auth status timed out (15s) — status unconfirmed, no flag changed."
+        _log(f"verify_pro_auth: {msg}")
+        return {"verified": False, "pro_valid": None, "logged_in": None, "auth_method": "", "subscription": "", "message": msg}
+    except Exception as e:
+        return {"verified": False, "pro_valid": None, "logged_in": None, "auth_method": "", "subscription": "", "message": f"Auth check error: {e}"}
+
+
 def _log(msg: str) -> None:
     try:
         from ..activity_log import bg_log

@@ -86,6 +86,19 @@ def _scheduled_health_check() -> None:
                     bg_log(f"Anomaly alerts fired: {_fired}", source="health_check")
             except Exception:
                 pass
+            # Verify actual Claude Pro auth state — syncs CLI_DOWN flag to reality
+            # so the system never reports assumed/stale status
+            try:
+                from .learning.pro_router import verify_pro_auth as _verify_pro
+                _auth = _verify_pro()
+                if not _auth.get("pro_valid"):
+                    bg_log(
+                        f"Health check: Pro auth check FAILED — {_auth.get('message', '')}. "
+                        "Falling back to ANTHROPIC_API_KEY until CLI recovers.",
+                        source="health_check",
+                    )
+            except Exception:
+                pass
         except Exception:
             pass
 
@@ -1813,13 +1826,19 @@ def credits_breakdown():
 @app.get("/credits/pro-status", tags=["meta"])
 def credits_pro_status():
     """
-    Returns current Pro subscription routing status.
-    mode=pro_primary  — all Claude calls going through Pro subscription (free)
-    mode=api_fallback — Pro limit hit, using ANTHROPIC_API_KEY until weekly reset
+    Returns VERIFIED current Pro subscription routing status.
+    Runs 'claude auth status' live — never returns assumed/stale state.
+    mode=pro_primary        — Pro subscription active and verified
+    mode=api_fallback_*     — Pro unavailable, using ANTHROPIC_API_KEY
+    auth.pro_valid=true/false — actual verified auth result
     """
     try:
-        from .learning.pro_router import get_status as _pro_status
-        return _pro_status()
+        from .learning.pro_router import get_status as _pro_status, verify_pro_auth as _verify
+        # Live auth check first — syncs flags before reading status
+        auth = _verify()
+        status = _pro_status()
+        status["auth"] = auth
+        return status
     except Exception as e:
         return {"error": str(e)}
 
