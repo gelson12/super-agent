@@ -103,11 +103,19 @@ def _collect_todays_data() -> dict:
     }
 
 
-def _build_prompt(data: dict) -> str:
+def _build_prompt(data: dict, cycle_ctx: str = "") -> str:
     summary = json.dumps(data, indent=2)
+    cycle_history_block = ""
+    if cycle_ctx:
+        cycle_history_block = (
+            "## IMPROVEMENT CYCLE HISTORY\n"
+            "(Past rejected hypotheses and NO_SAFE_IMPROVEMENT cycles.\n"
+            "Do not re-propose these without citing new evidence that changes the assessment.)\n"
+            f"{cycle_ctx}\n\n"
+        )
     return f"""You are doing a nightly engineering review of Super Agent — a multi-model AI system running in production on Railway.
 
-## TODAY'S ACTIVITY SUMMARY ({data['date']})
+{cycle_history_block}## TODAY'S ACTIVITY SUMMARY ({data['date']})
 {summary}
 
 ## THE 8 INTELLIGENCE FEATURES (currently deployed)
@@ -122,7 +130,54 @@ def _build_prompt(data: dict) -> str:
 
 ## YOUR TASK
 Read the source files in /workspace (if any repos are cloned there) and the activity data above.
-Produce a structured improvement report in the following JSON format — no other text, just valid JSON:
+
+For EACH item in feature_improvements, reason through the following 9-step cycle
+INTERNALLY before writing the JSON. All cycle outputs appear as new fields within
+each feature_improvements object.
+
+STEP 1 OBSERVE   — The activity summary above is your observation input. Also
+                   consult IMPROVEMENT CYCLE HISTORY above if present.
+STEP 2 DIAGNOSE  — Identify the single bottleneck category for this suggestion:
+                   prompt_instruction_failure | planning_failure |
+                   retrieval_context_failure | memory_failure |
+                   tool_selection_failure | algorithm_design_failure |
+                   evaluation_gap | infrastructure_runtime_issue
+STEP 3 HYPOTHESIZE — Propose 1–3 candidate fixes. For each assign float scores:
+                   expected_benefit, implementation_complexity, regression_risk,
+                   safety_risk, reversibility, confidence  (all 0.0–1.0)
+STEP 4 SELECT    — Compute score = expected_benefit * confidence * reversibility
+                   / (implementation_complexity + regression_risk)
+                   Select the candidate with the highest score.
+STEP 5 MODIFY    — For the selected candidate, produce a structured patch:
+                   current_behavior, proposed_behavior, rationale,
+                   affected_components (list), rollback_method
+STEP 6 EVALUATE  — Self-assess the proposed patch against:
+                   • benchmark alignment (does it improve the primary metric?)
+                   • adversarial edge cases (what could go wrong?)
+                   • previous failure patterns (from insight log errors)
+                   • cost/latency impact (will this slow or cost more?)
+                   • safety (does it touch safety/identity/operator constraints?)
+                   • regression risk (does it touch recently stable code?)
+STEP 7 DECIDE    — Set cycle_decision to:
+                   "ACCEPT"   if correctness improves, no critical regressions,
+                              safety score unchanged, change is reversible
+                   "REJECT"   if evaluation is negative or a hard constraint fires
+                   "NO_SAFE_IMPROVEMENT" if no hypothesis passes evaluation
+STEP 8 RECORD    — Set cycle_next_target to the highest remaining bottleneck.
+STEP 9 REPEAT    — The next scheduled review is the next iteration.
+                   Do NOT loop within this response.
+
+HARD CONSTRAINTS — if any apply, set cycle_constraint_violated: true and
+cycle_decision: "REJECT":
+  • Never rewrite the entire system when a local fix is possible
+  • Never optimize a proxy metric at the expense of the real objective
+  • Never alter safety/identity/operator constraints without explicit authorization
+  • Never hide failures, regressions, or uncertainties
+
+SUCCESS METRIC PRIORITY: correctness → robustness → safety/compliance →
+task completion rate → latency → cost
+
+Produce the following JSON — no other text, just valid JSON:
 
 {{
   "date": "{data['date']}",
@@ -139,7 +194,36 @@ Produce a structured improvement report in the following JSON format — no othe
       "suggested_improvement": "<specific code-level suggestion>",
       "file_to_change": "<path/to/file.py>",
       "priority": "low|medium|high",
-      "safe_to_auto_apply": false
+      "safe_to_auto_apply": false,
+      "bottleneck_category": "<one of 8 classes above>",
+      "hypotheses": [
+        {{
+          "name": "...",
+          "expected_benefit": 0.0,
+          "implementation_complexity": 0.0,
+          "regression_risk": 0.0,
+          "safety_risk": 0.0,
+          "reversibility": 0.0,
+          "confidence": 0.0,
+          "score": 0.0
+        }}
+      ],
+      "selected_hypothesis_name": "...",
+      "hypothesis_score": 0.0,
+      "cycle_proposed_patch": {{
+        "current_behavior": "...",
+        "proposed_behavior": "...",
+        "rationale": "...",
+        "affected_components": [],
+        "rollback_method": "..."
+      }},
+      "cycle_evaluation_plan": "...",
+      "cycle_eval_results": "...",
+      "cycle_decision": "ACCEPT|REJECT|NO_SAFE_IMPROVEMENT",
+      "cycle_decision_rationale": "...",
+      "cycle_constraint_violated": false,
+      "cycle_constraint_detail": null,
+      "cycle_next_target": "..."
     }}
   ],
   "new_algorithm_ideas": [
@@ -157,7 +241,15 @@ Produce a structured improvement report in the following JSON format — no othe
   ],
   "routing_observations": "<observations about routing accuracy, misroutes, confidence thresholds>",
   "model_performance_notes": "<which models performed well/poorly today and why>",
-  "tomorrow_priorities": ["<top 3 things to address tomorrow>"]
+  "tomorrow_priorities": ["<top 3 things to address tomorrow>"],
+  "cycle_summary": {{
+    "total_suggestions": 0,
+    "accepted": 0,
+    "rejected": 0,
+    "no_safe_improvement": 0,
+    "dominant_bottleneck_category": "...",
+    "highest_priority_next_target": "..."
+  }}
 }}
 
 Be specific and actionable. Reference actual file names and function names where possible.
@@ -218,6 +310,22 @@ def auto_apply_safe_suggestions(review: dict) -> list[dict]:
     applied = []
 
     for s in review.get("feature_improvements", []):
+        # ── Cycle pre-gate: respect self-evaluation before voting/applying ─────
+        from .improvement_cycle import evaluate_cycle_decision
+        _cycle_decision, _cycle_rationale = evaluate_cycle_decision(s)
+        if _cycle_decision in ("REJECT", "NO_SAFE_IMPROVEMENT"):
+            _status = "cycle_rejected" if _cycle_decision == "REJECT" else "no_safe_improvement"
+            _log(f"CYCLE {_cycle_decision}: {s.get('feature_name', '?')} — {_cycle_rationale}")
+            applied.append({
+                "feature_number": s.get("feature_number"),
+                "feature_name": s.get("feature_name", "unknown"),
+                "file_to_change": s.get("file_to_change", ""),
+                "status": _status,
+                "cycle_rationale": _cycle_rationale,
+            })
+            continue
+        # ACCEPT or no cycle fields → fall through to existing logic unchanged
+
         feature_name = s.get("feature_name", "unknown")
         file_to_change = s.get("file_to_change", "")
         priority = s.get("priority", "low")
@@ -433,7 +541,8 @@ def run_nightly_review() -> dict:
 
     try:
         data = _collect_todays_data()
-        prompt = _build_prompt(data)
+        from .improvement_cycle import load_cycle_context
+        prompt = _build_prompt(data, load_cycle_context())
         raw = ask_claude_code(prompt)
 
         # Parse JSON from Claude Code's response
@@ -446,6 +555,8 @@ def run_nightly_review() -> dict:
                 cleaned = cleaned[4:].strip()
         try:
             review = json.loads(cleaned)
+            from .improvement_cycle import parse_and_record_review_cycles
+            parse_and_record_review_cycles(review, "nightly")
         except json.JSONDecodeError:
             # Not valid JSON — store as raw text in a wrapper
             review = {

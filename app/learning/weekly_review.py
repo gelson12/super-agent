@@ -118,8 +118,16 @@ def _collect_weeks_data() -> dict:
     }
 
 
-def _build_prompt(data: dict) -> str:
+def _build_prompt(data: dict, cycle_ctx: str = "") -> str:
     summary = json.dumps(data, indent=2)
+    cycle_history_block = ""
+    if cycle_ctx:
+        cycle_history_block = (
+            "## IMPROVEMENT CYCLE HISTORY\n"
+            "(Past rejected hypotheses and NO_SAFE_IMPROVEMENT cycles.\n"
+            "Do not re-propose these without citing new evidence that changes the assessment.)\n"
+            f"{cycle_ctx}\n\n"
+        )
     return f"""You are Claude Opus 4.6 performing a deep weekly engineering review of Super Agent —
 a multi-model AI system running in production on Railway.
 
@@ -128,7 +136,7 @@ strategic patterns, recurring failures, and systemic improvements that the
 nightly tactical reviews may have missed. Think like a principal engineer
 doing a weekly retrospective.
 
-## WEEK ENDING {data['week_ending']} (covering {data['week_start']} → {data['week_ending']})
+{cycle_history_block}## WEEK ENDING {data['week_ending']} (covering {data['week_start']} → {data['week_ending']})
 
 {summary}
 
@@ -143,6 +151,54 @@ doing a weekly retrospective.
 8. Feedback loop    — insight_log.get_model_win_rates() skips underperforming models
 
 ## YOUR TASK
+Think like a principal engineer doing a weekly retrospective.
+
+For EACH item in feature_improvements, reason through the following 9-step cycle
+INTERNALLY before writing the JSON. All cycle outputs appear as new fields within
+each feature_improvements object.
+
+STEP 1 OBSERVE   — The week's activity summary above is your observation input. Also
+                   consult IMPROVEMENT CYCLE HISTORY above if present.
+STEP 2 DIAGNOSE  — Identify the single bottleneck category for this suggestion:
+                   prompt_instruction_failure | planning_failure |
+                   retrieval_context_failure | memory_failure |
+                   tool_selection_failure | algorithm_design_failure |
+                   evaluation_gap | infrastructure_runtime_issue
+STEP 3 HYPOTHESIZE — Propose 1–3 candidate fixes. For each assign float scores:
+                   expected_benefit, implementation_complexity, regression_risk,
+                   safety_risk, reversibility, confidence  (all 0.0–1.0)
+STEP 4 SELECT    — Compute score = expected_benefit * confidence * reversibility
+                   / (implementation_complexity + regression_risk)
+                   Select the candidate with the highest score.
+STEP 5 MODIFY    — For the selected candidate, produce a structured patch:
+                   current_behavior, proposed_behavior, rationale,
+                   affected_components (list), rollback_method
+STEP 6 EVALUATE  — Self-assess the proposed patch against:
+                   • benchmark alignment (does it improve the primary metric?)
+                   • adversarial edge cases (what could go wrong?)
+                   • previous failure patterns (from insight log errors)
+                   • cost/latency impact (will this slow or cost more?)
+                   • safety (does it touch safety/identity/operator constraints?)
+                   • regression risk (does it touch recently stable code?)
+STEP 7 DECIDE    — Set cycle_decision to:
+                   "ACCEPT"   if correctness improves, no critical regressions,
+                              safety score unchanged, change is reversible
+                   "REJECT"   if evaluation is negative or a hard constraint fires
+                   "NO_SAFE_IMPROVEMENT" if no hypothesis passes evaluation
+STEP 8 RECORD    — Set cycle_next_target to the highest remaining bottleneck.
+STEP 9 REPEAT    — The next scheduled review is the next iteration.
+                   Do NOT loop within this response.
+
+HARD CONSTRAINTS — if any apply, set cycle_constraint_violated: true and
+cycle_decision: "REJECT":
+  • Never rewrite the entire system when a local fix is possible
+  • Never optimize a proxy metric at the expense of the real objective
+  • Never alter safety/identity/operator constraints without explicit authorization
+  • Never hide failures, regressions, or uncertainties
+
+SUCCESS METRIC PRIORITY: correctness → robustness → safety/compliance →
+task completion rate → latency → cost
+
 Produce a structured weekly improvement report in the following JSON format — no other text:
 
 {{
@@ -164,7 +220,36 @@ Produce a structured weekly improvement report in the following JSON format — 
       "file_to_change": "<path/to/file.py>",
       "priority": "low|medium|high",
       "safe_to_auto_apply": <true if low priority + non-core utility file, else false>,
-      "estimated_impact": "<one sentence on expected improvement>"
+      "estimated_impact": "<one sentence on expected improvement>",
+      "bottleneck_category": "<one of 8 classes above>",
+      "hypotheses": [
+        {{
+          "name": "...",
+          "expected_benefit": 0.0,
+          "implementation_complexity": 0.0,
+          "regression_risk": 0.0,
+          "safety_risk": 0.0,
+          "reversibility": 0.0,
+          "confidence": 0.0,
+          "score": 0.0
+        }}
+      ],
+      "selected_hypothesis_name": "...",
+      "hypothesis_score": 0.0,
+      "cycle_proposed_patch": {{
+        "current_behavior": "...",
+        "proposed_behavior": "...",
+        "rationale": "...",
+        "affected_components": [],
+        "rollback_method": "..."
+      }},
+      "cycle_evaluation_plan": "...",
+      "cycle_eval_results": "...",
+      "cycle_decision": "ACCEPT|REJECT|NO_SAFE_IMPROVEMENT",
+      "cycle_decision_rationale": "...",
+      "cycle_constraint_violated": false,
+      "cycle_constraint_detail": null,
+      "cycle_next_target": "..."
     }}
   ],
   "systemic_issues": [
@@ -189,7 +274,23 @@ Produce a structured weekly improvement report in the following JSON format — 
     }}
   ],
   "next_week_priorities": ["<top 5 things to address next week>"],
-  "comparison_to_last_week": "<if you can infer trends, note them; otherwise say: insufficient history>"
+  "comparison_to_last_week": "<if you can infer trends, note them; otherwise say: insufficient history>",
+  "cycle_summary": {{
+    "total_suggestions": 0,
+    "accepted": 0,
+    "rejected": 0,
+    "no_safe_improvement": 0,
+    "dominant_bottleneck_category": "...",
+    "highest_priority_next_target": "..."
+  }},
+  "cycle_week_patterns": [
+    {{
+      "bottleneck_category": "...",
+      "recurrence_count": 0,
+      "trend": "worsening|stable|improving",
+      "strategic_recommendation": "..."
+    }}
+  ]
 }}
 
 Be strategic and specific. Reference actual file names and function names.
@@ -200,16 +301,20 @@ Always false for dispatcher.py, main.py, agents/, models/, config.py, Dockerfile
 
 
 def _ask_opus(prompt: str) -> str:
-    """Call Claude Opus 4.6 directly for the weekly review."""
-    import anthropic
-
-    client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
-    msg = client.messages.create(
-        model="claude-opus-4-6",
-        max_tokens=8192,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    return msg.content[0].text
+    """Weekly review via Claude Code CLI (Pro subscription — no API cost).
+    Falls back to direct Opus API if CLI is unavailable or returns an error token."""
+    from .claude_code_worker import ask_claude_code
+    result = ask_claude_code(prompt)
+    if result.startswith("["):  # CLI error token — fall back to paid API
+        import anthropic
+        client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+        msg = client.messages.create(
+            model="claude-opus-4-6",
+            max_tokens=8192,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return msg.content[0].text
+    return result
 
 
 def _is_core_file(file_path: str) -> bool:
@@ -247,6 +352,21 @@ def _apply_suggestions(review: dict) -> list[dict]:
     applied = []
 
     for s in review.get("feature_improvements", []):
+        # ── Cycle pre-gate: respect self-evaluation before voting/applying ─────
+        from .improvement_cycle import evaluate_cycle_decision
+        _cycle_decision, _cycle_rationale = evaluate_cycle_decision(s)
+        if _cycle_decision in ("REJECT", "NO_SAFE_IMPROVEMENT"):
+            _status = "cycle_rejected" if _cycle_decision == "REJECT" else "no_safe_improvement"
+            _log(f"CYCLE {_cycle_decision}: {s.get('feature_name', '?')} — {_cycle_rationale}")
+            applied.append({
+                "feature_name": s.get("feature_name", "unknown"),
+                "file_to_change": s.get("file_to_change", ""),
+                "status": _status,
+                "cycle_rationale": _cycle_rationale,
+            })
+            continue
+        # ACCEPT or no cycle fields → fall through to existing logic unchanged
+
         feature_name = s.get("feature_name", "unknown")
         file_to_change = s.get("file_to_change", "")
         priority = s.get("priority", "low")
@@ -350,7 +470,8 @@ def run_weekly_review() -> dict:
 
     try:
         data = _collect_weeks_data()
-        prompt = _build_prompt(data)
+        from .improvement_cycle import load_cycle_context
+        prompt = _build_prompt(data, load_cycle_context())
         raw = _ask_opus(prompt)
 
         review: dict = {}
@@ -361,6 +482,8 @@ def run_weekly_review() -> dict:
                 cleaned = cleaned[4:].strip()
         try:
             review = json.loads(cleaned)
+            from .improvement_cycle import parse_and_record_review_cycles
+            parse_and_record_review_cycles(review, "weekly")
         except json.JSONDecodeError:
             review = {
                 "week_ending": date_str,
@@ -372,7 +495,7 @@ def run_weekly_review() -> dict:
         review["_meta"] = {
             "generated_at_utc": datetime.datetime.utcnow().isoformat(),
             "interactions_reviewed": data["total_interactions_week"],
-            "source": "claude-opus-4-6",
+            "source": "claude-code-cli-pro",
             "review_type": "weekly",
         }
 

@@ -46,7 +46,7 @@ limiter = Limiter(key_func=get_remote_address)
 # Protected paths require header: X-Token: <UI_PASSWORD>
 # If UI_PASSWORD is not set, auth is disabled.
 
-_OPEN_PATHS = {"/", "/health", "/auth"}
+_OPEN_PATHS = {"/", "/health", "/auth", "/credits/pro-status"}
 _OPEN_PREFIXES = ("/static", "/downloads", "/webhook", "/n8n/connection-info", "/activity")  # token-in-URL or public info
 
 
@@ -155,6 +155,16 @@ async def _lifespan(app: FastAPI):
     # so it fires once on every startup without blocking the lifespan.
     _threading.Thread(target=_post_deploy_check, daemon=True).start()
 
+    # Refresh Pro token on startup — ensures Railway var is always current
+    # so the NEXT redeploy gets a fresh token regardless of when it happens.
+    def _startup_token_refresh():
+        try:
+            from .learning.pro_token_keeper import run_token_keeper
+            run_token_keeper()
+        except Exception:
+            pass
+    _threading.Thread(target=_startup_token_refresh, daemon=True).start()
+
     scheduler = BackgroundScheduler()
     # Health check: starts at 30min, dynamically respected via _hc_uses_llm() inside the job.
     # The interval itself stays at 30min but the job skips the LLM at reduced/critical tiers.
@@ -222,6 +232,32 @@ async def _lifespan(app: FastAPI):
         hour=1,
         minute=0,
         id="benchmark",
+        replace_existing=True,
+    )
+
+    # Pro token keeper — runs daily at 03:00 UTC, refreshes OAuth token and
+    # saves the updated credentials back to Railway Variables automatically.
+    # This keeps the Pro subscription alive indefinitely without human intervention.
+    def _pro_token_keeper_job():
+        try:
+            from .learning.pro_token_keeper import run_token_keeper
+            result = run_token_keeper()
+            status = "OK" if result.get("railway_ok") else "FAILED"
+            bg_log(
+                f"Pro token keeper: {status} — ping={result.get('ping_ok')} "
+                f"railway={result.get('railway_ok')} via={result.get('method')} "
+                f"msg={result.get('message', '')[:120]}",
+                source="pro_token_keeper",
+            )
+        except Exception as _e:
+            bg_log(f"Pro token keeper job error: {_e}", source="pro_token_keeper")
+
+    scheduler.add_job(
+        _pro_token_keeper_job,
+        "cron",
+        hour=3,
+        minute=0,
+        id="pro_token_keeper",
         replace_existing=True,
     )
 
@@ -765,6 +801,33 @@ def weekly_review_list():
     """List all available weekly review dates (newest first)."""
     from .learning.weekly_review import list_review_dates as _list
     return {"dates": _list()}
+
+
+@app.get("/cycle-log", tags=["meta"])
+def cycle_log_endpoint():
+    """Cycle log: last 100 entries with summary statistics."""
+    from .learning.improvement_cycle import get_cycle_log, get_cycle_summary
+    entries = get_cycle_log()
+    return {"total": len(entries), "summary": get_cycle_summary(), "entries": entries}
+
+
+@app.get("/cycle-log/rejected", tags=["meta"])
+def cycle_log_rejected():
+    """Most recent rejected and NO_SAFE_IMPROVEMENT cycle entries (up to 20)."""
+    from .learning.improvement_cycle import cycle_log as _cl
+    entries = sorted(
+        _cl.get_rejected(20) + _cl.get_no_safe(10),
+        key=lambda x: x.get("recorded_at", ""),
+        reverse=True,
+    )[:20]
+    return {"count": len(entries), "entries": entries}
+
+
+@app.get("/cycle-log/summary", tags=["meta"])
+def cycle_log_summary():
+    """Aggregated cycle statistics: totals by decision and most recent cycle date."""
+    from .learning.improvement_cycle import get_cycle_summary
+    return get_cycle_summary()
 
 
 @app.get("/improvement-status", tags=["meta"])
@@ -1602,17 +1665,53 @@ def credits_breakdown():
     Also returns throttle tier and which jobs are currently active vs throttled.
     Set DAILY_BUDGET_USD in Railway Variables to enable tier-based throttling.
     """
+    try:
+        from .learning.pro_router import get_status as _pro_status
+        pro = _pro_status()
+    except Exception:
+        pro = {"mode": "unknown", "pro_available": None}
     return {
         "breakdown": _cost_breakdown(),
         "throttle": _throttle_status(),
+        "pro_subscription": pro,
         "note": (
             "Costs are estimates based on average token lengths per job type. "
+            "Pro subscription is used first for all Claude calls — API key only "
+            "activates when Pro limit is hit. "
             "Set DAILY_BUDGET_USD in Railway Variables to activate throttling. "
             "At <50% remaining: diff review paused, health_check LLM reduced. "
             "At <25%: voting/improvement/benchmark paused. "
             "At <10%: only n8n monitor + metrics snapshots run."
         ),
     }
+
+
+@app.get("/credits/pro-status", tags=["meta"])
+def credits_pro_status():
+    """
+    Returns current Pro subscription routing status.
+    mode=pro_primary  — all Claude calls going through Pro subscription (free)
+    mode=api_fallback — Pro limit hit, using ANTHROPIC_API_KEY until weekly reset
+    """
+    try:
+        from .learning.pro_router import get_status as _pro_status
+        return _pro_status()
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.post("/credits/pro-reset", tags=["meta"])
+def credits_pro_reset():
+    """
+    Manually reset the Pro exhaustion flag (e.g. after account billing renews mid-week).
+    Requires X-Token auth.
+    """
+    try:
+        from .learning.pro_router import reset_pro_flag
+        reset_pro_flag()
+        return {"ok": True, "message": "Pro exhaustion flag cleared — Pro subscription is now primary again."}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
 
 
 @app.get("/benchmark/latest", tags=["benchmark"])
