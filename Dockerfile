@@ -99,10 +99,7 @@ COPY . .
 COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 COPY nginx.conf.template /app/nginx.conf.template
 
-# ── Make logos transparent ─────────────────────────────────────────────────────
-RUN pip install --no-cache-dir pillow \
-    && python make_transparent.py website/images/BRIDGE.png static/BRIDGE.png \
-    && python make_transparent.py static/logo.png static/logo.png
+# Logo has a dark background that suits the dark UI — no processing needed
 
 # ── Workspace for cloned repos + code-server user dirs ───────────────────────
 RUN mkdir -p /workspace /workspace/.vscode /workspace/.vscode-ext /var/log/supervisor \

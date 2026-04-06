@@ -1,20 +1,12 @@
-# Stage 1: make logo transparent via flood-fill
-FROM python:3.12-slim AS logo-builder
-WORKDIR /build
-RUN pip install --no-cache-dir pillow
-COPY lovable_website_version/src/assets/logo.png .
-COPY make_transparent.py .
-RUN python make_transparent.py logo.png logo-transparent.png
-
-# Stage 2: nginx static server
+# nginx static server — logo served as-is (dark background suits the dark theme)
 FROM nginx:alpine
 COPY lovable_website_version/dist/ /usr/share/nginx/html/
 # Rewrite logo URL inside the JS bundle to the versioned filename so browsers
 # with the old bridge-logo.png immutably cached (1-year TTL) will fetch the new one
 RUN sed -i 's|/assets/bridge-logo\.png|/assets/bridge-logo-v6.png|g' /usr/share/nginx/html/assets/index-aqi7jZpF.js
-# Serve the new transparent logo at the versioned path (and also overwrite the old path)
-COPY --from=logo-builder /build/logo-transparent.png /usr/share/nginx/html/assets/bridge-logo-v6.png
-COPY --from=logo-builder /build/logo-transparent.png /usr/share/nginx/html/assets/bridge-logo.png
+# Serve the logo at the versioned path (and also overwrite the old path)
+COPY lovable_website_version/src/assets/logo.png /usr/share/nginx/html/assets/bridge-logo-v6.png
+COPY lovable_website_version/src/assets/logo.png /usr/share/nginx/html/assets/bridge-logo.png
 COPY nginx-website2.conf /etc/nginx/conf.d/default.conf.template
 EXPOSE 8080
 CMD ["/bin/sh", "-c", "envsubst '$PORT' < /etc/nginx/conf.d/default.conf.template > /etc/nginx/conf.d/default.conf && exec nginx -g 'daemon off;'"]
