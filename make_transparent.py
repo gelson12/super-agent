@@ -6,6 +6,43 @@ Usage: python make_transparent.py <input.png> <output.png>
 import struct, zlib, sys
 from collections import deque
 
+def _defilter(data, width, height, bpp):
+    """Reconstruct absolute pixel values from PNG filtered scanline data.
+    Also rewrites all filter bytes to 0 so the output can be used as-is."""
+    stride = 1 + width * bpp
+    out = bytearray(len(data))
+    prev = bytearray(width * bpp)
+    for y in range(height):
+        base = y * stride
+        ftype = data[base]
+        row   = data[base+1:base+1+width*bpp]
+        rec   = bytearray(width * bpp)
+        if ftype == 0:
+            rec[:] = row
+        elif ftype == 1:   # Sub
+            for i in range(width * bpp):
+                a = rec[i-bpp] if i >= bpp else 0
+                rec[i] = (row[i] + a) & 0xFF
+        elif ftype == 2:   # Up
+            for i in range(width * bpp):
+                rec[i] = (row[i] + prev[i]) & 0xFF
+        elif ftype == 3:   # Average
+            for i in range(width * bpp):
+                a = rec[i-bpp] if i >= bpp else 0
+                rec[i] = (row[i] + (a + prev[i]) // 2) & 0xFF
+        elif ftype == 4:   # Paeth
+            for i in range(width * bpp):
+                a = rec[i-bpp] if i >= bpp else 0
+                b = prev[i]
+                c = prev[i-bpp] if i >= bpp else 0
+                pa, pb, pc = abs(b-c), abs(a-c), abs(a+b-2*c)
+                pr = a if (pa <= pb and pa <= pc) else (b if pb <= pc else c)
+                rec[i] = (row[i] + pr) & 0xFF
+        out[base] = 0   # filter type None in output
+        out[base+1:base+1+width*bpp] = rec
+        prev = rec
+    return out
+
 def make_transparent(src, dst):
     with open(src, 'rb') as f:
         data = f.read()
@@ -31,6 +68,9 @@ def make_transparent(src, dst):
 
     bpp = 3 if color_type == 2 else 4
     stride = 1 + width * bpp
+
+    # Reconstruct absolute pixel values (handles Sub/Up/Average/Paeth filters)
+    raw = _defilter(raw, width, height, bpp)
 
     def get_px(x, y):
         base = y * stride + 1 + x * bpp
@@ -58,11 +98,11 @@ def make_transparent(src, dst):
                     visited[idx] = 1
                     queue.append((nx, ny))
 
-    # Build RGBA output
+    # Build RGBA output (filter type 0 / None for all scanlines)
     new_raw = bytearray()
     for y in range(height):
         base = y * stride
-        new_raw.append(raw[base])  # filter byte
+        new_raw.append(0)  # filter type 0 (None) — raw[base] already 0 after _defilter
         for x in range(width):
             px = base + 1 + x * bpp
             r, g, b = raw[px], raw[px+1], raw[px+2]

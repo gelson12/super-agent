@@ -1,4 +1,4 @@
-# Stage 1: make BRIDGE.png transparent via flood-fill
+# Stage 1: make BRIDGE.png transparent via flood-fill (cache-bust: v2)
 FROM python:3.12-alpine AS logo-builder
 WORKDIR /build
 COPY static/BRIDGE.png .
