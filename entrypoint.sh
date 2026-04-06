@@ -186,8 +186,9 @@ echo "[entrypoint] code-server user settings written (theme: Abyss)."
 
 # ── Pre-trust /workspace so VS Code never shows "Do you trust the authors?" ──
 # Writes directly to the trusted-workspaces storage file that code-server reads.
-mkdir -p /root/.local/share/code-server/User/globalStorage/storage.json 2>/dev/null || true
 mkdir -p /root/.local/share/code-server/User/globalStorage
+# Remove if a previous bad boot created storage.json as a directory
+rm -rf /root/.local/share/code-server/User/globalStorage/storage.json 2>/dev/null || true
 cat > /root/.local/share/code-server/User/globalStorage/storage.json <<TRUSTDB
 {
   "security.workspace.trust": {
