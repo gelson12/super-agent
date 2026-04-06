@@ -1,10 +1,14 @@
+# Stage 1: make BRIDGE.png transparent via flood-fill
+FROM python:3.12-alpine AS logo-builder
+WORKDIR /build
+COPY static/BRIDGE.png .
+COPY make_transparent.py .
+RUN python make_transparent.py BRIDGE.png BRIDGE-transparent.png
+
+# Stage 2: nginx static server
 FROM nginx:alpine
-
-# Copy Bridge commercial website static files
 COPY website/ /usr/share/nginx/html/
-
+COPY --from=logo-builder /build/BRIDGE-transparent.png /usr/share/nginx/html/images/BRIDGE.png
 COPY nginx-website.conf /etc/nginx/conf.d/default.conf.template
-
 EXPOSE 8080
-
 CMD ["/bin/sh", "-c", "envsubst '$PORT' < /etc/nginx/conf.d/default.conf.template > /etc/nginx/conf.d/default.conf && exec nginx -g 'daemon off;'"]

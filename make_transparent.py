@@ -1,10 +1,12 @@
 """
-Pure-stdlib PNG white-background removal.
-Usage: python make_transparent.py <input.png> <output.png> [threshold]
+PNG background removal using flood-fill from corners.
+Handles checkered (white + grey) transparency backgrounds.
+Usage: python make_transparent.py <input.png> <output.png>
 """
 import struct, zlib, sys
+from collections import deque
 
-def make_transparent(src, dst, threshold=230):
+def make_transparent(src, dst):
     with open(src, 'rb') as f:
         data = f.read()
 
@@ -22,44 +24,51 @@ def make_transparent(src, dst, threshold=230):
     ihdr = chunks[0][1]
     width      = struct.unpack('>I', ihdr[0:4])[0]
     height     = struct.unpack('>I', ihdr[4:8])[0]
-    bit_depth  = ihdr[8]
     color_type = ihdr[9]   # 2=RGB, 6=RGBA
 
-    if color_type == 6:
-        # Already RGBA — just re-run transparency pass on existing alpha
-        pass
-
-    # Collect and decompress IDAT
     idat_raw = b''.join(cd for ct, cd in chunks if ct == b'IDAT')
     raw = bytearray(zlib.decompress(idat_raw))
 
-    if color_type == 2:
-        bpp = 3
-    elif color_type == 6:
-        bpp = 4
-    else:
-        raise ValueError(f"Unsupported color_type {color_type}")
-
+    bpp = 3 if color_type == 2 else 4
     stride = 1 + width * bpp
-    new_raw = bytearray()
 
-    for row in range(height):
-        base = row * stride
+    def get_px(x, y):
+        base = y * stride + 1 + x * bpp
+        return raw[base], raw[base+1], raw[base+2]
+
+    def is_bg(r, g, b):
+        # Match white AND checkerboard grey squares (~204,204,204)
+        return r > 175 and g > 175 and b > 175 and abs(int(r)-int(g)) < 30 and abs(int(g)-int(b)) < 30
+
+    # Flood fill from all four corners to find background pixels
+    visited = bytearray(width * height)  # 0=unvisited, 1=background
+    queue = deque()
+    for (sx, sy) in [(0,0),(width-1,0),(0,height-1),(width-1,height-1)]:
+        if not visited[sy*width+sx] and is_bg(*get_px(sx, sy)):
+            queue.append((sx, sy))
+            visited[sy*width+sx] = 1
+
+    while queue:
+        x, y = queue.popleft()
+        for dx, dy in ((1,0),(-1,0),(0,1),(0,-1)):
+            nx, ny = x+dx, y+dy
+            if 0 <= nx < width and 0 <= ny < height:
+                idx = ny*width+nx
+                if not visited[idx] and is_bg(*get_px(nx, ny)):
+                    visited[idx] = 1
+                    queue.append((nx, ny))
+
+    # Build RGBA output
+    new_raw = bytearray()
+    for y in range(height):
+        base = y * stride
         new_raw.append(raw[base])  # filter byte
-        for col in range(width):
-            px = base + 1 + col * bpp
+        for x in range(width):
+            px = base + 1 + x * bpp
             r, g, b = raw[px], raw[px+1], raw[px+2]
-            a = raw[px+3] if bpp == 4 else 255
-            # Make near-white pixels transparent
-            if r > threshold and g > threshold and b > threshold:
-                a = 0
-            elif r > threshold - 20 and g > threshold - 20 and b > threshold - 20:
-                # Soft feather edge
-                whiteness = (r + g + b) / 3
-                a = int((1 - (whiteness - (threshold - 20)) / 20) * a)
+            a = 0 if visited[y*width+x] else 255
             new_raw += bytes([r, g, b, a])
 
-    # New IHDR: force color_type=6 (RGBA)
     new_ihdr = ihdr[:9] + b'\x06' + ihdr[10:]
     new_idat = zlib.compress(bytes(new_raw), 9)
 
@@ -81,10 +90,7 @@ def make_transparent(src, dst, threshold=230):
 
     with open(dst, 'wb') as f:
         f.write(out)
-    print(f"Saved transparent PNG: {dst} ({width}x{height})")
+    print(f"Done: {dst} ({width}x{height}, RGBA, flood-fill background removed)")
 
 if __name__ == '__main__':
-    src = sys.argv[1]
-    dst = sys.argv[2]
-    thr = int(sys.argv[3]) if len(sys.argv) > 3 else 230
-    make_transparent(src, dst, thr)
+    make_transparent(sys.argv[1], sys.argv[2])

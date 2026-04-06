@@ -99,6 +99,9 @@ COPY . .
 COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 COPY nginx.conf.template /app/nginx.conf.template
 
+# ── Make BRIDGE logo transparent (flood-fill background removal) ──────────────
+RUN python make_transparent.py static/BRIDGE.png static/BRIDGE.png
+
 # ── Workspace for cloned repos + code-server user dirs ───────────────────────
 RUN mkdir -p /workspace /workspace/.vscode /workspace/.vscode-ext /var/log/supervisor \
     && mkdir -p /root/.claude && chmod 700 /root/.claude
