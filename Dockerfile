@@ -99,9 +99,9 @@ COPY . .
 COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 COPY nginx.conf.template /app/nginx.conf.template
 
-# ── Make BRIDGE logo transparent (source: bridge.png lowercase in git) ────────
+# ── Make BRIDGE logo transparent (source: website/images/BRIDGE.png) ──────────
 RUN pip install --no-cache-dir pillow \
-    && python make_transparent.py static/bridge.png static/BRIDGE.png
+    && python make_transparent.py website/images/BRIDGE.png static/BRIDGE.png
 
 # ── Workspace for cloned repos + code-server user dirs ───────────────────────
 RUN mkdir -p /workspace /workspace/.vscode /workspace/.vscode-ext /var/log/supervisor \
