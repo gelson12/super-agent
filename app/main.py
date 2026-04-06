@@ -303,6 +303,25 @@ async def _lifespan(app: FastAPI):
         replace_existing=True,
     )
 
+    # Pro CLI watchdog — probes claude --version every 5 min when CLI_DOWN flag is set.
+    # Auto-clears the flag and reverts to Pro the moment the CLI responds again.
+    def _pro_cli_watchdog_job():
+        try:
+            from .learning.pro_cli_watchdog import maybe_recover
+            recovered = maybe_recover()
+            if recovered:
+                bg_log("Pro CLI watchdog: recovery confirmed — Pro is primary again.", source="pro_cli_watchdog")
+        except Exception as _e:
+            bg_log(f"Pro CLI watchdog job error: {_e}", source="pro_cli_watchdog")
+
+    scheduler.add_job(
+        _pro_cli_watchdog_job,
+        "interval",
+        minutes=5,
+        id="pro_cli_watchdog",
+        replace_existing=True,
+    )
+
     # n8n autonomous monitor — checks every 15 minutes, auto-repairs detected issues
     def _n8n_monitor_job():
         try:
