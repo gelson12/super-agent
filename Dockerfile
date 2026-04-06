@@ -11,8 +11,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gnupg \
     ca-certificates \
     gettext-base \
+    openssh-client \
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y nodejs \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# ── GitHub CLI (gh) ───────────────────────────────────────────────────────────
+RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+        -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+        > /etc/apt/sources.list.d/github-cli.list \
+    && apt-get update \
+    && apt-get install -y gh \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # ── code-server (VSCode in browser) ───────────────────────────────────────────
@@ -89,11 +99,9 @@ COPY . .
 COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 COPY nginx.conf.template /app/nginx.conf.template
 
-# ── Make BRIDGE logo transparent ─────────────────────────────────────────────
-RUN python make_transparent.py static/BRIDGE.png static/BRIDGE.png 230
-
 # ── Workspace for cloned repos + code-server user dirs ───────────────────────
-RUN mkdir -p /workspace /workspace/.vscode /workspace/.vscode-ext /var/log/supervisor
+RUN mkdir -p /workspace /workspace/.vscode /workspace/.vscode-ext /var/log/supervisor \
+    && mkdir -p /root/.claude && chmod 700 /root/.claude
 
 # ── Entrypoint (strip Windows CRLF → LF, then make executable) ───────────────
 COPY entrypoint.sh /app/entrypoint.sh

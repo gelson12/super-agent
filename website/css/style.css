@@ -99,7 +99,7 @@ body {
 .preloader-bridge-icon {
   width: 220px; height: auto;
   animation: preloaderPulse 1.5s ease-in-out infinite;
-  filter: drop-shadow(0 0 20px rgba(184,134,11,0.5));
+  mix-blend-mode: screen;
 }
 
 @keyframes preloaderPulse {
@@ -303,7 +303,7 @@ h1, h2, h3, h4, h5 {
   max-width: 160px;
   object-fit: contain;
   display: block;
-  filter: drop-shadow(0 0 6px rgba(184,134,11,0.35));
+  mix-blend-mode: screen;
   transition: transform 0.3s, opacity 0.3s;
 }
 .nav-logo:hover .logo-img {
@@ -1252,8 +1252,8 @@ h1, h2, h3, h4, h5 {
   max-width: 220px;
   object-fit: contain;
   display: block;
-  filter: drop-shadow(0 0 10px rgba(184,134,11,0.5)) brightness(1.1);
-  transition: opacity 0.3s, filter 0.3s;
+  mix-blend-mode: screen;
+  transition: opacity 0.3s;
 }
 .footer-logo:hover .footer-logo-img {
   opacity: 0.85;
