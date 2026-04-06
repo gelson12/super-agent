@@ -78,6 +78,14 @@ def _scheduled_health_check() -> None:
             if trends.get("alert_count", 0) > 0:
                 for alert in trends["alerts"]:
                     bg_log(f"TREND ALERT: {alert}", source="health_check")
+            # Proactive anomaly alerting (email + activity log, 4h cooldown)
+            try:
+                from .learning.anomaly_alerter import check_and_alert as _check_alerts
+                _fired = _check_alerts(snap)
+                if _fired:
+                    bg_log(f"Anomaly alerts fired: {_fired}", source="health_check")
+            except Exception:
+                pass
         except Exception:
             pass
 
@@ -164,6 +172,15 @@ async def _lifespan(app: FastAPI):
         except Exception:
             pass
     _threading.Thread(target=_startup_token_refresh, daemon=True).start()
+
+    # Bootstrap prompt library — seeds v1 for all tracked prompts from static constants.
+    # Best-effort: never delays startup if it fails.
+    try:
+        from .learning.prompt_library import prompt_library as _pl
+        from . import prompts as _prompts_module
+        _pl.bootstrap(_prompts_module)
+    except Exception:
+        pass
 
     scheduler = BackgroundScheduler()
     # Health check: starts at 30min, dynamically respected via _hc_uses_llm() inside the job.
@@ -828,6 +845,69 @@ def cycle_log_summary():
     """Aggregated cycle statistics: totals by decision and most recent cycle date."""
     from .learning.improvement_cycle import get_cycle_summary
     return get_cycle_summary()
+
+
+@app.get("/pro-cache/stats", tags=["meta"])
+def pro_cache_stats():
+    """Pro CLI response cache statistics: hit rate, tokens saved, estimated cost saved."""
+    from .cache.response_cache import cache
+    return cache.stats()
+
+
+@app.get("/pro-usage", tags=["meta"])
+def pro_usage():
+    """Pro CLI quota usage: daily/weekly stats, API call savings, and daily-limit ETA."""
+    from .learning.pro_usage_tracker import get_daily_summary, get_weekly_summary, predict_daily_limit_eta
+    from .learning.pro_router import get_status
+    return {
+        "pro_status": get_status(),
+        "daily": get_daily_summary(),
+        "weekly": get_weekly_summary(),
+        "limit_eta": predict_daily_limit_eta(),
+    }
+
+
+@app.get("/n8n/test-results", tags=["n8n"])
+def n8n_test_results():
+    """Last 50 n8n workflow auto-test results with pass/fail counts."""
+    from .tools.n8n_tester import get_test_results
+    results = get_test_results(50)
+    passed = sum(1 for r in results if r.get("passed") and not r.get("skipped"))
+    failed = sum(1 for r in results if not r.get("passed") and not r.get("skipped"))
+    return {"total": len(results), "passed": passed, "failed": failed, "results": results}
+
+
+@app.get("/anomaly-alerts/recent", tags=["meta"])
+def anomaly_alerts_recent():
+    """Last 50 anomaly alerts (error spikes, budget, disk, n8n failures)."""
+    from .learning.anomaly_alerter import get_recent_alerts
+    return {"alerts": get_recent_alerts(50)}
+
+
+@app.get("/session-profiles", tags=["meta"])
+def session_profiles_endpoint():
+    """Adaptive session routing profiles: per-session model preferences and routing hints."""
+    from .learning.session_profile import session_profile
+    profiles = session_profile.get_all()
+    active = [p for p in profiles if p.get("routing_hint_active")]
+    return {"total": len(profiles), "routing_hint_active": len(active), "profiles": profiles}
+
+
+@app.get("/prompt-library", tags=["meta"])
+def prompt_library_endpoint():
+    """Self-improving prompt library: all tracked prompts with version counts and error rates."""
+    from .learning.prompt_library import prompt_library
+    return prompt_library.get_summary()
+
+
+@app.get("/prompt-library/{name}", tags=["meta"])
+def prompt_library_history(name: str):
+    """Version history and error-rate metrics for a specific prompt."""
+    from .learning.prompt_library import prompt_library, TRACKED_PROMPTS
+    if name not in TRACKED_PROMPTS:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail=f"Unknown prompt '{name}'. Tracked: {TRACKED_PROMPTS}")
+    return {"name": name, "versions": prompt_library.get_history(name)}
 
 
 @app.get("/improvement-status", tags=["meta"])

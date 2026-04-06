@@ -19,9 +19,29 @@ _TIMEOUT = 120
 def ask_claude_code(prompt: str) -> str:
     """
     Run the Claude Code CLI non-interactively with the given prompt.
+    Checks the shared ResponseCache first (TTL 1h) — on a hit the subprocess
+    is skipped entirely, saving Pro quota.  On a miss the response is cached
+    for future identical prompts.  Usage is recorded to pro_usage_tracker
+    regardless of cache status.
+
     Returns the response string. Never raises — returns an error string
     so ThreadPoolExecutor competitors keep running on failure.
     """
+    # ── Cache lookup ──────────────────────────────────────────────────────────
+    try:
+        from ..cache.response_cache import cache as _cache
+        _hit = _cache.get(prompt, "PRO_CLI", ttl=3600)
+        if _hit:
+            try:
+                from .pro_usage_tracker import record as _pro_record
+                _pro_record(len(prompt), len(_hit), was_cached=True)
+            except Exception:
+                pass
+            return _hit
+    except Exception:
+        pass
+
+    # ── Subprocess call ───────────────────────────────────────────────────────
     try:
         result = subprocess.run(
             ["claude", "-p", prompt],
@@ -30,7 +50,24 @@ def ask_claude_code(prompt: str) -> str:
             timeout=_TIMEOUT,
             cwd="/workspace",
         )
-        return result.stdout.strip() or result.stderr.strip() or "(no output)"
+        output = result.stdout.strip() or result.stderr.strip() or "(no output)"
+
+        # Cache successful (non-error) responses for future identical prompts
+        if not output.startswith("["):
+            try:
+                from ..cache.response_cache import cache as _cache
+                _cache.set(prompt, "PRO_CLI", output)
+            except Exception:
+                pass
+
+        # Record Pro quota usage
+        try:
+            from .pro_usage_tracker import record as _pro_record
+            _pro_record(len(prompt), len(output), was_cached=False)
+        except Exception:
+            pass
+
+        return output
     except subprocess.TimeoutExpired:
         return f"[claude_code: timed out after {_TIMEOUT}s]"
     except FileNotFoundError:

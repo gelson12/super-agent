@@ -235,7 +235,23 @@ def n8n_create_workflow(name: str, nodes_json: str, connections_json: str = "{}"
     result = _post("/api/v1/workflows", body)
     if isinstance(result, str):
         return result
-    return f"Workflow created: ID={result.get('id')} name='{result.get('name')}'"
+    wf_id = result.get("id", "")
+    wf_name = result.get("name", name)
+    success_msg = f"Workflow created: ID={wf_id} name='{wf_name}'"
+    try:
+        from .n8n_tester import test_workflow as _test
+        test_result = _test(wf_id, wf_name)
+        if test_result.get("skipped"):
+            return success_msg
+        if test_result["passed"]:
+            return f"{success_msg}\n✅ Auto-test passed (exec {test_result['execution_id']})"
+        return (
+            f"{success_msg}\n⚠️ Auto-test FAILED: "
+            f"nodes={test_result['failed_nodes']}, "
+            f"detail={test_result['error_detail'][:200]}"
+        )
+    except Exception:
+        return success_msg
 
 
 @tool
@@ -251,7 +267,22 @@ def n8n_update_workflow(workflow_id: str, workflow_json: str) -> str:
     result = _put(f"/api/v1/workflows/{workflow_id}", body)
     if isinstance(result, str):
         return result
-    return f"Workflow {workflow_id} updated: name='{result.get('name')}'"
+    wf_name = result.get("name", workflow_id)
+    success_msg = f"Workflow {workflow_id} updated: name='{wf_name}'"
+    try:
+        from .n8n_tester import test_workflow as _test
+        test_result = _test(workflow_id, wf_name)
+        if test_result.get("skipped"):
+            return success_msg
+        if test_result["passed"]:
+            return f"{success_msg}\n✅ Auto-test passed (exec {test_result['execution_id']})"
+        return (
+            f"{success_msg}\n⚠️ Auto-test FAILED: "
+            f"nodes={test_result['failed_nodes']}, "
+            f"detail={test_result['error_detail'][:200]}"
+        )
+    except Exception:
+        return success_msg
 
 
 @tool

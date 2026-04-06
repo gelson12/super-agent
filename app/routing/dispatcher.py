@@ -22,7 +22,12 @@ from ..learning.red_team import red_team
 from ..learning.cot_handoff import cot_handoff
 from ..memory.vector_memory import get_memory_context, store_memory
 from ..memory.session import get_compressed_context, append_exchange
-from ..prompts import build_capabilities_block, SYSTEM_PROMPT_CLAUDE, SYSTEM_PROMPT_HAIKU
+from ..prompts import (
+    build_capabilities_block,
+    SYSTEM_PROMPT_CLAUDE,
+    SYSTEM_PROMPT_HAIKU,
+    get_prompt as _get_prompt,
+)
 from ..config import settings as _settings
 
 # ── Active task tracker ───────────────────────────────────────────────────────
@@ -378,11 +383,13 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
     # ── 0c. Build capabilities-aware system prompts ───────────────────────────
     _caps = build_capabilities_block(_settings)
     _learned = adapter.get_learned_context() or ""
-    _system_claude = SYSTEM_PROMPT_CLAUDE.format(
+    _raw_claude = _get_prompt("system_claude") or SYSTEM_PROMPT_CLAUDE
+    _raw_haiku = _get_prompt("system_haiku") or SYSTEM_PROMPT_HAIKU
+    _system_claude = _raw_claude.format(
         capabilities=_caps,
         learned_context=_learned,
     )
-    _system_haiku = SYSTEM_PROMPT_HAIKU.format(
+    _system_haiku = _raw_haiku.format(
         capabilities=_caps,
         learned_context=_learned,
     )
@@ -716,9 +723,21 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
         suggested = "DEEPSEEK"
 
     if complexity in (3, 4):
-        classified = classify_request(message)
-        model = classified
-        routed_by = "classifier"
+        # Check session profile before calling Haiku classifier — saves 1 LLM call
+        # per request for sessions with a stable ≥80% routing pattern.
+        try:
+            from ..learning.session_profile import session_profile as _sp
+            _profile_hint = _sp.get_routing_hint(session_id)
+        except Exception:
+            _profile_hint = None
+
+        if _profile_hint:
+            model = _profile_hint
+            routed_by = f"session_profile:{_profile_hint.lower()}"
+        else:
+            classified = classify_request(message)
+            model = classified
+            routed_by = "classifier"
     else:
         model = suggested
         routed_by = "complexity_score"
@@ -830,6 +849,20 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
     adapter.tick()
     # Feature 4: store exchange in semantic memory for future cross-session recall
     store_memory(session_id, f"Q: {message[:300]} A: {response[:300]}")
+    # Prompt library outcome tracking (for prompt version error-rate correlation)
+    if model in ("CLAUDE", "HAIKU"):
+        try:
+            from ..learning.prompt_library import prompt_library as _pl
+            _prompt_name = "system_claude" if model == "CLAUDE" else "system_haiku"
+            _pl.record_outcome(_prompt_name, response.startswith("["))
+        except Exception:
+            pass
+    # Adaptive session routing: update per-session model profile
+    try:
+        from ..learning.session_profile import session_profile as _sp
+        _sp.update(session_id, model, routed_by, complexity)
+    except Exception:
+        pass
     wisdom_store.record_outcome(
         model,
         wisdom_store._detect_category(routed_by, model),

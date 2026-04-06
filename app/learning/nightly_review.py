@@ -249,14 +249,26 @@ Produce the following JSON — no other text, just valid JSON:
     "no_safe_improvement": 0,
     "dominant_bottleneck_category": "...",
     "highest_priority_next_target": "..."
-  }}
+  }},
+  "prompt_improvements": [
+    {{
+      "prompt_name": "system_claude|system_haiku|system_gemini|system_deepseek|routing",
+      "current_error_rate": 0.0,
+      "proposed_change": "<specific targeted change to the prompt text>",
+      "rationale": "<why this change would reduce error_rate or improve response quality>",
+      "estimated_benefit": 0.0,
+      "safe_to_auto_apply": false
+    }}
+  ]
 }}
 
 Be specific and actionable. Reference actual file names and function names where possible.
 If today had very few interactions, focus on the codebase quality instead.
 Set safe_to_auto_apply to true only for low-priority suggestions on non-core utility files
 (app/tools/, app/cache/, app/memory/, app/learning/).
-Always false for dispatcher.py, main.py, agents/, models/, config.py, Dockerfile, requirements.txt."""
+Always false for dispatcher.py, main.py, agents/, models/, config.py, Dockerfile, requirements.txt.
+For prompt_improvements: only propose a change if a prompt's error_rate from GET /prompt-library
+is above 5% AND you have a specific, targeted improvement. Never rewrite entire prompts."""
 
 
 def _is_core_file(file_path: str) -> bool:
@@ -432,6 +444,38 @@ def auto_apply_safe_suggestions(review: dict) -> list[dict]:
                 "vote_result": vote_result,
             })
             _log(f"Apply error for {feature_name}: {e}")
+
+    # ── Prompt improvement proposals from prompt_improvements ────────────────
+    for pi in review.get("prompt_improvements", []):
+        prompt_name = pi.get("prompt_name", "")
+        proposed_change = pi.get("proposed_change", "")
+        rationale = pi.get("rationale", "")
+        if not prompt_name or not proposed_change:
+            continue
+        try:
+            from .improvement_vote import vote_on_suggestion
+            vote_result = vote_on_suggestion({
+                "feature_name": f"Prompt: {prompt_name}",
+                "priority": "medium",
+                "observation": f"Error rate on '{prompt_name}': {pi.get('current_error_rate', '?')}",
+                "suggested_improvement": proposed_change,
+                "file_to_change": f"prompt_library:{prompt_name}",
+            })
+            if vote_result["approved"]:
+                from .prompt_library import prompt_library as _pl
+                new_vid = _pl.propose(prompt_name, proposed_change, rationale)
+                _pl.activate(prompt_name, new_vid)
+                _log(f"PROMPT APPROVED & ACTIVATED: {prompt_name} → {new_vid}")
+                applied.append({
+                    "prompt_name": prompt_name,
+                    "new_version": new_vid,
+                    "status": "prompt_activated",
+                    "vote_result": vote_result,
+                })
+            else:
+                _log(f"PROMPT REJECTED ({vote_result['yes_count']}/5): {prompt_name}")
+        except Exception as _pe:
+            _log(f"Prompt improvement error for {prompt_name}: {_pe}")
 
     return applied
 

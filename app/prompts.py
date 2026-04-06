@@ -1,7 +1,26 @@
 """
 System prompts — cognitive frameworks baked in so every model call
 reasons more deeply at zero extra API cost.
+
+get_prompt(name) returns the currently active version from the prompt library
+(versioned, error-rate tracked). Falls back to the static constant below on
+any error, so the dispatch pipeline is never blocked.
 """
+import sys as _sys
+
+
+def get_prompt(name: str) -> str | None:
+    """
+    Return the active prompt text for `name` from the PromptLibrary.
+    Returns None if the library doesn't have a version for this name yet
+    (caller should use the static constant as fallback).
+    Best-effort — never raises.
+    """
+    try:
+        from .learning.prompt_library import prompt_library
+        return prompt_library.get_active(name)
+    except Exception:
+        return None
 
 
 def build_capabilities_block(settings) -> str:
