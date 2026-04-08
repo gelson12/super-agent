@@ -237,6 +237,114 @@ else
     echo "[entrypoint] WARNING: bridge.jpg not found — logo will use fallback."
 fi
 
+# ── Claude Code CLI: n8n MCP server + CLAUDE.md ───────────────────────────────
+# Gives `claude -p "..."` subprocess direct tool access to the n8n REST API
+# so Claude can reason AND build workflows in a single call (no Python relay).
+
+# 1. Register the n8n MCP server with Claude CLI (idempotent — safe to rerun)
+if command -v claude >/dev/null 2>&1 && [ -n "$N8N_BASE_URL" ] && [ -n "$N8N_API_KEY" ]; then
+    claude mcp add n8n --stdio "python /app/mcp/n8n_mcp_server.py" 2>/dev/null || true
+    echo "[entrypoint] Claude CLI: n8n MCP server registered (n8n_mcp_server.py)."
+else
+    echo "[entrypoint] INFO: Skipping n8n MCP registration (claude not found or N8N_BASE_URL/N8N_API_KEY not set)."
+fi
+
+# 2. Write CLAUDE.md to /workspace so every `claude -p` invocation inherits
+#    the n8n API reference and workflow conventions automatically.
+mkdir -p /workspace
+cat > /workspace/CLAUDE.md <<CLAUDEMD
+# Super Agent — Claude Code CLI Context
+
+## n8n Workflow Automation
+
+You have **direct MCP tool access** to the n8n REST API via the registered
+\`n8n\` MCP server. Use MCP tools for ALL n8n operations — do not use curl
+or Python requests when MCP tools are available.
+
+### Available MCP Tools
+- \`list_workflows(active_only?)\` — list all workflows
+- \`get_workflow(workflow_id)\` — get full workflow JSON
+- \`create_workflow(workflow_json)\` — create a new workflow
+- \`update_workflow(workflow_id, workflow_json)\` — update existing workflow
+- \`delete_workflow(workflow_id)\` — delete a workflow
+- \`activate_workflow(workflow_id)\` — activate (enable triggers)
+- \`deactivate_workflow(workflow_id)\` — deactivate
+- \`execute_workflow(workflow_id, input_data?)\` — run manually
+- \`list_executions(workflow_id?, limit?, status?)\` — list recent runs
+- \`get_execution(execution_id)\` — inspect a specific execution (debug)
+
+### n8n Instance
+- Base URL: ${N8N_BASE_URL:-not set}
+- API version: v1
+
+### Workflow JSON Structure
+\`\`\`json
+{
+  "name": "Workflow Name",
+  "nodes": [
+    {
+      "id": "unique-uuid",
+      "name": "Node Name",
+      "type": "n8n-nodes-base.webhook",
+      "position": [250, 300],
+      "parameters": {},
+      "typeVersion": 1
+    }
+  ],
+  "connections": {
+    "Node Name": {
+      "main": [[{"node": "Next Node", "type": "main", "index": 0}]]
+    }
+  },
+  "settings": {"executionOrder": "v1"}
+}
+\`\`\`
+
+### Common Node Types
+| Intent | Node type |
+|--------|-----------|
+| Schedule / cron | \`n8n-nodes-base.scheduleTrigger\` |
+| HTTP webhook | \`n8n-nodes-base.webhook\` |
+| HTTP request | \`n8n-nodes-base.httpRequest\` |
+| Send email | \`n8n-nodes-base.emailSend\` |
+| If / filter | \`n8n-nodes-base.if\` |
+| Set fields | \`n8n-nodes-base.set\` |
+| Switch / route | \`n8n-nodes-base.switch\` |
+| Wait / delay | \`n8n-nodes-base.wait\` |
+| Slack | \`n8n-nodes-base.slack\` |
+| Google Sheets | \`n8n-nodes-base.googleSheets\` |
+| Outlook/Hotmail | \`n8n-nodes-base.microsoftOutlook\` |
+| Code (JS) | \`n8n-nodes-base.code\` |
+
+### Building Workflows — Required Pattern
+1. \`create_workflow\` with skeleton (trigger + first node only)
+2. \`get_workflow\` to confirm ID and current structure
+3. \`update_workflow\` to add remaining nodes (max 5 per update)
+4. \`activate_workflow\` to make it live
+5. Report: name, ID, what it does, webhook URL if applicable
+
+**Never attempt to build everything in one create call.**
+**Always read back after create before updating.**
+
+### For AI steps inside workflows
+Use an HTTP Request node pointing at Super Agent:
+- URL: https://super-agent-production.up.railway.app/chat
+- Method: POST
+- Body: \`{"message": "{{input}}", "session_id": "n8n-auto"}\`
+
+## File System
+- /workspace — repos, code, builds
+- /workspace/CLAUDE.md — this file (auto-generated on boot)
+- /app — Super Agent Python application
+
+## Environment
+- Platform: Railway (Docker container)
+- Python: 3.12
+- Node: 20
+- Flutter/Android SDK: available in /opt/flutter and /opt/android-sdk
+CLAUDEMD
+echo "[entrypoint] CLAUDE.md written to /workspace."
+
 # ── Start all services via supervisor ─────────────────────────────────────────
 echo "[entrypoint] Starting supervisor (nginx + uvicorn + code-server) on PORT=${PORT}"
 exec /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf
