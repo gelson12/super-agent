@@ -1,8 +1,9 @@
 #!/bin/bash
 set -e
 
-# CLI Worker service — task queue API on port 8002, VS Code on port 3001
-export PORT=8002
+# CLI Worker service — nginx on $PORT, task API on 8003 (internal), VS Code on 3001 (internal)
+# Use Railway-injected PORT if set; fall back to 8002 for local dev
+export PORT=${PORT:-8002}
 
 # ── Git identity + GitHub credentials (PAT / GITHUB_TOKEN / SSH key) ─────────
 # Accept either GITHUB_PAT or the standard GITHUB_TOKEN name
@@ -392,6 +393,10 @@ Use an HTTP Request node pointing at Super Agent:
 CLAUDEMD
 echo "[entrypoint] CLAUDE.md written to /workspace."
 
+# ── nginx config: routes /health /tasks → uvicorn:8003, / → code-server:3001 ──
+envsubst '${PORT}' < /app/nginx.cli.conf.template > /etc/nginx/nginx.conf
+echo "[entrypoint] nginx config written (PORT=${PORT} → VS Code:3001 + task API:8003)."
+
 # ── Start CLI worker services via supervisor ──────────────────────────────────
-echo "[entrypoint] Starting CLI worker (task-queue API port ${PORT} + VS Code port 3001)"
+echo "[entrypoint] Starting CLI worker (nginx:${PORT} → VS Code:3001 + task API:8003)"
 exec /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf
