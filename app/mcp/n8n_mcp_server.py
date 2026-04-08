@@ -1,18 +1,20 @@
 #!/usr/bin/env python3
 """
-n8n MCP Server — exposes the n8n REST API as MCP tools for Claude Code CLI.
+n8n MCP Server — exposes the full n8n REST API as MCP tools for Claude Code CLI.
 
 Runs as a stdio MCP server. Registered with Claude CLI via:
   claude mcp add n8n --stdio "python /app/mcp/n8n_mcp_server.py"
 
 After registration, every `claude -p "..."` subprocess has direct access to:
+  - list_node_types, get_node_type_details   ← discover ALL available nodes
+  - search_node_types                         ← find nodes by keyword
   - list_workflows, get_workflow
   - create_workflow, update_workflow, delete_workflow
   - activate_workflow, deactivate_workflow
   - execute_workflow, list_executions, get_execution
 
-Claude Code CLI can now reason AND act on n8n in a single subprocess call —
-no relay through Python backend required.
+Claude Code CLI can now discover every node n8n supports, design the
+workflow architecture, and build it — entirely autonomously.
 
 Reads N8N_BASE_URL and N8N_API_KEY from environment variables.
 """
@@ -118,6 +120,91 @@ def _delete(path: str) -> str:
 
 
 # ── Tools ──────────────────────────────────────────────────────────────────────
+
+# ── Node discovery (always call these FIRST when designing a workflow) ─────────
+
+@mcp.tool()
+def list_node_types(category: str = "") -> str:
+    """
+    List ALL available n8n node types installed in this instance.
+
+    Call this FIRST before designing any workflow — it tells you exactly
+    which nodes are available so you pick real, installed node types
+    rather than guessing.
+
+    category: optional filter e.g. "trigger", "action", "transform"
+    Returns a JSON array of {name, displayName, description, group, version}.
+    """
+    result = _get("/node-types")
+    if category and not result.startswith("["):
+        try:
+            data = json.loads(result)
+            nodes = data if isinstance(data, list) else data.get("data", [])
+            filtered = [
+                n for n in nodes
+                if category.lower() in " ".join(n.get("group", [])).lower()
+                or category.lower() in n.get("displayName", "").lower()
+                or category.lower() in n.get("description", "").lower()
+            ]
+            return json.dumps(filtered)
+        except Exception:
+            pass
+    return result
+
+
+@mcp.tool()
+def get_node_type_details(node_type_name: str) -> str:
+    """
+    Get the full parameter schema for a specific node type.
+
+    Use this after list_node_types to understand exactly what parameters
+    a node accepts before building the workflow JSON.
+
+    node_type_name: e.g. "n8n-nodes-base.microsoftOutlook"
+    Returns the full node definition including all configurable parameters.
+    """
+    # URL-encode the node type name for the path
+    encoded = requests.utils.quote(node_type_name, safe="")
+    return _get(f"/node-types/{encoded}")
+
+
+@mcp.tool()
+def search_node_types(keyword: str) -> str:
+    """
+    Search available n8n nodes by keyword.
+
+    Searches across node name, display name, and description.
+    Use this to find the right node when you know what service or
+    action you need (e.g. "outlook", "slack", "postgres", "cron").
+
+    Returns matching nodes with their type names and descriptions.
+    """
+    result = _get("/node-types")
+    if result.startswith("["):
+        return result
+    try:
+        data = json.loads(result)
+        nodes = data if isinstance(data, list) else data.get("data", [])
+        kw = keyword.lower()
+        matches = [
+            {
+                "name": n.get("name"),
+                "displayName": n.get("displayName"),
+                "description": n.get("description", "")[:120],
+                "group": n.get("group", []),
+                "version": n.get("defaultVersion", n.get("version", 1)),
+            }
+            for n in nodes
+            if kw in n.get("name", "").lower()
+            or kw in n.get("displayName", "").lower()
+            or kw in n.get("description", "").lower()
+        ]
+        return json.dumps({"keyword": keyword, "count": len(matches), "nodes": matches})
+    except Exception as e:
+        return f"[n8n error: search failed — {e}]"
+
+
+# ── Workflow CRUD ──────────────────────────────────────────────────────────────
 
 @mcp.tool()
 def list_workflows(active_only: bool = False) -> str:

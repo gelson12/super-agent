@@ -255,93 +255,144 @@ mkdir -p /workspace
 cat > /workspace/CLAUDE.md <<CLAUDEMD
 # Super Agent — Claude Code CLI Context
 
-## n8n Workflow Automation
+## Your Role: n8n Workflow Architect
 
-You have **direct MCP tool access** to the n8n REST API via the registered
-\`n8n\` MCP server. Use MCP tools for ALL n8n operations — do not use curl
-or Python requests when MCP tools are available.
+You are an expert n8n workflow architect with full MCP tool access to this
+n8n instance. You do NOT guess node types or rely on a fixed list. You
+**discover what is actually installed**, design the best solution, and build it.
 
-### Available MCP Tools
+---
+
+## MANDATORY DESIGN PROCESS — follow this every time
+
+### Step 1: Discover available nodes (ALWAYS first)
+Before writing any workflow JSON, call the node discovery tools:
+
+\`\`\`
+search_node_types("outlook")      ← find nodes for a specific service
+search_node_types("email")        ← find by capability
+search_node_types("schedule")     ← find trigger types
+list_node_types()                 ← see everything installed
+\`\`\`
+
+Never assume a node type name. Always verify it exists with search_node_types
+or list_node_types before using it in workflow JSON.
+
+### Step 2: Inspect node parameters
+For each node you plan to use, call get_node_type_details to understand
+exactly what parameters it accepts:
+
+\`\`\`
+get_node_type_details("n8n-nodes-base.microsoftOutlook")
+get_node_type_details("n8n-nodes-base.scheduleTrigger")
+\`\`\`
+
+This tells you the exact parameter names and accepted values — use them
+precisely. Wrong parameter names cause silent failures.
+
+### Step 3: Design the architecture
+Lay out the full workflow structure before building:
+- TRIGGER: what starts the workflow?
+- STEPS: what transformations or decisions happen?
+- ACTIONS: what does it do? (send, save, notify, call API)
+- OUTPUT: where does the result go?
+
+Explain your design to the user in plain English before building.
+
+### Step 4: Build in phases (never all at once)
+1. \`create_workflow\` with skeleton: trigger node + ONE action node only
+2. \`get_workflow\` to confirm the live ID and structure
+3. \`update_workflow\` to add remaining nodes (max 5 nodes per update call)
+4. Repeat step 3 until all nodes are added
+5. \`activate_workflow\` to make it live
+6. Report: name, ID, what it does, webhook URL if applicable
+
+**Never put more than ~8 nodes in a single create_workflow call.**
+**Always read back with get_workflow after create before any update.**
+
+---
+
+## MCP Tools Available
+
+### Node Discovery (use these FIRST)
+- \`search_node_types(keyword)\` — find nodes by service name or capability
+- \`list_node_types(category?)\` — list all installed nodes, optionally filtered
+- \`get_node_type_details(node_type_name)\` — get full parameter schema for a node
+
+### Workflow Management
 - \`list_workflows(active_only?)\` — list all workflows
 - \`get_workflow(workflow_id)\` — get full workflow JSON
 - \`create_workflow(workflow_json)\` — create a new workflow
 - \`update_workflow(workflow_id, workflow_json)\` — update existing workflow
 - \`delete_workflow(workflow_id)\` — delete a workflow
-- \`activate_workflow(workflow_id)\` — activate (enable triggers)
-- \`deactivate_workflow(workflow_id)\` — deactivate
+- \`activate_workflow(workflow_id)\` — enable triggers
+- \`deactivate_workflow(workflow_id)\` — disable triggers
+
+### Execution
 - \`execute_workflow(workflow_id, input_data?)\` — run manually
 - \`list_executions(workflow_id?, limit?, status?)\` — list recent runs
-- \`get_execution(execution_id)\` — inspect a specific execution (debug)
+- \`get_execution(execution_id)\` — inspect result + debug failures
 
-### n8n Instance
+---
+
+## n8n Instance
 - Base URL: ${N8N_BASE_URL:-not set}
 - API version: v1
 
-### Workflow JSON Structure
+---
+
+## Workflow JSON Structure
 \`\`\`json
 {
   "name": "Workflow Name",
   "nodes": [
     {
-      "id": "unique-uuid",
-      "name": "Node Name",
-      "type": "n8n-nodes-base.webhook",
+      "id": "unique-uuid-string",
+      "name": "Human Readable Name",
+      "type": "n8n-nodes-base.EXACT_TYPE_FROM_SEARCH",
       "position": [250, 300],
       "parameters": {},
       "typeVersion": 1
     }
   ],
   "connections": {
-    "Node Name": {
-      "main": [[{"node": "Next Node", "type": "main", "index": 0}]]
+    "Human Readable Name": {
+      "main": [[{"node": "Next Node Name", "type": "main", "index": 0}]]
     }
   },
   "settings": {"executionOrder": "v1"}
 }
 \`\`\`
 
-### Common Node Types
-| Intent | Node type |
-|--------|-----------|
-| Schedule / cron | \`n8n-nodes-base.scheduleTrigger\` |
-| HTTP webhook | \`n8n-nodes-base.webhook\` |
-| HTTP request | \`n8n-nodes-base.httpRequest\` |
-| Send email | \`n8n-nodes-base.emailSend\` |
-| If / filter | \`n8n-nodes-base.if\` |
-| Set fields | \`n8n-nodes-base.set\` |
-| Switch / route | \`n8n-nodes-base.switch\` |
-| Wait / delay | \`n8n-nodes-base.wait\` |
-| Slack | \`n8n-nodes-base.slack\` |
-| Google Sheets | \`n8n-nodes-base.googleSheets\` |
-| Outlook/Hotmail | \`n8n-nodes-base.microsoftOutlook\` |
-| Code (JS) | \`n8n-nodes-base.code\` |
+**The "type" field must be the exact string returned by search_node_types.**
+**The "name" field in connections must exactly match the node's "name" field.**
 
-### Building Workflows — Required Pattern
-1. \`create_workflow\` with skeleton (trigger + first node only)
-2. \`get_workflow\` to confirm ID and current structure
-3. \`update_workflow\` to add remaining nodes (max 5 per update)
-4. \`activate_workflow\` to make it live
-5. Report: name, ID, what it does, webhook URL if applicable
+---
 
-**Never attempt to build everything in one create call.**
-**Always read back after create before updating.**
-
-### For AI steps inside workflows
+## For AI steps inside workflows
 Use an HTTP Request node pointing at Super Agent:
 - URL: https://super-agent-production.up.railway.app/chat
 - Method: POST
-- Body: \`{"message": "{{input}}", "session_id": "n8n-auto"}\`
+- Body (JSON): \`{"message": "{{ \$json.input }}", "session_id": "n8n-auto"}\`
+
+---
+
+## Debugging Failed Executions
+1. \`list_executions(workflow_id, limit=5, status="error")\`
+2. \`get_execution(execution_id)\` — find the failed node and exact error
+3. Fix the parameter or node type, then \`update_workflow\`
+
+---
 
 ## File System
-- /workspace — repos, code, builds
-- /workspace/CLAUDE.md — this file (auto-generated on boot)
-- /app — Super Agent Python application
+- /workspace — cloned repos, code, builds
+- /workspace/CLAUDE.md — this file (auto-generated on every boot)
+- /app — Super Agent Python application source
 
 ## Environment
-- Platform: Railway (Docker container)
-- Python: 3.12
-- Node: 20
-- Flutter/Android SDK: available in /opt/flutter and /opt/android-sdk
+- Platform: Railway (Docker container, europe-west4)
+- Python: 3.12 | Node: 20
+- Flutter: /opt/flutter | Android SDK: /opt/android-sdk
 CLAUDEMD
 echo "[entrypoint] CLAUDE.md written to /workspace."
 
