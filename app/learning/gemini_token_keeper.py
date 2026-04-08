@@ -230,6 +230,12 @@ def run_token_keeper() -> dict:
         result["message"] = msg2 if ok2 else f"API: {msg} | CLI: {msg2}"
         level = "saved via CLI fallback" if ok2 else "FAILED to save to Railway"
         _log(f"Gemini token keeper: {_RAILWAY_VAR_NAME} {level}. {result['message']}")
+        if not ok2:
+            try:
+                from ..alerts.notifier import alert_token_refresh_failed
+                alert_token_refresh_failed("Gemini CLI", result["message"])
+            except Exception:
+                pass
 
     return result
 

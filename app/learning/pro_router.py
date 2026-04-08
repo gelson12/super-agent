@@ -411,6 +411,11 @@ def _classify_and_set_flag(stdout: str, stderr: str) -> None:
             "Watchdog probing every 5 min — will auto-revert to Pro when CLI recovers. "
             "To fix manually: VS Code terminal → 'claude login' → update CLAUDE_SESSION_TOKEN."
         )
+        try:
+            from ..alerts.notifier import alert_claude_cli_down
+            alert_claude_cli_down(reason="Auth failure / token expired")
+        except Exception:
+            pass
         return
 
     # DAILY limit — parse reset time from message, set TTL-aware flag
@@ -422,6 +427,11 @@ def _classify_and_set_flag(stdout: str, stderr: str) -> None:
             f"Pro DAILY LIMIT hit — using ANTHROPIC_API_KEY for ~{hours}h. "
             "Weekly quota NOT exhausted. Pro resumes automatically."
         )
+        try:
+            from ..alerts.notifier import alert_claude_daily_limit
+            alert_claude_daily_limit(reset_hours=hours)
+        except Exception:
+            pass
         return
 
     # BURST throttle — momentary overload, 30-min backoff

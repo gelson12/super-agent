@@ -118,7 +118,7 @@ def ask_gemini_cli(prompt: str) -> str:
             except Exception as e:
                 return f"[gemini_cli error: {e}]"
 
-        # Cache and track on success
+        # Cache and track on success; alert on failure
         if not output.startswith("["):
             try:
                 from ..cache.response_cache import cache as _cache
@@ -128,6 +128,13 @@ def ask_gemini_cli(prompt: str) -> str:
             try:
                 from .pro_usage_tracker import record as _pro_record
                 _pro_record(len(prompt), len(output), was_cached=False)
+            except Exception:
+                pass
+        else:
+            # Gemini returned an error — alert that Anthropic credits are next fallback
+            try:
+                from ..alerts.notifier import alert_gemini_cli_down
+                alert_gemini_cli_down(error=output)
             except Exception:
                 pass
 

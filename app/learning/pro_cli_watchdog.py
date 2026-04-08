@@ -82,6 +82,20 @@ def maybe_recover() -> bool:
                 "Will probe again in 5 min.",
                 source="pro_cli_watchdog",
             )
+            # Proactive escalation: alert if CLI has been down for a long time
+            try:
+                from ..alerts.notifier import alert_cli_still_down_escalation, _flag_age_minutes
+                from .pro_router import _CLI_DOWN_FLAG
+                minutes_down = _flag_age_minutes("claude_cli_down")
+                # Also check the flag file mtime directly as a backup
+                if minutes_down == 0 and _CLI_DOWN_FLAG.exists():
+                    import time as _t
+                    minutes_down = (_t.time() - _CLI_DOWN_FLAG.stat().st_mtime) / 60
+                # Escalate at 30 min, 60 min, 120 min intervals
+                if minutes_down >= 30:
+                    alert_cli_still_down_escalation(minutes_down)
+            except Exception:
+                pass
             return False
 
         # CLI binary is present — now verify actual auth state
@@ -100,6 +114,12 @@ def maybe_recover() -> bool:
             "Reverting to Claude Pro as primary model. ANTHROPIC_API_KEY fallback deactivated.",
             source="pro_cli_watchdog",
         )
+        try:
+            from ..alerts.notifier import alert_claude_recovered
+            subscription = auth.get("subscription", "")
+            alert_claude_recovered(subscription=subscription)
+        except Exception:
+            pass
         return True
 
     except Exception:
