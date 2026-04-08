@@ -80,6 +80,7 @@ class Settings(BaseSettings):
     smtp_user: str = ""        # e.g. bridge.digital.solution@gmail.com
     smtp_password: str = ""    # 16-char Gmail App Password
     notify_email: str = "bridge.digital.solution@gmail.com"  # recipient
+    n8n_contact_webhook_url: str = ""  # set via N8N_CONTACT_WEBHOOK_URL Railway var
 
 
 settings = Settings()

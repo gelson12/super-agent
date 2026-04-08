@@ -14,7 +14,30 @@ def _get_client() -> Anthropic:
 
 
 def ask_claude(prompt: str, system: str = SYSTEM_PROMPT_CLAUDE) -> str:
-    """Send a prompt to Claude Sonnet and return the text response."""
+    """Send a prompt to Claude Sonnet and return the text response.
+
+    Routing: Claude CLI (Pro/Max) → Gemini CLI (free fallback) → Anthropic API.
+    Gemini is tried before the API so credits are only consumed as a last resort.
+    """
+    # 1. Claude CLI (Pro/Max subscription — zero API cost)
+    try:
+        from ..learning.pro_router import try_pro
+        pro = try_pro(prompt, system=system)
+        if pro is not None:
+            return pro
+    except Exception:
+        pass  # pro_router unavailable — try Gemini next
+
+    # 2. Gemini CLI (free-tier fallback — preserves Anthropic credits)
+    try:
+        from ..learning.gemini_cli_worker import ask_gemini_cli
+        gemini = ask_gemini_cli(prompt)
+        if gemini and not gemini.startswith("["):
+            return gemini
+    except Exception:
+        pass  # Gemini unavailable — fall through to Anthropic API
+
+    # 3. Anthropic API (last resort — costs credits)
     if not settings.anthropic_api_key:
         return "[Claude error: ANTHROPIC_API_KEY not set]"
     try:
@@ -36,7 +59,26 @@ def ask_claude(prompt: str, system: str = SYSTEM_PROMPT_CLAUDE) -> str:
 
 
 def ask_claude_haiku(prompt: str, system: str = SYSTEM_PROMPT_CLAUDE) -> str:
-    """Send a prompt to Claude Haiku (fast, economical) and return the text response."""
+    """Send a prompt to Claude Haiku (fast, economical) and return the text response.
+
+    Routing: Claude CLI (Pro/Max) → Gemini CLI (free fallback) → Anthropic API Haiku.
+    """
+    try:
+        from ..learning.pro_router import try_pro
+        pro = try_pro(prompt, system=system)
+        if pro is not None:
+            return pro
+    except Exception:
+        pass  # pro_router unavailable — try Gemini next
+
+    try:
+        from ..learning.gemini_cli_worker import ask_gemini_cli
+        gemini = ask_gemini_cli(prompt)
+        if gemini and not gemini.startswith("["):
+            return gemini
+    except Exception:
+        pass  # Gemini unavailable — fall through to Anthropic API
+
     if not settings.anthropic_api_key:
         return "[Claude error: ANTHROPIC_API_KEY not set]"
     try:

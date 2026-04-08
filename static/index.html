@@ -448,7 +448,8 @@
 
   function _truncate(str, max) {
     if (!str) return '';
-    return str.length > max ? str.slice(0, max) + '…' : str;
+    const s = typeof str === 'string' ? str : (str.message || str.text || str.alert || JSON.stringify(str));
+    return s.length > max ? s.slice(0, max) + '…' : s;
   }
 
   async function _updateStatusBar() {

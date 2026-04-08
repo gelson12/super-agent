@@ -1595,6 +1595,24 @@ def submit_contact(req: ContactRequest):
         ),
     )
 
+    # Fire n8n contact-alert webhook (non-blocking — WhatsApp + extra channels)
+    _webhook_url = settings.n8n_contact_webhook_url
+    if _webhook_url:
+        import threading as _threading
+        import requests as _req_mod
+        def _fire_n8n():
+            try:
+                _req_mod.post(_webhook_url, json={
+                    "name": req.name,
+                    "email": req.email,
+                    "company": req.company or "",
+                    "message": req.message,
+                    "timestamp": req.timestamp or "",
+                }, timeout=5)
+            except Exception:
+                pass
+        _threading.Thread(target=_fire_n8n, daemon=True).start()
+
     return {"ok": True, "storage": storage}
 
 
