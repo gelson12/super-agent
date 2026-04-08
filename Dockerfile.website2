@@ -10,6 +10,9 @@ RUN npm run build
 
 # ── Serve stage ───────────────────────────────────────────────────────────────
 FROM nginx:alpine
+# Fix: Railway's kernel limits io_uring — force 1 worker using epoll to suppress io_setup() errors
+RUN sed -i 's/worker_processes\s*auto;/worker_processes 1;/' /etc/nginx/nginx.conf \
+ && sed -i 's/events {/events { use epoll;/' /etc/nginx/nginx.conf
 COPY --from=builder /build/dist/ /usr/share/nginx/html/
 # Overwrite Vite's hashed logo file with the latest source asset so
 # a changed logo.png is always served — Vite content-hashes handle cache busting.

@@ -2,5 +2,8 @@
 FROM nginx:alpine
 COPY website/ /usr/share/nginx/html/
 COPY nginx-website.conf /etc/nginx/conf.d/default.conf.template
+# Fix: Railway's kernel limits io_uring — force 1 worker using epoll to suppress io_setup() errors
+RUN sed -i 's/worker_processes\s*auto;/worker_processes 1;/' /etc/nginx/nginx.conf \
+ && sed -i 's/events {/events { use epoll;/' /etc/nginx/nginx.conf
 EXPOSE 8080
 CMD ["/bin/sh", "-c", "envsubst '$PORT' < /etc/nginx/conf.d/default.conf.template > /etc/nginx/conf.d/default.conf && exec nginx -g 'daemon off;'"]
