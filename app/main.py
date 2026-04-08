@@ -379,12 +379,12 @@ app.add_middleware(
 # ── Schemas ───────────────────────────────────────────────────────────────────
 
 class ChatRequest(BaseModel):
-    message: str = Field(..., min_length=1, max_length=4000)
+    message: str = Field(..., min_length=1, max_length=8000)  # 8000 to accommodate [APP_CONTEXT] blocks
     session_id: str = Field(default="default", max_length=128)
 
 
 class DirectChatRequest(BaseModel):
-    message: str = Field(..., min_length=1, max_length=4000)
+    message: str = Field(..., min_length=1, max_length=8000)
     model: str = Field(..., description="GEMINI | DEEPSEEK | CLAUDE")
     session_id: str = Field(default="default", max_length=128)
 
@@ -407,7 +407,7 @@ class ChatResponse(BaseModel):
 
 
 class EnsembleRequest(BaseModel):
-    message: str = Field(..., min_length=1, max_length=4000)
+    message: str = Field(..., min_length=1, max_length=8000)
     session_id: str = Field(default="default", max_length=128)
 
 
@@ -932,6 +932,29 @@ def n8n_test_results():
     passed = sum(1 for r in results if r.get("passed") and not r.get("skipped"))
     failed = sum(1 for r in results if not r.get("passed") and not r.get("skipped"))
     return {"total": len(results), "passed": passed, "failed": failed, "results": results}
+
+
+@app.post("/app-context/test", tags=["meta"])
+def app_context_test(req: ChatRequest):
+    """
+    Parse and preview an [APP_CONTEXT] block without dispatching.
+    Use from the mobile app to verify metadata is being read correctly.
+    Returns the parsed fields, clean message, routing decision, and
+    the exact Gemini prompt that would be built for location requests.
+    """
+    from .routing.app_context_parser import parse_app_context, is_location_request, build_location_prompt
+    ctx, clean = parse_app_context(req.message)
+    if not ctx:
+        return {"parsed": False, "message": "No [APP_CONTEXT] block found in message"}
+    is_loc = is_location_request(ctx)
+    return {
+        "parsed": True,
+        "metadata": ctx,
+        "clean_message": clean,
+        "is_location_request": is_loc,
+        "would_route_to": "GEMINI_CLI" if is_loc else "normal_pipeline",
+        "location_prompt_preview": build_location_prompt(ctx) if is_loc else None,
+    }
 
 
 @app.get("/anomaly-alerts/recent", tags=["meta"])

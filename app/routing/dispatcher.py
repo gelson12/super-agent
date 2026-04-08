@@ -323,6 +323,37 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
     red_team_ran, escalated, confidence_score, cloudinary_url, and more.
     """
 
+    # ── APP_CONTEXT: mobile app metadata routing (runs before everything else) ──
+    # The mobile app may inject a [APP_CONTEXT]...[/APP_CONTEXT] block into the
+    # message. If REQUEST_CATEGORY=LOCATION and ROUTE_TO=GEMINI_ONLY, the request
+    # is handled exclusively by Gemini CLI — no classifier, no ensemble, no other model.
+    try:
+        from .app_context_parser import parse_app_context, is_location_request, build_location_prompt
+        _app_ctx, _clean_msg = parse_app_context(message)
+        if _app_ctx and is_location_request(_app_ctx):
+            from ..learning.gemini_cli_worker import ask_gemini_cli
+            _loc_prompt = build_location_prompt(_app_ctx)
+            _response = ask_gemini_cli(_loc_prompt)
+            _log(
+                f"APP_CONTEXT routing: LOCATION → GEMINI_CLI "
+                f"(lat={_app_ctx.get('CURRENT_LAT', '?')} "
+                f"lon={_app_ctx.get('CURRENT_LON', '?')} "
+                f"voice={_app_ctx.get('VOICE_MODE', 'false')})"
+            )
+            return _build_extended_result({
+                "response": _response,
+                "model_used": "GEMINI_CLI",
+                "routed_by": "app_context:LOCATION:GEMINI_ONLY",
+                "complexity": 3,
+                "session_id": session_id,
+            })
+        # APP_CONTEXT present but not a location request — strip block, continue normally
+        if _app_ctx:
+            message = _clean_msg
+    except Exception:
+        pass  # Never block dispatch on parser failure — fall through to normal routing
+    # ── End APP_CONTEXT ───────────────────────────────────────────────────────
+
     # ── 0. Proactive cross-session memory injection ───────────────────────────
     # Always retrieve relevant past memories regardless of whether pgvector is up.
     # The JSON fallback in vector_memory.py ensures this always returns something
