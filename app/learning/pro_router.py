@@ -25,12 +25,49 @@ Public API:
     reset_pro_flag()             → clears all flags
     get_status()                 → dict (for /credits/pro-status)
 """
+import json
 import os
 import re
-import time
 import subprocess
+import time
+import urllib.request
 import datetime
 from pathlib import Path
+
+
+def _cli_worker_url() -> str:
+    return os.environ.get("CLI_WORKER_URL", "").rstrip("/")
+
+
+def _submit_and_poll(task_type: str, payload: dict, timeout: int = 30) -> str | None:
+    """Submit a task to CLI worker and poll for result. Returns result string or None."""
+    cli_url = _cli_worker_url()
+    if not cli_url:
+        return None
+    try:
+        data = json.dumps({"type": task_type, "payload": payload}).encode("utf-8")
+        req  = urllib.request.Request(
+            f"{cli_url}/tasks",
+            data=data,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            task_id = json.loads(resp.read().decode("utf-8")).get("task_id")
+        if not task_id:
+            return None
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            with urllib.request.urlopen(f"{cli_url}/tasks/{task_id}", timeout=10) as resp:
+                body = json.loads(resp.read().decode("utf-8"))
+                if body.get("status") == "done":
+                    return body.get("result") or ""
+                if body.get("status") == "failed":
+                    return None
+            time.sleep(2)
+        return None
+    except Exception:
+        return None
 
 _FLAG_DIR      = Path("/workspace") if os.access("/workspace", os.W_OK) else Path(".")
 _DAILY_FLAG    = _FLAG_DIR / ".pro_daily"
@@ -223,6 +260,56 @@ def verify_pro_auth() -> dict:
     import json as _json
     import re as _re
 
+    # ── Try CLI worker health endpoint first ──────────────────────────────────
+    cli_url = _cli_worker_url()
+    if cli_url:
+        try:
+            with urllib.request.urlopen(f"{cli_url}/health", timeout=10) as resp:
+                health = _json.loads(resp.read().decode("utf-8"))
+                claude_ok = health.get("claude_available", False)
+                if not claude_ok:
+                    _write_flag(_CLI_DOWN_FLAG, f"{datetime.datetime.utcnow().isoformat()}|{_CLI_DOWN_TTL}")
+                    msg = "CLI worker reports claude unavailable — CLI_DOWN flag set."
+                    _log(f"verify_pro_auth: {msg}")
+                    return {"verified": True, "pro_valid": False, "logged_in": False,
+                            "auth_method": "", "subscription": "", "message": msg}
+                # Binary is up — do a full auth check via task
+                raw = _submit_and_poll("claude_auth", {}, timeout=20) or ""
+                # Fall through to parse raw below
+        except Exception:
+            raw = ""
+        if raw:
+            # Parse and return — same logic as subprocess path
+            try:
+                data = _json.loads(raw)
+            except Exception:
+                data = {}
+                if '"loggedIn":true' in raw or '"loggedIn": true' in raw:
+                    data["loggedIn"] = True
+                m = re.search(r'"authMethod"\s*:\s*"([^"]*)"', raw)
+                if m:
+                    data["authMethod"] = m.group(1)
+                m = re.search(r'"subscriptionType"\s*:\s*"([^"]*)"', raw)
+                if m:
+                    data["subscriptionType"] = m.group(1)
+
+            logged_in    = bool(data.get("loggedIn", False))
+            auth_method  = data.get("authMethod", "")
+            subscription = data.get("subscriptionType", "")
+            is_pro       = logged_in and auth_method == "claude.ai"
+
+            if is_pro:
+                clear_cli_down_flag()
+                msg = f"Claude Pro auth VERIFIED ✓ (via CLI worker) — authMethod=claude.ai subscription={subscription or 'unknown'}"
+                _log(f"verify_pro_auth: {msg}")
+                return {"verified": True, "pro_valid": True, "logged_in": True,
+                        "auth_method": auth_method, "subscription": subscription, "message": msg}
+            else:
+                msg = f"Logged in but not Pro (authMethod={auth_method or 'unknown'}) via CLI worker"
+                return {"verified": True, "pro_valid": False, "logged_in": logged_in,
+                        "auth_method": auth_method, "subscription": subscription, "message": msg}
+
+    # ── Direct subprocess fallback ────────────────────────────────────────────
     try:
         proc = subprocess.run(
             ["claude", "auth", "status"],
@@ -368,6 +455,15 @@ def try_pro(prompt: str, system: str = "") -> str | None:
 
     full_prompt = f"{system}\n\n{prompt}" if system and system.strip() else prompt
 
+    # ── Try via CLI worker first (durable, survives API restarts) ────────────
+    cli_result = _submit_and_poll("claude_pro", {"prompt": full_prompt}, timeout=_TIMEOUT + 10)
+    if cli_result is not None:
+        if any(p in cli_result.lower() for p in _DAILY_PHRASES + _BURST_PHRASES + _CLI_DOWN_PHRASES):
+            _classify_and_set_flag(cli_result, "")
+            return None
+        return cli_result or None
+
+    # ── Direct subprocess fallback (no CLI worker / dev mode) ────────────────
     try:
         proc = subprocess.run(
             ["claude", "-p", full_prompt],
@@ -389,7 +485,6 @@ def try_pro(prompt: str, system: str = "") -> str | None:
         return None
 
     except FileNotFoundError:
-        # CLI binary gone — set CLI_DOWN so we don't waste time on every call
         _write_flag(_CLI_DOWN_FLAG, f"{datetime.datetime.utcnow().isoformat()}|{_CLI_DOWN_TTL}")
         _log(
             "Pro CLI binary not found — setting CLI_DOWN flag (10 min). "
@@ -397,9 +492,9 @@ def try_pro(prompt: str, system: str = "") -> str | None:
         )
         return None
     except subprocess.TimeoutExpired:
-        return None              # timed out — API for this call only, no flag
+        return None
     except Exception:
-        return None              # unexpected — silent fallback, no flag
+        return None
 
 
 # ── Status reporting ───────────────────────────────────────────────────────────

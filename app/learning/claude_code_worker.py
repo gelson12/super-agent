@@ -9,11 +9,59 @@ so Super Agent can learn which model wins which task type over time.
 """
 import datetime
 import json
+import os
 import subprocess
+import time
+import urllib.request
 from pathlib import Path
 
 _INSIGHTS_FILE = Path("/workspace/claude_code_insights.json")
 _TIMEOUT = 120
+_POLL_INTERVAL = 2   # seconds between task-status polls
+_POLL_TIMEOUT  = 130 # total poll budget (CLI timeout + 10s buffer)
+
+
+# ── CLI worker HTTP helpers ───────────────────────────────────────────────────
+
+def _cli_worker_url() -> str:
+    return os.environ.get("CLI_WORKER_URL", "").rstrip("/")
+
+
+def _submit_task(cli_url: str, task_type: str, payload: dict) -> str | None:
+    """Submit a task to the CLI worker. Returns task_id or None on error."""
+    try:
+        data = json.dumps({"type": task_type, "payload": payload}).encode("utf-8")
+        req  = urllib.request.Request(
+            f"{cli_url}/tasks",
+            data=data,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            body = json.loads(resp.read().decode("utf-8"))
+            return body.get("task_id")
+    except Exception:
+        return None
+
+
+def _poll_task(cli_url: str, task_id: str, timeout: int = _POLL_TIMEOUT) -> str:
+    """Poll CLI worker until task is done/failed or timeout. Returns result string."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            with urllib.request.urlopen(
+                f"{cli_url}/tasks/{task_id}", timeout=10
+            ) as resp:
+                body = json.loads(resp.read().decode("utf-8"))
+                status = body.get("status")
+                if status == "done":
+                    return body.get("result") or "(no output)"
+                if status == "failed":
+                    return f"[claude_code: task failed — {body.get('error', 'unknown')}]"
+        except Exception:
+            pass
+        time.sleep(_POLL_INTERVAL)
+    return f"[claude_code: timed out waiting for CLI worker after {timeout}s]"
 
 
 def ask_claude_code(prompt: str) -> str:
@@ -50,7 +98,29 @@ def ask_claude_code(prompt: str) -> str:
     except Exception:
         pass
 
-    # ── Subprocess call ───────────────────────────────────────────────────────
+    # ── Route via CLI worker service (durable, survives API restarts) ─────────
+    cli_url = _cli_worker_url()
+    if cli_url:
+        task_id = _submit_task(cli_url, "claude_pro", {"prompt": prompt})
+        if task_id:
+            output = _poll_task(cli_url, task_id)
+        else:
+            output = "[claude_code: failed to submit task to CLI worker]"
+
+        if not output.startswith("["):
+            try:
+                from ..cache.response_cache import cache as _cache
+                _cache.set(prompt, "PRO_CLI", output)
+            except Exception:
+                pass
+            try:
+                from .pro_usage_tracker import record as _pro_record
+                _pro_record(len(prompt), len(output), was_cached=False)
+            except Exception:
+                pass
+        return output
+
+    # ── Direct subprocess fallback (no CLI worker configured / dev mode) ──────
     try:
         result = subprocess.run(
             ["claude", "-p", prompt],
@@ -61,7 +131,6 @@ def ask_claude_code(prompt: str) -> str:
         )
         output = result.stdout.strip() or result.stderr.strip() or "(no output)"
 
-        # Cache successful (non-error) responses for future identical prompts
         if not output.startswith("["):
             try:
                 from ..cache.response_cache import cache as _cache
@@ -69,7 +138,6 @@ def ask_claude_code(prompt: str) -> str:
             except Exception:
                 pass
 
-        # Record Pro quota usage
         try:
             from .pro_usage_tracker import record as _pro_record
             _pro_record(len(prompt), len(output), was_cached=False)
@@ -78,7 +146,6 @@ def ask_claude_code(prompt: str) -> str:
 
         return output
     except subprocess.TimeoutExpired:
-        # Pro timed out — try Gemini as a fallback before giving up
         try:
             from .gemini_cli_worker import ask_gemini_cli
             gemini_result = ask_gemini_cli(prompt)
@@ -88,7 +155,7 @@ def ask_claude_code(prompt: str) -> str:
             pass
         return f"[claude_code: timed out after {_TIMEOUT}s]"
     except FileNotFoundError:
-        return "[claude_code: claude CLI not found in container]"
+        return "[claude_code: claude CLI not found — set CLI_WORKER_URL or install claude CLI]"
     except Exception as e:
         return f"[claude_code error: {e}]"
 

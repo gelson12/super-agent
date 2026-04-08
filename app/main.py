@@ -265,75 +265,10 @@ async def _lifespan(app: FastAPI):
         replace_existing=True,
     )
 
-    # Pro token keeper — runs daily at 03:00 UTC, refreshes OAuth token and
-    # saves the updated credentials back to Railway Variables automatically.
-    # This keeps the Pro subscription alive indefinitely without human intervention.
-    def _pro_token_keeper_job():
-        try:
-            from .learning.pro_token_keeper import run_token_keeper
-            result = run_token_keeper()
-            status = "OK" if result.get("railway_ok") else "FAILED"
-            bg_log(
-                f"Pro token keeper: {status} — ping={result.get('ping_ok')} "
-                f"railway={result.get('railway_ok')} via={result.get('method')} "
-                f"msg={result.get('message', '')[:120]}",
-                source="pro_token_keeper",
-            )
-        except Exception as _e:
-            bg_log(f"Pro token keeper job error: {_e}", source="pro_token_keeper")
-
-    scheduler.add_job(
-        _pro_token_keeper_job,
-        "cron",
-        hour=3,
-        minute=0,
-        id="pro_token_keeper",
-        replace_existing=True,
-    )
-
-    # Gemini token keeper — runs daily at 04:00 UTC (1 hour after Claude keeper),
-    # pings the Gemini CLI, re-encodes credentials, and saves to Railway Variables.
-    def _gemini_token_keeper_job():
-        try:
-            from .learning.gemini_token_keeper import run_token_keeper as _gemini_keep
-            result = _gemini_keep()
-            status = "OK" if result.get("railway_ok") else "FAILED"
-            bg_log(
-                f"Gemini token keeper: {status} — ping={result.get('ping_ok')} "
-                f"railway={result.get('railway_ok')} via={result.get('method')} "
-                f"msg={result.get('message', '')[:120]}",
-                source="gemini_token_keeper",
-            )
-        except Exception as _e:
-            bg_log(f"Gemini token keeper job error: {_e}", source="gemini_token_keeper")
-
-    scheduler.add_job(
-        _gemini_token_keeper_job,
-        "cron",
-        hour=4,
-        minute=0,
-        id="gemini_token_keeper",
-        replace_existing=True,
-    )
-
-    # Pro CLI watchdog — probes claude --version every 5 min when CLI_DOWN flag is set.
-    # Auto-clears the flag and reverts to Pro the moment the CLI responds again.
-    def _pro_cli_watchdog_job():
-        try:
-            from .learning.pro_cli_watchdog import maybe_recover
-            recovered = maybe_recover()
-            if recovered:
-                bg_log("Pro CLI watchdog: recovery confirmed — Pro is primary again.", source="pro_cli_watchdog")
-        except Exception as _e:
-            bg_log(f"Pro CLI watchdog job error: {_e}", source="pro_cli_watchdog")
-
-    scheduler.add_job(
-        _pro_cli_watchdog_job,
-        "interval",
-        minutes=5,
-        id="pro_cli_watchdog",
-        replace_existing=True,
-    )
+    # NOTE: Pro token keeper, Gemini token keeper, and Pro CLI watchdog jobs
+    # have been moved to cli_worker/main.py — they run inside the dedicated
+    # CLI worker Railway service which has direct access to the Claude/Gemini CLIs.
+    # The API service no longer needs to manage CLI credentials.
 
     # n8n autonomous monitor — checks every 15 minutes, auto-repairs detected issues
     def _n8n_monitor_job():

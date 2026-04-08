@@ -27,9 +27,23 @@ _PROBE_TIMEOUT = 15  # seconds — short so the scheduler thread is never blocke
 
 def probe_cli() -> bool:
     """
-    Run `claude --version` to verify the CLI is installed and responding.
-    Returns True if exit code is 0.  Never raises.
+    Check if the Claude CLI is available — via CLI worker /health endpoint
+    if CLI_WORKER_URL is set, otherwise via direct subprocess.
+    Returns True if CLI is responding.  Never raises.
     """
+    import json
+    import urllib.request
+
+    cli_url = os.environ.get("CLI_WORKER_URL", "").rstrip("/")
+    if cli_url:
+        try:
+            with urllib.request.urlopen(f"{cli_url}/health", timeout=_PROBE_TIMEOUT) as resp:
+                body = json.loads(resp.read().decode("utf-8"))
+                return bool(body.get("claude_available", False))
+        except Exception:
+            return False
+
+    # Fallback: direct subprocess (single-container mode)
     try:
         result = subprocess.run(
             ["claude", "--version"],

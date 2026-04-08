@@ -67,6 +67,12 @@ class Settings(BaseSettings):
     # e.g. RAILWAY_PUBLIC_DOMAIN=super-agent-production.up.railway.app
     railway_public_domain: str = ""
 
+    # CLI Worker service URL — the dedicated Railway service that runs Claude/Gemini CLI.
+    # Set this to the cli-worker Railway domain after deploying the cli-worker service.
+    # e.g. CLI_WORKER_URL=https://cli-worker-production.up.railway.app
+    # If not set, falls back to direct subprocess (single-container / dev mode).
+    cli_worker_url: str = ""
+
     # Bridge website — email notifications for form submissions
     # Use a Gmail App Password (not your regular Gmail password):
     #   Google Account → Security → 2-Step Verification → App passwords

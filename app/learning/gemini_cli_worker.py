@@ -14,11 +14,51 @@ Usage is tracked in pro_usage_tracker with model="GEMINI_CLI" so the
 
 Never raises — returns an error string on failure so callers can handle it.
 """
-import subprocess
+import json
 import os
+import subprocess
+import time
+import urllib.request
 
-_TIMEOUT = 120
-_CREDS_DIR = "/root/.gemini"
+_TIMEOUT    = 120
+_CREDS_DIR  = "/root/.gemini"
+_POLL_INTERVAL = 2
+_POLL_TIMEOUT  = 130
+
+
+def _cli_worker_url() -> str:
+    return os.environ.get("CLI_WORKER_URL", "").rstrip("/")
+
+
+def _submit_task(cli_url: str, task_type: str, payload: dict) -> str | None:
+    try:
+        data = json.dumps({"type": task_type, "payload": payload}).encode("utf-8")
+        req  = urllib.request.Request(
+            f"{cli_url}/tasks",
+            data=data,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return json.loads(resp.read().decode("utf-8")).get("task_id")
+    except Exception:
+        return None
+
+
+def _poll_task(cli_url: str, task_id: str, timeout: int = _POLL_TIMEOUT) -> str:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            with urllib.request.urlopen(f"{cli_url}/tasks/{task_id}", timeout=10) as resp:
+                body = json.loads(resp.read().decode("utf-8"))
+                if body.get("status") == "done":
+                    return body.get("result") or "(no output)"
+                if body.get("status") == "failed":
+                    return f"[gemini_cli: task failed — {body.get('error', 'unknown')}]"
+        except Exception:
+            pass
+        time.sleep(_POLL_INTERVAL)
+    return f"[gemini_cli: timed out waiting for CLI worker after {timeout}s]"
 
 
 def is_gemini_cli_available() -> bool:
@@ -51,15 +91,32 @@ def ask_gemini_cli(prompt: str) -> str:
         except Exception:
             pass
 
-        result = subprocess.run(
-            ["gemini", "--prompt", prompt],
-            capture_output=True,
-            text=True,
-            timeout=_TIMEOUT,
-            cwd="/workspace",
-            env={**os.environ, "HOME": "/root"},
-        )
-        output = result.stdout.strip() or result.stderr.strip() or "(no output)"
+        # ── Route via CLI worker (durable) ───────────────────────────────────
+        cli_url = _cli_worker_url()
+        if cli_url:
+            task_id = _submit_task(cli_url, "gemini_cli", {"prompt": prompt})
+            if task_id:
+                output = _poll_task(cli_url, task_id)
+            else:
+                output = "[gemini_cli: failed to submit task to CLI worker]"
+        else:
+            # ── Direct subprocess fallback ────────────────────────────────────
+            try:
+                result = subprocess.run(
+                    ["gemini", "--prompt", prompt],
+                    capture_output=True,
+                    text=True,
+                    timeout=_TIMEOUT,
+                    cwd="/workspace",
+                    env={**os.environ, "HOME": "/root"},
+                )
+                output = result.stdout.strip() or result.stderr.strip() or "(no output)"
+            except subprocess.TimeoutExpired:
+                return f"[gemini_cli: timed out after {_TIMEOUT}s]"
+            except FileNotFoundError:
+                return "[gemini_cli: gemini CLI not found — set CLI_WORKER_URL or install gemini CLI]"
+            except Exception as e:
+                return f"[gemini_cli error: {e}]"
 
         # Cache and track on success
         if not output.startswith("["):
@@ -76,9 +133,5 @@ def ask_gemini_cli(prompt: str) -> str:
 
         return output
 
-    except subprocess.TimeoutExpired:
-        return f"[gemini_cli: timed out after {_TIMEOUT}s]"
-    except FileNotFoundError:
-        return "[gemini_cli: gemini CLI not found in container]"
     except Exception as e:
         return f"[gemini_cli error: {e}]"
