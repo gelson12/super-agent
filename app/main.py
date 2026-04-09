@@ -631,29 +631,11 @@ def chat_stream(req: ChatRequest, request: Request):
         except Exception:
             pass
 
-        # ── 3. Anthropic API streaming (last resort) ──────────────────────────
-        yield "data: [PROGRESS:⚡ Using Anthropic API… (est. 3–8s, costs credits)]\n\n"
-        full_response = []
-        try:
-            client = _anthropic.Anthropic(api_key=settings.anthropic_api_key)
-            with client.messages.stream(
-                model="claude-sonnet-4-6",
-                max_tokens=settings.max_tokens_claude,
-                system=system,
-                messages=[{"role": "user", "content": msg}],
-            ) as stream:
-                for text in stream.text_stream:
-                    full_response.append(text)
-                    yield f"data: {text.replace(chr(10), chr(92) + 'n')}\n\n"
-            if full_response:
-                _complete = "".join(full_response)
-                _store_mem(req.session_id, f"Q: {msg[:300]} A: {_complete[:300]}")
-                append_exchange(req.session_id, msg, _complete)
-            yield f"data: [META:CLAUDE·conversational·{_mem_count}]\n\n"
-            yield "data: [DONE]\n\n"
-        except Exception as e:
-            yield f"data: [Stream error: {e}]\n\n"
-            yield "data: [DONE]\n\n"
+        # ── 3. CLI and Gemini both unavailable — do not call Anthropic API ──────
+        yield "data: [PROGRESS:⚠️ Claude CLI & Gemini both unavailable — please try again in a moment]\n\n"
+        yield "data: ⚠️ Both Claude CLI and Gemini are temporarily unavailable. Please try again in a few seconds.\n\n"
+        yield f"data: [META:UNAVAILABLE·conversational·{_mem_count}]\n\n"
+        yield "data: [DONE]\n\n"
 
     return StreamingResponse(
         _generate(),
