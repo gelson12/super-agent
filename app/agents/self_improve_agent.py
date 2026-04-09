@@ -248,18 +248,25 @@ def _invoke(message: str) -> str:
 
 def run_self_improve_agent(message: str, authorized: bool = False) -> str:
     """
-    Run the self-improvement agent with full planning and recovery.
-
-    authorized=True (safe word provided) unlocks write/critical tools.
-    Without authorization, write tools are still present but the agent's
-    system prompt instructs it to stop and ask for the safe word before
-    executing any CRITICAL operation.
+    Run the self-improvement agent. Routing: Claude CLI (free) → Anthropic API (last resort).
     """
+    # ── 1. Claude CLI (zero cost, preferred) ─────────────────────────────────
+    try:
+        from ..learning.pro_router import try_pro, is_pro_available
+        if is_pro_available():
+            cli_result = try_pro(f"{_SYSTEM}\n\n{message}")
+            if cli_result and not cli_result.startswith("["):
+                return cli_result
+    except Exception:
+        pass
+
+    # ── 2. Anthropic API + LangGraph (last resort) ────────────────────────────
     if not settings.anthropic_api_key:
-        return "[Self-improve agent error: ANTHROPIC_API_KEY not set]"
-
+        return (
+            "[Self-improve agent: Claude CLI unavailable and ANTHROPIC_API_KEY not set. "
+            "Refresh Claude session token in VS Code on inspiring-cat.]"
+        )
     tool_names = [t.name for t in _SELF_IMPROVE_TOOLS]
-
     return run_with_plan_and_recovery(
         agent_fn=_invoke,
         message=message,

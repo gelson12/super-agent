@@ -302,10 +302,23 @@ Always false for dispatcher.py, main.py, agents/, models/, config.py, Dockerfile
 
 def _ask_opus(prompt: str) -> str:
     """Weekly review via Claude Code CLI (Pro subscription — no API cost).
-    Falls back to direct Opus API if CLI is unavailable or returns an error token."""
+    Falls back to Gemini CLI, then Anthropic API if CLI is unavailable."""
     from .claude_code_worker import ask_claude_code
     result = ask_claude_code(prompt)
-    if result.startswith("["):  # CLI error token — fall back to paid API
+    if not result.startswith("["):
+        return result
+
+    # CLI error — try Gemini next (free)
+    try:
+        from .gemini_cli_worker import ask_gemini_cli
+        gemini = ask_gemini_cli(prompt)
+        if gemini and not gemini.startswith("["):
+            return gemini
+    except Exception:
+        pass
+
+    # Last resort — Anthropic API
+    try:
         import anthropic
         client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
         msg = client.messages.create(
@@ -314,7 +327,8 @@ def _ask_opus(prompt: str) -> str:
             messages=[{"role": "user", "content": prompt}],
         )
         return msg.content[0].text
-    return result
+    except Exception as e:
+        return f"[weekly_review: all backends failed — {e}]"
 
 
 def _is_core_file(file_path: str) -> bool:

@@ -462,30 +462,45 @@ def chat_stream(req: ChatRequest, request: Request):
     )
 
     if _needs_routing:
-        # Run the full dispatcher (agents, tools, routing) synchronously,
-        # then SSE the complete response in word-boundary chunks.
-        try:
-            result = dispatch(msg, session_id=req.session_id)
-        except Exception as _dispatch_err:
-            def _generate_dispatch_err():
+        # Emit progress events IMMEDIATELY, then run dispatch inside the generator
+        # so the user sees "thinking" feedback instead of a frozen cursor.
+        def _generate_routed():
+            # ── 1. Emit a context-aware progress message right away ───────────
+            if _is_n8n_request(msg):
+                yield "data: [PROGRESS:⚙️ Building n8n workflow…]\n\n"
+            elif _is_github_request(msg):
+                yield "data: [PROGRESS:📁 Accessing GitHub…]\n\n"
+            elif _is_shell_request(msg):
+                yield "data: [PROGRESS:💻 Running shell commands…]\n\n"
+            elif _is_self_improve_request(msg):
+                yield "data: [PROGRESS:🔬 Analysing system health…]\n\n"
+            elif _is_debug_request(msg):
+                yield "data: [PROGRESS:🐛 Running diagnostics…]\n\n"
+            elif _is_search_request(msg):
+                yield "data: [PROGRESS:🔍 Searching the web…]\n\n"
+            else:
+                yield "data: [PROGRESS:🤖 Routing request…]\n\n"
+
+            # ── 2. Run the full dispatcher (agents, tools, routing) ───────────
+            try:
+                _result = dispatch(msg, session_id=req.session_id)
+            except Exception as _dispatch_err:
                 err = str(_dispatch_err)[:300].replace(chr(10), " ")
                 yield f"data: Agent encountered an error: {err}\n\n"
                 yield "data: [META:ERROR·dispatch_error·0]\n\n"
                 yield "data: [DONE]\n\n"
-            return StreamingResponse(_generate_dispatch_err(), media_type="text/event-stream", headers=_SSE_HEADERS)
+                return
 
-        response_text = result["response"]
-        if not response_text.startswith("["):
-            append_exchange(req.session_id, msg, response_text)
-            _cat = "n8n_workflow" if req.session_id.startswith("n8n") else "chat"
-            _ledger_record(result.get("model_used", "UNKNOWN"), len(msg), len(response_text), category=_cat)
+            _response_text = _result["response"]
+            if not _response_text.startswith("["):
+                append_exchange(req.session_id, msg, _response_text)
+                _cat = "n8n_workflow" if req.session_id.startswith("n8n") else "chat"
+                _ledger_record(_result.get("model_used", "UNKNOWN"), len(msg), len(_response_text), category=_cat)
 
-        def _generate_routed():
+            # ── 3. Stream the response in word-boundary chunks ────────────────
             # Normalize: replace bare newlines with space+newline+space so that
             # words on adjacent lines don't merge (e.g. "This\nis" → "This \n is").
-            # Then split on spaces, filter empty, join with a space in the buffer.
-            # Newlines are encoded as \n literals for SSE transport; frontend decodes them.
-            normalized = response_text.replace("\n", " \n ")
+            normalized = _response_text.replace("\n", " \n ")
             words = [w for w in normalized.split(" ") if w]
             buf = ""
             for word in words:
@@ -496,34 +511,83 @@ def chat_stream(req: ChatRequest, request: Request):
                     buf = ""
             if buf.strip():
                 yield f"data: {buf.rstrip().replace(chr(10), chr(92) + 'n')}\n\n"
-            # Send routing metadata + memory count for the UI label
-            _model = result.get("model_used", "AGENT")
-            _route = result.get("routed_by", "dispatcher")
-            _mem = result.get("memory_count", 0)
+            _model = _result.get("model_used", "AGENT")
+            _route = _result.get("routed_by", "dispatcher")
+            _mem = _result.get("memory_count", 0)
             yield f"data: [META:{_model}·{_route}·{_mem}]\n\n"
             yield "data: [DONE]\n\n"
 
         return StreamingResponse(_generate_routed(), media_type="text/event-stream", headers=_SSE_HEADERS)
 
-    # Conversational — stream token-by-token with capabilities-aware + memory system prompt
+    # Conversational — CLI first (free), Anthropic API as last resort
     from .memory.vector_memory import get_memory_context as _get_mem, store_memory as _store_mem
     _caps = build_capabilities_block(settings)
     _mem_ctx = _get_mem(msg)
     _learned = _adapter.get_learned_context() or ""
-    # Prepend cross-session memories so the model always sees past context
     if _mem_ctx:
         _learned = _mem_ctx + "\n" + _learned
     system = SYSTEM_PROMPT_CLAUDE.format(
         capabilities=_caps,
         learned_context=_learned,
     )
-
-    client = _anthropic.Anthropic(api_key=settings.anthropic_api_key)
     _mem_count = _mem_ctx.count("\n-") if _mem_ctx else 0
 
     def _generate():
+        # ── 1. Claude CLI (zero cost) ─────────────────────────────────────────
+        yield "data: [PROGRESS:🤔 Thinking…]\n\n"
+        try:
+            from .learning.pro_router import try_pro, is_pro_available
+            if is_pro_available():
+                yield "data: [PROGRESS:⚡ Using Claude CLI…]\n\n"
+                cli_resp = try_pro(f"{system}\n\n{msg}")
+                if cli_resp and not cli_resp.startswith("["):
+                    _store_mem(req.session_id, f"Q: {msg[:300]} A: {cli_resp[:300]}")
+                    append_exchange(req.session_id, msg, cli_resp)
+                    normalized = cli_resp.replace("\n", " \n ")
+                    words = [w for w in normalized.split(" ") if w]
+                    buf = ""
+                    for word in words:
+                        buf += word + " "
+                        if len(buf) >= 60:
+                            yield f"data: {buf.rstrip().replace(chr(10), chr(92) + 'n')}\n\n"
+                            buf = ""
+                    if buf.strip():
+                        yield f"data: {buf.rstrip().replace(chr(10), chr(92) + 'n')}\n\n"
+                    yield f"data: [META:CLI·conversational·{_mem_count}]\n\n"
+                    yield "data: [DONE]\n\n"
+                    return
+        except Exception:
+            pass
+
+        # ── 2. Gemini CLI (free fallback) ─────────────────────────────────────
+        yield "data: [PROGRESS:🤖 Trying Gemini…]\n\n"
+        try:
+            from .learning.gemini_cli_worker import ask_gemini_cli
+            gemini_resp = ask_gemini_cli(msg)
+            if gemini_resp and not gemini_resp.startswith("["):
+                _store_mem(req.session_id, f"Q: {msg[:300]} A: {gemini_resp[:300]}")
+                append_exchange(req.session_id, msg, gemini_resp)
+                normalized = gemini_resp.replace("\n", " \n ")
+                words = [w for w in normalized.split(" ") if w]
+                buf = ""
+                for word in words:
+                    buf += word + " "
+                    if len(buf) >= 60:
+                        yield f"data: {buf.rstrip().replace(chr(10), chr(92) + 'n')}\n\n"
+                        buf = ""
+                if buf.strip():
+                    yield f"data: {buf.rstrip().replace(chr(10), chr(92) + 'n')}\n\n"
+                yield f"data: [META:GEMINI·conversational·{_mem_count}]\n\n"
+                yield "data: [DONE]\n\n"
+                return
+        except Exception:
+            pass
+
+        # ── 3. Anthropic API streaming (last resort) ──────────────────────────
+        yield "data: [PROGRESS:⚡ Using Anthropic API…]\n\n"
         full_response = []
         try:
+            client = _anthropic.Anthropic(api_key=settings.anthropic_api_key)
             with client.messages.stream(
                 model="claude-sonnet-4-6",
                 max_tokens=settings.max_tokens_claude,
@@ -532,9 +596,7 @@ def chat_stream(req: ChatRequest, request: Request):
             ) as stream:
                 for text in stream.text_stream:
                     full_response.append(text)
-                    # Encode newlines as \n literal — frontend decodes back to real newlines
                     yield f"data: {text.replace(chr(10), chr(92) + 'n')}\n\n"
-            # Persist the full exchange to long-term memory and session history
             if full_response:
                 _complete = "".join(full_response)
                 _store_mem(req.session_id, f"Q: {msg[:300]} A: {_complete[:300]}")
