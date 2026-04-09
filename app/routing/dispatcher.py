@@ -599,7 +599,26 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
             "cache_hit": False,
         })
 
-    # ── 4b. Self-improvement routing (highest priority after debug) ──────────
+    # ── 4b. N8N routing (high priority — long prompts contain many keywords) ────
+    # Checked before self_improve and debug so complex n8n design prompts that
+    # happen to contain words like "error", "optimize", "check" are not misrouted.
+    if _is_n8n_request(message):
+        from ..agents.n8n_agent import run_n8n_agent
+        _write_active_task(session_id, message)
+        response = run_n8n_agent(augmented_message)
+        _clear_active_task()
+        insight_log.record(message, "N8N", response, "n8n_early", complexity, session_id)
+        adapter.tick()
+        store_memory(session_id, f"Q: {message[:300]} A: {response[:300]}")
+        return _build_extended_result({
+            "model_used": "N8N",
+            "response": response,
+            "routed_by": "n8n_early",
+            "complexity": complexity,
+            "cache_hit": False,
+        })
+
+    # ── 4c. Self-improvement routing ─────────────────────────────────────────
     if _is_self_improve_request(message):
         _write_active_task(session_id, message)
         response = run_self_improve_agent(message, authorized=authorized)
@@ -614,7 +633,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
             "cache_hit": False,
         })
 
-    # ── 4c. Isolation debug routing ───────────────────────────────────────────
+    # ── 4d. Isolation debug routing ───────────────────────────────────────────
     if _is_debug_request(message):
         _write_active_task(session_id, message)
         response = run_shell_agent(message, authorized=authorized, debug_mode=True)
