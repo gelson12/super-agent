@@ -551,13 +551,19 @@
         cost.textContent = '';
       }
 
-      // ── Trend alerts ──────────────────────────────────────────────────────
+      // ── Trend alerts (+ watchdog alert) ──────────────────────────────────
+      const watchdogAlert = d.watchdog_alert || '';
       const alerts = d.trend_alerts || [];
-      if (alerts.length) {
-        alert.textContent = '⚠️ ' + _truncate(alerts[0], 60);
+      // Watchdog RESOLVED alerts start with ✅ — show green, no ⚠️ prefix
+      const firstAlert = watchdogAlert || (alerts.length ? alerts[0] : '');
+      if (firstAlert) {
+        const isResolved = firstAlert.startsWith('✅');
+        alert.textContent = isResolved ? _truncate(firstAlert, 70) : '⚠️ ' + _truncate(firstAlert, 60);
+        alert.style.color = isResolved ? '#22c55e' : '#f59e0b';
         bar.classList.add('has-alert');
       } else {
         alert.textContent = '';
+        alert.style.color = '#f59e0b';
         if (!bld.running) bar.classList.remove('has-alert');
       }
 

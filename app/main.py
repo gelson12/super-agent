@@ -287,6 +287,22 @@ async def _lifespan(app: FastAPI):
         replace_existing=True,
     )
 
+    # CLI + n8n self-healing watchdog — every 5 min until resolved, then hourly re-check
+    def _cli_n8n_watchdog_job():
+        try:
+            from .learning.cli_n8n_watchdog import run_watchdog_cycle
+            run_watchdog_cycle()
+        except Exception as _e:
+            bg_log(f"CLI/n8n watchdog error: {_e}", source="cli_n8n_watchdog")
+
+    scheduler.add_job(
+        _cli_n8n_watchdog_job,
+        "interval",
+        minutes=5,
+        id="cli_n8n_watchdog",
+        replace_existing=True,
+    )
+
     scheduler.start()
     yield
     scheduler.shutdown(wait=False)
@@ -1818,6 +1834,17 @@ def status_now():
         report["metrics_snapshot"] = {k: v["current"] for k, v in trends.get("metrics", {}).items()}
     except Exception:
         report["trend_alerts"] = []
+
+    # Watchdog alert — injected at front so it's always visible
+    try:
+        from .learning.cli_n8n_watchdog import read_watchdog_alert
+        wa = read_watchdog_alert()
+        if wa:
+            report["watchdog_alert"] = wa
+            # Also prepend to trend_alerts so existing UI picks it up
+            report["trend_alerts"] = [wa] + report.get("trend_alerts", [])
+    except Exception:
+        pass
 
     # Cost today
     try:
