@@ -801,12 +801,12 @@ def try_pro(prompt: str, system: str = "") -> str | None:
         if any(p in _cli_lower for p in _CREDIT_ERROR_PHRASES + _IGNORED_PHRASES):
             _log(
                 f"CLI worker returned a credit/billing error — setting BURST flag (30 min) "
-                f"to skip CLI worker. Refresh CLAUDE_SESSION_TOKEN in Railway env vars to restore. "
-                f"Response: {cli_result[:120]!r}"
+                f"and falling through to super-agent local CLI. Response: {cli_result[:120]!r}"
             )
-            _write_flag(_BURST_FLAG)  # Skip CLI for 30 min — prevents 50s delay on every request
-            _queue_progress("⚠️ CLI session expired — using Gemini (refresh CLAUDE_SESSION_TOKEN to restore Claude CLI)")
-            return None
+            _write_flag(_BURST_FLAG)  # Skip inspiring-cat for 30 min on future requests
+            _queue_progress("⚠️ inspiring-cat CLI expired — trying super-agent local CLI…")
+            # Fall through to direct subprocess below (do NOT return None here)
+            # so super-agent's own Claude CLI handles this request right now.
         return cli_result or None
 
     # ── Direct subprocess fallback (CLI worker unreachable — use local CLI) ─────
