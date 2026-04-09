@@ -188,7 +188,18 @@ def run_n8n_agent(message: str) -> str:
     Pre-flight: verify n8n is reachable; auto-repair if not (restart Railway, check vars)
     """
     if not settings.n8n_base_url:
-        return "[n8n agent error: N8N_BASE_URL not set — add it in Railway Variables tab]"
+        return (
+            "⚠️ **N8N_BASE_URL not set in super-agent Railway Variables.**\n\n"
+            "Add `N8N_BASE_URL = https://outstanding-blessing.up.railway.app` to the "
+            "super-agent service Variables tab, then redeploy. Once set, I can build "
+            "workflows directly into n8n without any manual steps."
+        )
+    if not settings.n8n_api_key:
+        return (
+            "⚠️ **N8N_API_KEY not set in super-agent Railway Variables.**\n\n"
+            "In n8n → Settings → API → create an API key, then add "
+            "`N8N_API_KEY = <that key>` to the super-agent service Variables tab and redeploy."
+        )
 
     # ── Pre-flight: verify n8n is reachable before handing to the agent ──────
     from ..tools.n8n_repair import attempt_n8n_repair, n8n_health_check
@@ -231,35 +242,76 @@ def run_n8n_agent(message: str) -> str:
     # Gemini can describe/design workflows but cannot call Python or MCP tools.
     # Skip Gemini if it says it can't perform the task due to missing tool access.
     _GEMINI_NO_TOOLS = (
+        # "operating as X CLI" variants
         "operating as the gemini cli",
+        "operating as gemini",
+        "operating in a headless cli",
+        "headless cli environment",
+        # "no access to tools" variants
         "don't have direct access to the claude mcp tools",
         "i don't have direct access",
+        "without direct network bindings",
         "cannot directly interact with",
         "don't have access to the mcp",
+        "no direct access to your",
+        "cannot directly call",
+        "cannot directly connect",
+        # "I am Gemini" variants
         "gemini cli, i don't",
         "as gemini, i",
         "i'm gemini",
+        # "generated JSON for you to import" variants — means it gave up and provided copy-paste
+        "generated the sql and the n8n workflow json",
+        "import directly into n8n",
+        "copy this json",
+        "paste it directly into",
+        "you can copy this",
+        "json for you to execute and import",
+        "execute and import directly",
+        "paste directly into a new n8n",
     )
+    # ── 2. Gemini — skip for build requests (no tool access, always a dead end) ──
+    # Gemini can describe workflows but cannot call n8n REST API — any n8n build
+    # request will produce a "copy and paste this JSON" response regardless of phrasing.
+    # Only use Gemini for purely informational queries (status, explain, what-is, etc.).
+    _BUILD_KEYWORDS = ("create", "build", "make", "add", "generate", "set up", "setup",
+                       "automate", "design", "deploy", "write", "implement")
+    _is_build_request = any(kw in message.lower() for kw in _BUILD_KEYWORDS)
+
     _gemini_blueprint = None
-    try:
-        from ..learning.gemini_cli_worker import ask_gemini_cli
-        gemini = ask_gemini_cli(f"{_SYSTEM}\n\n{message}")
-        if gemini and not gemini.startswith("["):
-            if any(p in gemini.lower() for p in _GEMINI_NO_TOOLS):
-                # Gemini described the workflow architecture but can't build it.
-                # Capture its design as a blueprint and pass it to LangGraph so
-                # LangGraph can use Gemini's architecture when building the real workflow.
+    if not _is_build_request:
+        try:
+            from ..learning.gemini_cli_worker import ask_gemini_cli
+            gemini = ask_gemini_cli(f"{_SYSTEM}\n\n{message}")
+            if gemini and not gemini.startswith("["):
+                if any(p in gemini.lower() for p in _GEMINI_NO_TOOLS):
+                    _gemini_blueprint = gemini
+                    from ..activity_log import bg_log as _bg
+                    _bg(
+                        "n8n agent: Gemini provided workflow architecture — forwarding to LangGraph "
+                        "as blueprint context for actual build",
+                        source="n8n_agent",
+                    )
+                else:
+                    return gemini
+        except Exception:
+            pass
+    else:
+        # Build request — Gemini can't build, but ask it for architecture only
+        # so LangGraph has a design blueprint to work from.
+        try:
+            from ..learning.gemini_cli_worker import ask_gemini_cli
+            _arch_prompt = (
+                f"Design the architecture for this n8n workflow (describe nodes, connections, "
+                f"and data flow — do NOT say you can't build it, just describe the design):\n\n{message}"
+            )
+            gemini = ask_gemini_cli(f"{_SYSTEM}\n\n{_arch_prompt}")
+            if gemini and not gemini.startswith("["):
                 _gemini_blueprint = gemini
                 from ..activity_log import bg_log as _bg
-                _bg(
-                    "n8n agent: Gemini provided workflow architecture — forwarding to LangGraph "
-                    "as blueprint context for actual build",
-                    source="n8n_agent",
-                )
-            else:
-                return gemini
-    except Exception:
-        pass
+                _bg("n8n agent: captured Gemini architecture blueprint for LangGraph build", source="n8n_agent")
+        except Exception:
+            pass
 
     # ── 3. LangGraph + Anthropic API — full Python n8n_tools, builds directly ──
     # _N8N_TOOLS includes n8n_create_workflow, n8n_update_workflow, n8n_activate_workflow
