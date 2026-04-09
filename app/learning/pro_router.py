@@ -469,6 +469,125 @@ def _log(msg: str) -> None:
         pass
 
 
+# ── Credential auto-restore ───────────────────────────────────────────────────
+
+def _try_restore_claude_auth() -> bool:
+    """
+    Attempt to restore Claude CLI credentials from the CLAUDE_SESSION_TOKEN
+    env var — the same token that entrypoint.sh writes on container start.
+
+    Called automatically when an auth error is detected mid-session (e.g.
+    after a container restart where the credentials file was wiped from the
+    ephemeral filesystem before the app had a chance to read it, or when the
+    credentials file was written to the wrong path).
+
+    Writes to all known credential paths so different Claude CLI versions
+    all find the token regardless of which file they look for.
+
+    Returns True if credentials were restored AND `claude auth status` confirms
+    that the session is now valid.
+    """
+    import base64 as _b64
+
+    token = os.environ.get("CLAUDE_SESSION_TOKEN", "")
+    if not token:
+        _log("Auto-restore skipped — CLAUDE_SESSION_TOKEN env var not set.")
+        return False
+
+    try:
+        # base64-decode with padding tolerance
+        decoded = _b64.b64decode(token + "==")
+    except Exception as e:
+        _log(f"Auto-restore failed: cannot base64-decode CLAUDE_SESSION_TOKEN — {e}")
+        return False
+
+    # Write to EVERY location Claude Code CLI may look for credentials
+    cred_dir = Path("/root/.claude")
+    cred_dir.mkdir(parents=True, exist_ok=True)
+    written = 0
+    for fpath in [
+        cred_dir / ".credentials.json",   # entrypoint.sh default
+        cred_dir / "credentials.json",    # alternative path (no dot prefix)
+        Path("/root/.claude.json"),        # Claude Code CLI < 1.x global config
+    ]:
+        try:
+            fpath.write_bytes(decoded)
+            fpath.chmod(0o600)
+            written += 1
+        except Exception:
+            pass
+
+    if written == 0:
+        _log("Auto-restore failed: could not write any credential file.")
+        return False
+
+    # Verify the restored token with a tight timeout
+    try:
+        r = subprocess.run(
+            ["claude", "auth", "status"],
+            capture_output=True, text=True, timeout=12,
+            env={**os.environ, "HOME": "/root"},
+        )
+        out = r.stdout + r.stderr
+        if '"authMethod":"claude.ai"' in out or ('"loggedIn":true' in out):
+            _log(f"Auto-restore VERIFIED ✓ — credentials written to {written} paths.")
+            return True
+        _log(f"Auto-restore wrote files but auth still invalid: {out[:200]!r}")
+        return False
+    except subprocess.TimeoutExpired:
+        _log("Auto-restore: auth verify timed out — token may be expired.")
+        return False
+    except Exception as e:
+        _log(f"Auto-restore verify exception: {e}")
+        return False
+
+
+def _pre_flight_auth_ok() -> bool:
+    """
+    Quick 12-second auth check before a full `claude -p` subprocess call.
+
+    Prevents a 360-second hang when the container restarted and the credentials
+    file was wiped — the auth check fails in 12s instead of 360s.
+
+    Only used on the direct subprocess path (when CLI_WORKER_URL is not set).
+    The CLI worker path has its own health-check via _verify_cli_health().
+
+    Returns True if auth looks fine and the full prompt call can proceed.
+    """
+    try:
+        r = subprocess.run(
+            ["claude", "auth", "status"],
+            capture_output=True, text=True, timeout=12,
+            env={**os.environ, "HOME": "/root"},
+        )
+        out = r.stdout + r.stderr
+        # Happy path
+        if '"authMethod":"claude.ai"' in out or '"loggedIn":true' in out:
+            return True
+        # Auth failure detected — try to self-restore before giving up
+        if any(p in out.lower() for p in _CLI_DOWN_PHRASES):
+            _log("Pre-flight: auth failure detected — attempting auto-restore…")
+            if _try_restore_claude_auth():
+                _log("Pre-flight: auth restored ✓ — proceeding with prompt call.")
+                return True
+            # Restore failed — set CLI_DOWN and bail fast
+            _write_flag(_CLI_DOWN_FLAG,
+                        f"{datetime.datetime.utcnow().isoformat()}|{_CLI_DOWN_TTL}")
+            _log("Pre-flight: auth restore failed — CLI_DOWN set (10 min).")
+            return False
+        # Unknown output — optimistically continue (avoids false negatives)
+        return True
+    except FileNotFoundError:
+        _write_flag(_CLI_DOWN_FLAG,
+                    f"{datetime.datetime.utcnow().isoformat()}|{_CLI_DOWN_TTL}")
+        return False
+    except subprocess.TimeoutExpired:
+        _log("Pre-flight auth check timed out (12s) — skipping CLI.")
+        return False
+    except Exception:
+        return True  # Unknown error — don't block, let the full call decide
+
+
 # ── Timeout self-healing ──────────────────────────────────────────────────────
 
 def _fire_timeout_investigation(prompt_len: int, proc=None) -> None:
@@ -557,18 +676,40 @@ def _classify_and_set_flag(stdout: str, stderr: str) -> None:
         )
         return
 
-    # CLI DOWN: auth failure / token expired — set CLI_DOWN flag, watchdog will recover
+    # CLI DOWN: auth failure / token expired
     if any(p in combined for p in _CLI_DOWN_PHRASES):
+        _log("Pro CLI AUTH FAILURE detected — attempting autonomous credential restore…")
+        # Before flagging CLI as down: try to re-write credentials from env var.
+        # This handles the common case where the container restarted and wiped
+        # /root/.claude/ from the ephemeral filesystem.
+        if _try_restore_claude_auth():
+            # Credentials restored successfully — DON'T set CLI_DOWN, just log
+            _log(
+                "Pro CLI auth SELF-HEALED ✓ — credentials restored from "
+                "CLAUDE_SESSION_TOKEN env var. CLI_DOWN flag NOT set. "
+                "Next call will retry Claude CLI normally."
+            )
+            _queue_progress(
+                "🔑 Auth restored from env var — Claude CLI is back (self-heal ✓)"
+            )
+            return  # Do not set CLI_DOWN — retry next call
+
+        # Auto-restore failed (token expired or env var not set)
         _write_flag(_CLI_DOWN_FLAG, f"{datetime.datetime.utcnow().isoformat()}|{_CLI_DOWN_TTL}")
         _log(
             "Pro CLI AUTH FAILURE — token expired or not logged in. "
-            "Switching to ANTHROPIC_API_KEY. "
-            "Watchdog probing every 5 min — will auto-revert to Pro when CLI recovers. "
-            "To fix manually: VS Code terminal → 'claude login' → update CLAUDE_SESSION_TOKEN."
+            "Auto-restore attempted but failed. "
+            "Falling back to Gemini → Anthropic API. "
+            "To fix: VS Code terminal → 'claude login' → copy new token → "
+            "update CLAUDE_SESSION_TOKEN in Railway Variables."
+        )
+        _queue_progress(
+            "⚠️ Claude CLI session expired — fell back to Gemini/API. "
+            "Update CLAUDE_SESSION_TOKEN in Railway Variables to restore."
         )
         try:
             from ..alerts.notifier import alert_claude_cli_down
-            alert_claude_cli_down(reason="Auth failure / token expired")
+            alert_claude_cli_down(reason="Auth failure / token expired — auto-restore also failed")
         except Exception:
             pass
         return
@@ -643,6 +784,12 @@ def try_pro(prompt: str, system: str = "") -> str | None:
         return cli_result or None
 
     # ── Direct subprocess fallback (no CLI worker / dev mode) ────────────────
+    # Pre-flight auth check — fails in 12s if session is gone (e.g. container
+    # restarted and /root/.claude/ was wiped), preventing a 360s hang.
+    # Also attempts autonomous credential restore before giving up.
+    if not _pre_flight_auth_ok():
+        return None
+
     def _run_subprocess(t: int):
         return subprocess.Popen(
             ["claude", "-p", full_prompt],

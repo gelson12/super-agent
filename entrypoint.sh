@@ -69,20 +69,38 @@ fi
 #                      or: base64 -i ~/.claude/credentials.json | tr -d '\n'  (macOS)
 if [ -n "$CLAUDE_SESSION_TOKEN" ]; then
     mkdir -p /root/.claude
+    # Write to ALL known credential paths so any Claude CLI version finds it.
+    # The correct path varies by CLI version — we write all of them defensively.
     echo "$CLAUDE_SESSION_TOKEN" | base64 -d > /root/.claude/.credentials.json
-    chmod 600 /root/.claude/.credentials.json
-    echo "[entrypoint] Claude.ai Pro credentials restored."
+    echo "$CLAUDE_SESSION_TOKEN" | base64 -d > /root/.claude/credentials.json
+    echo "$CLAUDE_SESSION_TOKEN" | base64 -d > /root/.claude.json
+    chmod 600 /root/.claude/.credentials.json /root/.claude/credentials.json /root/.claude.json 2>/dev/null || true
+    echo "[entrypoint] Claude.ai Pro credentials written to all known paths."
 
-    # Verify the restored token is still valid — alert clearly if expired
-    _auth_status=$(claude auth status 2>/dev/null || echo "{}")
+    # Verify the restored token is still valid — set CLI_DOWN flag IMMEDIATELY
+    # on failure so the app never attempts a live CLI call with a dead session
+    # (which would hang for 360s instead of failing fast).
+    _CLI_FLAG_DIR="/workspace"
+    [ -w "/workspace" ] || _CLI_FLAG_DIR="/app"
+    _auth_status=$(timeout 15 claude auth status 2>/dev/null || echo "{}")
     if echo "$_auth_status" | grep -q '"authMethod":"claude.ai"'; then
         _sub=$(echo "$_auth_status" | grep -o '"subscriptionType":"[^"]*"' | cut -d'"' -f4)
-        echo "[entrypoint] Claude.ai Pro token VALID — authMethod=claude.ai subscriptionType=${_sub:-unknown}. Pro subscription active."
+        echo "[entrypoint] Claude.ai Pro token VALID — authMethod=claude.ai subscriptionType=${_sub:-unknown}. CLI ready."
+        # Clear any stale CLI_DOWN flag from a previous failed boot
+        rm -f "${_CLI_FLAG_DIR}/.pro_cli_down" 2>/dev/null || true
     elif echo "$_auth_status" | grep -q '"loggedIn":true'; then
-        echo "[entrypoint] WARNING: Claude logged in but authMethod is not claude.ai (using API key fallback). Re-run 'claude login' in VS Code terminal and update CLAUDE_SESSION_TOKEN."
+        echo "[entrypoint] WARNING: Claude logged in but NOT via claude.ai (API key mode). Pro subscription inactive."
+        # Flag as down so the app doesn't waste time — it will route to Gemini/API
+        echo "$(date -u +%Y-%m-%dT%H:%M:%S)|600" > "${_CLI_FLAG_DIR}/.pro_cli_down"
+        echo "[entrypoint] CLI_DOWN flag set — app will use Gemini/API fallback."
     else
-        echo "[entrypoint] WARNING: CLAUDE_SESSION_TOKEN EXPIRED — Pro unavailable, falling back to ANTHROPIC_API_KEY."
-        echo "[entrypoint] TO REFRESH: VS Code terminal → 'claude login' → approve in browser → 'cat /root/.claude/.credentials.json | base64 -w0' → update CLAUDE_SESSION_TOKEN in Railway Variables."
+        echo "[entrypoint] WARNING: CLAUDE_SESSION_TOKEN INVALID OR EXPIRED."
+        echo "[entrypoint] TO REFRESH: VS Code terminal → 'claude login' → approve browser → run:"
+        echo "[entrypoint]   cat /root/.claude/.credentials.json | base64 -w0"
+        echo "[entrypoint]   then update CLAUDE_SESSION_TOKEN in Railway Variables → redeploy."
+        # Set CLI_DOWN flag immediately — prevents 360s hangs on every request
+        echo "$(date -u +%Y-%m-%dT%H:%M:%S)|600" > "${_CLI_FLAG_DIR}/.pro_cli_down"
+        echo "[entrypoint] CLI_DOWN flag set — app routes to Gemini/API until token is refreshed."
     fi
 else
     echo "[entrypoint] WARNING: CLAUDE_SESSION_TOKEN not set — claude CLI will fall back to ANTHROPIC_API_KEY."
