@@ -794,10 +794,18 @@ def try_pro(prompt: str, system: str = "") -> str | None:
         if any(p in _cli_lower for p in _DAILY_PHRASES + _BURST_PHRASES + _CLI_DOWN_PHRASES):
             _classify_and_set_flag(cli_result, "")
             return None
-        # Credit/billing errors — API key on the CLI worker has no credits.
-        # Return None so Gemini is tried. No flag set — this is not a quota issue.
+        # Credit/billing errors — CLI worker's OAuth session is expired and it
+        # fell back to an API key with no credits. Set BURST flag (30 min) so
+        # all subsequent requests skip the CLI worker immediately instead of
+        # waiting 15-50s for it to fail again on each message.
         if any(p in _cli_lower for p in _CREDIT_ERROR_PHRASES + _IGNORED_PHRASES):
-            _log(f"CLI worker returned a credit/billing error — falling back to Gemini. {cli_result[:120]!r}")
+            _log(
+                f"CLI worker returned a credit/billing error — setting BURST flag (30 min) "
+                f"to skip CLI worker. Refresh CLAUDE_SESSION_TOKEN in Railway env vars to restore. "
+                f"Response: {cli_result[:120]!r}"
+            )
+            _write_flag(_BURST_FLAG)  # Skip CLI for 30 min — prevents 50s delay on every request
+            _queue_progress("⚠️ CLI session expired — using Gemini (refresh CLAUDE_SESSION_TOKEN to restore Claude CLI)")
             return None
         return cli_result or None
 
