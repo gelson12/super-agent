@@ -803,11 +803,11 @@ def try_pro(prompt: str, system: str = "") -> str | None:
                 f"CLI worker returned a credit/billing error — setting BURST flag (30 min) "
                 f"and falling through to super-agent local CLI. Response: {cli_result[:120]!r}"
             )
-            _write_flag(_BURST_FLAG)  # Skip inspiring-cat for 30 min on future requests
+            _write_flag(_BURST_FLAG)
             _queue_progress("⚠️ inspiring-cat CLI expired — trying super-agent local CLI…")
-            # Fall through to direct subprocess below (do NOT return None here)
-            # so super-agent's own Claude CLI handles this request right now.
-        return cli_result or None
+            # Do NOT return here — fall through to the direct subprocess below.
+        else:
+            return cli_result or None
 
     # ── Direct subprocess fallback (CLI worker unreachable — use local CLI) ─────
     # This path activates when inspiring-cat is down/unreachable. super-agent has
