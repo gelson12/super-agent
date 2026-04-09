@@ -317,18 +317,8 @@ def _ask_opus(prompt: str) -> str:
     except Exception:
         pass
 
-    # Last resort — Anthropic API
-    try:
-        import anthropic
-        client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
-        msg = client.messages.create(
-            model="claude-opus-4-6",
-            max_tokens=8192,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        return msg.content[0].text
-    except Exception as e:
-        return f"[weekly_review: all backends failed — {e}]"
+    # CLI and Gemini both unavailable — do not call Anthropic API
+    return "[weekly_review: CLI and Gemini both unavailable — skipping review this cycle]"
 
 
 def _is_core_file(file_path: str) -> bool:
