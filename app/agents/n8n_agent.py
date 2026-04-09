@@ -227,24 +227,38 @@ def run_n8n_agent(message: str) -> str:
     except Exception:
         pass
 
-    # ── 2. Gemini CLI — try for ALL requests (free, no API cost) ────────────
-    # For build tasks Gemini can't call Python tools, but it can design/describe
-    # the workflow. Always try it before burning Anthropic API credits.
+    # ── 2. Gemini CLI — informational queries only (no n8n tool access) ────────
+    # Gemini can describe/design workflows but cannot call Python or MCP tools.
+    # Skip Gemini if it says it can't perform the task due to missing tool access.
+    _GEMINI_NO_TOOLS = (
+        "operating as the gemini cli",
+        "don't have direct access to the claude mcp tools",
+        "i don't have direct access",
+        "cannot directly interact with",
+        "don't have access to the mcp",
+        "gemini cli, i don't",
+        "as gemini, i",
+        "i'm gemini",
+    )
     try:
         from ..learning.gemini_cli_worker import ask_gemini_cli
         gemini = ask_gemini_cli(f"{_SYSTEM}\n\n{message}")
         if gemini and not gemini.startswith("["):
-            return gemini
+            if any(p in gemini.lower() for p in _GEMINI_NO_TOOLS):
+                # Gemini admitted it can't use n8n tools — fall through to LangGraph
+                from ..activity_log import bg_log as _bg
+                _bg("n8n agent: Gemini has no tool access — falling through to LangGraph", source="n8n_agent")
+            else:
+                return gemini
     except Exception:
         pass
 
-    # ── 3. CLI and Gemini both unavailable — never call Anthropic API ───────
-    # API credits are reserved for conversational ask_claude() calls only.
-    # Agent tool-use (create/update workflows) requires CLI access — cannot
-    # substitute with a raw API call that has no n8n tool bindings.
-    return (
-        "⚠️ Claude CLI (inspiring-cat) and Gemini are both temporarily unavailable.\n\n"
-        "Cannot build or modify n8n workflows without CLI tool access. "
-        "Please try again in a few minutes — the CLI worker may be busy or restarting.\n\n"
-        "If this persists, open inspiring-cat VS Code and run `claude login` to refresh credentials."
-    )
+    # ── 3. LangGraph + Anthropic API — full Python n8n_tools, builds directly ──
+    # _N8N_TOOLS includes n8n_create_workflow, n8n_update_workflow, n8n_activate_workflow
+    # etc. — these call the n8n REST API directly via httpx, no MCP, no CLI needed.
+    try:
+        from ..activity_log import bg_log as _bg
+        _bg("n8n agent: using LangGraph (Anthropic API) — CLI/Gemini unavailable", source="n8n_agent")
+        return _invoke(message)
+    except Exception as _e:
+        return f"⚠️ n8n agent error: {_e}"

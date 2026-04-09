@@ -168,10 +168,20 @@ def run_shell_agent(message: str, authorized: bool = False, debug_mode: bool = F
     except Exception:
         pass
 
-    # ── 3. CLI and Gemini both unavailable — never call Anthropic API ───────
-    return (
-        "⚠️ Claude CLI (inspiring-cat) and Gemini are both temporarily unavailable.\n\n"
-        "Cannot execute shell/infrastructure commands without CLI tool access. "
-        "Please try again in a few minutes.\n\n"
-        "If this persists, open inspiring-cat VS Code and run `claude login` to refresh credentials."
-    )
+    # ── 3. LangGraph + Anthropic API — full shell + infrastructure tools ──────
+    try:
+        from ..activity_log import bg_log as _bg
+        from langchain_anthropic import ChatAnthropic
+        from langgraph.prebuilt import create_react_agent
+        _bg("Shell agent: using LangGraph (Anthropic API) — CLI/Gemini unavailable", source="shell_agent")
+        _llm = ChatAnthropic(model="claude-sonnet-4-6", api_key=settings.anthropic_api_key, max_tokens=8192)
+        _agent = create_react_agent(_llm, tools)
+        _result = _agent.invoke({
+            "messages": [
+                {"role": "system", "content": _SYSTEM_PROMPT},
+                {"role": "user", "content": user_content},
+            ]
+        })
+        return extract_final_agent_text(_result) or "[shell agent: no response]"
+    except Exception as _e:
+        return f"⚠️ Shell agent error: {_e}"

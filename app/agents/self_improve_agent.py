@@ -268,10 +268,10 @@ def run_self_improve_agent(message: str, authorized: bool = False) -> str:
     except Exception:
         pass
 
-    # ── 3. CLI and Gemini both unavailable — never call Anthropic API ───────
-    return (
-        "⚠️ Claude CLI (inspiring-cat) and Gemini are both temporarily unavailable.\n\n"
-        "Cannot run self-improvement tasks without CLI tool access. "
-        "Please try again in a few minutes.\n\n"
-        "If this persists, open inspiring-cat VS Code and run `claude login` to refresh credentials."
-    )
+    # ── 3. LangGraph + Anthropic API — full tool access ──────────────────────
+    try:
+        from ..activity_log import bg_log as _bg
+        _bg("Self-improve agent: using LangGraph (Anthropic API) — CLI/Gemini unavailable", source="self_improve_agent")
+        return _invoke(message)
+    except Exception as _e:
+        return f"⚠️ Self-improve agent error: {_e}"
