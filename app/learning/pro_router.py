@@ -209,18 +209,61 @@ def _daily_flag_active() -> bool:
     return _flag_active(_DAILY_FLAG, ttl)
 
 
+def _verify_cli_health() -> bool:
+    """
+    Ping the CLI worker /health endpoint to get ground truth on claude_available.
+    Returns True if the live endpoint confirms Claude CLI is up.
+    Never raises — returns False on any network error.
+    """
+    import json as _json
+    cli_url = _cli_worker_url()
+    if not cli_url:
+        return False
+    try:
+        with urllib.request.urlopen(f"{cli_url}/health", timeout=8) as resp:
+            data = _json.loads(resp.read().decode("utf-8"))
+            return bool(data.get("claude_available", False))
+    except Exception:
+        return False
+
+
 def is_pro_available() -> bool:
-    """True if Pro subscription can be used right now."""
-    return (
-        not _daily_flag_active()
-        and not _flag_active(_BURST_FLAG, _BURST_TTL)
-        and not _flag_active(_CLI_DOWN_FLAG, _CLI_DOWN_TTL)
-    )
+    """
+    True if Pro subscription can be used right now.
+
+    If the CLI_DOWN flag is set, we verify against the LIVE /health endpoint
+    before trusting it — stale flags are auto-cleared when the CLI is actually up.
+    This prevents false negatives that push traffic to the Anthropic API
+    unnecessarily (and burn credits).
+    """
+    if _daily_flag_active() or _flag_active(_BURST_FLAG, _BURST_TTL):
+        return False  # Daily/burst limits are legitimate — no override needed
+
+    if _flag_active(_CLI_DOWN_FLAG, _CLI_DOWN_TTL):
+        # Flag says CLI is down — but verify against live /health before trusting it
+        if _verify_cli_health():
+            # Health endpoint says CLI is actually UP — flag is stale, clear it
+            _log("CLI_DOWN flag was set but /health reports claude_available=true — clearing stale flag.")
+            clear_cli_down_flag()
+            return True
+        return False  # Health endpoint confirmed CLI is genuinely down
+
+    return True
 
 
 def is_cli_down() -> bool:
-    """True if the CLI_DOWN flag is active (auth failure, binary missing, etc.)."""
-    return _flag_active(_CLI_DOWN_FLAG, _CLI_DOWN_TTL)
+    """
+    True if Claude CLI is genuinely down — verifies against live /health endpoint
+    rather than trusting a potentially stale flag file.
+    """
+    if not _flag_active(_CLI_DOWN_FLAG, _CLI_DOWN_TTL):
+        return False  # No flag set — CLI assumed available
+    # Flag is set — cross-check with live endpoint
+    if _verify_cli_health():
+        _log("is_cli_down: CLI_DOWN flag stale — /health says up. Clearing flag.")
+        clear_cli_down_flag()
+        return False
+    return True
 
 
 def clear_cli_down_flag() -> None:
