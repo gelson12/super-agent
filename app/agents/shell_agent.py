@@ -121,9 +121,6 @@ def run_shell_agent(message: str, authorized: bool = False, debug_mode: bool = F
         authorized: True if the owner safe word was verified — enables write tools.
         debug_mode: True when routed as isolation_debug — prepends ISOLATION_DEBUG_PROMPT.
     """
-    if not settings.anthropic_api_key:
-        return "[Shell agent error: ANTHROPIC_API_KEY not set]"
-
     tools = [
         run_shell_command, write_workspace_file, clone_repo, list_workspace, run_claude_cli,
         # Flutter build pipeline — use build_flutter_voice_app for voice app requests
@@ -139,13 +136,6 @@ def run_shell_agent(message: str, authorized: bool = False, debug_mode: bool = F
         tools.append(run_authorized_shell_command)
         tools.append(railway_redeploy)
 
-    llm = ChatAnthropic(
-        model="claude-haiku-4-5-20251001",
-        api_key=settings.anthropic_api_key,
-        max_tokens=8192,
-    )
-    agent = create_react_agent(llm, tools)
-
     # Inject winning build recipe if one exists — agent replays what worked last time
     _recipe_hint = ""
     if any(kw in message.lower() for kw in ("build", "apk", "flutter", "voice app")):
@@ -157,6 +147,30 @@ def run_shell_agent(message: str, authorized: bool = False, debug_mode: bool = F
 
     base_content = f"{_recipe_hint}\n\n{message}".strip() if _recipe_hint else message
     user_content = f"{ISOLATION_DEBUG_PROMPT}\n\n---\n\n{base_content}" if debug_mode else base_content
+
+    # ── 1. Claude CLI (zero API cost, preferred) ──────────────────────────────
+    try:
+        from ..learning.pro_router import try_pro, is_pro_available
+        if is_pro_available():
+            cli_result = try_pro(f"{_SYSTEM_PROMPT}\n\n{user_content}")
+            if cli_result and not cli_result.startswith("["):
+                return cli_result
+    except Exception:
+        pass
+
+    # ── 2. Anthropic API + LangGraph (last resort — full tool access) ─────────
+    if not settings.anthropic_api_key:
+        return (
+            "[Shell agent: Claude CLI unavailable and ANTHROPIC_API_KEY not set. "
+            "Refresh Claude session token in VS Code on inspiring-cat.]"
+        )
+
+    llm = ChatAnthropic(
+        model="claude-haiku-4-5-20251001",
+        api_key=settings.anthropic_api_key,
+        max_tokens=8192,
+    )
+    agent = create_react_agent(llm, tools)
 
     def _invoke(msg: str) -> str:
         result = agent.invoke({

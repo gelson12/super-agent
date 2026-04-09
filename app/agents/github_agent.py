@@ -95,7 +95,7 @@ def _get_agent():
 
 
 def _invoke(message: str) -> str:
-    """Raw agent invoke — called by run_with_plan_and_recovery."""
+    """Raw agent invoke via LangGraph + Anthropic API (last resort)."""
     agent = _get_agent()
     result = agent.invoke({
         "messages": [
@@ -109,17 +109,27 @@ def _invoke(message: str) -> str:
 
 def run_github_agent(message: str) -> str:
     """
-    Run the GitHub agent with pre-execution model competition + self-healing.
-
-    Pipeline:
-      1. Claude vs DeepSeek compete on execution plan
-      2. Haiku adjudicates — winning plan injected into agent context
-      3. Agent executes; on failure → diagnose → SAFE auto-fix or CRITICAL safe-word prompt
-      4. Up to 3 self-healing retries before escalating
+    Run the GitHub agent. Routing: Claude CLI (free) → Anthropic API (last resort).
     """
     if not settings.github_pat:
         return "[GitHub agent error: GITHUB_PAT not set]"
 
+    # ── 1. Claude CLI (zero cost, preferred) ─────────────────────────────────
+    try:
+        from ..learning.pro_router import try_pro, is_pro_available
+        if is_pro_available():
+            cli_result = try_pro(f"{_SYSTEM}\n\n{message}")
+            if cli_result and not cli_result.startswith("["):
+                return cli_result
+    except Exception:
+        pass
+
+    # ── 2. Anthropic API + LangGraph (last resort) ────────────────────────────
+    if not settings.anthropic_api_key:
+        return (
+            "[GitHub agent: Claude CLI unavailable and ANTHROPIC_API_KEY not set. "
+            "Refresh Claude session token in VS Code on inspiring-cat.]"
+        )
     return run_with_plan_and_recovery(
         agent_fn=_invoke,
         message=message,
