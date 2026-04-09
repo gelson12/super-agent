@@ -571,7 +571,15 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
     complexity = score_complexity(message)
 
     # ── 4a. Web search routing (Feature 1) ───────────────────────────────────
-    if _is_search_request(message):
+    # Guard: never misroute to web_search when a specific agent owns the request.
+    # _SEARCH_KEYWORDS like "current" / "trigger" appear in n8n / shell messages.
+    if _is_search_request(message) and not (
+        _is_n8n_request(message)
+        or _is_shell_request(message)
+        or _is_github_request(message)
+        or _is_self_improve_request(message)
+        or _is_debug_request(message)
+    ):
         from ..tools.search_tools import web_search
         results = web_search.invoke({"query": message})
         synthesis_prompt = (
