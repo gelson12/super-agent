@@ -29,7 +29,12 @@ _TIMEOUTS = {
 }
 
 _WORKSPACE = "/workspace"
-_CLI_ENV = {**os.environ, "HOME": "/root"}
+# Strip ANTHROPIC_API_KEY so claude CLI uses OAuth (claude.ai Pro subscription)
+# instead of the API key. When ANTHROPIC_API_KEY is present, claude -p always
+# prefers it over OAuth — causing "Credit balance is too low" even when Pro
+# credentials are valid in /root/.claude/.credentials.json
+_CLI_ENV = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
+_CLI_ENV["HOME"] = "/root"
 
 
 def _conn():
