@@ -1915,16 +1915,29 @@ def credits_pro_status():
 
 @app.post("/credits/pro-reset", tags=["meta"])
 def credits_pro_reset():
-    """
-    Manually reset the Pro exhaustion flag (e.g. after account billing renews mid-week).
-    Requires X-Token auth.
-    """
+    """Manually reset the Pro exhaustion/burst flag (POST version)."""
     try:
         from .learning.pro_router import reset_pro_flag
         reset_pro_flag()
-        return {"ok": True, "message": "Pro exhaustion flag cleared — Pro subscription is now primary again."}
+        return {"ok": True, "message": "Pro flag cleared — Claude CLI is now primary again."}
     except Exception as e:
         return {"ok": False, "error": str(e)}
+
+
+@app.get("/credits/pro-reset", tags=["meta"])
+def credits_pro_reset_get():
+    """Manually reset the Pro exhaustion/burst flag — browser-friendly GET version."""
+    try:
+        from .learning.pro_router import reset_pro_flag
+        reset_pro_flag()
+        from fastapi.responses import HTMLResponse
+        return HTMLResponse(
+            "<h2 style='font-family:sans-serif;color:#4ade80'>✅ Pro flag cleared!</h2>"
+            "<p style='font-family:sans-serif'>Claude CLI is now the primary model again.<br>"
+            "<a href='/'>← Back to Super Agent</a></p>"
+        )
+    except Exception as e:
+        return HTMLResponse(f"<h2 style='color:red'>Error: {e}</h2>")
 
 
 @app.get("/benchmark/latest", tags=["benchmark"])
