@@ -228,32 +228,31 @@ def run_n8n_agent(message: str) -> str:
     except Exception:
         pass
 
-    # ── 2. Gemini CLI — informational only (no tool access, cannot build) ─────
-    # Gemini can answer questions about n8n but cannot call tools to create workflows.
-    # Only use it when the request is clearly informational (not a build/create/update).
-    _build_keywords = ("create", "build", "make", "design", "add node", "update", "delete",
-                       "activate", "deactivate", "execute", "fix workflow", "modify")
-    _is_build = any(w in message.lower() for w in _build_keywords)
-    if not _is_build:
-        try:
-            from ..learning.gemini_cli_worker import ask_gemini_cli
-            gemini = ask_gemini_cli(f"{_SYSTEM}\n\n{message}")
-            if gemini and not gemini.startswith("["):
-                return gemini
-        except Exception:
-            pass
+    # ── 2. Gemini CLI — try for ALL requests (free, no API cost) ────────────
+    # For build tasks Gemini can't call Python tools, but it can design/describe
+    # the workflow. Always try it before burning Anthropic API credits.
+    try:
+        from ..learning.gemini_cli_worker import ask_gemini_cli
+        gemini = ask_gemini_cli(f"{_SYSTEM}\n\n{message}")
+        if gemini and not gemini.startswith("["):
+            return gemini
+    except Exception:
+        pass
 
     # ── 3. LangGraph + Anthropic API (last resort — full Python tool access) ──
     if not settings.anthropic_api_key:
         return (
-            "[n8n agent: Claude CLI unavailable and ANTHROPIC_API_KEY not set.\n"
+            "[n8n agent: Claude CLI and Gemini both unavailable and ANTHROPIC_API_KEY not set.\n"
             "To fix: refresh Claude session token in VS Code on inspiring-cat → "
             "'claude login' → update CLAUDE_SESSION_TOKEN in Railway Variables.]"
         )
 
-    return run_with_plan_and_recovery(
+    _result = run_with_plan_and_recovery(
         agent_fn=_invoke,
         message=message,
         agent_type="n8n_agent",
         tool_names=[t.name for t in _N8N_TOOLS],
     )
+    # Tag response so the streaming layer can emit a warning to the user
+    _marker = "\x00API_FALLBACK\x00"
+    return (_marker + _result) if (_result and not _result.startswith("[")) else _result

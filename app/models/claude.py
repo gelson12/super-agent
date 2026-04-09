@@ -1,9 +1,24 @@
 import base64
+import threading
 from anthropic import Anthropic, APIError, APIConnectionError, RateLimitError
 from ..config import settings
 from ..prompts import SYSTEM_PROMPT_CLAUDE
 
 _client: Anthropic | None = None
+
+# Thread-local flag: set True when this thread fell through to Anthropic API.
+# The streaming layer checks and clears this flag to emit a warning progress event.
+_tls = threading.local()
+
+
+def api_fallback_used() -> bool:
+    """Return True if any ask_claude* call in this thread used the Anthropic API."""
+    return bool(getattr(_tls, "api_used", False))
+
+
+def clear_api_fallback_flag() -> None:
+    """Clear the per-thread API usage flag."""
+    _tls.api_used = False
 
 
 def _get_client() -> Anthropic:
@@ -40,6 +55,7 @@ def ask_claude(prompt: str, system: str = SYSTEM_PROMPT_CLAUDE) -> str:
     # 3. Anthropic API (last resort — costs credits)
     if not settings.anthropic_api_key:
         return "[Claude error: ANTHROPIC_API_KEY not set]"
+    _tls.api_used = True  # signal to upstream that API credits are being consumed
     try:
         resp = _get_client().messages.create(
             model="claude-sonnet-4-6",
@@ -81,6 +97,7 @@ def ask_claude_haiku(prompt: str, system: str = SYSTEM_PROMPT_CLAUDE) -> str:
 
     if not settings.anthropic_api_key:
         return "[Claude error: ANTHROPIC_API_KEY not set]"
+    _tls.api_used = True  # signal to upstream that API credits are being consumed
     try:
         resp = _get_client().messages.create(
             model="claude-haiku-4-5-20251001",

@@ -248,7 +248,7 @@ def _invoke(message: str) -> str:
 
 def run_self_improve_agent(message: str, authorized: bool = False) -> str:
     """
-    Run the self-improvement agent. Routing: Claude CLI (free) → Anthropic API (last resort).
+    Run the self-improvement agent. Routing: Claude CLI → Gemini → Anthropic API (last resort).
     """
     # ── 1. Claude CLI (zero cost, preferred) ─────────────────────────────────
     try:
@@ -260,16 +260,27 @@ def run_self_improve_agent(message: str, authorized: bool = False) -> str:
     except Exception:
         pass
 
-    # ── 2. Anthropic API + LangGraph (last resort) ────────────────────────────
+    # ── 2. Gemini CLI (free fallback) ─────────────────────────────────────────
+    try:
+        from ..learning.gemini_cli_worker import ask_gemini_cli
+        gemini = ask_gemini_cli(f"{_SYSTEM}\n\n{message}")
+        if gemini and not gemini.startswith("["):
+            return gemini
+    except Exception:
+        pass
+
+    # ── 3. Anthropic API + LangGraph (last resort) ────────────────────────────
     if not settings.anthropic_api_key:
         return (
-            "[Self-improve agent: Claude CLI unavailable and ANTHROPIC_API_KEY not set. "
+            "[Self-improve agent: Claude CLI and Gemini both unavailable and ANTHROPIC_API_KEY not set. "
             "Refresh Claude session token in VS Code on inspiring-cat.]"
         )
     tool_names = [t.name for t in _SELF_IMPROVE_TOOLS]
-    return run_with_plan_and_recovery(
+    _result = run_with_plan_and_recovery(
         agent_fn=_invoke,
         message=message,
         agent_type="self_improve_agent",
         tool_names=tool_names,
     )
+    _marker = "\x00API_FALLBACK\x00"
+    return (_marker + _result) if (_result and not _result.startswith("[")) else _result

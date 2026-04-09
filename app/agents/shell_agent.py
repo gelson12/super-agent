@@ -158,10 +158,21 @@ def run_shell_agent(message: str, authorized: bool = False, debug_mode: bool = F
     except Exception:
         pass
 
-    # ── 2. Anthropic API + LangGraph (last resort — full tool access) ─────────
+    # ── 2. Gemini CLI (free fallback) ─────────────────────────────────────────
+    # Gemini has no shell tool access but can answer informational queries.
+    # Always try it before spending API credits.
+    try:
+        from ..learning.gemini_cli_worker import ask_gemini_cli
+        gemini = ask_gemini_cli(f"{_SYSTEM_PROMPT}\n\n{user_content}")
+        if gemini and not gemini.startswith("["):
+            return gemini
+    except Exception:
+        pass
+
+    # ── 3. Anthropic API + LangGraph (last resort — full tool access) ─────────
     if not settings.anthropic_api_key:
         return (
-            "[Shell agent: Claude CLI unavailable and ANTHROPIC_API_KEY not set. "
+            "[Shell agent: Claude CLI and Gemini both unavailable and ANTHROPIC_API_KEY not set. "
             "Refresh Claude session token in VS Code on inspiring-cat.]"
         )
 
@@ -182,9 +193,11 @@ def run_shell_agent(message: str, authorized: bool = False, debug_mode: bool = F
         text = extract_final_agent_text(result)
         return text or "[Shell agent returned no response]"
 
-    return run_with_plan_and_recovery(
+    _result = run_with_plan_and_recovery(
         agent_fn=_invoke,
         message=user_content,
         agent_type="shell_agent",
         tool_names=[t.name for t in tools],
     )
+    _marker = "\x00API_FALLBACK\x00"
+    return (_marker + _result) if (_result and not _result.startswith("[")) else _result

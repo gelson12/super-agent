@@ -482,6 +482,13 @@ def chat_stream(req: ChatRequest, request: Request):
                 yield "data: [PROGRESS:🤖 Routing request…]\n\n"
 
             # ── 2. Run the full dispatcher (agents, tools, routing) ───────────
+            # Clear the per-thread API usage flag before dispatch so we can
+            # detect if any ask_claude* call fell through to the Anthropic API.
+            try:
+                from .models.claude import clear_api_fallback_flag, api_fallback_used
+                clear_api_fallback_flag()
+            except Exception:
+                api_fallback_used = lambda: False  # noqa: E731
             try:
                 _result = dispatch(msg, session_id=req.session_id)
             except Exception as _dispatch_err:
@@ -492,6 +499,23 @@ def chat_stream(req: ChatRequest, request: Request):
                 return
 
             _response_text = _result["response"]
+
+            # ── API fallback detection ────────────────────────────────────────
+            # Two signals: sentinel prefix from agent functions (tool-using agents)
+            # OR thread-local flag from ask_claude* (conversational/search routes).
+            _API_MARKER = "\x00API_FALLBACK\x00"
+            _api_warned = False
+            if _response_text.startswith(_API_MARKER):
+                _response_text = _response_text[len(_API_MARKER):]
+                yield "data: [PROGRESS:⚠️ Claude CLI timed out — Anthropic API used (costs credits)]\n\n"
+                _api_warned = True
+            if not _api_warned:
+                try:
+                    if api_fallback_used():
+                        yield "data: [PROGRESS:⚠️ Claude CLI & Gemini unavailable — Anthropic API used (costs credits)]\n\n"
+                except Exception:
+                    pass
+
             if not _response_text.startswith("["):
                 append_exchange(req.session_id, msg, _response_text)
                 _cat = "n8n_workflow" if req.session_id.startswith("n8n") else "chat"
