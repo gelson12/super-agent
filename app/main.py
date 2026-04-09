@@ -465,21 +465,26 @@ def chat_stream(req: ChatRequest, request: Request):
         # Emit progress events IMMEDIATELY, then run dispatch inside the generator
         # so the user sees "thinking" feedback instead of a frozen cursor.
         def _generate_routed():
-            # ── 1. Emit a context-aware progress message right away ───────────
+            # ── 1. Emit a context-aware progress message with time estimate ───
+            _msg_lower = msg.lower()
+            _is_apk = any(w in _msg_lower for w in ("apk", "flutter", "android app", "build app", "voice app"))
             if _is_n8n_request(msg):
-                yield "data: [PROGRESS:⚙️ Building n8n workflow…]\n\n"
+                yield "data: [PROGRESS:⚙️ Building n8n workflow… (est. 1–4 min)]\n\n"
             elif _is_github_request(msg):
-                yield "data: [PROGRESS:📁 Accessing GitHub…]\n\n"
+                yield "data: [PROGRESS:📁 Accessing GitHub… (est. 20–60s)]\n\n"
             elif _is_shell_request(msg):
-                yield "data: [PROGRESS:💻 Running shell commands…]\n\n"
+                if _is_apk:
+                    yield "data: [PROGRESS:💻 Compiling Android APK… (est. 5–15 min)]\n\n"
+                else:
+                    yield "data: [PROGRESS:💻 Running shell commands… (est. 30–90s)]\n\n"
             elif _is_self_improve_request(msg):
-                yield "data: [PROGRESS:🔬 Analysing system health…]\n\n"
+                yield "data: [PROGRESS:🔬 Analysing system health… (est. 1–3 min)]\n\n"
             elif _is_debug_request(msg):
-                yield "data: [PROGRESS:🐛 Running diagnostics…]\n\n"
+                yield "data: [PROGRESS:🐛 Running diagnostics… (est. 30–90s)]\n\n"
             elif _is_search_request(msg):
-                yield "data: [PROGRESS:🔍 Searching the web…]\n\n"
+                yield "data: [PROGRESS:🔍 Searching the web… (est. 10–20s)]\n\n"
             else:
-                yield "data: [PROGRESS:🤖 Routing request…]\n\n"
+                yield "data: [PROGRESS:🤖 Routing request… (est. 10–30s)]\n\n"
 
             # ── 2. Run the full dispatcher (agents, tools, routing) ───────────
             # Clear the per-thread API usage flag before dispatch so we can
@@ -489,6 +494,12 @@ def chat_stream(req: ChatRequest, request: Request):
                 clear_api_fallback_flag()
             except Exception:
                 api_fallback_used = lambda: False  # noqa: E731
+            # Also clear the pro_router progress queue so stale events don't bleed in
+            try:
+                from .learning.pro_router import drain_progress_events as _drain
+                _drain()  # clear any leftover events from a previous request
+            except Exception:
+                _drain = lambda: []  # noqa: E731
             try:
                 _result = dispatch(msg, session_id=req.session_id)
             except Exception as _dispatch_err:
@@ -500,6 +511,16 @@ def chat_stream(req: ChatRequest, request: Request):
 
             _response_text = _result["response"]
 
+            # ── 2b. Drain self-healing / retry events queued by pro_router ────
+            # These capture timeout retries and self-heal milestones so the user
+            # sees exactly what Super Agent did on their behalf.
+            try:
+                from .learning.pro_router import drain_progress_events
+                for _ev in drain_progress_events():
+                    yield f"data: [PROGRESS:{_ev}]\n\n"
+            except Exception:
+                pass
+
             # ── API fallback detection ────────────────────────────────────────
             # Two signals: sentinel prefix from agent functions (tool-using agents)
             # OR thread-local flag from ask_claude* (conversational/search routes).
@@ -507,7 +528,7 @@ def chat_stream(req: ChatRequest, request: Request):
             _api_warned = False
             if _response_text.startswith(_API_MARKER):
                 _response_text = _response_text[len(_API_MARKER):]
-                yield "data: [PROGRESS:⚠️ Claude CLI timed out — Anthropic API used (costs credits)]\n\n"
+                yield "data: [PROGRESS:⚠️ Claude CLI & Gemini unavailable — Anthropic API used (costs credits)]\n\n"
                 _api_warned = True
             if not _api_warned:
                 try:
@@ -558,12 +579,15 @@ def chat_stream(req: ChatRequest, request: Request):
 
     def _generate():
         # ── 1. Claude CLI (zero cost) ─────────────────────────────────────────
-        yield "data: [PROGRESS:🤔 Thinking…]\n\n"
+        yield "data: [PROGRESS:🤔 Thinking… (est. 5–15s)]\n\n"
         try:
-            from .learning.pro_router import try_pro, is_pro_available
+            from .learning.pro_router import try_pro, is_pro_available, drain_progress_events as _drain_conv
             if is_pro_available():
-                yield "data: [PROGRESS:⚡ Using Claude CLI…]\n\n"
+                yield "data: [PROGRESS:⚡ Using Claude CLI… (est. 5–15s)]\n\n"
                 cli_resp = try_pro(f"{system}\n\n{msg}")
+                # Surface any self-healing events that fired during the CLI call
+                for _ev in _drain_conv():
+                    yield f"data: [PROGRESS:{_ev}]\n\n"
                 if cli_resp and not cli_resp.startswith("["):
                     _store_mem(req.session_id, f"Q: {msg[:300]} A: {cli_resp[:300]}")
                     append_exchange(req.session_id, msg, cli_resp)
@@ -584,7 +608,7 @@ def chat_stream(req: ChatRequest, request: Request):
             pass
 
         # ── 2. Gemini CLI (free fallback) ─────────────────────────────────────
-        yield "data: [PROGRESS:🤖 Trying Gemini…]\n\n"
+        yield "data: [PROGRESS:🤖 Trying Gemini… (est. 5–10s)]\n\n"
         try:
             from .learning.gemini_cli_worker import ask_gemini_cli
             gemini_resp = ask_gemini_cli(msg)
@@ -608,7 +632,7 @@ def chat_stream(req: ChatRequest, request: Request):
             pass
 
         # ── 3. Anthropic API streaming (last resort) ──────────────────────────
-        yield "data: [PROGRESS:⚡ Using Anthropic API…]\n\n"
+        yield "data: [PROGRESS:⚡ Using Anthropic API… (est. 3–8s, costs credits)]\n\n"
         full_response = []
         try:
             client = _anthropic.Anthropic(api_key=settings.anthropic_api_key)

@@ -29,10 +29,31 @@ import json
 import os
 import re
 import subprocess
+import threading
 import time
 import urllib.request
 import datetime
 from pathlib import Path
+
+# ── Per-request progress event queue ─────────────────────────────────────────
+# try_pro() queues UI events (timeout retries, self-healing milestones) here.
+# The SSE generator in main.py drains them AFTER dispatch() returns so they
+# appear in the user's thinking-step bubble before the response streams in.
+_thread_events = threading.local()
+
+
+def _queue_progress(msg: str) -> None:
+    """Queue a progress message for the current request's SSE stream."""
+    if not hasattr(_thread_events, "events"):
+        _thread_events.events = []
+    _thread_events.events.append(msg)
+
+
+def drain_progress_events() -> list:
+    """Return and clear all queued progress events for this thread."""
+    events = list(getattr(_thread_events, "events", []))
+    _thread_events.events = []
+    return events
 
 
 def _cli_worker_url() -> str:
@@ -660,6 +681,11 @@ def try_pro(prompt: str, system: str = "") -> str | None:
             f"CLI TIMEOUT (attempt 1) — prompt_len={len(full_prompt)} chars, "
             f"timeout={_timeout}s. Firing parallel investigation + retrying once."
         )
+        # Queue visible self-healing milestone for the current SSE stream
+        _queue_progress(
+            f"🔧 CLI timed out after {_timeout}s — "
+            f"Super Agent is self-healing: killing hung process, retrying with fresh connection…"
+        )
         # Fire parallel self-healing in a daemon thread (non-blocking)
         _fire_timeout_investigation(len(full_prompt), proc=proc)
 
@@ -667,12 +693,14 @@ def try_pro(prompt: str, system: str = "") -> str | None:
         # The investigation killed any hung process; a fresh Popen has a clean slate.
         proc2 = None
         try:
+            _queue_progress("🔄 Self-heal retry in progress — waiting for Claude CLI response…")
             proc2 = _run_subprocess(_timeout)
             stdout2, stderr2 = proc2.communicate(timeout=_timeout)
             stdout2 = (stdout2 or "").strip()
             stderr2 = (stderr2 or "").strip()
             if proc2.returncode == 0 and stdout2:
                 _log("CLI TIMEOUT RETRY succeeded ✓")
+                _queue_progress("✅ Self-heal successful — CLI responded on retry, no API credits used")
                 return stdout2
             if stdout2 or stderr2:
                 _classify_and_set_flag(stdout2, stderr2)
@@ -685,6 +713,10 @@ def try_pro(prompt: str, system: str = "") -> str | None:
             _log(
                 f"CLI TIMEOUT (attempt 2 also timed out) — "
                 f"prompt_len={len(full_prompt)} chars. Falling back to Gemini/API."
+            )
+            _queue_progress(
+                "⚠️ Both CLI attempts timed out — self-healing routed to Gemini/API "
+                "(background investigation continues to restore CLI)"
             )
         except Exception:
             pass
