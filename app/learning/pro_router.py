@@ -79,7 +79,24 @@ _BURST_TTL         = 30 * 60    # 30 minutes
 _CLI_DOWN_TTL      = 10 * 60    # 10 minutes — watchdog will clear sooner if CLI recovers
 _RESET_BUFFER      = 15 * 60    # 15-min buffer added to parsed reset time
 
-_TIMEOUT = 120  # seconds per CLI subprocess call
+# Dynamic timeouts — scale with prompt complexity so large tasks never time out.
+# Thresholds are character counts of the FULL prompt (system + user combined).
+_TIMEOUT_SMALL  = 120   # < 1 500 chars  — quick chat / trivial query
+_TIMEOUT_MEDIUM = 200   # 1 500 – 4 000  — moderate complexity
+_TIMEOUT_LARGE  = 360   # > 4 000 chars  — n8n design, big analysis, agent planning
+
+# Back-compat alias used elsewhere in this file
+_TIMEOUT = _TIMEOUT_SMALL
+
+
+def _dynamic_timeout(prompt: str) -> int:
+    """Return the right timeout based on prompt length."""
+    n = len(prompt)
+    if n > 4000:
+        return _TIMEOUT_LARGE
+    if n > 1500:
+        return _TIMEOUT_MEDIUM
+    return _TIMEOUT_SMALL
 
 # ── Phrase banks ───────────────────────────────────────────────────────────────
 
@@ -431,6 +448,80 @@ def _log(msg: str) -> None:
         pass
 
 
+# ── Timeout self-healing ──────────────────────────────────────────────────────
+
+def _fire_timeout_investigation(prompt_len: int, proc=None) -> None:
+    """
+    Spawn a daemon thread to investigate a CLI timeout in parallel with the
+    main response falling back to Gemini/API.  Never blocks the caller.
+
+    Actions taken autonomously:
+    1. Kill the hung process (if one is provided)
+    2. Ping CLI worker /health for ground-truth status
+    3. Kill any orphaned 'claude' processes left in the container
+    4. Log findings to the activity log (visible in status bar)
+    5. Record the timeout in a simple counter file for frequency tracking
+    6. If CLI worker is unhealthy → set CLI_DOWN flag so future calls skip CLI
+       and route to Gemini instead of timing out again
+    """
+    import threading
+
+    def _investigate():
+        try:
+            # 1. Kill the specific timed-out process
+            if proc is not None:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+
+            # 2. Kill any other orphaned claude processes in the container
+            try:
+                import subprocess as _sp
+                _sp.run(["pkill", "-f", "claude -p"], timeout=5,
+                        capture_output=True)
+            except Exception:
+                pass
+
+            # 3. Ping CLI worker for ground truth
+            healthy = _verify_cli_health()
+            health_note = "CLI worker healthy ✓" if healthy else "CLI worker UNHEALTHY ✗"
+
+            # 4. If worker is unhealthy, set CLI_DOWN so retries skip CLI
+            if not healthy:
+                _write_flag(_CLI_DOWN_FLAG,
+                            f"{datetime.datetime.utcnow().isoformat()}|{_CLI_DOWN_TTL}")
+                health_note += " → CLI_DOWN flag set (10 min)"
+
+            # 5. Record timeout in counter file
+            _timeout_count = 0
+            _counter_file = _FLAG_DIR / ".cli_timeout_count"
+            try:
+                if _counter_file.exists():
+                    _timeout_count = int(_counter_file.read_text().strip() or "0")
+                _timeout_count += 1
+                _counter_file.write_text(str(_timeout_count))
+            except Exception:
+                pass
+
+            _log(
+                f"[AUTO-HEAL] CLI timeout on prompt_len={prompt_len} chars | "
+                f"total_timeouts={_timeout_count} | {health_note}"
+            )
+
+            # 6. Alert if timeouts are becoming frequent (>5 in a session)
+            if _timeout_count >= 5:
+                _log(
+                    "[AUTO-HEAL] ⚠️ CLI timeouts are frequent — consider increasing "
+                    "CLI_WORKER_URL capacity or checking inspiring-cat CPU/memory."
+                )
+
+        except Exception as _e:
+            _log(f"[AUTO-HEAL] Timeout investigation failed: {_e}")
+
+    threading.Thread(target=_investigate, daemon=True).start()
+
+
 # ── Classifier ─────────────────────────────────────────────────────────────────
 
 def _classify_and_set_flag(stdout: str, stderr: str) -> None:
@@ -499,17 +590,31 @@ def try_pro(prompt: str, system: str = "") -> str | None:
     """
     Attempt to answer via Claude Code CLI (Pro subscription).
 
+    Timeout strategy: dynamic — scales with prompt length so large prompts
+    (e.g. complex n8n workflow design) are never cut short prematurely.
+      < 1 500 chars  → 120 s
+      1 500 – 4 000  → 200 s
+      > 4 000 chars  → 360 s  (6 minutes)
+
+    On timeout:
+    - Kill the hung process immediately
+    - Fire a parallel daemon thread for autonomous investigation
+      (health ping, orphan kill, counter, flag-set if worker unhealthy)
+    - Retry ONCE with the full dynamic timeout (catches transient hangs)
+
     Returns:
         str   — CLI response. Use directly.
-        None  — daily limit or burst active; caller must use ANTHROPIC_API_KEY.
+        None  — unavailable or timed out; caller falls back to Gemini/API.
     """
     if not is_pro_available():
         return None
 
     full_prompt = f"{system}\n\n{prompt}" if system and system.strip() else prompt
+    _timeout = _dynamic_timeout(full_prompt)
 
     # ── Try via CLI worker first (durable, survives API restarts) ────────────
-    cli_result = _submit_and_poll("claude_pro", {"prompt": full_prompt}, timeout=_TIMEOUT + 10)
+    cli_result = _submit_and_poll("claude_pro", {"prompt": full_prompt},
+                                  timeout=_timeout + 30)  # +30 s polling buffer
     if cli_result is not None:
         if any(p in cli_result.lower() for p in _DAILY_PHRASES + _BURST_PHRASES + _CLI_DOWN_PHRASES):
             _classify_and_set_flag(cli_result, "")
@@ -517,17 +622,22 @@ def try_pro(prompt: str, system: str = "") -> str | None:
         return cli_result or None
 
     # ── Direct subprocess fallback (no CLI worker / dev mode) ────────────────
-    try:
-        proc = subprocess.run(
+    def _run_subprocess(t: int):
+        return subprocess.Popen(
             ["claude", "-p", full_prompt],
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            timeout=_TIMEOUT,
             cwd="/workspace",
             env={**os.environ, "HOME": "/root"},
         )
-        stdout = (proc.stdout or "").strip()
-        stderr = (proc.stderr or "").strip()
+
+    proc = None
+    try:
+        proc = _run_subprocess(_timeout)
+        stdout, stderr = proc.communicate(timeout=_timeout)
+        stdout = (stdout or "").strip()
+        stderr = (stderr or "").strip()
 
         if proc.returncode == 0 and stdout:
             return stdout
@@ -541,11 +651,46 @@ def try_pro(prompt: str, system: str = "") -> str | None:
         _write_flag(_CLI_DOWN_FLAG, f"{datetime.datetime.utcnow().isoformat()}|{_CLI_DOWN_TTL}")
         _log(
             "Pro CLI binary not found — setting CLI_DOWN flag (10 min). "
-            "Switching to ANTHROPIC_API_KEY. Watchdog will auto-revert when CLI is available."
+            "Switching to Gemini/API. Watchdog will auto-revert when CLI is available."
         )
         return None
+
     except subprocess.TimeoutExpired:
+        _log(
+            f"CLI TIMEOUT (attempt 1) — prompt_len={len(full_prompt)} chars, "
+            f"timeout={_timeout}s. Firing parallel investigation + retrying once."
+        )
+        # Fire parallel self-healing in a daemon thread (non-blocking)
+        _fire_timeout_investigation(len(full_prompt), proc=proc)
+
+        # ── Retry once with the full timeout ─────────────────────────────────
+        # The investigation killed any hung process; a fresh Popen has a clean slate.
+        proc2 = None
+        try:
+            proc2 = _run_subprocess(_timeout)
+            stdout2, stderr2 = proc2.communicate(timeout=_timeout)
+            stdout2 = (stdout2 or "").strip()
+            stderr2 = (stderr2 or "").strip()
+            if proc2.returncode == 0 and stdout2:
+                _log("CLI TIMEOUT RETRY succeeded ✓")
+                return stdout2
+            if stdout2 or stderr2:
+                _classify_and_set_flag(stdout2, stderr2)
+        except subprocess.TimeoutExpired:
+            if proc2:
+                try:
+                    proc2.kill()
+                except Exception:
+                    pass
+            _log(
+                f"CLI TIMEOUT (attempt 2 also timed out) — "
+                f"prompt_len={len(full_prompt)} chars. Falling back to Gemini/API."
+            )
+        except Exception:
+            pass
+
         return None
+
     except Exception:
         return None
 
