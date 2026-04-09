@@ -95,6 +95,54 @@ def _update_railway_variable(name: str, value: str) -> tuple[bool, str]:
         return False, f"Railway API call failed: {e}"
 
 
+def _update_railway_variable_for_service(name: str, value: str, service_id: str) -> tuple[bool, str]:
+    """Push a Railway variable to a SPECIFIC service (e.g. inspiring-cat) by service ID."""
+    token      = os.environ.get("RAILWAY_TOKEN", "")
+    project_id = os.environ.get("RAILWAY_PROJECT_ID", "")
+    env_id     = os.environ.get("RAILWAY_ENVIRONMENT_ID", "")
+
+    if not all([token, project_id, env_id, service_id]):
+        missing = [k for k, v in {
+            "RAILWAY_TOKEN": token, "RAILWAY_PROJECT_ID": project_id,
+            "RAILWAY_ENVIRONMENT_ID": env_id, "CLI_WORKER_SERVICE_ID": service_id,
+        }.items() if not v]
+        return False, f"Missing vars: {missing}"
+
+    mutation = """
+    mutation VariableUpsert($input: VariableUpsertInput!) {
+      variableUpsert(input: $input)
+    }
+    """
+    payload = {
+        "query": mutation,
+        "variables": {
+            "input": {
+                "projectId":     project_id,
+                "environmentId": env_id,
+                "serviceId":     service_id,
+                "name":          name,
+                "value":         value,
+            }
+        }
+    }
+    try:
+        import urllib.request as _ur
+        data = json.dumps(payload).encode("utf-8")
+        req  = _ur.Request(
+            "https://backboard.railway.app/graphql/v2",
+            data=data,
+            headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"},
+            method="POST",
+        )
+        with _ur.urlopen(req, timeout=_TIMEOUT) as resp:
+            body = json.loads(resp.read().decode("utf-8"))
+            if "errors" in body:
+                return False, f"Railway API error: {body['errors']}"
+            return True, "OK"
+    except Exception as e:
+        return False, str(e)
+
+
 def _update_via_cli(name: str, value: str) -> tuple[bool, str]:
     """Fallback: update Railway variable via railway CLI."""
     try:
@@ -189,14 +237,13 @@ def run_token_keeper() -> dict:
         return result
     result["encode_ok"] = True
 
-    # Step 3 — push to Railway (API first, CLI fallback)
+    # Step 3 — push to THIS service (super-agent) via API, CLI fallback
     ok, msg = _update_railway_variable("CLAUDE_SESSION_TOKEN", encoded)
     if ok:
         result["railway_ok"] = True
         result["method"]  = "api"
         result["message"] = msg
-        _log(f"Token keeper: CLAUDE_SESSION_TOKEN refreshed and saved to Railway via API. "
-             f"Pro subscription credentials valid for next redeploy.")
+        _log("Token keeper: CLAUDE_SESSION_TOKEN refreshed for super-agent ✓")
     else:
         _log(f"Token keeper: Railway API failed ({msg}), trying CLI fallback...")
         ok2, msg2 = _update_via_cli("CLAUDE_SESSION_TOKEN", encoded)
@@ -211,6 +258,25 @@ def run_token_keeper() -> dict:
                 alert_token_refresh_failed("Claude Pro", result["message"])
             except Exception:
                 pass
+
+    # Step 4 — also push to inspiring-cat (CLI worker) so its token never expires.
+    # Set CLI_WORKER_SERVICE_ID in super-agent Railway Variables to inspiring-cat's
+    # service ID (visible in Railway → inspiring-cat → Settings → Service ID).
+    cli_worker_sid = os.environ.get("CLI_WORKER_SERVICE_ID", "")
+    if cli_worker_sid and encoded:
+        _log("Token keeper: pushing same token to inspiring-cat (CLI_WORKER_SERVICE_ID set)…")
+        ok_cli, msg_cli = _update_railway_variable_for_service(
+            "CLAUDE_SESSION_TOKEN", encoded, cli_worker_sid
+        )
+        if ok_cli:
+            _log("Token keeper: inspiring-cat CLAUDE_SESSION_TOKEN refreshed ✓ — token will never expire on CLI worker.")
+        else:
+            _log(f"Token keeper: inspiring-cat token update FAILED — {msg_cli}. "
+                 "Manually copy CLAUDE_SESSION_TOKEN from super-agent to inspiring-cat in Railway.")
+    else:
+        if not cli_worker_sid:
+            _log("Token keeper: CLI_WORKER_SERVICE_ID not set — inspiring-cat token NOT refreshed. "
+                 "Add CLI_WORKER_SERVICE_ID to super-agent Railway Variables to enable auto-refresh.")
 
     return result
 

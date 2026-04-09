@@ -46,7 +46,7 @@ limiter = Limiter(key_func=get_remote_address)
 # Protected paths require header: X-Token: <UI_PASSWORD>
 # If UI_PASSWORD is not set, auth is disabled.
 
-_OPEN_PATHS = {"/", "/health", "/auth", "/credits/pro-status"}
+_OPEN_PATHS = {"/", "/health", "/auth", "/credits/pro-status", "/credits/pro-reset"}
 _OPEN_PREFIXES = ("/static", "/downloads", "/webhook", "/n8n/connection-info", "/activity")  # token-in-URL or public info
 
 
