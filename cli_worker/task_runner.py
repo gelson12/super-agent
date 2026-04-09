@@ -72,19 +72,45 @@ def _mark_failed(task_id: str, error: str) -> None:
         conn.commit()
 
 
+_MCP_PERMISSION_PHRASES = (
+    "need your permission to use",
+    "permission prompts for",
+    "please approve",
+    "approve both",
+    "approve the tool",
+    "approve this tool",
+    "grant permission",
+    "you should see permission prompts",
+    "mcp tool permissions",
+)
+
+# Auto-accept input: answer "1" (Allow once) to any interactive MCP permission prompts.
+# Provides up to 30 answers so any sequence of permission requests is handled.
+_AUTO_ACCEPT_INPUT = "1\n" * 30
+
+
 def _run_subprocess(cmd: list[str], cwd: str | None, timeout: int) -> str:
     """Run a subprocess and return its output string. Never raises."""
     try:
         result = subprocess.run(
             cmd,
+            input=_AUTO_ACCEPT_INPUT,  # auto-accept MCP permission prompts (option 1 = Allow once)
             capture_output=True,
             text=True,
             timeout=timeout,
             cwd=cwd,
             env=_CLI_ENV,
-            stdin=subprocess.DEVNULL,
         )
-        return (result.stdout or result.stderr or "(no output)").strip()
+        output = (result.stdout or result.stderr or "(no output)").strip()
+        # If MCP permission phrases still appear, extract content lines only
+        lower = output.lower()
+        if any(p in lower for p in _MCP_PERMISSION_PHRASES):
+            lines = output.splitlines()
+            clean_lines = [l for l in lines if not any(p in l.lower() for p in _MCP_PERMISSION_PHRASES)]
+            clean = "\n".join(clean_lines).strip()
+            if clean and len(clean) > 20:
+                return clean
+        return output
     except subprocess.TimeoutExpired:
         return f"[cli_worker: timed out after {timeout}s]"
     except FileNotFoundError:

@@ -240,14 +240,22 @@ def run_n8n_agent(message: str) -> str:
         "as gemini, i",
         "i'm gemini",
     )
+    _gemini_blueprint = None
     try:
         from ..learning.gemini_cli_worker import ask_gemini_cli
         gemini = ask_gemini_cli(f"{_SYSTEM}\n\n{message}")
         if gemini and not gemini.startswith("["):
             if any(p in gemini.lower() for p in _GEMINI_NO_TOOLS):
-                # Gemini admitted it can't use n8n tools — fall through to LangGraph
+                # Gemini described the workflow architecture but can't build it.
+                # Capture its design as a blueprint and pass it to LangGraph so
+                # LangGraph can use Gemini's architecture when building the real workflow.
+                _gemini_blueprint = gemini
                 from ..activity_log import bg_log as _bg
-                _bg("n8n agent: Gemini has no tool access — falling through to LangGraph", source="n8n_agent")
+                _bg(
+                    "n8n agent: Gemini provided workflow architecture — forwarding to LangGraph "
+                    "as blueprint context for actual build",
+                    source="n8n_agent",
+                )
             else:
                 return gemini
     except Exception:
@@ -258,7 +266,16 @@ def run_n8n_agent(message: str) -> str:
     # etc. — these call the n8n REST API directly via httpx, no MCP, no CLI needed.
     try:
         from ..activity_log import bg_log as _bg
-        _bg("n8n agent: using LangGraph (Anthropic API) — CLI/Gemini unavailable", source="n8n_agent")
-        return _invoke(message)
+        _bg("n8n agent: using LangGraph (Anthropic API) — full n8n tool access", source="n8n_agent")
+        # If Gemini provided a workflow architecture, inject it as a blueprint so
+        # LangGraph builds exactly what was designed rather than starting from scratch.
+        _build_message = message
+        if _gemini_blueprint:
+            _build_message = (
+                f"{message}\n\n"
+                f"[WORKFLOW BLUEPRINT FROM GEMINI — build this exact design using n8n tools]:\n"
+                f"{_gemini_blueprint}"
+            )
+        return _invoke(_build_message)
     except Exception as _e:
         return f"⚠️ n8n agent error: {_e}"

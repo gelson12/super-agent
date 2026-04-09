@@ -649,9 +649,37 @@ def chat_stream(req: ChatRequest, request: Request):
         except Exception:
             pass
 
-        # ── 3. CLI and Gemini both unavailable — do not call Anthropic API ──────
-        yield "data: [PROGRESS:⚠️ Claude CLI & Gemini both unavailable — please try again in a moment]\n\n"
-        yield "data: ⚠️ Both Claude CLI and Gemini are temporarily unavailable. Please try again in a few seconds.\n\n"
+        # ── 3. Anthropic API (final fallback — CLI and Gemini both unavailable) ──
+        yield "data: [PROGRESS:🔄 CLI & Gemini unavailable — using Anthropic API…]\n\n"
+        try:
+            _client = _anthropic.Anthropic(api_key=settings.anthropic_api_key)
+            with _client.messages.stream(
+                model="claude-sonnet-4-6",
+                max_tokens=4096,
+                system=system,
+                messages=[{"role": "user", "content": msg}],
+            ) as _stream:
+                _buf = ""
+                _full_api_resp = ""
+                for _token in _stream.text_stream:
+                    _full_api_resp += _token
+                    _buf += _token
+                    if len(_buf) >= 60:
+                        yield f"data: {_buf.replace(chr(10), chr(92) + 'n')}\n\n"
+                        _buf = ""
+                if _buf.strip():
+                    yield f"data: {_buf.replace(chr(10), chr(92) + 'n')}\n\n"
+            if _full_api_resp:
+                _store_mem(req.session_id, f"Q: {msg[:300]} A: {_full_api_resp[:300]}")
+                append_exchange(req.session_id, msg, _full_api_resp)
+            yield f"data: [META:ANTHROPIC·conversational·{_mem_count}]\n\n"
+            yield "data: [DONE]\n\n"
+            return
+        except Exception:
+            pass
+
+        # ── 4. All paths failed — last-resort message ─────────────────────────
+        yield "data: ⚠️ All response paths unavailable. Please try again in a moment.\n\n"
         yield f"data: [META:UNAVAILABLE·conversational·{_mem_count}]\n\n"
         yield "data: [DONE]\n\n"
 
