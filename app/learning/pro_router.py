@@ -180,6 +180,18 @@ _IGNORED_PHRASES = (
     "no remaining",
 )
 
+# Credit / balance errors — API key has no credits; return None so Gemini is tried
+_CREDIT_ERROR_PHRASES = (
+    "credit balance is too low",
+    "credit balance",
+    "insufficient credits",
+    "insufficient funds",
+    "payment required",
+    "no credits",
+    "credits remaining",
+    "credits left",
+)
+
 
 # ── Reset time parser ──────────────────────────────────────────────────────────
 
@@ -778,8 +790,14 @@ def try_pro(prompt: str, system: str = "") -> str | None:
     cli_result = _submit_and_poll("claude_pro", {"prompt": full_prompt},
                                   timeout=_timeout + 30)  # +30 s polling buffer
     if cli_result is not None:
-        if any(p in cli_result.lower() for p in _DAILY_PHRASES + _BURST_PHRASES + _CLI_DOWN_PHRASES):
+        _cli_lower = cli_result.lower()
+        if any(p in _cli_lower for p in _DAILY_PHRASES + _BURST_PHRASES + _CLI_DOWN_PHRASES):
             _classify_and_set_flag(cli_result, "")
+            return None
+        # Credit/billing errors — API key on the CLI worker has no credits.
+        # Return None so Gemini is tried. No flag set — this is not a quota issue.
+        if any(p in _cli_lower for p in _CREDIT_ERROR_PHRASES + _IGNORED_PHRASES):
+            _log(f"CLI worker returned a credit/billing error — falling back to Gemini. {cli_result[:120]!r}")
             return None
         return cli_result or None
 
