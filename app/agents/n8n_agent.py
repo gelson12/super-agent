@@ -239,20 +239,13 @@ def run_n8n_agent(message: str) -> str:
     except Exception:
         pass
 
-    # ── 3. LangGraph + Anthropic API (last resort — full Python tool access) ──
-    if not settings.anthropic_api_key:
-        return (
-            "[n8n agent: Claude CLI and Gemini both unavailable and ANTHROPIC_API_KEY not set.\n"
-            "To fix: refresh Claude session token in VS Code on inspiring-cat → "
-            "'claude login' → update CLAUDE_SESSION_TOKEN in Railway Variables.]"
-        )
-
-    _result = run_with_plan_and_recovery(
-        agent_fn=_invoke,
-        message=message,
-        agent_type="n8n_agent",
-        tool_names=[t.name for t in _N8N_TOOLS],
+    # ── 3. CLI and Gemini both unavailable — never call Anthropic API ───────
+    # API credits are reserved for conversational ask_claude() calls only.
+    # Agent tool-use (create/update workflows) requires CLI access — cannot
+    # substitute with a raw API call that has no n8n tool bindings.
+    return (
+        "⚠️ Claude CLI (inspiring-cat) and Gemini are both temporarily unavailable.\n\n"
+        "Cannot build or modify n8n workflows without CLI tool access. "
+        "Please try again in a few minutes — the CLI worker may be busy or restarting.\n\n"
+        "If this persists, open inspiring-cat VS Code and run `claude login` to refresh credentials."
     )
-    # Tag response so the streaming layer can emit a warning to the user
-    _marker = "\x00API_FALLBACK\x00"
-    return (_marker + _result) if (_result and not _result.startswith("[")) else _result

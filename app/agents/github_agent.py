@@ -133,17 +133,10 @@ def run_github_agent(message: str) -> str:
     except Exception:
         pass
 
-    # ── 3. Anthropic API + LangGraph (last resort) ────────────────────────────
-    if not settings.anthropic_api_key:
-        return (
-            "[GitHub agent: Claude CLI and Gemini both unavailable and ANTHROPIC_API_KEY not set. "
-            "Refresh Claude session token in VS Code on inspiring-cat.]"
-        )
-    _result = run_with_plan_and_recovery(
-        agent_fn=_invoke,
-        message=message,
-        agent_type="github_agent",
-        tool_names=[t.name for t in _GITHUB_TOOLS],
+    # ── 3. CLI and Gemini both unavailable — never call Anthropic API ───────
+    return (
+        "⚠️ Claude CLI (inspiring-cat) and Gemini are both temporarily unavailable.\n\n"
+        "Cannot perform GitHub operations without CLI tool access. "
+        "Please try again in a few minutes.\n\n"
+        "If this persists, open inspiring-cat VS Code and run `claude login` to refresh credentials."
     )
-    _marker = "\x00API_FALLBACK\x00"
-    return (_marker + _result) if (_result and not _result.startswith("[")) else _result
