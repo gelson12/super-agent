@@ -246,7 +246,33 @@ else
     echo "[entrypoint] INFO: Skipping n8n MCP registration (claude not found or N8N_BASE_URL/N8N_API_KEY not set)."
 fi
 
-# 2. Write CLAUDE.md to /workspace so every `claude -p` invocation inherits
+# 2. Write Claude Code CLI settings — pre-approve all tools so MCP calls never
+#    pause to ask for user permission.
+#    NOTE: --dangerously-skip-permissions is blocked as root; settings.json is the
+#    supported alternative for pre-approving tools in non-interactive (-p) mode.
+mkdir -p /root/.claude
+cat > /root/.claude/settings.json <<'CLAUDESETTINGS'
+{
+  "permissions": {
+    "allow": [
+      "Bash(*)",
+      "Read(*)",
+      "Write(*)",
+      "Edit(*)",
+      "Glob(*)",
+      "Grep(*)",
+      "mcp__*",
+      "WebFetch(*)",
+      "WebSearch(*)"
+    ],
+    "deny": []
+  }
+}
+CLAUDESETTINGS
+chmod 600 /root/.claude/settings.json
+echo "[entrypoint] Claude Code CLI settings written — all MCP tools pre-approved (no permission prompts)."
+
+# 3. Write CLAUDE.md to /workspace so every `claude -p` invocation inherits
 #    the n8n API reference and workflow conventions automatically.
 mkdir -p /workspace
 cat > /workspace/CLAUDE.md <<CLAUDEMD

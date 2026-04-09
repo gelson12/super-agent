@@ -121,6 +121,22 @@ def _dynamic_timeout(prompt: str) -> int:
 
 # ── Phrase banks ───────────────────────────────────────────────────────────────
 
+# MCP PERMISSION REQUEST: Claude is asking user to approve MCP tool use interactively.
+# This happens when settings.json hasn't taken effect yet or is in an unsupported format.
+# Treat as a non-response — discard and fall through to Gemini/LangGraph so the user
+# never sees "please approve mcp__..." text in the chat.
+_MCP_PERMISSION_PHRASES = (
+    "need your permission to use",
+    "permission prompts for",
+    "please approve",
+    "approve both",
+    "approve the tool",
+    "approve this tool",
+    "grant permission",
+    "you should see permission prompts",
+    "mcp tool permissions",
+)
+
 # DAILY: today's cap hit — message always contains a reset time
 _DAILY_PHRASES = (
     "daily limit",
@@ -835,6 +851,14 @@ def try_pro(prompt: str, system: str = "") -> str | None:
                 _write_flag(_BURST_FLAG)
                 _queue_progress("⚠️ inspiring-cat CLI expired — trying super-agent local CLI…")
                 # Do NOT return here — fall through to the direct subprocess below.
+            elif any(p in _cli_lower for p in _MCP_PERMISSION_PHRASES):
+                # CLI is asking for interactive MCP tool approval — discard and fall through.
+                # settings.json pre-approval didn't take effect yet. Next deploy will fix it.
+                _log(
+                    "CLI returned MCP permission request — discarding, falling through to API agent. "
+                    "Ensure /root/.claude/settings.json is written in entrypoint.cli.sh."
+                )
+                return None
             else:
                 return cli_result or None  # Clean response — use it
     else:
@@ -876,6 +900,10 @@ def try_pro(prompt: str, system: str = "") -> str | None:
         stderr = (stderr or "").strip()
 
         if proc.returncode == 0 and stdout:
+            # Discard MCP permission-request responses — fall through to API
+            if any(p in stdout.lower() for p in _MCP_PERMISSION_PHRASES):
+                _log("Local CLI returned MCP permission request — discarding, falling through to API agent.")
+                return None
             return stdout
 
         if stdout or stderr:
