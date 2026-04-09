@@ -416,14 +416,10 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
     _learned = adapter.get_learned_context() or ""
     _raw_claude = _get_prompt("system_claude") or SYSTEM_PROMPT_CLAUDE
     _raw_haiku = _get_prompt("system_haiku") or SYSTEM_PROMPT_HAIKU
-    _system_claude = _raw_claude.format(
-        capabilities=_caps,
-        learned_context=_learned,
-    )
-    _system_haiku = _raw_haiku.format(
-        capabilities=_caps,
-        learned_context=_learned,
-    )
+    # Use .replace() instead of .format() so that {curly braces} inside
+    # stored memory (e.g. n8n JSON) don't cause a KeyError in .format().
+    _system_claude = _raw_claude.replace("{capabilities}", _caps).replace("{learned_context}", _learned)
+    _system_haiku  = _raw_haiku.replace("{capabilities}", _caps).replace("{learned_context}", _learned)
 
     # ── 1. Safe word guard ────────────────────────────────────────────────────
     authorized, block_reason = check_authorization(message)

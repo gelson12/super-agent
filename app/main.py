@@ -567,14 +567,16 @@ def chat_stream(req: ChatRequest, request: Request):
     # Conversational — CLI first (free), Anthropic API as last resort
     from .memory.vector_memory import get_memory_context as _get_mem, store_memory as _store_mem
     _caps = build_capabilities_block(settings)
-    _mem_ctx = _get_mem(msg)
+    try:
+        _mem_ctx = _get_mem(msg)
+    except Exception:
+        _mem_ctx = None
     _learned = _adapter.get_learned_context() or ""
     if _mem_ctx:
         _learned = _mem_ctx + "\n" + _learned
-    system = SYSTEM_PROMPT_CLAUDE.format(
-        capabilities=_caps,
-        learned_context=_learned,
-    )
+    # Use .replace() instead of .format() so that {curly braces} inside
+    # stored memory (e.g. n8n JSON) don't cause a KeyError in .format().
+    system = SYSTEM_PROMPT_CLAUDE.replace("{capabilities}", _caps).replace("{learned_context}", _learned)
     _mem_count = _mem_ctx.count("\n-") if _mem_ctx else 0
 
     def _generate():
