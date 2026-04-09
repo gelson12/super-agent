@@ -180,21 +180,17 @@ def run_n8n_agent(message: str) -> str:
     """
     Run the n8n agent with pre-execution model competition + self-healing.
 
-    Pipeline:
-      1. Pre-flight: verify n8n is reachable; auto-repair if not (restart Railway, check vars)
-      2. Claude vs DeepSeek compete on execution plan
-      3. Haiku adjudicates — winning plan injected into agent context
-      4. Agent executes; on failure → diagnose → SAFE auto-fix or CRITICAL safe-word prompt
-      5. Up to 3 self-healing retries before escalating
+    Routing (cheapest first):
+      1. Claude CLI on inspiring-cat — has n8n MCP registered, zero API cost, full tool access
+      2. Gemini CLI — text-only, no tool access; used only for informational n8n questions
+      3. LangGraph + Anthropic API — last resort, full tool access via Python n8n_tools
+
+    Pre-flight: verify n8n is reachable; auto-repair if not (restart Railway, check vars)
     """
-    if not settings.anthropic_api_key:
-        return "[n8n agent error: ANTHROPIC_API_KEY not set]"
     if not settings.n8n_base_url:
         return "[n8n agent error: N8N_BASE_URL not set — add it in Railway Variables tab]"
 
     # ── Pre-flight: verify n8n is reachable before handing to the agent ──────
-    # If it's down, attempt_n8n_repair applies known fixes (redeploy, check vars)
-    # and waits for the service to recover — silently, without asking the user.
     from ..tools.n8n_repair import attempt_n8n_repair, n8n_health_check
     health = n8n_health_check()
     if not health["reachable"]:
@@ -202,7 +198,6 @@ def run_n8n_agent(message: str) -> str:
         error_str = issues[0] if issues else "n8n unreachable"
         fixed, fixes = attempt_n8n_repair(error_str)
         if fixed:
-            # Re-check after repair
             health2 = n8n_health_check()
             if not health2["reachable"]:
                 return (
@@ -210,7 +205,6 @@ def run_n8n_agent(message: str) -> str:
                     + "\n".join(f"• {f}" for f in fixes)
                     + "\n\nService is still not responding. Check Railway logs for crash details."
                 )
-            # Service recovered — inject repair context into the message
             message = (
                 f"[AUTO-REPAIR APPLIED before your request]\n"
                 + "\n".join(f"• {f}" for f in fixes)
@@ -219,9 +213,43 @@ def run_n8n_agent(message: str) -> str:
         else:
             return (
                 f"⚠️ n8n is unreachable and no auto-fix could be applied.\n"
-                f"Error: {error_str}\n\n"
-                f"Investigating Railway infrastructure now..."
+                f"Error: {error_str}\n\nInvestigating Railway infrastructure now..."
             )
+
+    # ── 1. Claude CLI (inspiring-cat has n8n MCP registered — zero API cost) ──
+    # Claude CLI on inspiring-cat runs `claude mcp add n8n` at boot, so it has
+    # FULL n8n tool access (create, update, activate workflows) at zero credit cost.
+    try:
+        from ..learning.pro_router import try_pro, is_pro_available
+        if is_pro_available():
+            cli_result = try_pro(f"{_SYSTEM}\n\n{message}")
+            if cli_result and not cli_result.startswith("["):
+                return cli_result
+    except Exception:
+        pass
+
+    # ── 2. Gemini CLI — informational only (no tool access, cannot build) ─────
+    # Gemini can answer questions about n8n but cannot call tools to create workflows.
+    # Only use it when the request is clearly informational (not a build/create/update).
+    _build_keywords = ("create", "build", "make", "design", "add node", "update", "delete",
+                       "activate", "deactivate", "execute", "fix workflow", "modify")
+    _is_build = any(w in message.lower() for w in _build_keywords)
+    if not _is_build:
+        try:
+            from ..learning.gemini_cli_worker import ask_gemini_cli
+            gemini = ask_gemini_cli(f"{_SYSTEM}\n\n{message}")
+            if gemini and not gemini.startswith("["):
+                return gemini
+        except Exception:
+            pass
+
+    # ── 3. LangGraph + Anthropic API (last resort — full Python tool access) ──
+    if not settings.anthropic_api_key:
+        return (
+            "[n8n agent: Claude CLI unavailable and ANTHROPIC_API_KEY not set.\n"
+            "To fix: refresh Claude session token in VS Code on inspiring-cat → "
+            "'claude login' → update CLAUDE_SESSION_TOKEN in Railway Variables.]"
+        )
 
     return run_with_plan_and_recovery(
         agent_fn=_invoke,
