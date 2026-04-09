@@ -52,26 +52,9 @@ def ask_claude(prompt: str, system: str = SYSTEM_PROMPT_CLAUDE) -> str:
     except Exception:
         pass  # Gemini unavailable — fall through to Anthropic API
 
-    # 3. Anthropic API (last resort — costs credits)
-    if not settings.anthropic_api_key:
-        return "[Claude error: ANTHROPIC_API_KEY not set]"
-    _tls.api_used = True  # signal to upstream that API credits are being consumed
-    try:
-        resp = _get_client().messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=settings.max_tokens_claude,
-            system=system,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        return "".join(
-            block.text for block in resp.content if block.type == "text"
-        ).strip()
-    except RateLimitError:
-        return "[Claude error: rate limit exceeded — try again shortly]"
-    except APIConnectionError:
-        return "[Claude error: connection failed]"
-    except APIError as e:
-        return f"[Claude error: {e.status_code} — {e.message}]"
+    # 3. Both CLI and Gemini unavailable — do not call Anthropic API
+    # API credits are preserved. Return a clear error so the user can retry.
+    return "[Claude unavailable: CLI and Gemini both unreachable — please try again in a moment]"
 
 
 def ask_claude_haiku(prompt: str, system: str = SYSTEM_PROMPT_CLAUDE) -> str:
@@ -95,25 +78,8 @@ def ask_claude_haiku(prompt: str, system: str = SYSTEM_PROMPT_CLAUDE) -> str:
     except Exception:
         pass  # Gemini unavailable — fall through to Anthropic API
 
-    if not settings.anthropic_api_key:
-        return "[Claude error: ANTHROPIC_API_KEY not set]"
-    _tls.api_used = True  # signal to upstream that API credits are being consumed
-    try:
-        resp = _get_client().messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=settings.max_tokens_claude,
-            system=system,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        return "".join(
-            block.text for block in resp.content if block.type == "text"
-        ).strip()
-    except RateLimitError:
-        return "[Claude error: rate limit exceeded — try again shortly]"
-    except APIConnectionError:
-        return "[Claude error: connection failed]"
-    except APIError as e:
-        return f"[Claude error: {e.status_code} — {e.message}]"
+    # 3. Both CLI and Gemini unavailable — do not call Anthropic API
+    return "[Claude unavailable: CLI and Gemini both unreachable — please try again in a moment]"
 
 
 def ask_claude_vision(image_bytes: bytes, media_type: str, text: str = "") -> str:
