@@ -21,6 +21,7 @@ from typing import Optional
 from ..models.claude import ask_claude, ask_claude_haiku
 from ..models.gemini import ask_gemini
 from ..models.deepseek import ask_deepseek
+from .claude_code_worker import ask_claude_code as _peer_ask_cli
 from ..prompts import PEER_REVIEW_PROMPT
 from ..learning.insight_log import insight_log
 
@@ -34,7 +35,7 @@ _CRITIC_MAP: dict[str, str] = {
 }
 
 _MODEL_CALLERS = {
-    "CLAUDE":   ask_claude,
+    "CLAUDE":   lambda prompt, system="": _peer_ask_cli(prompt),
     "DEEPSEEK": ask_deepseek,
     "GEMINI":   ask_gemini,
     "HAIKU":    ask_claude_haiku,

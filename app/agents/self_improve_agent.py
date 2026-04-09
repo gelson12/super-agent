@@ -252,11 +252,10 @@ def run_self_improve_agent(message: str, authorized: bool = False) -> str:
     """
     # ── 1. Claude CLI (zero cost, preferred) ─────────────────────────────────
     try:
-        from ..learning.pro_router import try_pro, is_pro_available
-        if is_pro_available():
-            cli_result = try_pro(f"{_SYSTEM}\n\n{message}")
-            if cli_result and not cli_result.startswith("["):
-                return cli_result
+        from ..learning.pro_router import try_pro
+        cli_result = try_pro(f"{_SYSTEM}\n\n{message}")
+        if cli_result and not cli_result.startswith("["):
+            return cli_result
     except Exception:
         pass
 

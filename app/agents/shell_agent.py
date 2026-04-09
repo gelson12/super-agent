@@ -150,11 +150,10 @@ def run_shell_agent(message: str, authorized: bool = False, debug_mode: bool = F
 
     # ── 1. Claude CLI (zero API cost, preferred) ──────────────────────────────
     try:
-        from ..learning.pro_router import try_pro, is_pro_available
-        if is_pro_available():
-            cli_result = try_pro(f"{_SYSTEM_PROMPT}\n\n{user_content}")
-            if cli_result and not cli_result.startswith("["):
-                return cli_result
+        from ..learning.pro_router import try_pro
+        cli_result = try_pro(f"{_SYSTEM_PROMPT}\n\n{user_content}")
+        if cli_result and not cli_result.startswith("["):
+            return cli_result
     except Exception:
         pass
 

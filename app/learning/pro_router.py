@@ -301,6 +301,19 @@ def is_pro_available() -> bool:
     return True
 
 
+def should_attempt_cli() -> bool:
+    """
+    True if ANY Claude CLI path should be attempted (inspiring-cat or local).
+
+    Unlike is_pro_available(), BURST-only situations still return True —
+    super-agent's local subprocess fallback works even when inspiring-cat is in
+    its 30-min cooldown. DAILY quota and CLI_DOWN flags are still hard blocks.
+    """
+    if _flag_active(_BURST_FLAG, _BURST_TTL):
+        return True  # BURST: skip inspiring-cat but still try local CLI
+    return is_pro_available()
+
+
 def is_cli_down() -> bool:
     """
     True if Claude CLI is genuinely down — verifies against live /health endpoint
@@ -786,40 +799,52 @@ def try_pro(prompt: str, system: str = "") -> str | None:
         str   — CLI response. Use directly.
         None  — unavailable or timed out; caller falls back to Gemini/API.
     """
-    if not is_pro_available():
-        return None
+    # BURST flag only disables inspiring-cat — the local subprocess fallback in
+    # super-agent still works (separate container, separate credentials).
+    # Check BURST separately so we skip inspiring-cat but still try local CLI.
+    _burst_active = _flag_active(_BURST_FLAG, _BURST_TTL)
+    if not _burst_active and not is_pro_available():
+        return None  # DAILY or CLI_DOWN — full skip (inspiring-cat AND local)
 
     full_prompt = f"{system}\n\n{prompt}" if system and system.strip() else prompt
     _timeout = _dynamic_timeout(full_prompt)
 
-    # ── Try via CLI worker first (durable, survives API restarts) ────────────
-    cli_result = _submit_and_poll("claude_pro", {"prompt": full_prompt},
-                                  timeout=_timeout + 30)  # +30 s polling buffer
-    if cli_result is not None:
-        _cli_lower = cli_result.lower()
-        if any(p in _cli_lower for p in _DAILY_PHRASES + _BURST_PHRASES + _CLI_DOWN_PHRASES):
-            _classify_and_set_flag(cli_result, "")
-            return None
-        # Credit/billing errors — CLI worker's OAuth session is expired and it
-        # fell back to an API key with no credits. Set BURST flag (30 min) so
-        # all subsequent requests skip the CLI worker immediately instead of
-        # waiting 15-50s for it to fail again on each message.
-        if any(p in _cli_lower for p in _CREDIT_ERROR_PHRASES + _IGNORED_PHRASES):
-            _log(
-                f"CLI worker returned a credit/billing error — setting BURST flag (30 min) "
-                f"and falling through to super-agent local CLI. Response: {cli_result[:120]!r}"
-            )
-            _write_flag(_BURST_FLAG)
-            _queue_progress("⚠️ inspiring-cat CLI expired — trying super-agent local CLI…")
-            # Do NOT return here — fall through to the direct subprocess below.
-        else:
-            return cli_result or None
+    # ── Try via CLI worker (skipped when BURST active — saves 15-50s per call) ─
+    cli_result = None
+    if not _burst_active:
+        cli_result = _submit_and_poll("claude_pro", {"prompt": full_prompt},
+                                      timeout=_timeout + 30)  # +30 s polling buffer
+        if cli_result is not None:
+            _cli_lower = cli_result.lower()
+            if any(p in _cli_lower for p in _DAILY_PHRASES):
+                _classify_and_set_flag(cli_result, "")
+                return None  # Daily quota same account — local subprocess won't help
+            elif any(p in _cli_lower for p in _BURST_PHRASES + _CLI_DOWN_PHRASES):
+                _classify_and_set_flag(cli_result, "")
+                _queue_progress("⚠️ inspiring-cat throttled — trying super-agent local CLI…")
+                # Fall through to local subprocess — separate credentials, may work
+            # Credit/billing errors — CLI worker's OAuth session is expired and it
+            # fell back to an API key with no credits. Set BURST flag (30 min) so
+            # all subsequent requests skip the CLI worker immediately instead of
+            # waiting 15-50s for it to fail again on each message.
+            elif any(p in _cli_lower for p in _CREDIT_ERROR_PHRASES + _IGNORED_PHRASES):
+                _log(
+                    f"CLI worker returned a credit/billing error — setting BURST flag (30 min) "
+                    f"and falling through to super-agent local CLI. Response: {cli_result[:120]!r}"
+                )
+                _write_flag(_BURST_FLAG)
+                _queue_progress("⚠️ inspiring-cat CLI expired — trying super-agent local CLI…")
+                # Do NOT return here — fall through to the direct subprocess below.
+            else:
+                return cli_result or None  # Clean response — use it
+    else:
+        _queue_progress("⚠️ inspiring-cat in cooldown — routing to local Claude CLI…")
 
     # ── Direct subprocess fallback (CLI worker unreachable — use local CLI) ─────
-    # This path activates when inspiring-cat is down/unreachable. super-agent has
-    # its own Claude CLI credentials (Railway volume at /root/.claude/) so it can
-    # handle the request directly without falling to Gemini or the Anthropic API.
-    _queue_progress("⚠️ CLI worker unreachable — trying local CLI fallback…")
+    # This path activates when inspiring-cat is down/unreachable or in BURST
+    # cooldown. super-agent has its own Claude CLI credentials (Railway volume at
+    # /root/.claude/) so it can handle the request without Gemini or the API.
+    _queue_progress("⚡ Trying super-agent local CLI…")
     # Pre-flight auth check — fails in 12s if session is gone (e.g. container
     # restarted and /root/.claude/ was wiped), preventing a 360s hang.
     # Also attempts autonomous credential restore before giving up.

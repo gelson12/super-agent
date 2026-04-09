@@ -220,11 +220,10 @@ def run_n8n_agent(message: str) -> str:
     # Claude CLI on inspiring-cat runs `claude mcp add n8n` at boot, so it has
     # FULL n8n tool access (create, update, activate workflows) at zero credit cost.
     try:
-        from ..learning.pro_router import try_pro, is_pro_available
-        if is_pro_available():
-            cli_result = try_pro(f"{_SYSTEM}\n\n{message}")
-            if cli_result and not cli_result.startswith("["):
-                return cli_result
+        from ..learning.pro_router import try_pro
+        cli_result = try_pro(f"{_SYSTEM}\n\n{message}")
+        if cli_result and not cli_result.startswith("["):
+            return cli_result
     except Exception:
         pass
 

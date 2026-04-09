@@ -551,11 +551,11 @@ def chat_stream(req: ChatRequest, request: Request):
             for word in words:
                 buf += word + " "
                 if len(buf) >= 60:
-                    chunk = buf.rstrip().replace(chr(10), chr(92) + "n")
+                    chunk = buf.replace(chr(10), chr(92) + "n")
                     yield f"data: {chunk}\n\n"
                     buf = ""
             if buf.strip():
-                yield f"data: {buf.rstrip().replace(chr(10), chr(92) + 'n')}\n\n"
+                yield f"data: {buf.replace(chr(10), chr(92) + 'n')}\n\n"
             _model = _result.get("model_used", "AGENT")
             _route = _result.get("routed_by", "dispatcher")
             _mem = _result.get("memory_count", 0)
@@ -583,8 +583,8 @@ def chat_stream(req: ChatRequest, request: Request):
         # ── 1. Claude CLI (zero cost) ─────────────────────────────────────────
         yield "data: [PROGRESS:🤔 Thinking… (est. 5–15s)]\n\n"
         try:
-            from .learning.pro_router import try_pro, is_pro_available, drain_progress_events as _drain_conv
-            if is_pro_available():
+            from .learning.pro_router import try_pro, should_attempt_cli, drain_progress_events as _drain_conv
+            if should_attempt_cli():
                 yield "data: [PROGRESS:⚡ Using Claude CLI… (est. 5–15s)]\n\n"
                 cli_resp = try_pro(f"{system}\n\n{msg}")
                 # Surface any self-healing events that fired during the CLI call
@@ -599,10 +599,10 @@ def chat_stream(req: ChatRequest, request: Request):
                     for word in words:
                         buf += word + " "
                         if len(buf) >= 60:
-                            yield f"data: {buf.rstrip().replace(chr(10), chr(92) + 'n')}\n\n"
+                            yield f"data: {buf.replace(chr(10), chr(92) + 'n')}\n\n"
                             buf = ""
                     if buf.strip():
-                        yield f"data: {buf.rstrip().replace(chr(10), chr(92) + 'n')}\n\n"
+                        yield f"data: {buf.replace(chr(10), chr(92) + 'n')}\n\n"
                     yield f"data: [META:CLI·conversational·{_mem_count}]\n\n"
                     yield "data: [DONE]\n\n"
                     return
@@ -623,10 +623,10 @@ def chat_stream(req: ChatRequest, request: Request):
                 for word in words:
                     buf += word + " "
                     if len(buf) >= 60:
-                        yield f"data: {buf.rstrip().replace(chr(10), chr(92) + 'n')}\n\n"
+                        yield f"data: {buf.replace(chr(10), chr(92) + 'n')}\n\n"
                         buf = ""
                 if buf.strip():
-                    yield f"data: {buf.rstrip().replace(chr(10), chr(92) + 'n')}\n\n"
+                    yield f"data: {buf.replace(chr(10), chr(92) + 'n')}\n\n"
                 yield f"data: [META:GEMINI·conversational·{_mem_count}]\n\n"
                 yield "data: [DONE]\n\n"
                 return

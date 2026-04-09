@@ -45,8 +45,8 @@ def _parse_vote(response: str) -> tuple[str, str]:
 
 
 def _ask_sonnet(prompt: str) -> str:
-    from ..models.claude import ask_claude
-    return ask_claude(prompt)
+    from .claude_code_worker import ask_claude_code
+    return ask_claude_code(prompt)
 
 
 def _ask_haiku(prompt: str) -> str:
@@ -70,7 +70,7 @@ def _ask_claude_code(prompt: str) -> str:
 
 
 _VOTERS = [
-    ("claude-sonnet", _ask_sonnet),
+    ("claude-code-cli-2", _ask_sonnet),
     ("claude-haiku", _ask_haiku),
     ("deepseek", _ask_deepseek),
     ("gemini", _ask_gemini),

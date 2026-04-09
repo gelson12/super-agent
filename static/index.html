@@ -817,7 +817,7 @@
           for (const event of events) {
             for (const line of event.split('\n')) {
               if (!line.startsWith('data: ')) continue;
-              const token = line.slice(6).trim();
+              const token = line.slice(6);
               if (token === '[DONE]') break;
               if (token.startsWith('[Stream error')) { streamOk = false; break; }
               if (token.startsWith('[META:')) {
@@ -827,7 +827,7 @@
                 const route = parts[1] || 'dispatcher';
                 const mem = parseInt(parts[2] || '0', 10);
                 const memBadge = mem > 0 ? ` · 🧠 ${mem} memories` : '';
-                streamMeta = `${model} · via ${route}${memBadge}`;
+                streamMeta = `✓ ${model} · via ${route}${memBadge}`;
                 continue;
               }
               // ── Progress / thinking step ──────────────────────────────────
@@ -882,6 +882,7 @@
         sp.onclick = () => speakText(fullText, sp);
         meta.appendChild(sp);
         msgDiv.appendChild(meta);
+        chat.scrollTop = chat.scrollHeight;
       }
     } catch (_) { streamOk = false; }
     clearTimeout(_buildTimer);
