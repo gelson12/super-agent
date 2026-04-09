@@ -61,29 +61,45 @@ else
 fi
 
 # ── Claude.ai Pro session token (credentials for claude CLI) ─────────────────
-# Store as CLAUDE_SESSION_TOKEN in Railway: base64 -w0 ~/.claude/credentials.json
-# After claude login run: base64 -w0 ~/.claude/credentials.json  (Linux)
-#                      or: base64 -i ~/.claude/credentials.json | tr -d '\n'  (macOS)
-if [ -n "$CLAUDE_SESSION_TOKEN" ]; then
-    mkdir -p /root/.claude
+# IMPORTANT: only restore from env var if the volume has no valid credentials.
+# The volume persists /root/.claude/ across restarts. Overwriting valid credentials
+# (which may have been auto-refreshed by the CLI) with an older env var token is
+# the main cause of auth failures after container restarts.
+mkdir -p /root/.claude
+
+_claude_valid=false
+if [ -f /root/.claude/.credentials.json ]; then
+    # Volume has credentials — check if they're still valid before deciding
+    _auth_status=$(claude auth status 2>/dev/null || echo "{}")
+    if echo "$_auth_status" | grep -q '"authMethod":"claude.ai"'; then
+        _sub=$(echo "$_auth_status" | grep -o '"subscriptionType":"[^"]*"' | cut -d'"' -f4)
+        echo "[entrypoint] Claude.ai Pro credentials VALID in volume (authMethod=claude.ai subscriptionType=${_sub:-unknown}) — skipping env var restore."
+        _claude_valid=true
+    else
+        echo "[entrypoint] Volume credentials invalid or expired — will restore from CLAUDE_SESSION_TOKEN."
+    fi
+fi
+
+if [ "$_claude_valid" = "false" ] && [ -n "$CLAUDE_SESSION_TOKEN" ]; then
     echo "$CLAUDE_SESSION_TOKEN" | base64 -d > /root/.claude/.credentials.json
     chmod 600 /root/.claude/.credentials.json
-    echo "[entrypoint] Claude.ai Pro credentials restored."
+    echo "[entrypoint] Claude.ai Pro credentials restored from CLAUDE_SESSION_TOKEN env var."
 
-    # Verify the restored token is still valid — alert clearly if expired
+    # Verify restored token
     _auth_status=$(claude auth status 2>/dev/null || echo "{}")
     if echo "$_auth_status" | grep -q '"authMethod":"claude.ai"'; then
         _sub=$(echo "$_auth_status" | grep -o '"subscriptionType":"[^"]*"' | cut -d'"' -f4)
         echo "[entrypoint] Claude.ai Pro token VALID — authMethod=claude.ai subscriptionType=${_sub:-unknown}. Pro subscription active."
+        _claude_valid=true
     elif echo "$_auth_status" | grep -q '"loggedIn":true'; then
-        echo "[entrypoint] WARNING: Claude logged in but authMethod is not claude.ai (using API key fallback). Re-run 'claude login' in VS Code terminal and update CLAUDE_SESSION_TOKEN."
+        echo "[entrypoint] WARNING: Claude logged in but authMethod is not claude.ai (API key fallback). Re-run 'claude login' in VS Code terminal and update CLAUDE_SESSION_TOKEN."
     else
         echo "[entrypoint] WARNING: CLAUDE_SESSION_TOKEN EXPIRED — Pro unavailable, falling back to ANTHROPIC_API_KEY."
         echo "[entrypoint] TO REFRESH: VS Code terminal → 'claude login' → approve in browser → 'cat /root/.claude/.credentials.json | base64 -w0' → update CLAUDE_SESSION_TOKEN in Railway Variables."
     fi
-else
-    echo "[entrypoint] WARNING: CLAUDE_SESSION_TOKEN not set — claude CLI will fall back to ANTHROPIC_API_KEY."
-    echo "[entrypoint] TO ENABLE PRO: open VS Code terminal → run 'claude login' → approve in browser → run 'base64 -w0 /root/.claude/credentials.json' → add as CLAUDE_SESSION_TOKEN in Railway Variables."
+elif [ "$_claude_valid" = "false" ]; then
+    echo "[entrypoint] WARNING: No CLAUDE_SESSION_TOKEN set and no valid volume credentials — claude CLI will fall back to ANTHROPIC_API_KEY."
+    echo "[entrypoint] TO ENABLE PRO: VS Code terminal → 'claude login' → approve in browser → 'cat /root/.claude/.credentials.json | base64 -w0' → add as CLAUDE_SESSION_TOKEN in Railway Variables."
 fi
 
 # ── Google Gemini CLI session token (free-tier Pro backup) ───────────────────
