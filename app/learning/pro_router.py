@@ -404,10 +404,12 @@ def verify_pro_auth() -> dict:
 
     # ── Direct subprocess fallback ────────────────────────────────────────────
     try:
+        _nokey_env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
+        _nokey_env["HOME"] = "/root"
         proc = subprocess.run(
             ["claude", "auth", "status"],
             capture_output=True, text=True, timeout=15,
-            env={**os.environ, "HOME": "/root"},
+            env=_nokey_env,
         )
         raw = (proc.stdout or proc.stderr or "").strip()
 
@@ -535,10 +537,12 @@ def _try_restore_claude_auth() -> bool:
 
     # Verify the restored token with a tight timeout
     try:
+        _nokey = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
+        _nokey["HOME"] = "/root"
         r = subprocess.run(
             ["claude", "auth", "status"],
             capture_output=True, text=True, timeout=12,
-            env={**os.environ, "HOME": "/root"},
+            env=_nokey,
         )
         out = r.stdout + r.stderr
         if '"authMethod":"claude.ai"' in out or ('"loggedIn":true' in out):
@@ -567,10 +571,12 @@ def _pre_flight_auth_ok() -> bool:
     Returns True if auth looks fine and the full prompt call can proceed.
     """
     try:
+        _env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
+        _env["HOME"] = "/root"
         r = subprocess.run(
             ["claude", "auth", "status"],
             capture_output=True, text=True, timeout=12,
-            env={**os.environ, "HOME": "/root"},
+            env=_env,
         )
         out = r.stdout + r.stderr
         # Happy path
@@ -821,13 +827,19 @@ def try_pro(prompt: str, system: str = "") -> str | None:
         return None
 
     def _run_subprocess(t: int):
+        # Unset ANTHROPIC_API_KEY so claude CLI uses OAuth (claude.ai Pro)
+        # instead of the API key. When API key is present in env, claude -p
+        # prefers it over OAuth — causing "Credit balance is too low" even
+        # when Pro credentials are valid.
+        _env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
+        _env["HOME"] = "/root"
         return subprocess.Popen(
             ["claude", "-p", full_prompt],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
             cwd="/workspace",
-            env={**os.environ, "HOME": "/root"},
+            env=_env,
         )
 
     proc = None
