@@ -783,7 +783,11 @@ def try_pro(prompt: str, system: str = "") -> str | None:
             return None
         return cli_result or None
 
-    # ── Direct subprocess fallback (no CLI worker / dev mode) ────────────────
+    # ── Direct subprocess fallback (CLI worker unreachable — use local CLI) ─────
+    # This path activates when inspiring-cat is down/unreachable. super-agent has
+    # its own Claude CLI credentials (Railway volume at /root/.claude/) so it can
+    # handle the request directly without falling to Gemini or the Anthropic API.
+    _queue_progress("⚠️ CLI worker unreachable — trying local CLI fallback…")
     # Pre-flight auth check — fails in 12s if session is gone (e.g. container
     # restarted and /root/.claude/ was wiped), preventing a 360s hang.
     # Also attempts autonomous credential restore before giving up.
