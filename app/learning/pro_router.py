@@ -859,9 +859,10 @@ def try_pro(prompt: str, system: str = "") -> str | None:
         _env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
         _env["HOME"] = "/root"
         return subprocess.Popen(
-            ["claude", "-p", "--dangerously-skip-permissions", full_prompt],
+            ["claude", "-p", full_prompt],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+            stdin=subprocess.DEVNULL,
             text=True,
             cwd="/workspace",
             env=_env,

@@ -82,6 +82,7 @@ def _run_subprocess(cmd: list[str], cwd: str | None, timeout: int) -> str:
             timeout=timeout,
             cwd=cwd,
             env=_CLI_ENV,
+            stdin=subprocess.DEVNULL,
         )
         return (result.stdout or result.stderr or "(no output)").strip()
     except subprocess.TimeoutExpired:
@@ -103,7 +104,7 @@ def execute_task(task_id: str, task_type: str, payload: dict) -> None:
 
         if task_type == "claude_pro":
             prompt = payload.get("prompt", "")
-            result = _run_subprocess(["claude", "-p", "--dangerously-skip-permissions", prompt], _WORKSPACE, timeout)
+            result = _run_subprocess(["claude", "-p", prompt], _WORKSPACE, timeout)
 
         elif task_type == "gemini_cli":
             prompt = payload.get("prompt", "")
@@ -183,7 +184,7 @@ def run_task_from_record(task: dict) -> None:
     try:
         if task_type == "claude_pro":
             prompt = payload.get("prompt", "")
-            result = _run_subprocess(["claude", "-p", "--dangerously-skip-permissions", prompt], _WORKSPACE, timeout)
+            result = _run_subprocess(["claude", "-p", prompt], _WORKSPACE, timeout)
 
         elif task_type == "gemini_cli":
             prompt = payload.get("prompt", "")
