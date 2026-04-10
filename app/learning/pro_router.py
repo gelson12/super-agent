@@ -179,10 +179,13 @@ _CLI_DOWN_PHRASES = (
     "invalid token",
     "login required",
     "not logged in",
-    "unauthorized",
-    "forbidden",
     "auth failed",
-    "credentials",
+    "invalid credentials",
+    "credentials expired",
+    "no valid credentials",
+    # NOTE: "credentials" alone was too broad — matched file paths like
+    # .credentials.json. "unauthorized" and "forbidden" removed because
+    # they match too many non-auth contexts (e.g. Railway API 403).
 )
 
 # Weekly / billing / upgrade phrases — explicitly IGNORED, no flag set
