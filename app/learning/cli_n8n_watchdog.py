@@ -45,6 +45,20 @@ _CLI_TEST_TIMEOUT  = 45
 _N8N_TEST_TIMEOUT  = 20
 _TEST_WF_PREFIX    = "Watchdog-Health-Test"
 
+# ── New: CLI n8n build test + HA test thresholds ─────────────────────────────
+_CLI_BUILD_TIMEOUT     = 180      # MCP builds involve multiple tool calls
+_CLI_HA_TIMEOUT        = 45
+_BUILD_TEST_PREFIX     = "Watchdog-CLI-Build-Test"
+_BUILD_COOLDOWN_HOURS  = 6        # skip expensive build test if last success < 6h ago
+
+_BUILD_REFUSAL_PHRASES = (
+    "i can't", "i cannot", "i'm unable", "not able to",
+    "don't have access", "no mcp", "cannot create workflows",
+    "don't have direct access", "operating as", "headless cli",
+    "without direct network", "copy this json", "paste it directly",
+    "import directly into",
+)
+
 
 def _log(msg: str) -> None:
     try:
@@ -72,6 +86,12 @@ def _load_state() -> dict:
         "resolved_workflow_id": None,
         "resolved_workflow_name": None,
         "tier_results": {},
+        "cli_build_ok": False,
+        "cli_build_detail": "",
+        "cli_build_workflow_id": None,
+        "cli_build_last_success_ts": 0,
+        "cli_ha_ok": False,
+        "cli_ha_detail": "",
     }
 
 
@@ -232,6 +252,244 @@ def _test_n8n() -> tuple[bool, str, str | None, str | None]:
         return False, "n8n returned no workflow ID", None, None
     except Exception as e:
         return False, f"exception: {e}", None, None
+
+
+# ── NEW: CLI n8n Build Test ───────────────────────────────────────────────────
+
+def _test_cli_n8n_build() -> tuple[bool, str, str | None]:
+    """
+    Send a real n8n build prompt to Claude CLI, then verify the workflow
+    was actually created in n8n canvas via REST API.
+    Returns (ok, detail, workflow_id).
+    """
+    try:
+        from ..config import settings
+        if not settings.n8n_base_url or not settings.n8n_api_key:
+            return False, "n8n not configured (N8N_BASE_URL/N8N_API_KEY missing)", None
+
+        import re
+        import urllib.request as _urlr
+
+        ts = int(time.time())
+        wf_name = f"{_BUILD_TEST_PREFIX}-{ts}"
+        build_prompt = (
+            f"Using your n8n MCP tools, create a workflow called '{wf_name}' "
+            f"with a Manual Trigger node connected to a NoOp node called 'CLI-Built-OK'. "
+            f"Use the create_workflow tool to build it directly in n8n. "
+            f"After creating it, reply with only the workflow ID."
+        )
+
+        cli_result = None
+
+        # Try inspiring-cat CLI worker first
+        try:
+            from .pro_router import _submit_and_poll, _cli_worker_url
+            if _cli_worker_url():
+                cli_result = _submit_and_poll(
+                    "claude_pro", {"prompt": build_prompt},
+                    timeout=_CLI_BUILD_TIMEOUT + 30,
+                )
+        except Exception:
+            pass
+
+        # Fallback: local subprocess
+        if not cli_result:
+            try:
+                import subprocess as _sp
+                _env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
+                _env["HOME"] = "/root"
+                proc = _sp.run(
+                    ["claude", "-p", build_prompt],
+                    capture_output=True, text=True, input="1\n" * 30,
+                    timeout=_CLI_BUILD_TIMEOUT, cwd="/workspace", env=_env,
+                )
+                cli_result = (proc.stdout or "").strip()
+            except Exception:
+                pass
+
+        if not cli_result:
+            return False, "CLI returned no response", None
+
+        # Check for refusal
+        lower = cli_result.lower()
+        if any(p in lower for p in _BUILD_REFUSAL_PHRASES):
+            return False, f"CLI refused: {cli_result[:120]}", None
+
+        # Try to extract workflow ID from CLI output
+        # n8n IDs are alphanumeric strings, typically 10+ chars
+        wf_id = None
+        id_match = re.search(r'\b([a-zA-Z0-9]{10,})\b', cli_result)
+        if id_match:
+            wf_id = id_match.group(1)
+
+        # Verify workflow exists in n8n via REST API
+        found = False
+        if wf_id:
+            try:
+                req = _urlr.Request(
+                    f"{settings.n8n_base_url.rstrip('/')}/api/v1/workflows/{wf_id}",
+                    headers={"X-N8N-API-KEY": settings.n8n_api_key, "Accept": "application/json"},
+                )
+                with _urlr.urlopen(req, timeout=_N8N_TEST_TIMEOUT) as resp:
+                    body = json.loads(resp.read().decode("utf-8"))
+                    found = bool(body.get("id"))
+            except Exception:
+                pass
+
+        # Fallback: search by name if ID extraction failed or didn't match
+        if not found:
+            try:
+                req = _urlr.Request(
+                    f"{settings.n8n_base_url.rstrip('/')}/api/v1/workflows?limit=30",
+                    headers={"X-N8N-API-KEY": settings.n8n_api_key, "Accept": "application/json"},
+                )
+                with _urlr.urlopen(req, timeout=_N8N_TEST_TIMEOUT) as resp:
+                    body = json.loads(resp.read().decode("utf-8"))
+                    workflows = body.get("data", body) if isinstance(body, dict) else body
+                    if isinstance(workflows, list):
+                        for wf in workflows:
+                            if wf.get("name", "").startswith(_BUILD_TEST_PREFIX):
+                                wf_id = str(wf.get("id", ""))
+                                found = True
+                                break
+            except Exception:
+                pass
+
+        # Cleanup test workflow (best-effort)
+        if found and wf_id:
+            try:
+                req = _urlr.Request(
+                    f"{settings.n8n_base_url.rstrip('/')}/api/v1/workflows/{wf_id}",
+                    headers={"X-N8N-API-KEY": settings.n8n_api_key},
+                    method="DELETE",
+                )
+                _urlr.urlopen(req, timeout=10)
+            except Exception:
+                pass
+
+        if found:
+            return True, f"CLI built workflow {wf_id} in n8n ✓", wf_id
+        return False, f"CLI responded but workflow not found in n8n (output: {cli_result[:100]})", None
+
+    except Exception as e:
+        return False, f"exception: {e}", None
+
+
+def _apply_cli_build_fixes(detail: str) -> list[str]:
+    """Auto-fix strategies when CLI n8n build fails."""
+    fixes = []
+
+    # If CLI refused, try re-registering MCP server
+    if any(p in detail.lower() for p in _BUILD_REFUSAL_PHRASES):
+        try:
+            from .pro_router import _submit_and_poll, _cli_worker_url
+            if _cli_worker_url():
+                _submit_and_poll(
+                    "claude_pro",
+                    {"prompt": 'Run this command: claude mcp add n8n --stdio "python /app/mcp/n8n_mcp_server.py"'},
+                    timeout=30,
+                )
+                fixes.append("re-registered n8n MCP server on inspiring-cat")
+        except Exception:
+            pass
+
+    # If workflow not found, check n8n is reachable
+    if "not found in n8n" in detail:
+        try:
+            from ..tools.n8n_repair import attempt_n8n_repair
+            fixed, repair_actions = attempt_n8n_repair("connection refused", {})
+            if fixed:
+                fixes.append(f"n8n repair: {'; '.join(repair_actions)[:80]}")
+        except Exception:
+            pass
+
+    return fixes
+
+
+# ── NEW: CLI High Availability Test ──────────────────────────────────────────
+
+def _test_cli_ha() -> tuple[bool, str]:
+    """
+    Test BOTH CLI instances independently:
+    1. inspiring-cat (CLI worker) via /health + task submission
+    2. super-agent (local subprocess) via direct claude -p
+
+    Returns (ok, detail). Both must pass for HA.
+    """
+    import urllib.request as _urlr
+
+    cli_worker_url = os.environ.get("CLI_WORKER_URL", "").rstrip("/")
+
+    # ── Test inspiring-cat ────────────────────────────────────────────────────
+    ic_ok = False
+    ic_detail = "CLI_WORKER_URL not set"
+    if cli_worker_url:
+        # Health check
+        try:
+            with _urlr.urlopen(f"{cli_worker_url}/health", timeout=10) as resp:
+                health = json.loads(resp.read().decode("utf-8"))
+                if health.get("claude_available"):
+                    ic_ok = True
+                    ic_detail = "healthy"
+                else:
+                    ic_detail = "claude_available=false"
+        except Exception as e:
+            ic_detail = f"health unreachable: {e}"
+
+        # If health passed, also submit a real task
+        if ic_ok:
+            try:
+                from .pro_router import _submit_and_poll
+                result = _submit_and_poll(
+                    "claude_pro", {"prompt": "Reply with exactly the word PONG"},
+                    timeout=_CLI_HA_TIMEOUT,
+                )
+                if result and not result.startswith("["):
+                    ic_detail = "task OK"
+                else:
+                    ic_ok = False
+                    ic_detail = f"task failed: {(result or 'None')[:60]}"
+            except Exception as e:
+                ic_ok = False
+                ic_detail = f"task exception: {e}"
+    else:
+        # Single-instance mode — skip inspiring-cat, don't block HA
+        ic_ok = True
+        ic_detail = "skipped (single-instance mode)"
+
+    # ── Test super-agent local CLI ────────────────────────────────────────────
+    sa_ok = False
+    sa_detail = "not tested"
+    try:
+        import subprocess as _sp
+        _env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
+        _env["HOME"] = "/root"
+        proc = _sp.run(
+            ["claude", "-p", "Reply with exactly the word PONG"],
+            capture_output=True, text=True, input="1\n" * 30,
+            timeout=_CLI_HA_TIMEOUT, env=_env,
+        )
+        stdout = (proc.stdout or "").strip()
+        if proc.returncode == 0 and stdout and not stdout.startswith("["):
+            sa_ok = True
+            sa_detail = "OK"
+        else:
+            sa_detail = f"failed: rc={proc.returncode} out={stdout[:60]}"
+            # Attempt auto-fix
+            try:
+                from .pro_router import _try_restore_claude_auth
+                if _try_restore_claude_auth():
+                    sa_detail += " → auth restored, will retry next cycle"
+            except Exception:
+                pass
+    except FileNotFoundError:
+        sa_detail = "claude CLI not found"
+    except Exception as e:
+        sa_detail = f"exception: {e}"
+
+    both_ok = ic_ok and sa_ok
+    combined = f"inspiring-cat: {ic_detail} | super-agent: {sa_detail}"
+    return both_ok, combined
 
 
 # ── Auto-fix: detect and set N8N_BASE_URL from Railway ────────────────────────
@@ -482,9 +740,48 @@ def run_watchdog_cycle() -> None:
         deepseek_ok, deepseek_detail = _test_deepseek()
         tier_results["DeepSeek"] = {"ok": deepseek_ok, "detail": deepseek_detail}
 
-        # ── 4. Test n8n ───────────────────────────────────────────────────────
+        # ── 4. Test n8n REST ──────────────────────────────────────────────────
         n8n_ok, n8n_detail, wf_id, wf_name = _test_n8n()
         tier_results["n8n"] = {"ok": n8n_ok, "detail": n8n_detail}
+
+        # ── 5. Test CLI High Availability ─────────────────────────────────────
+        ha_ok, ha_detail = _test_cli_ha()
+        tier_results["HA"] = {"ok": ha_ok, "detail": ha_detail}
+        state["cli_ha_ok"] = ha_ok
+        state["cli_ha_detail"] = ha_detail
+
+        # ── 6. Test CLI n8n Build (only if HA passed — no point if CLI is down)
+        n8n_configured = bool(os.environ.get("N8N_BASE_URL") or os.environ.get("n8n_base_url"))
+        build_ok = False
+        build_detail = "skipped"
+        build_wf_id = None
+
+        # Check cooldown — skip if last success was < 6h ago
+        last_build_ts = state.get("cli_build_last_success_ts", 0)
+        build_cooled = (time.time() - last_build_ts) > (_BUILD_COOLDOWN_HOURS * 3600)
+
+        if ha_ok and n8n_configured and build_cooled:
+            build_ok, build_detail, build_wf_id = _test_cli_n8n_build()
+            if not build_ok:
+                # Apply auto-fixes for build failures
+                build_fixes = _apply_cli_build_fixes(build_detail)
+                if build_fixes:
+                    _log(f"Watchdog build fixes: {'; '.join(build_fixes)}")
+            else:
+                state["cli_build_last_success_ts"] = time.time()
+        elif not ha_ok:
+            build_detail = "skipped (HA failed — CLI not available)"
+        elif not n8n_configured:
+            build_ok = True  # don't block if n8n not configured
+            build_detail = "skipped (n8n not configured)"
+        elif not build_cooled:
+            build_ok = True  # last build was recent enough
+            build_detail = "skipped (cooldown — last success < 6h ago)"
+
+        tier_results["Build"] = {"ok": build_ok, "detail": build_detail}
+        state["cli_build_ok"] = build_ok
+        state["cli_build_detail"] = build_detail
+        state["cli_build_workflow_id"] = build_wf_id
 
         state["tier_results"] = {k: v for k, v in tier_results.items()}
         _save_state(state)
@@ -497,17 +794,20 @@ def run_watchdog_cycle() -> None:
         summary = " | ".join(summary_parts)
         _log(f"Watchdog cycle #{cycle} results: {summary}")
 
-        # ── 5. Resolution check ──────────────────────────────────────────────
-        # Resolve when: at least ONE free tier works (CLI or Gemini) AND
-        # at least ONE paid fallback is available AND n8n is reachable.
+        # ── 7. Resolution check ──────────────────────────────────────────────
         any_free = cli_ok or gemini_ok
         any_paid = anthropic_ok or deepseek_ok
-        # n8n is optional — if N8N_BASE_URL/N8N_API_KEY aren't set we don't block on it
-        n8n_configured = bool(os.environ.get("N8N_BASE_URL") or os.environ.get("n8n_base_url"))
         n8n_pass = n8n_ok or not n8n_configured
+        cli_worker_url = os.environ.get("CLI_WORKER_URL", "")
 
-        if any_free and any_paid and n8n_pass:
-            _resolve(state, tier_results, wf_id, wf_name)
+        # BOTH new gates must pass alongside existing criteria
+        cli_build_pass = build_ok or not n8n_configured
+        cli_ha_pass = ha_ok or not cli_worker_url  # single-instance mode OK
+
+        resolved = any_free and any_paid and n8n_pass and cli_build_pass and cli_ha_pass
+
+        if resolved:
+            _resolve(state, tier_results, wf_id or build_wf_id, wf_name)
             return
 
         # Not resolved yet — report what's failing
@@ -538,5 +838,9 @@ def get_status() -> dict:
         "resolved_workflow_id": state.get("resolved_workflow_id"),
         "resolved_workflow_name": state.get("resolved_workflow_name"),
         "tier_results": state.get("tier_results", {}),
+        "cli_build_ok": state.get("cli_build_ok", False),
+        "cli_build_detail": state.get("cli_build_detail", ""),
+        "cli_ha_ok": state.get("cli_ha_ok", False),
+        "cli_ha_detail": state.get("cli_ha_detail", ""),
         "dashboard_alert": alert,
     }
