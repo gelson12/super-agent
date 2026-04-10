@@ -1346,6 +1346,278 @@ async def n8n_connection_info(request: Request):
     }
 
 
+# ── Direct n8n Workflow Management API ─────────────────────────────────────────
+# Zero-cost REST proxy to n8n — no AI models called, no Anthropic credits used.
+# Create, update, activate, delete workflows directly via super-agent URL.
+
+
+class WorkflowCreateRequest(BaseModel):
+    """Create a workflow from a full JSON definition or name + nodes."""
+    name: str = Field(..., description="Workflow display name")
+    nodes: list = Field(default=[], description="Array of node objects")
+    connections: dict = Field(default={}, description="Node connections map")
+    workflow_json: dict | None = Field(default=None, description="Full workflow JSON (overrides nodes/connections)")
+    activate: bool = Field(default=False, description="Activate immediately after creation")
+
+
+class WorkflowUpdateRequest(BaseModel):
+    """Update an existing workflow."""
+    nodes: list | None = Field(default=None, description="Updated node array")
+    connections: dict | None = Field(default=None, description="Updated connections")
+    workflow_json: dict | None = Field(default=None, description="Full workflow JSON")
+    name: str | None = Field(default=None, description="New name")
+    activate: bool | None = Field(default=None, description="Set active state")
+
+
+@app.get("/n8n/workflows", tags=["n8n"])
+async def n8n_list_all_workflows(request: Request):
+    """List all workflows in n8n with their active status. No AI credits used."""
+    import httpx
+    from .config import settings
+    if not settings.n8n_base_url or not settings.n8n_api_key:
+        raise HTTPException(status_code=503, detail="n8n not configured (N8N_BASE_URL/N8N_API_KEY missing)")
+
+    base = settings.n8n_base_url.rstrip("/")
+    headers = {"X-N8N-API-KEY": settings.n8n_api_key, "Accept": "application/json"}
+    all_workflows = []
+    cursor = None
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        for _ in range(20):
+            url = f"{base}/api/v1/workflows?limit=100"
+            if cursor:
+                url += f"&cursor={cursor}"
+            resp = await client.get(url, headers=headers)
+            resp.raise_for_status()
+            data = resp.json()
+            for wf in data.get("data", []):
+                all_workflows.append({
+                    "id": wf["id"],
+                    "name": wf["name"],
+                    "active": wf.get("active", False),
+                    "createdAt": wf.get("createdAt"),
+                    "updatedAt": wf.get("updatedAt"),
+                })
+            cursor = data.get("nextCursor")
+            if not cursor:
+                break
+
+    return {"count": len(all_workflows), "workflows": all_workflows}
+
+
+@app.get("/n8n/workflows/{workflow_id}", tags=["n8n"])
+async def n8n_get_workflow_detail(workflow_id: str, request: Request):
+    """Get full workflow JSON by ID. No AI credits used."""
+    import httpx
+    from .config import settings
+    if not settings.n8n_base_url or not settings.n8n_api_key:
+        raise HTTPException(status_code=503, detail="n8n not configured")
+
+    base = settings.n8n_base_url.rstrip("/")
+    headers = {"X-N8N-API-KEY": settings.n8n_api_key, "Accept": "application/json"}
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.get(f"{base}/api/v1/workflows/{workflow_id}", headers=headers)
+        if resp.status_code == 404:
+            raise HTTPException(status_code=404, detail=f"Workflow {workflow_id} not found")
+        resp.raise_for_status()
+        return resp.json()
+
+
+@app.post("/n8n/workflows", tags=["n8n"])
+async def n8n_create_new_workflow(body: WorkflowCreateRequest, request: Request):
+    """
+    Create a new workflow in n8n directly. No AI credits used.
+    Accepts either workflow_json (full definition) or name + nodes + connections.
+    Set activate=true to make it live immediately.
+    """
+    import httpx
+    from .config import settings
+    if not settings.n8n_base_url or not settings.n8n_api_key:
+        raise HTTPException(status_code=503, detail="n8n not configured")
+
+    base = settings.n8n_base_url.rstrip("/")
+    headers = {
+        "X-N8N-API-KEY": settings.n8n_api_key,
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+
+    if body.workflow_json:
+        payload = body.workflow_json.copy()
+        payload.pop("id", None)
+        payload.pop("versionId", None)
+        if body.name:
+            payload["name"] = body.name
+    else:
+        payload = {
+            "name": body.name,
+            "nodes": body.nodes,
+            "connections": body.connections,
+            "settings": {"executionOrder": "v1"},
+        }
+
+    async with httpx.AsyncClient(timeout=60) as client:
+        resp = await client.post(f"{base}/api/v1/workflows", json=payload, headers=headers)
+        if resp.status_code >= 400:
+            raise HTTPException(status_code=resp.status_code, detail=resp.text)
+        created = resp.json()
+        wf_id = created.get("id")
+
+        if body.activate and wf_id:
+            act_resp = await client.patch(
+                f"{base}/api/v1/workflows/{wf_id}",
+                json={"active": True},
+                headers=headers,
+            )
+            if act_resp.status_code < 400:
+                created["active"] = True
+
+    bg_log(f"Workflow created via API: {created.get('name')} (ID: {wf_id}, active: {created.get('active')})", source="n8n_api")
+    return {
+        "success": True,
+        "id": wf_id,
+        "name": created.get("name"),
+        "active": created.get("active", False),
+        "message": f"Workflow '{created.get('name')}' created" + (" and activated" if body.activate else ""),
+    }
+
+
+@app.put("/n8n/workflows/{workflow_id}", tags=["n8n"])
+async def n8n_update_existing_workflow(workflow_id: str, body: WorkflowUpdateRequest, request: Request):
+    """Update an existing workflow. No AI credits used."""
+    import httpx
+    from .config import settings
+    if not settings.n8n_base_url or not settings.n8n_api_key:
+        raise HTTPException(status_code=503, detail="n8n not configured")
+
+    base = settings.n8n_base_url.rstrip("/")
+    headers = {
+        "X-N8N-API-KEY": settings.n8n_api_key,
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+
+    async with httpx.AsyncClient(timeout=60) as client:
+        current = await client.get(f"{base}/api/v1/workflows/{workflow_id}", headers=headers)
+        if current.status_code == 404:
+            raise HTTPException(status_code=404, detail=f"Workflow {workflow_id} not found")
+        current.raise_for_status()
+        wf = current.json()
+
+        if body.workflow_json:
+            payload = body.workflow_json.copy()
+            payload.pop("id", None)
+        else:
+            payload = {}
+            if body.nodes is not None:
+                payload["nodes"] = body.nodes
+            if body.connections is not None:
+                payload["connections"] = body.connections
+            if body.name is not None:
+                payload["name"] = body.name
+
+        if payload:
+            resp = await client.put(f"{base}/api/v1/workflows/{workflow_id}", json=payload, headers=headers)
+            if resp.status_code >= 400:
+                raise HTTPException(status_code=resp.status_code, detail=resp.text)
+            wf = resp.json()
+
+        if body.activate is not None:
+            act_resp = await client.patch(
+                f"{base}/api/v1/workflows/{workflow_id}",
+                json={"active": body.activate},
+                headers=headers,
+            )
+            if act_resp.status_code < 400:
+                wf["active"] = body.activate
+
+    bg_log(f"Workflow updated via API: {wf.get('name')} (ID: {workflow_id})", source="n8n_api")
+    return {"success": True, "id": workflow_id, "name": wf.get("name"), "active": wf.get("active", False)}
+
+
+@app.patch("/n8n/workflows/{workflow_id}/activate", tags=["n8n"])
+async def n8n_activate(workflow_id: str, request: Request):
+    """Activate a workflow. No AI credits used."""
+    import httpx
+    from .config import settings
+    if not settings.n8n_base_url or not settings.n8n_api_key:
+        raise HTTPException(status_code=503, detail="n8n not configured")
+
+    base = settings.n8n_base_url.rstrip("/")
+    headers = {"X-N8N-API-KEY": settings.n8n_api_key, "Content-Type": "application/json"}
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.patch(f"{base}/api/v1/workflows/{workflow_id}", json={"active": True}, headers=headers)
+        if resp.status_code >= 400:
+            raise HTTPException(status_code=resp.status_code, detail=resp.text)
+        return {"success": True, "id": workflow_id, "active": True}
+
+
+@app.patch("/n8n/workflows/{workflow_id}/deactivate", tags=["n8n"])
+async def n8n_deactivate(workflow_id: str, request: Request):
+    """Deactivate a workflow. No AI credits used."""
+    import httpx
+    from .config import settings
+    if not settings.n8n_base_url or not settings.n8n_api_key:
+        raise HTTPException(status_code=503, detail="n8n not configured")
+
+    base = settings.n8n_base_url.rstrip("/")
+    headers = {"X-N8N-API-KEY": settings.n8n_api_key, "Content-Type": "application/json"}
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.patch(f"{base}/api/v1/workflows/{workflow_id}", json={"active": False}, headers=headers)
+        if resp.status_code >= 400:
+            raise HTTPException(status_code=resp.status_code, detail=resp.text)
+        return {"success": True, "id": workflow_id, "active": False}
+
+
+@app.delete("/n8n/workflows/{workflow_id}", tags=["n8n"])
+async def n8n_delete_existing_workflow(workflow_id: str, request: Request):
+    """Delete a workflow permanently. No AI credits used."""
+    import httpx
+    from .config import settings
+    if not settings.n8n_base_url or not settings.n8n_api_key:
+        raise HTTPException(status_code=503, detail="n8n not configured")
+
+    base = settings.n8n_base_url.rstrip("/")
+    headers = {"X-N8N-API-KEY": settings.n8n_api_key}
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.delete(f"{base}/api/v1/workflows/{workflow_id}", headers=headers)
+        if resp.status_code == 404:
+            raise HTTPException(status_code=404, detail=f"Workflow {workflow_id} not found")
+        if resp.status_code >= 400:
+            raise HTTPException(status_code=resp.status_code, detail=resp.text)
+
+    bg_log(f"Workflow deleted via API: {workflow_id}", source="n8n_api")
+    return {"success": True, "id": workflow_id, "deleted": True}
+
+
+@app.post("/n8n/workflows/{workflow_id}/execute", tags=["n8n"])
+async def n8n_execute_existing_workflow(workflow_id: str, request: Request):
+    """Manually trigger a workflow execution. No AI credits used."""
+    import httpx
+    from .config import settings
+    if not settings.n8n_base_url or not settings.n8n_api_key:
+        raise HTTPException(status_code=503, detail="n8n not configured")
+
+    base = settings.n8n_base_url.rstrip("/")
+    headers = {"X-N8N-API-KEY": settings.n8n_api_key, "Content-Type": "application/json"}
+
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+
+    async with httpx.AsyncClient(timeout=60) as client:
+        resp = await client.post(f"{base}/api/v1/workflows/{workflow_id}/run", json=body, headers=headers)
+        if resp.status_code >= 400:
+            raise HTTPException(status_code=resp.status_code, detail=resp.text)
+        return resp.json()
+
+
 @app.post("/webhook/railway", tags=["webhook"])
 async def railway_webhook(request: Request):
     """
