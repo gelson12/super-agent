@@ -287,21 +287,9 @@ async def _lifespan(app: FastAPI):
         replace_existing=True,
     )
 
-    # CLI + n8n self-healing watchdog — every 5 min until resolved, then hourly re-check
-    def _cli_n8n_watchdog_job():
-        try:
-            from .learning.cli_n8n_watchdog import run_watchdog_cycle
-            run_watchdog_cycle()
-        except Exception as _e:
-            bg_log(f"CLI/n8n watchdog error: {_e}", source="cli_n8n_watchdog")
-
-    scheduler.add_job(
-        _cli_n8n_watchdog_job,
-        "interval",
-        minutes=5,
-        id="cli_n8n_watchdog",
-        replace_existing=True,
-    )
+    # CLI + n8n self-healing watchdog — DISABLED: was creating 150+ junk
+    # workflows in n8n every 5 min and never cleaning them up, crashing the server.
+    # See cli_n8n_watchdog.py if re-enabling — cleanup logic was added.
 
     scheduler.start()
     yield

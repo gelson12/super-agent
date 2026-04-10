@@ -248,6 +248,16 @@ def _test_n8n() -> tuple[bool, str, str | None, str | None]:
             body = json.loads(resp.read().decode("utf-8"))
             wf_id = str(body.get("id", ""))
             if wf_id:
+                # Immediately delete the test workflow to prevent buildup
+                try:
+                    del_req = _urlr.Request(
+                        f"{settings.n8n_base_url.rstrip('/')}/api/v1/workflows/{wf_id}",
+                        headers={"X-N8N-API-KEY": settings.n8n_api_key},
+                        method="DELETE",
+                    )
+                    _urlr.urlopen(del_req, timeout=_N8N_TEST_TIMEOUT)
+                except Exception:
+                    pass  # best-effort cleanup
                 return True, "OK", wf_id, body.get("name", name)
         return False, "n8n returned no workflow ID", None, None
     except Exception as e:
