@@ -227,16 +227,23 @@ def run_n8n_agent(message: str) -> str:
                 f"Error: {error_str}\n\nInvestigating Railway infrastructure now..."
             )
 
-    # ── 1. Claude CLI (inspiring-cat has n8n MCP registered — zero API cost) ──
-    # Claude CLI on inspiring-cat runs `claude mcp add n8n` at boot, so it has
-    # FULL n8n tool access (create, update, activate workflows) at zero credit cost.
+    # ── 1. Claude CLI Pro (zero cost, has n8n MCP registered on inspiring-cat) ──
     try:
-        from ..learning.pro_router import try_pro
-        cli_result = try_pro(f"{_SYSTEM}\n\n{message}")
-        if cli_result and not cli_result.startswith("["):
-            return cli_result
-    except Exception:
-        pass
+        from ..learning.pro_router import try_pro, should_attempt_cli
+        if should_attempt_cli():
+            cli_result = try_pro(f"{_SYSTEM}\n\n{message}")
+            if cli_result and not cli_result.startswith("["):
+                from ..activity_log import bg_log as _bg
+                _bg("n8n agent: ✓ Claude CLI Pro responded", source="n8n_agent")
+                return cli_result
+            from ..activity_log import bg_log as _bg
+            _bg(f"n8n agent: CLI unavailable ({(cli_result or 'None')[:80]}) — trying Gemini", source="n8n_agent")
+        else:
+            from ..activity_log import bg_log as _bg
+            _bg("n8n agent: CLI flagged down — skipping to Gemini", source="n8n_agent")
+    except Exception as _e:
+        from ..activity_log import bg_log as _bg
+        _bg(f"n8n agent: CLI exception: {_e} — trying Gemini", source="n8n_agent")
 
     # ── 2. Gemini CLI — informational queries only (no n8n tool access) ────────
     # Gemini can describe/design workflows but cannot call Python or MCP tools.
@@ -339,28 +346,19 @@ def run_n8n_agent(message: str) -> str:
         )
         if any(p in err.lower() for p in _no_credits):
             from ..activity_log import bg_log as _bg
-            _bg(
-                "n8n agent: Anthropic API has no credits — retrying via CLI worker (free path)",
-                source="n8n_agent",
-            )
-            # Force a fresh CLI attempt bypassing the flag checks
+            _bg("n8n agent: Anthropic API no credits — trying DeepSeek as last resort", source="n8n_agent")
+            # Tier 4: DeepSeek last resort
             try:
-                from ..learning.pro_router import _submit_and_poll, _dynamic_timeout, _cli_worker_url
-                if _cli_worker_url():
-                    _t = _dynamic_timeout(_build_message)
-                    result = _submit_and_poll(
-                        "claude_pro",
-                        {"prompt": f"{_SYSTEM}\n\n{_build_message}"},
-                        timeout=_t + 30,
-                    )
-                    if result and not result.startswith("["):
-                        return result
+                from ..config import settings as _s
+                if _s.deepseek_api_key:
+                    from ..models.deepseek import ask_deepseek
+                    ds = ask_deepseek(_build_message, system=_SYSTEM)
+                    if ds and not ds.startswith("["):
+                        return ds
             except Exception:
                 pass
             return (
-                "⚠️ **Anthropic API key has no credits** and CLI is temporarily unavailable.\n\n"
-                "The CLI fix is deploying now — please retry in 2 minutes. "
-                "After inspiring-cat restarts with the new code, n8n workflows will build "
-                "directly via Claude CLI (free, no API credits needed)."
+                "⚠️ **Anthropic API key has no credits** and all free tiers are temporarily unavailable.\n\n"
+                "Please retry in 2 minutes — inspiring-cat CLI is restarting with the credential fix."
             )
         return f"⚠️ n8n agent error: {_e}"

@@ -250,16 +250,18 @@ def run_self_improve_agent(message: str, authorized: bool = False) -> str:
     """
     Run the self-improvement agent. Routing: Claude CLI → Gemini → Anthropic API (last resort).
     """
-    # ── 1. Claude CLI (zero cost, preferred) ─────────────────────────────────
+    # ── 1→2→3→4: CLI Pro → Gemini → Anthropic API (with tools) → DeepSeek ─────
+    # Tier 1: Claude CLI Pro (free)
     try:
-        from ..learning.pro_router import try_pro
-        cli_result = try_pro(f"{_SYSTEM}\n\n{message}")
-        if cli_result and not cli_result.startswith("["):
-            return cli_result
+        from ..learning.pro_router import try_pro, should_attempt_cli
+        if should_attempt_cli():
+            cli_result = try_pro(f"{_SYSTEM}\n\n{message}")
+            if cli_result and not cli_result.startswith("["):
+                return cli_result
     except Exception:
         pass
 
-    # ── 2. Gemini CLI (free fallback) ─────────────────────────────────────────
+    # Tier 2: Gemini CLI (free)
     try:
         from ..learning.gemini_cli_worker import ask_gemini_cli
         gemini = ask_gemini_cli(f"{_SYSTEM}\n\n{message}")
@@ -268,10 +270,22 @@ def run_self_improve_agent(message: str, authorized: bool = False) -> str:
     except Exception:
         pass
 
-    # ── 3. LangGraph + Anthropic API — full tool access ──────────────────────
+    # Tier 3: LangGraph + Anthropic API — full tool access
     try:
         from ..activity_log import bg_log as _bg
         _bg("Self-improve agent: using LangGraph (Anthropic API) — CLI/Gemini unavailable", source="self_improve_agent")
         return _invoke(message)
     except Exception as _e:
-        return f"⚠️ Self-improve agent error: {_e}"
+        if "credit" not in str(_e).lower():
+            return f"⚠️ Self-improve agent error: {_e}"
+
+    # Tier 4: DeepSeek (last resort)
+    try:
+        from ..models.deepseek import ask_deepseek
+        ds = ask_deepseek(message, system=_SYSTEM)
+        if ds and not ds.startswith("["):
+            return ds
+    except Exception:
+        pass
+
+    return "⚠️ All response tiers unavailable (CLI, Gemini, Anthropic, DeepSeek). Please retry in a moment."

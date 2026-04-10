@@ -114,16 +114,18 @@ def run_github_agent(message: str) -> str:
     if not settings.github_pat:
         return "[GitHub agent error: GITHUB_PAT not set]"
 
-    # ── 1. Claude CLI (zero cost, preferred) ─────────────────────────────────
+    # ── 1→2→3→4: CLI Pro → Gemini → Anthropic API (with tools) → DeepSeek ─────
+    # Tier 1: Claude CLI Pro (free)
     try:
-        from ..learning.pro_router import try_pro
-        cli_result = try_pro(f"{_SYSTEM}\n\n{message}")
-        if cli_result and not cli_result.startswith("["):
-            return cli_result
+        from ..learning.pro_router import try_pro, should_attempt_cli
+        if should_attempt_cli():
+            cli_result = try_pro(f"{_SYSTEM}\n\n{message}")
+            if cli_result and not cli_result.startswith("["):
+                return cli_result
     except Exception:
         pass
 
-    # ── 2. Gemini CLI (free fallback) ─────────────────────────────────────────
+    # Tier 2: Gemini CLI (free)
     try:
         from ..learning.gemini_cli_worker import ask_gemini_cli
         gemini = ask_gemini_cli(f"{_SYSTEM}\n\n{message}")
@@ -132,10 +134,22 @@ def run_github_agent(message: str) -> str:
     except Exception:
         pass
 
-    # ── 3. LangGraph + Anthropic API — full Python github_tools ──────────────
+    # Tier 3: LangGraph + Anthropic API — full github_tools
     try:
         from ..activity_log import bg_log as _bg
         _bg("GitHub agent: using LangGraph (Anthropic API) — CLI/Gemini unavailable", source="github_agent")
         return _invoke(message)
     except Exception as _e:
-        return f"⚠️ GitHub agent error: {_e}"
+        if "credit" not in str(_e).lower():
+            return f"⚠️ GitHub agent error: {_e}"
+
+    # Tier 4: DeepSeek (last resort — text only, no GitHub tools)
+    try:
+        from ..models.deepseek import ask_deepseek
+        ds = ask_deepseek(message, system=_SYSTEM)
+        if ds and not ds.startswith("["):
+            return ds
+    except Exception:
+        pass
+
+    return "⚠️ All response tiers unavailable (CLI, Gemini, Anthropic, DeepSeek). Please retry in a moment."

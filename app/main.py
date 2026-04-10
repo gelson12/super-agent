@@ -649,8 +649,9 @@ def chat_stream(req: ChatRequest, request: Request):
         except Exception:
             pass
 
-        # ── 3. Anthropic API (final fallback — CLI and Gemini both unavailable) ──
-        yield "data: [PROGRESS:🔄 CLI & Gemini unavailable — using Anthropic API…]\n\n"
+        # ── 3. Anthropic API ──────────────────────────────────────────────────
+        yield "data: [PROGRESS:🔄 Trying Anthropic API…]\n\n"
+        _api_ok = False
         try:
             _client = _anthropic.Anthropic(api_key=settings.anthropic_api_key)
             with _client.messages.stream(
@@ -672,14 +673,40 @@ def chat_stream(req: ChatRequest, request: Request):
             if _full_api_resp:
                 _store_mem(req.session_id, f"Q: {msg[:300]} A: {_full_api_resp[:300]}")
                 append_exchange(req.session_id, msg, _full_api_resp)
-            yield f"data: [META:ANTHROPIC·conversational·{_mem_count}]\n\n"
-            yield "data: [DONE]\n\n"
-            return
+                _api_ok = True
+            if _api_ok:
+                yield f"data: [META:ANTHROPIC·conversational·{_mem_count}]\n\n"
+                yield "data: [DONE]\n\n"
+                return
         except Exception:
             pass
 
-        # ── 4. All paths failed — last-resort message ─────────────────────────
-        yield "data: ⚠️ All response paths unavailable. Please try again in a moment.\n\n"
+        # ── 4. DeepSeek (last resort) ─────────────────────────────────────────
+        yield "data: [PROGRESS:🔄 Trying DeepSeek (last resort)…]\n\n"
+        try:
+            from .models.deepseek import ask_deepseek
+            _ds_resp = ask_deepseek(msg, system=system)
+            if _ds_resp and not _ds_resp.startswith("["):
+                _store_mem(req.session_id, f"Q: {msg[:300]} A: {_ds_resp[:300]}")
+                append_exchange(req.session_id, msg, _ds_resp)
+                normalized = _ds_resp.replace("\n", " \n ")
+                words = [w for w in normalized.split(" ") if w]
+                buf = ""
+                for word in words:
+                    buf += word + " "
+                    if len(buf) >= 60:
+                        yield f"data: {buf.replace(chr(10), chr(92) + 'n')}\n\n"
+                        buf = ""
+                if buf.strip():
+                    yield f"data: {buf.replace(chr(10), chr(92) + 'n')}\n\n"
+                yield f"data: [META:DEEPSEEK·conversational·{_mem_count}]\n\n"
+                yield "data: [DONE]\n\n"
+                return
+        except Exception:
+            pass
+
+        # ── 5. All tiers failed ───────────────────────────────────────────────
+        yield "data: ⚠️ All response tiers unavailable (CLI, Gemini, Anthropic, DeepSeek). Please retry in a moment.\n\n"
         yield f"data: [META:UNAVAILABLE·conversational·{_mem_count}]\n\n"
         yield "data: [DONE]\n\n"
 

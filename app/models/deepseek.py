@@ -15,7 +15,9 @@ def _get_client() -> OpenAI:
     return _client
 
 
-def ask_deepseek(prompt: str, system: str = SYSTEM_PROMPT_DEEPSEEK) -> str:
+def ask_deepseek(prompt: str, system: str = "") -> str:
+    if not system:
+        system = SYSTEM_PROMPT_DEEPSEEK
     """Send a prompt to DeepSeek Chat and return the text response."""
     if not settings.deepseek_api_key:
         return "[DeepSeek error: DEEPSEEK_API_KEY not set]"
