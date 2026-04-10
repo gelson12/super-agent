@@ -287,10 +287,6 @@ async def _lifespan(app: FastAPI):
         replace_existing=True,
     )
 
-    # CLI + n8n self-healing watchdog — DISABLED: was creating 150+ junk
-    # workflows in n8n every 5 min and never cleaning them up, crashing the server.
-    # See cli_n8n_watchdog.py if re-enabling — cleanup logic was added.
-
     scheduler.start()
     yield
     scheduler.shutdown(wait=False)
@@ -2149,17 +2145,6 @@ def status_now():
         report["metrics_snapshot"] = {k: v["current"] for k, v in trends.get("metrics", {}).items()}
     except Exception:
         report["trend_alerts"] = []
-
-    # Watchdog alert — injected at front so it's always visible
-    try:
-        from .learning.cli_n8n_watchdog import read_watchdog_alert
-        wa = read_watchdog_alert()
-        if wa:
-            report["watchdog_alert"] = wa
-            # Also prepend to trend_alerts so existing UI picks it up
-            report["trend_alerts"] = [wa] + report.get("trend_alerts", [])
-    except Exception:
-        pass
 
     # Cost today
     try:
