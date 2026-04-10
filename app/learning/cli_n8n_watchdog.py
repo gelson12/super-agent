@@ -122,11 +122,9 @@ def _test_cli() -> tuple[bool, str]:
         result = try_pro("Reply with exactly the word OK and nothing else.")
         if not result:
             return False, "CLI returned None"
-        lower = result.lower().strip()
-        error_markers = ("[", "unavailable", "error", "failed", "timeout",
-                         "throttl", "limit", "credential", "auth", "login",
-                         "permission", "approve")
-        if any(m in lower for m in error_markers):
+        # try_pro() returns None on failure, or a string starting with "["
+        # for errors. Any non-None, non-"[" response is a real CLI response.
+        if result.startswith("["):
             return False, f"CLI error: {result[:100]}"
         return True, "OK"
     except Exception as e:
