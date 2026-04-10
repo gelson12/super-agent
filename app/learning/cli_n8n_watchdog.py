@@ -483,7 +483,10 @@ def _test_cli_ha() -> tuple[bool, str]:
             except Exception:
                 pass
     except FileNotFoundError:
-        sa_detail = "claude CLI not found"
+        # Claude CLI not installed on this container — that's OK if
+        # inspiring-cat is the designated CLI host. Don't block HA.
+        sa_ok = True
+        sa_detail = "skipped (claude CLI not on this container — inspiring-cat is primary)"
     except Exception as e:
         sa_detail = f"exception: {e}"
 
