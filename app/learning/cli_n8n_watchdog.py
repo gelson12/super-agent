@@ -470,25 +470,42 @@ def _test_cli_ha() -> tuple[bool, str]:
             timeout=_CLI_HA_TIMEOUT, env=_env,
         )
         stdout = (proc.stdout or "").strip()
+        stderr = (proc.stderr or "").strip()
         if proc.returncode == 0 and stdout and not stdout.startswith("["):
             sa_ok = True
             sa_detail = "OK"
         else:
-            sa_detail = f"failed: rc={proc.returncode} out={stdout[:60]}"
-            # Attempt auto-fix
-            try:
-                from .pro_router import _try_restore_claude_auth
-                if _try_restore_claude_auth():
-                    sa_detail += " → auth restored, will retry next cycle"
-            except Exception:
-                pass
+            sa_detail = f"rc={proc.returncode} out={stdout[:80]} err={stderr[:80]}"
+            _log(f"HA: super-agent local CLI failed — {sa_detail}")
+            # Check if auth is actually valid despite failure
+            _out_compact = f"{stdout} {stderr}".replace(": ", ":")
+            if '"authMethod":"claude.ai"' in _out_compact and '"loggedIn":true' in _out_compact:
+                _log("HA: super-agent auth IS valid — transient CLI error, not auth issue")
+            else:
+                # Attempt auto-fix
+                try:
+                    from .pro_router import _try_restore_claude_auth
+                    if _try_restore_claude_auth():
+                        sa_detail += " → auth restored, will retry next cycle"
+                        _log("HA: super-agent credentials auto-restored")
+                except Exception:
+                    pass
     except FileNotFoundError:
-        # Claude CLI not installed on this container — that's OK if
-        # inspiring-cat is the designated CLI host. Don't block HA.
-        sa_ok = True
-        sa_detail = "skipped (claude CLI not on this container — inspiring-cat is primary)"
+        sa_detail = "claude CLI binary not found in PATH"
+        _log(f"HA: super-agent FileNotFoundError — checking PATH")
+        # Log what's actually in PATH for debugging
+        try:
+            import subprocess as _sp2
+            which = _sp2.run(["which", "claude"], capture_output=True, text=True, timeout=5)
+            _log(f"HA: 'which claude' → {(which.stdout or which.stderr or 'empty').strip()}")
+        except Exception:
+            pass
+    except _sp.TimeoutExpired:
+        sa_detail = f"timed out ({_CLI_HA_TIMEOUT}s)"
+        _log(f"HA: super-agent local CLI timed out after {_CLI_HA_TIMEOUT}s")
     except Exception as e:
         sa_detail = f"exception: {e}"
+        _log(f"HA: super-agent exception: {e}")
 
     both_ok = ic_ok and sa_ok
     combined = f"inspiring-cat: {ic_detail} | super-agent: {sa_detail}"
