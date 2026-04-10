@@ -574,7 +574,9 @@ def _try_restore_claude_auth() -> bool:
             env=_nokey,
         )
         out = r.stdout + r.stderr
-        if '"authMethod":"claude.ai"' in out or ('"loggedIn":true' in out):
+        # Handle both compact JSON ("authMethod":"claude.ai") and pretty-printed ("authMethod": "claude.ai")
+        _out_compact = out.replace(": ", ":")
+        if '"authMethod":"claude.ai"' in _out_compact or '"loggedIn":true' in _out_compact:
             _log(f"Auto-restore VERIFIED ✓ — credentials written to {written} paths.")
             return True
         _log(f"Auto-restore wrote files but auth still invalid: {out[:200]!r}")
@@ -608,8 +610,9 @@ def _pre_flight_auth_ok() -> bool:
             env=_env,
         )
         out = r.stdout + r.stderr
-        # Happy path
-        if '"authMethod":"claude.ai"' in out or '"loggedIn":true' in out:
+        # Happy path — handle both compact and pretty-printed JSON
+        _out_compact = out.replace(": ", ":")
+        if '"authMethod":"claude.ai"' in _out_compact or '"loggedIn":true' in _out_compact:
             return True
         # Auth failure detected — try to self-restore before giving up
         if any(p in out.lower() for p in _CLI_DOWN_PHRASES):
@@ -923,7 +926,15 @@ def try_pro(prompt: str, system: str = "") -> str | None:
             return stdout
 
         if stdout or stderr:
-            _classify_and_set_flag(stdout, stderr)
+            # Don't misclassify valid auth JSON as a failure — if the output
+            # contains a valid auth status (loggedIn + authMethod=claude.ai),
+            # it's a transient CLI error, not an auth failure.
+            combined = f"{stdout} {stderr}"
+            _combined_compact = combined.replace(": ", ":")
+            if '"authMethod":"claude.ai"' in _combined_compact and '"loggedIn":true' in _combined_compact:
+                _log("CLI returned non-zero exit but auth is valid — transient error, not flagging as down")
+            else:
+                _classify_and_set_flag(stdout, stderr)
 
         return None
 
