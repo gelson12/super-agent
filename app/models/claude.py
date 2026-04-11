@@ -52,9 +52,20 @@ def ask_claude(prompt: str, system: str = SYSTEM_PROMPT_CLAUDE) -> str:
     except Exception:
         pass  # Gemini unavailable — fall through to Anthropic API
 
-    # 3. Both CLI and Gemini unavailable — do not call Anthropic API
-    # API credits are preserved. Return a clear error so the user can retry.
-    return "[Claude unavailable: CLI and Gemini both unreachable — please try again in a moment]"
+    # 3. Both CLI and Gemini unavailable — fall back to Anthropic API as last resort
+    if not settings.anthropic_api_key:
+        return "[Claude unavailable: CLI and Gemini both unreachable, no API key configured]"
+    try:
+        _tls.api_used = True
+        resp = _get_client().messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=settings.max_tokens_claude,
+            system=system,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return resp.content[0].text
+    except Exception as e:
+        return f"[Claude API fallback error: {e}]"
 
 
 def ask_claude_haiku(prompt: str, system: str = SYSTEM_PROMPT_CLAUDE) -> str:
@@ -78,8 +89,20 @@ def ask_claude_haiku(prompt: str, system: str = SYSTEM_PROMPT_CLAUDE) -> str:
     except Exception:
         pass  # Gemini unavailable — fall through to Anthropic API
 
-    # 3. Both CLI and Gemini unavailable — do not call Anthropic API
-    return "[Claude unavailable: CLI and Gemini both unreachable — please try again in a moment]"
+    # 3. Both CLI and Gemini unavailable — fall back to Anthropic API as last resort
+    if not settings.anthropic_api_key:
+        return "[Claude unavailable: CLI and Gemini both unreachable, no API key configured]"
+    try:
+        _tls.api_used = True
+        resp = _get_client().messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=settings.max_tokens_claude,
+            system=system,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return resp.content[0].text
+    except Exception as e:
+        return f"[Claude API fallback error: {e}]"
 
 
 def ask_claude_vision(image_bytes: bytes, media_type: str, text: str = "") -> str:

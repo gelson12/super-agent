@@ -2,7 +2,7 @@
 Pro Token Keeper — keeps Claude.ai Pro OAuth credentials alive indefinitely.
 
 How it works:
-  1. Runs daily at 03:00 UTC (low-traffic window)
+  1. Runs every hour (keeps token alive through periodic activity)
   2. Makes a lightweight `claude auth status` call — the CLI auto-refreshes the
      OAuth access token using the refresh token if it's near expiry
   3. Re-encodes the (now refreshed) credentials file as base64
@@ -207,7 +207,7 @@ def run_token_keeper() -> dict:
       3. Push updated value to Railway Variables
       4. Return status dict
 
-    Designed to run daily. Never raises — all errors captured in return value.
+    Designed to run hourly. Never raises — all errors captured in return value.
     """
     result = {
         "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
