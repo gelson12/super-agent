@@ -138,6 +138,21 @@ def tiered_agent_invoke(
     """
     _source = source or f"{agent_type}_agent"
 
+    # ── Status tracker helpers (for Anthropic/DeepSeek LangGraph tiers) ──
+    def _track(worker, task=""):
+        try:
+            from ..learning.agent_status_tracker import mark_working
+            mark_working(worker, task)
+        except Exception:
+            pass
+
+    def _done(worker):
+        try:
+            from ..learning.agent_status_tracker import mark_done
+            mark_done(worker)
+        except Exception:
+            pass
+
     # ── Tier 1: Claude CLI Pro (ALWAYS try first — it's free) ────────────
     # CLI Pro on inspiring-cat has shell access, n8n MCP, and full tool
     # capability. There is NO reason to skip it for "operational" requests.
