@@ -189,6 +189,45 @@ def get_all_statuses() -> list[dict]:
     return result
 
 
+def get_worker_history(worker_id: str, limit: int = 20) -> list[dict]:
+    """
+    Return recent activity history for a worker from the insight log.
+    Each entry: {ts, date, model, routed_by, complexity, error, msg_preview}
+    """
+    try:
+        from .insight_log import insight_log
+        from datetime import datetime, timezone
+        entries = insight_log._load_all()
+
+        # Find all models that map to this worker
+        matching_models = set()
+        for model_key, wid in _MODEL_MAP.items():
+            if wid == worker_id:
+                matching_models.add(model_key)
+
+        history = []
+        for entry in reversed(entries):
+            model = entry.get("model", "").upper()
+            if model in matching_models:
+                ts = entry.get("ts", 0)
+                dt = datetime.fromtimestamp(ts, tz=timezone.utc) if ts else None
+                history.append({
+                    "ts": ts,
+                    "date": dt.strftime("%Y-%m-%d %H:%M UTC") if dt else "",
+                    "model": entry.get("model", ""),
+                    "routed_by": entry.get("routed_by", ""),
+                    "complexity": entry.get("complexity", 0),
+                    "error": entry.get("error", False),
+                    "msg_words": entry.get("msg_words", 0),
+                    "resp_len": entry.get("resp_len", 0),
+                })
+                if len(history) >= limit:
+                    break
+        return history
+    except Exception:
+        return []
+
+
 def seed_from_insight_log() -> None:
     """
     On startup, read the insight log to populate last_worked times

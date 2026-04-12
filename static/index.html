@@ -663,6 +663,56 @@
 
     .o-popup-row span { color: #ccc; }
 
+    /* ── Activity history modal ──────────────────────────────────── */
+    .o-history-modal {
+      position: absolute;
+      top: 60px;
+      left: 8px;
+      right: 8px;
+      background: #111;
+      border: 1px solid #6b5337;
+      border-radius: 8px;
+      z-index: 20;
+      box-shadow: 0 6px 20px rgba(0,0,0,0.7);
+      max-height: 60vh;
+      overflow-y: auto;
+    }
+
+    .o-hist-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      padding: 10px 12px 8px;
+      border-bottom: 1px solid #2a2a2a;
+    }
+
+    .o-hist-body { padding: 0; }
+
+    .o-hist-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 8px;
+    }
+
+    .o-hist-table th {
+      text-align: left;
+      padding: 5px 8px;
+      background: #0a0a0a;
+      color: #8b7355;
+      font-weight: 600;
+      border-bottom: 1px solid #2a2a2a;
+      position: sticky;
+      top: 0;
+    }
+
+    .o-hist-table td {
+      padding: 4px 8px;
+      border-bottom: 1px solid #1a1a1a;
+      color: #aaa;
+    }
+
+    .o-hist-table tr:hover td { background: #1a1a1a; }
+
     /* Blinking cursor on working monitors */
     .o-monitor.on-blue::after {
       content: "_";
@@ -677,95 +727,115 @@
     /* ── Office background mode ─────────────────────────────────────── */
     #office-panel.bg-on {
       background:
-        repeating-linear-gradient(
-          90deg,
-          #3d2b16 0px, #3d2b16 60px,
-          #4a3520 60px, #4a3520 62px
+        /* Wall — top portion with beige paint */
+        linear-gradient(180deg,
+          #b89e78 0%, #a8906a 8%, #a08560 10%,
+          /* Wall-to-floor transition */
+          #7a6040 10.5%,
+          /* Wood plank floor */
+          #8b6f47 11%, #7a6040 13%,
+          #8b6f47 13.5%, #7a6040 16%,
+          #886c44 16.5%, #7a6040 19%,
+          #8b6f47 19.5%, #7a6040 22%
         ),
+        /* Repeating plank pattern for the rest */
         repeating-linear-gradient(
-          0deg,
-          #3d2b16 0px, #3d2b16 30px,
-          #352517 30px, #352517 32px
+          180deg,
+          #8b6f47 0px, #7a6040 24px,
+          #886c44 25px, #7a6040 48px
         );
-      background-color: #2d1f0e;
+      background-color: #7a6040;
     }
 
     #office-panel.bg-on .office-header {
-      background: #1a0f05;
-      border-bottom-color: #6b4a2a;
+      background: linear-gradient(180deg, #6b5030 0%, #5a4020 100%);
+      border-bottom: 3px solid #a08050;
       box-shadow: 0 2px 8px rgba(0,0,0,0.4);
     }
 
     #office-panel.bg-on .office-legend {
-      background: #2a1a0c;
-      border-bottom-color: #4a3520;
+      background: rgba(90, 64, 32, 0.8);
+      border-bottom-color: #6b5337;
     }
 
     #office-panel.bg-on .o-desk {
-      background:
-        linear-gradient(180deg, #3d2b16 0%, #2a1e10 60%, #231508 100%);
-      border-color: #6b5337;
-      box-shadow: 2px 3px 6px rgba(0,0,0,0.4);
+      background: linear-gradient(180deg, #5a4528 0%, #4a3820 60%, #3d2d18 100%);
+      border: 2px solid #8b7050;
+      box-shadow: 3px 4px 8px rgba(0,0,0,0.5);
+      border-radius: 8px;
     }
 
     #office-panel.bg-on .o-desk:hover {
-      border-color: #a0845c;
-      box-shadow: 2px 3px 10px rgba(0,0,0,0.5);
+      border-color: #c0a070;
+      box-shadow: 3px 4px 14px rgba(0,0,0,0.6);
     }
 
     #office-panel.bg-on .o-avatar {
-      background: #5a4020;
-      border-color: #a0845c;
+      background: #6b5030;
+      border: 2px solid #c0a070;
     }
 
     #office-panel.bg-on .o-monitor {
       border-width: 3px;
+      border-radius: 4px;
     }
 
     #office-panel.bg-on .o-monitor-stand {
-      background: linear-gradient(180deg, #a0845c 0%, #6b5337 100%);
-      height: 5px;
+      background: linear-gradient(180deg, #b09060 0%, #8b7050 100%);
+      height: 6px;
+      width: 35px;
     }
 
     #office-panel.bg-on .office-decor-row {
-      background: #1a0f05;
-      border-bottom: 2px solid #6b4a2a;
+      background: rgba(90, 64, 32, 0.9);
+      border-bottom: 2px solid #a08050;
     }
 
     #office-panel.bg-on .office-decor-shelf {
-      background: linear-gradient(180deg, #5a4020 0%, #3d2b16 100%);
-      border-top: 3px solid #a0845c;
-      border-bottom: 2px solid #4a3520;
-      box-shadow: 0 3px 6px rgba(0,0,0,0.3);
+      background: linear-gradient(180deg, #7a6040 0%, #5a4528 100%);
+      border-top: 3px solid #b09060;
+      border-bottom: 2px solid #5a4020;
+      box-shadow: 0 4px 8px rgba(0,0,0,0.4);
     }
 
     #office-panel.bg-on .office-decor-bottom {
-      background: #1a0f05;
-      border-top: 3px solid #6b4a2a;
+      background: rgba(60, 44, 20, 0.9);
+      border-top: 3px solid #8b7050;
     }
 
     #office-panel.bg-on .office-section-label {
-      color: #a0845c;
-      text-shadow: 1px 1px 2px rgba(0,0,0,0.5);
+      color: #d4b080;
+      text-shadow: 1px 1px 3px rgba(0,0,0,0.6);
+      font-weight: 700;
     }
 
     #office-panel.bg-on .o-name {
-      color: #e8d5b5;
-      text-shadow: 1px 1px 2px rgba(0,0,0,0.6);
+      color: #f0e0c0;
+      text-shadow: 1px 1px 3px rgba(0,0,0,0.7);
+    }
+
+    #office-panel.bg-on .o-status {
+      box-shadow: 0 1px 3px rgba(0,0,0,0.4);
     }
 
     #office-panel.bg-on .office-clock {
-      background: #1a0f05;
-      border-color: #a0845c;
-      color: #e8d5b5;
-      box-shadow: inset 0 1px 3px rgba(0,0,0,0.4);
+      background: #3d2d18;
+      border: 2px solid #b09060;
+      color: #f0e0c0;
+      box-shadow: inset 0 1px 4px rgba(0,0,0,0.5);
+      border-radius: 6px;
+      padding: 3px 10px;
+    }
+
+    #office-panel.bg-on .o-time {
+      color: #b09060;
     }
 
     /* BG toggle button active state */
     #bg-toggle.active {
-      background: #4a3520 !important;
-      color: #e8d5b5 !important;
-      border-color: #a0845c !important;
+      background: #5a4020 !important;
+      color: #f0e0c0 !important;
+      border-color: #b09060 !important;
     }
 
     @media (max-width: 600px) {
@@ -1450,6 +1520,20 @@
     "Sonnet Anthropic":"👨🏽‍🔧","Opus Anthropic":"👩🏻‍🔬","DeepSeek":"🧑🏽‍🔬",
     "Shell Agent":"👷🏼","GitHub Agent":"👷🏿‍♀️","N8N Agent":"👷🏽‍♂️","Self-Improve Agent":"🧑🏼‍🏫"
   };
+
+  // Job titles (shown as display name) and full names (shown on click/hover)
+  const _OFFICE_TITLES = {
+    "Claude CLI Pro":      { title: "Claude — Architect",           full: "Claude CLI Pro" },
+    "Gemini CLI":          { title: "Gemini — Analyst",             full: "Gemini CLI" },
+    "Anthropic Haiku":     { title: "Haiku — Writer",               full: "Anthropic Haiku" },
+    "Sonnet Anthropic":    { title: "Sonnet — Psychologist",        full: "Sonnet Anthropic" },
+    "Opus Anthropic":      { title: "Opus — Project Manager",       full: "Opus Anthropic" },
+    "DeepSeek":            { title: "DeepSeek — Security Specialist", full: "DeepSeek" },
+    "Shell Agent":         { title: "System Administrator",         full: "Shell Agent" },
+    "GitHub Agent":        { title: "Software Engineer",            full: "GitHub Agent" },
+    "N8N Agent":           { title: "Automation Engineer",          full: "N8N Agent" },
+    "Self-Improve Agent":  { title: "Performance Coach",            full: "Self-Improve Agent" },
+  };
   let _officeOpen = false;
   let _officeTimer = null;
 
@@ -1507,12 +1591,15 @@
 
   function _oDesk(w) {
     const av = _OFFICE_AVATARS[w.id]||'👤';
+    const info = _OFFICE_TITLES[w.id] || { title: w.id, full: w.id };
     const showTime = (w.state==='idle'||w.state==='sleeping'||w.state==='break') && w.last_worked>0;
     const timeAgo = w.last_worked_ago!=null ? _oTimeAgo(w.last_worked_ago) : '';
     const dateStr = w.last_worked ? _oDateTime(w.last_worked) : '';
+    const statusLabel = w.state === 'break' ? 'short break' : w.state;
 
     // Popup content
     let popupRows = '';
+    popupRows += `<div class="o-popup-row" style="color:#8b7355;font-style:italic">(${_oEsc(info.full)})</div>`;
     if (w.state === 'working' && w.task) {
       popupRows += `<div class="o-popup-row">Working on: <span>${_oEsc(w.task)}</span></div>`;
     }
@@ -1526,14 +1613,15 @@
     if (w.state === 'strike') popupRows += `<div class="o-popup-row" style="color:#fca5a5">API credits exhausted</div>`;
     if (w.state === 'sick') popupRows += `<div class="o-popup-row" style="color:#fde68a">Auth token invalid/expired</div>`;
     if (w.state === 'talking' && w.talking_to) popupRows += `<div class="o-popup-row">Collaborating with: <span>${_oEsc(w.talking_to)}</span></div>`;
+    popupRows += `<div class="o-popup-row" style="margin-top:4px"><a href="#" onclick="_oShowHistory('${_oEsc(w.id)}',event)" style="color:#c9a96e;font-size:8px;text-decoration:underline;">View Activity Report</a></div>`;
 
     return `<div class="o-desk" onclick="_oTogglePopup(this)">
       <div class="o-popup">
-        <div class="o-popup-title">${_oEsc(w.id)}</div>
+        <div class="o-popup-title">${_oEsc(info.title)}</div>
         ${popupRows}
       </div>
-      <div class="o-name">${_oEsc(w.id)}</div>
-      <div class="o-status ${w.state}">${w.state}</div>
+      <div class="o-name">${_oEsc(info.title)}</div>
+      <div class="o-status ${w.state}">${statusLabel}</div>
       <div class="o-monitor ${_oMonClass(w.state)}">${_oScreen(w)}</div>
       <div class="o-monitor-stand"></div>
       <div class="o-avatar">${av}${_oOverlay(w)}</div>
@@ -1543,17 +1631,70 @@
 
   function _oTogglePopup(desk) {
     const wasOpen = desk.classList.contains('popup-open');
-    // Close all popups first
     document.querySelectorAll('.o-desk.popup-open').forEach(d => d.classList.remove('popup-open'));
     if (!wasOpen) desk.classList.add('popup-open');
   }
 
-  // Close popup when clicking outside
   document.addEventListener('click', function(e) {
-    if (!e.target.closest('.o-desk')) {
+    if (!e.target.closest('.o-desk') && !e.target.closest('.o-history-modal')) {
       document.querySelectorAll('.o-desk.popup-open').forEach(d => d.classList.remove('popup-open'));
     }
   });
+
+  // ── Activity history modal ─────────────────────────────────────────────
+  async function _oShowHistory(workerId, evt) {
+    evt.stopPropagation();
+    evt.preventDefault();
+    document.querySelectorAll('.o-desk.popup-open').forEach(d => d.classList.remove('popup-open'));
+
+    // Remove existing modal
+    const old = document.getElementById('o-history-modal');
+    if (old) old.remove();
+
+    const info = _OFFICE_TITLES[workerId] || { title: workerId, full: workerId };
+
+    const modal = document.createElement('div');
+    modal.id = 'o-history-modal';
+    modal.className = 'o-history-modal';
+    modal.innerHTML = `
+      <div class="o-hist-header">
+        <div>
+          <div style="font-size:11px;font-weight:700;color:#d4b896">${_oEsc(info.title)}</div>
+          <div style="font-size:8px;color:#8b7355">(${_oEsc(info.full)}) — Activity Report</div>
+        </div>
+        <button onclick="document.getElementById('o-history-modal').remove()" style="background:none;border:none;color:#888;font-size:16px;cursor:pointer;">&times;</button>
+      </div>
+      <div class="o-hist-body" id="o-hist-body">
+        <div style="color:#666;font-size:9px;padding:12px;text-align:center">Loading...</div>
+      </div>
+    `;
+    document.getElementById('office-panel').appendChild(modal);
+
+    try {
+      const res = await fetch('/dashboard/agents/' + encodeURIComponent(workerId) + '/history', { headers: authHeaders() });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const data = await res.json();
+      const body = document.getElementById('o-hist-body');
+      if (!data.history || data.history.length === 0) {
+        body.innerHTML = '<div style="color:#666;font-size:9px;padding:12px;text-align:center">No activity recorded yet.</div>';
+        return;
+      }
+      let html = '<table class="o-hist-table"><thead><tr><th>Date/Time</th><th>Route</th><th>Cx</th><th>Status</th></tr></thead><tbody>';
+      data.history.forEach(h => {
+        const status = h.error ? '<span style="color:#f87171">REJECTED</span>' : '<span style="color:#4ade80">DONE</span>';
+        html += `<tr>
+          <td>${_oEsc(h.date)}</td>
+          <td>${_oEsc(h.routed_by)}</td>
+          <td>${h.complexity}</td>
+          <td>${status}</td>
+        </tr>`;
+      });
+      html += '</tbody></table>';
+      body.innerHTML = html;
+    } catch (e) {
+      document.getElementById('o-hist-body').innerHTML = '<div style="color:#f87171;font-size:9px;padding:12px">Failed to load: ' + _oEsc(e.message) + '</div>';
+    }
+  }
 
   function _oEsc(s) {
     if (!s) return '';

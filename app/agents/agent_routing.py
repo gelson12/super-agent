@@ -139,16 +139,34 @@ def tiered_agent_invoke(
     _source = source or f"{agent_type}_agent"
     operational = is_operational(message, agent_type)
 
+    # ── Status tracker helpers ─────────────────────────────────────────
+    def _track(worker, task=""):
+        try:
+            from ..learning.agent_status_tracker import mark_working
+            mark_working(worker, task)
+        except Exception:
+            pass
+
+    def _done(worker):
+        try:
+            from ..learning.agent_status_tracker import mark_done
+            mark_done(worker)
+        except Exception:
+            pass
+
     # ── Tiers 1-2: text-only (skip for operational requests) ─────────────
     if not operational:
         # Tier 1: Claude CLI Pro (free)
         try:
             from ..learning.pro_router import try_pro, should_attempt_cli
             if should_attempt_cli():
+                _track("Claude CLI Pro", message[:100])
                 cli_result = try_pro(f"{system_prompt}\n\n{message}")
                 if cli_result and not cli_result.startswith("["):
                     _log(f"✓ CLI Pro responded ({len(cli_result)} chars)", _source)
+                    _done("Claude CLI Pro")
                     return cli_result
+                _done("Claude CLI Pro")
                 _log(f"CLI returned error/empty — trying Gemini", _source)
             else:
                 _log("CLI flagged down — skipping to Gemini", _source)
@@ -158,17 +176,22 @@ def tiered_agent_invoke(
                 except Exception:
                     pass
         except Exception as e:
+            _done("Claude CLI Pro")
             _log(f"CLI exception: {e} — trying Gemini", _source)
 
         # Tier 2: Gemini CLI (free)
         try:
             from ..learning.gemini_cli_worker import ask_gemini_cli
+            _track("Gemini CLI", message[:100])
             gemini = ask_gemini_cli(f"{system_prompt}\n\n{message}")
             if gemini and not gemini.startswith("["):
                 _log(f"✓ Gemini CLI responded ({len(gemini)} chars)", _source)
+                _done("Gemini CLI")
                 return gemini
+            _done("Gemini CLI")
             _log(f"Gemini returned error/empty — trying Anthropic API", _source)
         except Exception as e:
+            _done("Gemini CLI")
             _log(f"Gemini exception: {e} — trying Anthropic API", _source)
     else:
         _log(f"Operational request detected — skipping text-only tiers, using LangGraph directly", _source)
@@ -177,9 +200,13 @@ def tiered_agent_invoke(
     if settings.anthropic_api_key:
         try:
             _log(f"Using LangGraph (Anthropic API) — full tool access", _source)
+            _track("Sonnet Anthropic", message[:100])
             llm = _get_anthropic_llm()
-            return _invoke_langgraph(llm, tools, system_prompt, message)
+            result = _invoke_langgraph(llm, tools, system_prompt, message)
+            _done("Sonnet Anthropic")
+            return result
         except Exception as e:
+            _done("Sonnet Anthropic")
             err = str(e).lower()
             if any(p in err for p in _NO_CREDIT_PHRASES):
                 _log("Anthropic API no credits — trying DeepSeek LangGraph", _source)
@@ -200,9 +227,13 @@ def tiered_agent_invoke(
     if settings.deepseek_api_key:
         try:
             _log("Using LangGraph (DeepSeek) — tool-calling fallback", _source)
+            _track("DeepSeek", message[:100])
             llm = _get_deepseek_llm()
-            return _invoke_langgraph(llm, tools, system_prompt, message)
+            result = _invoke_langgraph(llm, tools, system_prompt, message)
+            _done("DeepSeek")
+            return result
         except Exception as e:
+            _done("DeepSeek")
             _log(f"DeepSeek LangGraph error: {e}", _source)
 
     # ── Tier 4: DeepSeek text-only (last resort) ────────────────────────

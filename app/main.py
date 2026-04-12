@@ -404,6 +404,17 @@ def agents_status():
     return {"workers": get_all_statuses()}
 
 
+@app.get("/dashboard/agents/{worker_id}/history", tags=["meta"])
+def agent_history(worker_id: str):
+    """Activity history for a specific worker — last 20 interactions."""
+    from .learning.agent_status_tracker import get_worker_history
+    # URL-decode worker_id (spaces come as %20)
+    import urllib.parse
+    decoded = urllib.parse.unquote(worker_id)
+    history = get_worker_history(decoded, limit=20)
+    return {"worker": decoded, "history": history}
+
+
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 @app.get("/health", tags=["meta"])
