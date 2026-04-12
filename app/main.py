@@ -246,9 +246,14 @@ async def _lifespan(app: FastAPI):
         from .learning.agent_status_tracker import seed_from_insight_log, seed_live_status
         seed_from_insight_log()
         # Proactively check API credits + CLI health so dashboard reflects
-        # reality immediately (e.g. Anthropic shows "strike" if no credits)
+        # reality immediately (e.g. Anthropic shows "strike" if no credits).
+        # Delay 30s to let CLI worker finish booting — avoids false "sick" on startup.
         import threading as _seed_t
-        _seed_t.Thread(target=seed_live_status, daemon=True).start()
+        def _delayed_seed():
+            import time as _t
+            _t.sleep(30)
+            seed_live_status()
+        _seed_t.Thread(target=_delayed_seed, daemon=True).start()
     except Exception:
         pass
 
