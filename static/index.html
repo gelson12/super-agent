@@ -393,6 +393,195 @@
     #sb-activity{ color: #9ca3af; flex: 1; overflow: hidden; text-overflow: ellipsis; }
     #sb-cost    { color: #9ca3af; flex-shrink: 0; }
     #sb-alert   { color: #f59e0b; font-weight: 600; flex-shrink: 0; }
+
+    /* ── Agent Office Panel ──────────────────────────────────────────────── */
+    #office-panel {
+      position: fixed;
+      top: 0; right: 0;
+      width: 380px;
+      height: 100vh;
+      background: #1a1208;
+      border-left: 2px solid #4a3520;
+      z-index: 500;
+      overflow-y: auto;
+      box-shadow: -4px 0 20px rgba(0,0,0,0.5);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    .office-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 16px;
+      border-bottom: 2px solid #4a3520;
+      font-size: 11px;
+      font-weight: 700;
+      color: #c9a96e;
+      letter-spacing: 1px;
+    }
+
+    .office-legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      padding: 8px 16px;
+      border-bottom: 1px solid #2d1f0e;
+      font-size: 10px;
+      color: #8b7355;
+    }
+
+    .office-legend span { display: flex; align-items: center; gap: 4px; }
+
+    .ol-dot {
+      display: inline-block;
+      width: 6px; height: 6px;
+      border-radius: 2px;
+    }
+
+    .office-section-label {
+      font-size: 9px;
+      color: #6b5337;
+      letter-spacing: 2px;
+      padding: 10px 16px 4px;
+      font-weight: 600;
+    }
+
+    .office-desks {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 8px;
+      padding: 4px 12px 12px;
+    }
+
+    .o-desk {
+      background: #2a1e10;
+      border: 1px solid #3d2b16;
+      border-radius: 6px;
+      padding: 8px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-height: 130px;
+      transition: border-color 0.3s;
+    }
+    .o-desk:hover { border-color: #6b5337; }
+
+    .o-desk .o-name {
+      font-size: 9px;
+      color: #d4b896;
+      text-align: center;
+      margin-bottom: 3px;
+      font-weight: 600;
+    }
+
+    .o-desk .o-status {
+      font-size: 8px;
+      padding: 1px 5px;
+      border-radius: 2px;
+      margin-bottom: 6px;
+      text-transform: lowercase;
+      font-weight: 600;
+    }
+
+    .o-status.working  { background: #1e3a5f; color: #60a5fa; }
+    .o-status.idle     { background: #14532d; color: #4ade80; }
+    .o-status.sleeping { background: #333;    color: #888; }
+    .o-status.talking  { background: #4c1d95; color: #c4b5fd; }
+    .o-status.strike   { background: #7f1d1d; color: #fca5a5; }
+    .o-status.sick     { background: #713f12; color: #fde68a; }
+
+    .o-monitor {
+      width: 72px;
+      height: 44px;
+      border: 2px solid #555;
+      border-radius: 3px;
+      position: relative;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 8px;
+      color: rgba(255,255,255,0.6);
+      text-align: center;
+      padding: 2px;
+      line-height: 1.3;
+    }
+
+    .o-monitor.off        { background: #111; border-color: #333; }
+    .o-monitor.on-blue    { background: linear-gradient(135deg,#1e3a5f,#2563eb); border-color: #3b82f6; box-shadow: 0 0 8px rgba(59,130,246,0.3); }
+    .o-monitor.on-green   { background: linear-gradient(135deg,#14532d,#16a34a); border-color: #22c55e; }
+    .o-monitor.on-purple  { background: linear-gradient(135deg,#4c1d95,#7c3aed); border-color: #8b5cf6; box-shadow: 0 0 8px rgba(139,92,246,0.3); }
+    .o-monitor.on-red     { background: linear-gradient(135deg,#7f1d1d,#dc2626); border-color: #ef4444; }
+    .o-monitor.on-yellow  { background: linear-gradient(135deg,#713f12,#ca8a04); border-color: #eab308; }
+
+    /* Monitor stand */
+    .o-monitor-stand {
+      width: 30px;
+      height: 4px;
+      background: linear-gradient(180deg,#8b6f47,#6b5337);
+      border-radius: 1px;
+      margin-top: 2px;
+    }
+
+    .o-avatar {
+      width: 28px; height: 28px;
+      border-radius: 50%;
+      background: #3d2b16;
+      border: 1px solid #6b5337;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      margin-top: 6px;
+      position: relative;
+    }
+
+    .o-zzz {
+      position: absolute;
+      top: -10px; right: -8px;
+      font-size: 8px;
+      color: #888;
+      animation: o-float 2s ease-in-out infinite;
+    }
+    @keyframes o-float {
+      0%,100% { transform: translateY(0); opacity: 1; }
+      50%     { transform: translateY(-4px); opacity: 0.4; }
+    }
+
+    .o-strike-sign {
+      position: absolute;
+      top: -12px; right: -10px;
+      font-size: 10px;
+      animation: o-shake 0.5s ease-in-out infinite alternate;
+    }
+    @keyframes o-shake { 0% { transform: rotate(-5deg); } 100% { transform: rotate(5deg); } }
+
+    .o-sick   { position: absolute; top: -12px; right: -10px; font-size: 10px; }
+    .o-bubble { position: absolute; top: -14px; left: -10px; font-size: 9px;
+                animation: o-bounce 0.8s ease-in-out infinite alternate; }
+    @keyframes o-bounce { 0% { transform: translateY(0); } 100% { transform: translateY(-3px); } }
+
+    .o-time {
+      font-size: 7px;
+      color: #555;
+      margin-top: 4px;
+      text-align: center;
+    }
+
+    /* Blinking cursor on working monitors */
+    .o-monitor.on-blue::after {
+      content: "_";
+      animation: blink 1s step-end infinite;
+      position: absolute;
+      bottom: 2px;
+      right: 4px;
+      font-size: 10px;
+      color: rgba(255,255,255,0.5);
+    }
+
+    @media (max-width: 600px) {
+      #office-panel { width: 100vw; }
+    }
   </style>
 </head>
 <body>
@@ -420,8 +609,30 @@
   <div class="header-center">
     <img class="bridge-logo" id="header-logo" src="/static/logo.png?v=7" alt="Bridge" />
   </div>
-  <div style="width:80px;"></div><!-- spacer to balance the left side -->
+  <div style="display:flex;gap:6px;align-items:center;">
+    <button class="icon-btn" id="office-toggle" title="Agent Office" onclick="toggleOfficePanel()" style="width:36px;height:36px;font-size:14px;border-radius:8px;">🏢</button>
+  </div>
 </header>
+
+<!-- ── Agent Office Panel (overlay) ────────────────────────────────────────── -->
+<div id="office-panel" style="display:none;">
+  <div class="office-header">
+    <span>AGENT OFFICE</span>
+    <button onclick="toggleOfficePanel()" style="background:none;border:none;color:#888;font-size:18px;cursor:pointer;">&times;</button>
+  </div>
+  <div class="office-legend">
+    <span><span class="ol-dot" style="background:#3b82f6"></span>Working</span>
+    <span><span class="ol-dot" style="background:#22c55e"></span>Idle</span>
+    <span><span class="ol-dot" style="background:#555"></span>Sleeping</span>
+    <span><span class="ol-dot" style="background:#8b5cf6"></span>Talking</span>
+    <span><span class="ol-dot" style="background:#ef4444"></span>Strike</span>
+    <span><span class="ol-dot" style="background:#eab308"></span>Sick</span>
+  </div>
+  <div class="office-section-label">LLM MODELS</div>
+  <div class="office-desks" id="office-models"></div>
+  <div class="office-section-label">AGENTS</div>
+  <div class="office-desks" id="office-agents"></div>
+</div>
 
 <!-- ── Status bar ────────────────────────────────────────────────────────── -->
 <div id="status-bar">
@@ -1025,6 +1236,94 @@
       } else addMessage('agent', '⚠️ ' + (data.detail || 'Audio transcription failed.'));
     } catch { typing.remove(); addMessage('agent', '⚠️ Could not reach the server.'); }
     sendBtn.disabled = false; input.focus();
+  }
+
+  // ── Agent Office Panel ─────────────────────────────────────────────────────
+  const _OFFICE_MODELS = ["Claude CLI Pro","Gemini CLI","Anthropic Haiku","Sonnet Anthropic","Opus Anthropic","DeepSeek"];
+  const _OFFICE_AGENTS = ["Shell Agent","GitHub Agent","N8N Agent","Self-Improve Agent"];
+  const _OFFICE_AVATARS = {
+    "Claude CLI Pro":"🤖","Gemini CLI":"💎","Anthropic Haiku":"🎋",
+    "Sonnet Anthropic":"🎵","Opus Anthropic":"🎼","DeepSeek":"🔍",
+    "Shell Agent":"🐚","GitHub Agent":"🐙","N8N Agent":"⚡","Self-Improve Agent":"🧠"
+  };
+  let _officeOpen = false;
+  let _officeTimer = null;
+
+  function toggleOfficePanel() {
+    _officeOpen = !_officeOpen;
+    document.getElementById('office-panel').style.display = _officeOpen ? 'block' : 'none';
+    if (_officeOpen) {
+      _fetchOffice();
+      _officeTimer = setInterval(_fetchOffice, 5000);
+    } else {
+      if (_officeTimer) { clearInterval(_officeTimer); _officeTimer = null; }
+    }
+  }
+
+  function _oMonClass(state) {
+    return ({working:'on-blue',idle:'on-green',talking:'on-purple',strike:'on-red',sick:'on-yellow'})[state] || 'off';
+  }
+
+  function _oScreen(w) {
+    switch(w.state) {
+      case 'working': return w.task ? _oEsc(w.task.substring(0,30)) : 'Processing...';
+      case 'idle': return 'Ready';
+      case 'talking': return 'w/ '+ _oEsc(w.talking_to||'?');
+      case 'strike': return 'NO CREDITS!';
+      case 'sick': return 'TOKEN ERR';
+      default: return '';
+    }
+  }
+
+  function _oOverlay(w) {
+    switch(w.state) {
+      case 'sleeping': return '<span class="o-zzz">Zzz</span>';
+      case 'strike': return '<span class="o-strike-sign">🪧</span>';
+      case 'sick': return '<span class="o-sick">🤒</span>';
+      case 'talking': return '<span class="o-bubble">💬</span>';
+      default: return '';
+    }
+  }
+
+  function _oTimeAgo(s) {
+    if (!s && s!==0) return '';
+    if (s<60) return s+'s ago';
+    if (s<3600) return Math.floor(s/60)+'m ago';
+    if (s<86400) return Math.floor(s/3600)+'h ago';
+    return Math.floor(s/86400)+'d ago';
+  }
+
+  function _oDesk(w) {
+    const av = _OFFICE_AVATARS[w.id]||'👤';
+    const t = w.last_worked_ago!=null ? _oTimeAgo(w.last_worked_ago) : '';
+    return `<div class="o-desk">
+      <div class="o-name">${_oEsc(w.id)}</div>
+      <div class="o-status ${w.state}">${w.state}</div>
+      <div class="o-monitor ${_oMonClass(w.state)}">${_oScreen(w)}</div>
+      <div class="o-monitor-stand"></div>
+      <div class="o-avatar">${av}${_oOverlay(w)}</div>
+      ${t ? `<div class="o-time">${t}</div>` : ''}
+    </div>`;
+  }
+
+  function _oEsc(s) {
+    if (!s) return '';
+    const d = document.createElement('div');
+    d.textContent = String(s);
+    return d.innerHTML;
+  }
+
+  async function _fetchOffice() {
+    try {
+      const res = await fetch('/dashboard/agents/status', { headers: authHeaders() });
+      if (!res.ok) return;
+      const data = await res.json();
+      const map = {};
+      (data.workers||[]).forEach(w => map[w.id]=w);
+      const defW = id => map[id] || {id, state:'sleeping', last_worked:0, last_worked_ago:null, talking_to:null, task:''};
+      document.getElementById('office-models').innerHTML = _OFFICE_MODELS.map(id => _oDesk(defW(id))).join('');
+      document.getElementById('office-agents').innerHTML = _OFFICE_AGENTS.map(id => _oDesk(defW(id))).join('');
+    } catch(e) { console.error('Office fetch error:', e); }
   }
 </script>
 </body>
