@@ -248,3 +248,57 @@ def seed_from_insight_log() -> None:
                     w["state"] = "idle"
     except Exception:
         pass
+
+
+def seed_live_status() -> None:
+    """
+    On startup, proactively check API credit status and CLI health
+    so the dashboard reflects reality immediately (not just after first request).
+
+    - Anthropic API: check if API key exists and has credits → strike if not
+    - Claude CLI Pro: check if should_attempt_cli() → sick if not
+    - Gemini CLI: check if available → sick if not
+    """
+    # Check Anthropic API credit status
+    try:
+        from ..config import settings
+        if not settings.anthropic_api_key:
+            mark_strike("Anthropic Haiku")
+            mark_strike("Sonnet Anthropic")
+            mark_strike("Opus Anthropic")
+        else:
+            # Try a minimal API call to check credits
+            import anthropic
+            try:
+                client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+                client.messages.create(
+                    model="claude-haiku-4-5-20251001",
+                    max_tokens=1,
+                    messages=[{"role": "user", "content": "hi"}],
+                )
+                # If we get here, credits are available — leave as idle
+            except Exception as e:
+                err = str(e).lower()
+                _no_credit = ("credit balance", "insufficient", "payment required", "no credits")
+                if any(p in err for p in _no_credit):
+                    mark_strike("Anthropic Haiku")
+                    mark_strike("Sonnet Anthropic")
+                    mark_strike("Opus Anthropic")
+    except Exception:
+        pass
+
+    # Check Claude CLI Pro status
+    try:
+        from .pro_router import should_attempt_cli
+        if not should_attempt_cli():
+            mark_sick("Claude CLI Pro")
+    except Exception:
+        pass
+
+    # Check Gemini CLI status
+    try:
+        from .gemini_cli_worker import is_gemini_cli_available
+        if not is_gemini_cli_available():
+            mark_sick("Gemini CLI")
+    except Exception:
+        pass

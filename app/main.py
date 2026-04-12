@@ -222,8 +222,12 @@ async def _lifespan(app: FastAPI):
 
     # Seed agent status tracker from insight log so dashboard doesn't show all sleeping
     try:
-        from .learning.agent_status_tracker import seed_from_insight_log
+        from .learning.agent_status_tracker import seed_from_insight_log, seed_live_status
         seed_from_insight_log()
+        # Proactively check API credits + CLI health so dashboard reflects
+        # reality immediately (e.g. Anthropic shows "strike" if no credits)
+        import threading as _seed_t
+        _seed_t.Thread(target=seed_live_status, daemon=True).start()
     except Exception:
         pass
 
