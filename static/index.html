@@ -438,6 +438,51 @@
       border-radius: 2px;
     }
 
+    .office-decor-row {
+      display: flex;
+      justify-content: space-around;
+      align-items: center;
+      padding: 6px 16px;
+      font-size: 18px;
+      border-bottom: 1px solid #2d1f0e;
+      background: #15100a;
+    }
+
+    .office-clock {
+      font-size: 10px !important;
+      color: #c9a96e;
+      font-family: monospace;
+      background: #2a1e10;
+      border: 1px solid #4a3520;
+      border-radius: 4px;
+      padding: 2px 8px;
+      letter-spacing: 1px;
+    }
+
+    .office-decor-shelf {
+      display: flex;
+      justify-content: space-around;
+      align-items: center;
+      padding: 4px 16px;
+      font-size: 14px;
+      background: linear-gradient(180deg, #3d2b16 0%, #2a1e10 100%);
+      border-top: 2px solid #6b5337;
+      border-bottom: 1px solid #2d1f0e;
+      margin: 0 12px;
+      border-radius: 0 0 4px 4px;
+    }
+
+    .office-decor-bottom {
+      display: flex;
+      justify-content: space-around;
+      align-items: center;
+      padding: 8px 16px;
+      font-size: 16px;
+      border-top: 2px solid #4a3520;
+      background: #15100a;
+      margin-top: 4px;
+    }
+
     .office-section-label {
       font-size: 9px;
       color: #6b5337;
@@ -628,10 +673,21 @@
     <span><span class="ol-dot" style="background:#ef4444"></span>Strike</span>
     <span><span class="ol-dot" style="background:#eab308"></span>Sick</span>
   </div>
+  <div class="office-decor-row">
+    <span title="Water cooler">🚰</span>
+    <span title="Clock" class="office-clock" id="office-clock"></span>
+    <span title="Coffee machine">☕</span>
+  </div>
   <div class="office-section-label">LLM MODELS</div>
   <div class="office-desks" id="office-models"></div>
+  <div class="office-decor-shelf">
+    <span>🪴</span><span>📋</span><span>📊</span><span>🪴</span>
+  </div>
   <div class="office-section-label">AGENTS</div>
   <div class="office-desks" id="office-agents"></div>
+  <div class="office-decor-bottom">
+    <span>🗄️</span><span>📁</span><span>🖨️</span><span>🗑️</span><span>🪴</span>
+  </div>
 </div>
 
 <!-- ── Status bar ────────────────────────────────────────────────────────── -->
@@ -1242,9 +1298,9 @@
   const _OFFICE_MODELS = ["Claude CLI Pro","Gemini CLI","Anthropic Haiku","Sonnet Anthropic","Opus Anthropic","DeepSeek"];
   const _OFFICE_AGENTS = ["Shell Agent","GitHub Agent","N8N Agent","Self-Improve Agent"];
   const _OFFICE_AVATARS = {
-    "Claude CLI Pro":"👨‍💻","Gemini CLI":"👩‍💻","Anthropic Haiku":"🧑‍💻",
-    "Sonnet Anthropic":"👨‍🔧","Opus Anthropic":"👩‍🔬","DeepSeek":"🧑‍🔬",
-    "Shell Agent":"👷","GitHub Agent":"👷‍♀️","N8N Agent":"👷‍♂️","Self-Improve Agent":"🧑‍🏫"
+    "Claude CLI Pro":"👨🏿‍💻","Gemini CLI":"👩🏼‍💻","Anthropic Haiku":"🧑🏻‍💻",
+    "Sonnet Anthropic":"👨🏽‍🔧","Opus Anthropic":"👩🏻‍🔬","DeepSeek":"🧑🏽‍🔬",
+    "Shell Agent":"👷🏼","GitHub Agent":"👷🏿‍♀️","N8N Agent":"👷🏽‍♂️","Self-Improve Agent":"🧑🏼‍🏫"
   };
   let _officeOpen = false;
   let _officeTimer = null;
@@ -1320,6 +1376,15 @@
     d.textContent = String(s);
     return d.innerHTML;
   }
+
+  // Office clock
+  function _updateOfficeClock() {
+    const el = document.getElementById('office-clock');
+    if (!el) return;
+    const now = new Date();
+    el.textContent = '🕐 ' + now.toLocaleTimeString(undefined, { hour:'2-digit', minute:'2-digit', second:'2-digit' });
+  }
+  setInterval(_updateOfficeClock, 1000);
 
   async function _fetchOffice() {
     try {
