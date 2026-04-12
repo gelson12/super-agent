@@ -169,23 +169,35 @@ def _gemini_auth_ok() -> bool:
     """Check Gemini CLI binary AND credentials — version alone is not enough."""
     if not _probe(["gemini", "--version"]):
         return False
-    # Verify credentials file exists and contains auth data
+    # Verify credentials exist — check all known file locations
     import json as _json
-    creds_path = os.path.expanduser("/root/.gemini/credentials.json")
-    try:
-        with open(creds_path, "r") as f:
-            creds = _json.load(f)
-        # Must have either client credentials or an API key configured
-        return bool(creds.get("client_id") or creds.get("api_key"))
-    except Exception:
-        # Also check settings.json for API key auth
-        settings_path = os.path.expanduser("/root/.gemini/settings.json")
+    _gemini_dir = "/root/.gemini"
+    _cred_candidates = [
+        f"{_gemini_dir}/credentials.json",
+        f"{_gemini_dir}/oauth_creds.json",
+        f"{_gemini_dir}/auth.json",
+    ]
+    for creds_path in _cred_candidates:
         try:
-            with open(settings_path, "r") as f:
-                settings = _json.load(f)
-            return bool(settings.get("apiKey"))
+            with open(creds_path, "r") as f:
+                creds = _json.load(f)
+            # Any non-empty JSON with auth-related keys counts
+            if creds.get("client_id") or creds.get("refresh_token") or creds.get("api_key"):
+                return True
         except Exception:
-            return False
+            continue
+    # Also check settings.json for API key auth
+    try:
+        with open(f"{_gemini_dir}/settings.json", "r") as f:
+            settings = _json.load(f)
+        if settings.get("apiKey"):
+            return True
+    except Exception:
+        pass
+    # Check GEMINI_API_KEY env var
+    if os.environ.get("GEMINI_API_KEY"):
+        return True
+    return False
 
 
 @app.get("/health")
