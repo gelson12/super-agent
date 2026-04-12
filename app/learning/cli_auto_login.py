@@ -12,9 +12,22 @@ valid, this module performs a full OAuth re-authentication automatically:
   6. CLI detects the localhost callback and saves the new token
   7. Encodes and pushes the fresh token to Railway Variables
 
+Claude.ai uses PASSWORDLESS auth (email + verification code sent to inbox).
+The flow is:
+  1. Navigate to OAuth URL
+  2. Enter email → click "Continue with email"
+  3. Wait for verification code email to arrive
+  4. Read code via n8n webhook (monitors Hotmail inbox)
+  5. Type code → click "Verify Email Address"
+  6. Click "Approve" on consent screen
+
 Requirements (Railway env vars):
-  ANTHROPIC_EMAIL      — claude.ai account email
-  ANTHROPIC_PASSWORD   — claude.ai account password
+  ANTHROPIC_EMAIL      — claude.ai account email (e.g. gelson_m@hotmail.com)
+  N8N_BASE_URL         — n8n instance URL (for triggering email monitor workflow)
+
+The n8n workflow monitors the Hotmail inbox for Anthropic verification emails,
+extracts the 6-digit code, and POSTs it to the CLI worker's
+/webhook/verification-code endpoint.
 
 This is the nuclear recovery option — called only when:
   - The refresh token itself is dead (can't be auto-refreshed)
@@ -46,21 +59,67 @@ def _log(msg: str) -> None:
         pass
 
 
-def _get_credentials() -> tuple[str, str]:
-    """Get Anthropic email/password from env vars."""
-    email = os.environ.get("ANTHROPIC_EMAIL", "")
-    password = os.environ.get("ANTHROPIC_PASSWORD", "")
-    return email, password
+# ── Verification code exchange ────────────────────────────────────────────────
+# The Playwright script waits for an n8n webhook to POST the verification code.
+# Thread-safe queue used to pass the code from the webhook handler to the
+# waiting browser automation thread.
+import queue
+_verification_code_queue: queue.Queue = queue.Queue()
+_VERIFICATION_CODE_TIMEOUT = 120  # max seconds to wait for code from n8n
+
+
+def receive_verification_code(code: str) -> None:
+    """Called by the webhook endpoint when n8n sends the verification code."""
+    _log(f"Received verification code from n8n webhook: {code[:2]}****")
+    _verification_code_queue.put(code)
+
+
+def _wait_for_verification_code() -> str | None:
+    """Block until verification code arrives from n8n, or timeout."""
+    _log(f"Waiting for verification code from n8n (timeout: {_VERIFICATION_CODE_TIMEOUT}s)...")
+    try:
+        code = _verification_code_queue.get(timeout=_VERIFICATION_CODE_TIMEOUT)
+        return code.strip()
+    except queue.Empty:
+        _log("Verification code TIMEOUT — n8n did not send the code in time.")
+        return None
+
+
+def _trigger_n8n_email_monitor() -> bool:
+    """Trigger the n8n workflow that monitors Hotmail for Anthropic verification emails."""
+    try:
+        n8n_base = os.environ.get("N8N_BASE_URL", "")
+        if not n8n_base:
+            _log("Cannot trigger n8n email monitor — N8N_BASE_URL not set.")
+            return False
+
+        # Trigger the webhook on the n8n workflow
+        import urllib.request
+        import json
+        webhook_url = f"{n8n_base}/webhook/claude-verification-monitor"
+        data = json.dumps({"action": "start_monitoring", "email": os.environ.get("ANTHROPIC_EMAIL", "")}).encode()
+        req = urllib.request.Request(
+            webhook_url,
+            data=data,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            _log(f"n8n email monitor triggered: {resp.status}")
+            return resp.status == 200
+    except Exception as e:
+        _log(f"Failed to trigger n8n email monitor: {e}")
+        return False
 
 
 def auto_login_claude() -> bool:
     """
-    Full automated OAuth login flow using headless browser.
+    Full automated OAuth login flow using headless browser + n8n email monitor.
     Returns True if login succeeded and credentials file was updated.
     """
-    email, password = _get_credentials()
-    if not email or not password:
-        _log("Auto-login skipped — ANTHROPIC_EMAIL or ANTHROPIC_PASSWORD not set in Railway Variables.")
+    email = os.environ.get("ANTHROPIC_EMAIL", "")
+    if not email:
+        _log("Auto-login skipped — ANTHROPIC_EMAIL not set in Railway Variables.")
         return False
 
     _log(f"Starting automated Claude CLI login for {email}...")
@@ -73,7 +132,7 @@ def auto_login_claude() -> bool:
         pass
 
     try:
-        return _do_auto_login(email, password)
+        return _do_auto_login(email)
     except Exception as e:
         _log(f"Auto-login failed with error: {e}")
         try:
@@ -84,8 +143,8 @@ def auto_login_claude() -> bool:
         return False
 
 
-def _do_auto_login(email: str, password: str) -> bool:
-    """Core login flow — start CLI, capture URL, automate browser."""
+def _do_auto_login(email: str) -> bool:
+    """Core login flow — start CLI, capture URL, automate browser with n8n verification."""
 
     # Step 1: Start `claude login` subprocess
     _log("Step 1: Starting `claude login` subprocess...")
@@ -139,9 +198,14 @@ def _do_auto_login(email: str, password: str) -> bool:
         proc.kill()
         return False
 
-    # Step 3: Automate the browser flow
-    _log("Step 3: Opening headless browser...")
-    browser_ok = _automate_browser(oauth_url, email, password)
+    # Step 3: Trigger n8n email monitor BEFORE opening browser
+    # n8n will start watching for the Anthropic verification email
+    _log("Step 3a: Triggering n8n email monitor...")
+    _trigger_n8n_email_monitor()
+
+    # Step 3b: Automate the browser flow
+    _log("Step 3b: Opening headless browser...")
+    browser_ok = _automate_browser(oauth_url, email)
 
     if not browser_ok:
         _log("Step 3 FAILED: Browser automation failed.")
@@ -198,12 +262,19 @@ def _do_auto_login(email: str, password: str) -> bool:
     return False
 
 
-def _automate_browser(oauth_url: str, email: str, password: str) -> bool:
-    """Use Playwright to automate the OAuth approval flow."""
+def _automate_browser(oauth_url: str, email: str) -> bool:
+    """
+    Automate the Claude.ai passwordless OAuth login flow:
+      1. Navigate to OAuth URL
+      2. Enter email → click "Continue with email"
+      3. Wait for verification code from n8n (via webhook → queue)
+      4. Type code → click "Verify Email Address"
+      5. Click "Approve" on consent screen
+    """
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
-        _log("Playwright not installed — cannot auto-login. Install: pip install playwright && playwright install chromium")
+        _log("Playwright not installed — cannot auto-login.")
         return False
 
     try:
@@ -222,136 +293,99 @@ def _automate_browser(oauth_url: str, email: str, password: str) -> bool:
 
             _log(f"Browser: navigating to OAuth URL...")
             page.goto(oauth_url, timeout=30000)
-            time.sleep(2)
+            time.sleep(3)
+            _log(f"Browser: on page = {page.url[:100]}")
 
-            # Take note of current URL — may have redirected to login
-            current_url = page.url
-            _log(f"Browser: current URL = {current_url[:100]}")
+            # ── Step 1: Enter email ──────────────────────────────────────
+            email_field = (
+                page.query_selector('input[type="email"]')
+                or page.query_selector('input[placeholder*="email" i]')
+                or page.query_selector('input[name="email"]')
+            )
+            if email_field:
+                email_field.fill(email)
+                _log(f"Browser: email entered ({email})")
+                time.sleep(0.5)
 
-            # Check if we need to log in
-            if _needs_login(page):
-                _log("Browser: login form detected — entering credentials...")
-                if not _fill_login(page, email, password):
-                    browser.close()
-                    return False
+                # Click "Continue with email"
+                continue_btn = (
+                    page.query_selector('button:has-text("Continue with email")')
+                    or page.query_selector('button:has-text("Continue")')
+                    or page.query_selector('button[type="submit"]')
+                )
+                if continue_btn:
+                    continue_btn.click()
+                    _log("Browser: clicked 'Continue with email'")
+                else:
+                    page.keyboard.press("Enter")
+                    _log("Browser: pressed Enter to submit email")
 
                 time.sleep(3)
-                current_url = page.url
-                _log(f"Browser: after login, URL = {current_url[:100]}")
-
-            # Look for and click the Approve/Allow button
-            _log("Browser: looking for Approve button...")
-            approved = _click_approve(page)
-
-            if approved:
-                _log("Browser: Approve clicked — waiting for redirect...")
-                time.sleep(5)
-                _log(f"Browser: final URL = {page.url[:100]}")
+                _log(f"Browser: after email submit, URL = {page.url[:100]}")
             else:
-                _log("Browser: no Approve button found — may have auto-approved or page structure changed.")
+                _log("Browser: no email field found on page.")
+                _log(f"Browser: page content sample: {page.content()[:500]}")
+                browser.close()
+                return False
+
+            # ── Step 2: Wait for verification code from n8n ──────────────
+            # The n8n workflow was triggered before the browser opened.
+            # It monitors the Hotmail inbox and will POST the code to our webhook.
+            verification_field = (
+                page.query_selector('input[placeholder*="verification" i]')
+                or page.query_selector('input[placeholder*="code" i]')
+                or page.query_selector('input[type="text"]')
+                or page.query_selector('input[type="number"]')
+            )
+            if not verification_field:
+                _log("Browser: no verification code field found — page may have changed.")
+                _log(f"Browser: page content: {page.content()[:500]}")
+                # Maybe already approved (Google SSO or remembered session)
+                if _click_approve(page):
+                    browser.close()
+                    return True
+                browser.close()
+                return False
+
+            _log("Browser: verification code field found — waiting for code from n8n...")
+            code = _wait_for_verification_code()
+            if not code:
+                _log("Browser: no verification code received — aborting.")
+                browser.close()
+                return False
+
+            # ── Step 3: Enter code and verify ────────────────────────────
+            verification_field.fill(code)
+            _log(f"Browser: entered verification code ({code[:2]}****)")
+            time.sleep(0.5)
+
+            verify_btn = (
+                page.query_selector('button:has-text("Verify")')
+                or page.query_selector('button:has-text("Submit")')
+                or page.query_selector('button:has-text("Continue")')
+                or page.query_selector('button[type="submit"]')
+            )
+            if verify_btn:
+                verify_btn.click()
+                _log("Browser: clicked Verify button")
+            else:
+                page.keyboard.press("Enter")
+                _log("Browser: pressed Enter to verify")
+
+            time.sleep(5)
+            _log(f"Browser: after verification, URL = {page.url[:100]}")
+
+            # ── Step 4: Click Approve on consent screen ──────────────────
+            _log("Browser: looking for Approve button...")
+            _click_approve(page)
+            time.sleep(3)
+            _log(f"Browser: final URL = {page.url[:100]}")
 
             browser.close()
             return True
 
     except Exception as e:
         _log(f"Browser automation error: {e}")
-        return False
-
-
-def _needs_login(page) -> bool:
-    """Check if the page shows a login form."""
-    try:
-        # Look for common login form elements
-        selectors = [
-            'input[type="email"]',
-            'input[name="email"]',
-            'input[type="password"]',
-            '#email',
-            '#password',
-            'input[placeholder*="email" i]',
-            'button:has-text("Log in")',
-            'button:has-text("Sign in")',
-        ]
-        for sel in selectors:
-            if page.query_selector(sel):
-                return True
-        return False
-    except Exception:
-        return False
-
-
-def _fill_login(page, email: str, password: str) -> bool:
-    """Fill in the login form and submit."""
-    try:
-        # Try email field
-        email_field = (
-            page.query_selector('input[type="email"]')
-            or page.query_selector('input[name="email"]')
-            or page.query_selector('#email')
-            or page.query_selector('input[placeholder*="email" i]')
-        )
-        if email_field:
-            email_field.fill(email)
-            _log("Browser: email entered.")
-        else:
-            _log("Browser: no email field found.")
-            return False
-
-        # Try password field
-        pw_field = (
-            page.query_selector('input[type="password"]')
-            or page.query_selector('input[name="password"]')
-            or page.query_selector('#password')
-        )
-        if pw_field:
-            pw_field.fill(password)
-            _log("Browser: password entered.")
-        else:
-            # Some flows show email first, then password on next page
-            _log("Browser: no password field — submitting email first...")
-            # Click submit/continue
-            submit = (
-                page.query_selector('button[type="submit"]')
-                or page.query_selector('button:has-text("Continue")')
-                or page.query_selector('button:has-text("Next")')
-            )
-            if submit:
-                submit.click()
-                time.sleep(3)
-            # Now look for password
-            pw_field = (
-                page.query_selector('input[type="password"]')
-                or page.query_selector('input[name="password"]')
-            )
-            if pw_field:
-                pw_field.fill(password)
-                _log("Browser: password entered (second page).")
-            else:
-                _log("Browser: still no password field after email submit.")
-                return False
-
-        # Submit the form
-        time.sleep(0.5)
-        submit = (
-            page.query_selector('button[type="submit"]')
-            or page.query_selector('button:has-text("Log in")')
-            or page.query_selector('button:has-text("Sign in")')
-            or page.query_selector('button:has-text("Continue")')
-        )
-        if submit:
-            submit.click()
-            _log("Browser: login form submitted.")
-            time.sleep(3)
-            return True
-
-        # Fallback: press Enter
-        page.keyboard.press("Enter")
-        _log("Browser: pressed Enter to submit.")
-        time.sleep(3)
-        return True
-
-    except Exception as e:
-        _log(f"Browser: login form error — {e}")
         return False
 
 

@@ -189,6 +189,28 @@ def health():
     }
 
 
+@app.post("/webhook/verification-code")
+def receive_verification_code(request: dict):
+    """
+    Receive a Claude.ai email verification code from n8n.
+    The n8n workflow monitors the Hotmail inbox for Anthropic verification emails,
+    extracts the code, and POSTs it here. The waiting Playwright thread picks it up.
+    """
+    code = request.get("code", "")
+    if not code:
+        return {"ok": False, "error": "No code provided"}
+    try:
+        import sys
+        sys.path.insert(0, "/app")
+        from app.learning.cli_auto_login import receive_verification_code as _recv
+        _recv(code)
+        _bg_log(f"Verification code received from n8n: {code[:2]}****", "webhook")
+        return {"ok": True, "message": "Code received — auto-login proceeding"}
+    except Exception as e:
+        _bg_log(f"Verification code webhook error: {e}", "webhook")
+        return {"ok": False, "error": str(e)}
+
+
 @app.post("/tasks", status_code=201)
 def submit_task(req: TaskSubmit):
     """

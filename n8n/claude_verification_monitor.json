@@ -1,0 +1,71 @@
+{
+  "name": "Claude Verification Code Monitor",
+  "nodes": [
+    {
+      "parameters": {
+        "mailbox": "INBOX",
+        "postProcessAction": "read",
+        "format": "simple",
+        "downloadAttachments": false,
+        "options": {
+          "customEmailConfig": "[\"UNSEEN\", [\"FROM\", \"noreply@anthropic.com\"]]",
+          "forceReconnect": 5
+        }
+      },
+      "id": "email-trigger",
+      "name": "Watch Hotmail for Anthropic Emails",
+      "type": "n8n-nodes-base.emailReadImap",
+      "typeVersion": 2.1,
+      "position": [240, 400],
+      "credentials": {
+        "imap": {
+          "id": "",
+          "name": "Hotmail IMAP"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const items = $input.all();\nconst results = [];\nfor (const item of items) {\n  const subject = (item.json.subject || '').toLowerCase();\n  const body = item.json.text || item.json.html || '';\n  \n  // Only process Anthropic verification emails\n  if (!subject.includes('verification') && !subject.includes('code') && !subject.includes('anthropic') && !subject.includes('claude')) {\n    continue;\n  }\n  \n  // Extract 6-digit code from email body\n  const codeMatch = body.match(/\\b(\\d{6})\\b/);\n  if (codeMatch) {\n    results.push({\n      json: {\n        code: codeMatch[1],\n        subject: item.json.subject,\n        from: item.json.from,\n        timestamp: new Date().toISOString()\n      }\n    });\n  }\n}\n\nif (results.length === 0) {\n  return [];\n}\nreturn results;"
+      },
+      "id": "extract-code",
+      "name": "Extract Verification Code",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://inspiring-cat-production.up.railway.app/webhook/verification-code",
+        "authentication": "none",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ code: $json.code }) }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "post-code",
+      "name": "POST Code to CLI Worker",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [720, 400]
+    }
+  ],
+  "connections": {
+    "Watch Hotmail for Anthropic Emails": {
+      "main": [[{ "node": "Extract Verification Code", "type": "main", "index": 0 }]]
+    },
+    "Extract Verification Code": {
+      "main": [[{ "node": "POST Code to CLI Worker", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
