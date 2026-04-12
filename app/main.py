@@ -46,8 +46,8 @@ limiter = Limiter(key_func=get_remote_address)
 # Protected paths require header: X-Token: <UI_PASSWORD>
 # If UI_PASSWORD is not set, auth is disabled.
 
-_OPEN_PATHS = {"/", "/health", "/auth", "/credits/pro-status", "/credits/pro-reset", "/agents", "/dashboard"}
-_OPEN_PREFIXES = ("/static", "/downloads", "/webhook", "/n8n/connection-info", "/activity", "/dashboard/")  # token-in-URL or public info
+_OPEN_PATHS = {"/", "/health", "/auth", "/credits/pro-status", "/credits/pro-reset", "/agents", "/dashboard", "/stats", "/stats/report"}
+_OPEN_PREFIXES = ("/static", "/downloads", "/webhook", "/n8n/connection-info", "/activity", "/dashboard/", "/stats/")  # token-in-URL or public info
 
 
 class AuthMiddleware(BaseHTTPMiddleware):
@@ -2426,6 +2426,28 @@ def credits_pro_status():
         auth = _verify()
         status = _pro_status()
         status["auth"] = auth
+
+        # Add Gemini CLI availability (widget reads this)
+        try:
+            from .learning.gemini_cli_worker import is_gemini_cli_available
+            status["gemini_available"] = is_gemini_cli_available()
+        except Exception:
+            status["gemini_available"] = False
+
+        # Add Anthropic API availability
+        try:
+            from .config import settings as _s
+            status["api_available"] = bool(_s.anthropic_api_key)
+            if _s.anthropic_api_key:
+                # Quick credit check via the spend summary
+                try:
+                    spend = _spend_summary()
+                    status["api_available"] = not spend.get("over_budget", False)
+                except Exception:
+                    pass
+        except Exception:
+            status["api_available"] = False
+
         return status
     except Exception as e:
         return {"error": str(e)}

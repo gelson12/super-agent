@@ -289,11 +289,16 @@ cat > /root/.claude/settings.json <<'CLAUDESETTINGS'
       "Glob(*)",
       "Grep(*)",
       "mcp__*",
+      "mcp__n8n__*",
+      "mcp__n8n(*)",
       "WebFetch(*)",
-      "WebSearch(*)"
+      "WebSearch(*)",
+      "Agent(*)",
+      "NotebookEdit(*)"
     ],
     "deny": []
-  }
+  },
+  "enableAllProjectMcpServers": true
 }
 CLAUDESETTINGS
 chmod 600 /root/.claude/settings.json
