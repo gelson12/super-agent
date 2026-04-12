@@ -1242,9 +1242,9 @@
   const _OFFICE_MODELS = ["Claude CLI Pro","Gemini CLI","Anthropic Haiku","Sonnet Anthropic","Opus Anthropic","DeepSeek"];
   const _OFFICE_AGENTS = ["Shell Agent","GitHub Agent","N8N Agent","Self-Improve Agent"];
   const _OFFICE_AVATARS = {
-    "Claude CLI Pro":"🤖","Gemini CLI":"💎","Anthropic Haiku":"🎋",
-    "Sonnet Anthropic":"🎵","Opus Anthropic":"🎼","DeepSeek":"🔍",
-    "Shell Agent":"🐚","GitHub Agent":"🐙","N8N Agent":"⚡","Self-Improve Agent":"🧠"
+    "Claude CLI Pro":"👨‍💻","Gemini CLI":"👩‍💻","Anthropic Haiku":"🧑‍💻",
+    "Sonnet Anthropic":"👨‍🔧","Opus Anthropic":"👩‍🔬","DeepSeek":"🧑‍🔬",
+    "Shell Agent":"👷","GitHub Agent":"👷‍♀️","N8N Agent":"👷‍♂️","Self-Improve Agent":"🧑‍🏫"
   };
   let _officeOpen = false;
   let _officeTimer = null;
@@ -1293,16 +1293,24 @@
     return Math.floor(s/86400)+'d ago';
   }
 
+  function _oDateTime(ts) {
+    if (!ts) return '';
+    const d = new Date(ts * 1000);
+    return d.toLocaleString(undefined, { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' });
+  }
+
   function _oDesk(w) {
     const av = _OFFICE_AVATARS[w.id]||'👤';
-    const t = w.last_worked_ago!=null ? _oTimeAgo(w.last_worked_ago) : '';
+    const showTime = (w.state==='idle'||w.state==='sleeping') && w.last_worked>0;
+    const timeAgo = w.last_worked_ago!=null ? _oTimeAgo(w.last_worked_ago) : '';
+    const dateStr = w.last_worked ? _oDateTime(w.last_worked) : '';
     return `<div class="o-desk">
       <div class="o-name">${_oEsc(w.id)}</div>
       <div class="o-status ${w.state}">${w.state}</div>
       <div class="o-monitor ${_oMonClass(w.state)}">${_oScreen(w)}</div>
       <div class="o-monitor-stand"></div>
       <div class="o-avatar">${av}${_oOverlay(w)}</div>
-      ${t ? `<div class="o-time">${t}</div>` : ''}
+      ${showTime ? `<div class="o-time">${timeAgo}</div><div class="o-time">${dateStr}</div>` : ''}
     </div>`;
   }
 
