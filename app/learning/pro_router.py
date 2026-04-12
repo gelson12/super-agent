@@ -76,6 +76,7 @@ def _submit_and_poll(task_type: str, payload: dict, timeout: int = 30) -> str | 
         with urllib.request.urlopen(req, timeout=10) as resp:
             task_id = json.loads(resp.read().decode("utf-8")).get("task_id")
         if not task_id:
+            _log(f"CLI worker returned no task_id for {task_type}")
             return None
         deadline = time.time() + timeout
         while time.time() < deadline:
@@ -84,10 +85,20 @@ def _submit_and_poll(task_type: str, payload: dict, timeout: int = 30) -> str | 
                 if body.get("status") == "done":
                     return body.get("result") or ""
                 if body.get("status") == "failed":
-                    return None
+                    _err = body.get("error", "unknown")
+                    _log(f"CLI worker task {task_id} FAILED: {str(_err)[:200]}")
+                    return f"[CLI worker error: {str(_err)[:200]}]"
             time.sleep(2)
+        _log(f"CLI worker task {task_id} TIMED OUT after {timeout}s")
         return None
-    except Exception:
+    except urllib.error.HTTPError as e:
+        _log(f"CLI worker HTTP {e.code} on {task_type}: {str(e)[:200]}")
+        return None
+    except urllib.error.URLError as e:
+        _log(f"CLI worker unreachable ({task_type}): {e.reason}")
+        return None
+    except Exception as e:
+        _log(f"CLI worker error ({task_type}): {str(e)[:200]}")
         return None
 
 _FLAG_DIR      = Path("/workspace") if os.access("/workspace", os.W_OK) else Path(".")

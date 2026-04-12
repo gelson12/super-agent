@@ -137,42 +137,26 @@ def tiered_agent_invoke(
     Returns a response string — never raises.
     """
     _source = source or f"{agent_type}_agent"
+
+    # ── Tier 1: Claude CLI Pro (ALWAYS try first — it's free) ────────────
+    # CLI Pro on inspiring-cat has shell access, n8n MCP, and full tool
+    # capability. There is NO reason to skip it for "operational" requests.
+    try:
+        from ..learning.pro_router import try_pro, should_attempt_cli
+        if should_attempt_cli():
+            cli_result = try_pro(f"{system_prompt}\n\n{message}")
+            if cli_result and not cli_result.startswith("["):
+                _log(f"✓ CLI Pro responded ({len(cli_result)} chars)", _source)
+                return cli_result
+            _log(f"CLI returned error/empty — trying Gemini", _source)
+        else:
+            _log("CLI flagged down — skipping to Gemini", _source)
+    except Exception as e:
+        _log(f"CLI exception: {e} — trying Gemini", _source)
+
+    # ── Tier 2: Gemini CLI (free, but text-only — skip for operational) ──
     operational = is_operational(message, agent_type)
-
-    # ── Status tracker helpers ─────────────────────────────────────────
-    def _track(worker, task=""):
-        try:
-            from ..learning.agent_status_tracker import mark_working
-            mark_working(worker, task)
-        except Exception:
-            pass
-
-    def _done(worker):
-        try:
-            from ..learning.agent_status_tracker import mark_done
-            mark_done(worker)
-        except Exception:
-            pass
-
-    # ── Tiers 1-2: text-only (skip for operational requests) ─────────────
-    # Status tracking for CLI/Gemini is handled inside pro_router.py and
-    # gemini_cli_worker.py directly — they mark working/done/sick at source.
     if not operational:
-        # Tier 1: Claude CLI Pro (free)
-        try:
-            from ..learning.pro_router import try_pro, should_attempt_cli
-            if should_attempt_cli():
-                cli_result = try_pro(f"{system_prompt}\n\n{message}")
-                if cli_result and not cli_result.startswith("["):
-                    _log(f"✓ CLI Pro responded ({len(cli_result)} chars)", _source)
-                    return cli_result
-                _log(f"CLI returned error/empty — trying Gemini", _source)
-            else:
-                _log("CLI flagged down — skipping to Gemini", _source)
-        except Exception as e:
-            _log(f"CLI exception: {e} — trying Gemini", _source)
-
-        # Tier 2: Gemini CLI (free)
         try:
             from ..learning.gemini_cli_worker import ask_gemini_cli
             gemini = ask_gemini_cli(f"{system_prompt}\n\n{message}")
@@ -183,7 +167,7 @@ def tiered_agent_invoke(
         except Exception as e:
             _log(f"Gemini exception: {e} — trying Anthropic API", _source)
     else:
-        _log(f"Operational request detected — skipping text-only tiers, using LangGraph directly", _source)
+        _log(f"Operational request — skipping Gemini (no tools), using LangGraph", _source)
 
     # ── Tier 3: LangGraph + Anthropic API (full tool access) ─────────────
     if settings.anthropic_api_key:
