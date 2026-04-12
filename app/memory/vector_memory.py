@@ -228,7 +228,17 @@ def _json_retrieve(query: str, top_k: int = 5) -> list[str]:
             overlap = len(query_tokens & rec_tokens)
             if overlap > 0:
                 score = overlap / (len(query_tokens | rec_tokens) ** 0.5)
-                scored.append((score, rec["content"]))
+                # Boost enriched memories by importance level
+                content = rec["content"]
+                if content.startswith("[IMPORTANT:"):
+                    try:
+                        _tag_end = content.index("]")
+                        _parts = content[1:_tag_end].split(":")
+                        _imp = int(_parts[2]) if len(_parts) >= 3 else 3
+                        score *= 1.0 + (_imp * 0.15)  # +15% per importance level
+                    except (ValueError, IndexError):
+                        score *= 1.3  # default 30% boost
+                scored.append((score, content))
 
         scored.sort(key=lambda x: x[0], reverse=True)
         # Deduplicate by content prefix to avoid repeating near-identical exchanges
@@ -259,6 +269,24 @@ def store_memory(session_id: str, content: str) -> None:
             return
     # Always write to JSON fallback — acts as secondary backup even when pg works
     _json_store(session_id, content)
+
+
+def store_enriched_memory(
+    session_id: str,
+    content: str,
+    memory_type: str = "general",
+    importance: int = 3,
+) -> None:
+    """
+    Store a memory with enriched metadata for proactive recall.
+
+    memory_type: one of "decision", "preference", "fact", "goal", "problem"
+    importance: 1 (low) to 5 (critical)
+
+    High-importance memories are tagged so retrieval can boost them.
+    """
+    tagged = f"[IMPORTANT:{memory_type}:{importance}] {content}"
+    store_memory(session_id, tagged)
 
 
 def retrieve_memories(query: str, top_k: int = 8) -> list[str]:

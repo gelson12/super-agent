@@ -20,7 +20,12 @@ from ..learning.peer_review import peer_reviewer
 from ..learning.ensemble import ensemble_voter
 from ..learning.red_team import red_team
 from ..learning.cot_handoff import cot_handoff
-from ..memory.vector_memory import get_memory_context, store_memory
+from ..learning.agent_status_tracker import (
+    mark_working as _mark_working, mark_done as _mark_done,
+    mark_talking as _mark_talking, clear_talking as _clear_talking,
+    resolve_worker as _resolve_worker, mark_strike as _mark_strike,
+)
+from ..memory.vector_memory import get_memory_context, store_memory, store_enriched_memory
 from ..memory.session import get_compressed_context, append_exchange
 from ..prompts import (
     build_capabilities_block,
@@ -80,6 +85,70 @@ _HANDLERS = {
     "HAIKU":    ask_claude_haiku,
     "GITHUB":   run_github_agent,
 }
+
+# ── Proactive memory detection ────────────────────────────────────────────────
+
+_SAVEABLE_PATTERNS: list[tuple[str, str, int]] = [
+    # (pattern, memory_type, importance)
+    # Decisions
+    ("i decided to", "decision", 4),
+    ("let's go with", "decision", 4),
+    ("we'll use", "decision", 3),
+    ("i chose", "decision", 4),
+    ("the plan is to", "decision", 4),
+    ("going forward we", "decision", 4),
+    # Preferences
+    ("i prefer", "preference", 3),
+    ("always use", "preference", 3),
+    ("never do", "preference", 3),
+    ("i like it when", "preference", 3),
+    ("don't ever", "preference", 4),
+    # Project facts
+    ("the repo is at", "fact", 4),
+    ("the api key is", "fact", 5),
+    ("the domain is", "fact", 4),
+    ("the password is", "fact", 5),
+    ("the url is", "fact", 4),
+    ("we're using", "fact", 3),
+    ("our stack is", "fact", 4),
+    # Recurring problems
+    ("this keeps happening", "problem", 4),
+    ("again the same", "problem", 4),
+    ("same issue as before", "problem", 4),
+    ("recurring problem", "problem", 5),
+    ("keeps failing", "problem", 4),
+    # Goals
+    ("i want to", "goal", 3),
+    ("next we need to", "goal", 3),
+    ("the goal is", "goal", 4),
+    ("we need to finish", "goal", 4),
+    ("by end of week", "goal", 4),
+    ("the deadline is", "goal", 5),
+]
+
+
+def _detect_saveable_content(message: str, response: str) -> dict | None:
+    """
+    Detect if the user's message contains content worth enriching in memory.
+    Returns {type, summary, importance} or None.
+    """
+    lower = message.lower()
+    best_match = None
+    best_importance = 0
+
+    for pattern, mem_type, importance in _SAVEABLE_PATTERNS:
+        if pattern in lower and importance > best_importance:
+            best_match = (mem_type, importance)
+            best_importance = importance
+
+    if best_match is None:
+        return None
+
+    mem_type, importance = best_match
+    # Build a concise summary from the message
+    summary = message[:300]
+    return {"type": mem_type, "summary": summary, "importance": importance}
+
 
 _GITHUB_KEYWORDS = {
     "github", "repo", "repository", "repositories", "commit", "pull request",
@@ -617,7 +686,9 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
     # ── 4c. Self-improvement routing ─────────────────────────────────────────
     if _is_self_improve_request(message):
         _write_active_task(session_id, message)
+        _mark_working("Self-Improve Agent", message[:100])
         response = run_self_improve_agent(message, authorized=authorized)
+        _mark_done("Self-Improve Agent")
         _clear_active_task()
         insight_log.record(message, "SELF_IMPROVE", response, "self_improve", complexity, session_id)
         adapter.tick()
@@ -721,11 +792,18 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
             else augmented_message
         )
         _write_active_task(session_id, message)
+        _mark_working("Shell Agent", message[:100])
         response = run_shell_agent(_shell_payload, authorized=authorized)
+        _mark_done("Shell Agent")
         _clear_active_task()
         if _agent_response_is_error(response):
             response = _auto_investigate("SHELL", message, response)
         store_memory(session_id, f"Q: {message[:300]} A: {response[:300]}")
+        _sav = _detect_saveable_content(message, response)
+        if _sav:
+            store_enriched_memory(session_id, f"Q: {message[:300]} A: {response[:300]}", _sav["type"], _sav["importance"])
+            if _sav["importance"] >= 4:
+                response = response.rstrip() + "\n\n_Noted for future reference._"
         insight_log.record(message, "SHELL", response, "shell_keywords", complexity, session_id)
         adapter.tick()
         return _build_extended_result({
@@ -738,11 +816,18 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
 
     if _kw_route == "GITHUB":
         _write_active_task(session_id, message)
+        _mark_working("GitHub Agent", message[:100])
         response = run_github_agent(augmented_message)
+        _mark_done("GitHub Agent")
         _clear_active_task()
         if _agent_response_is_error(response):
             response = _auto_investigate("GITHUB", message, response)
         store_memory(session_id, f"Q: {message[:300]} A: {response[:300]}")
+        _sav = _detect_saveable_content(message, response)
+        if _sav:
+            store_enriched_memory(session_id, f"Q: {message[:300]} A: {response[:300]}", _sav["type"], _sav["importance"])
+            if _sav["importance"] >= 4:
+                response = response.rstrip() + "\n\n_Noted for future reference._"
         insight_log.record(message, "GITHUB", response, "github_keywords", complexity, session_id)
         adapter.tick()
         return _build_extended_result({
@@ -755,11 +840,18 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
 
     if _kw_route == "N8N":
         _write_active_task(session_id, message)
+        _mark_working("N8N Agent", message[:100])
         response = run_n8n_agent(augmented_message)
+        _mark_done("N8N Agent")
         _clear_active_task()
         if _agent_response_is_error(response):
             response = _auto_investigate("N8N", message, response)
         store_memory(session_id, f"Q: {message[:300]} A: {response[:300]}")
+        _sav = _detect_saveable_content(message, response)
+        if _sav:
+            store_enriched_memory(session_id, f"Q: {message[:300]} A: {response[:300]}", _sav["type"], _sav["importance"])
+            if _sav["importance"] >= 4:
+                response = response.rstrip() + "\n\n_Noted for future reference._"
         insight_log.record(message, "N8N", response, "n8n_keywords", complexity, session_id)
         adapter.tick()
         return _build_extended_result({
@@ -841,7 +933,11 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
 
     # ── 8a. Ensemble (complexity == 5) ────────────────────────────────────────
     if complexity == 5:
+        _mark_talking("Sonnet Anthropic", "DeepSeek")
+        _mark_talking("Sonnet Anthropic", "Gemini CLI")
         ensemble_result = ensemble_voter.vote(message, complexity, session_id)
+        _clear_talking("Sonnet Anthropic", "DeepSeek")
+        _clear_talking("Sonnet Anthropic", "Gemini CLI")
         if ensemble_result["is_ensemble"]:
             response = ensemble_result["response"]
             if model in _CACHEABLE_MODELS:
@@ -864,12 +960,15 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
 
     # ── 8b. Single model call ─────────────────────────────────────────────────
     # Inject capabilities-aware system prompt for Claude/Haiku
+    _worker_id = _resolve_worker(model)
+    _mark_working(_worker_id, message[:100])
     if model == "CLAUDE":
         response = ask_claude(augmented_message, system=_system_claude)
     elif model == "HAIKU":
         response = ask_claude_haiku(augmented_message, system=_system_haiku)
     else:
         response = _HANDLERS[model](augmented_message)
+    _mark_done(_worker_id)
 
     # Layer 1: CoT handoff (complexity >= 4, classifier-routed)
     cot_result = {
@@ -903,6 +1002,19 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
     adapter.tick()
     # Feature 4: store exchange in semantic memory for future cross-session recall
     store_memory(session_id, f"Q: {message[:300]} A: {response[:300]}")
+
+    # Feature 4b: proactive memory — detect saveable content and enrich
+    _saveable = _detect_saveable_content(message, response)
+    if _saveable:
+        store_enriched_memory(
+            session_id,
+            f"Q: {message[:300]} A: {response[:300]}",
+            memory_type=_saveable["type"],
+            importance=_saveable["importance"],
+        )
+        # For high-importance items, hint to the user
+        if _saveable["importance"] >= 4:
+            response = response.rstrip() + "\n\n_Noted for future reference._"
     # Prompt library outcome tracking (for prompt version error-rate correlation)
     if model in ("CLAUDE", "HAIKU"):
         try:

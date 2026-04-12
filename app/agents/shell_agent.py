@@ -148,52 +148,11 @@ def run_shell_agent(message: str, authorized: bool = False, debug_mode: bool = F
     base_content = f"{_recipe_hint}\n\n{message}".strip() if _recipe_hint else message
     user_content = f"{ISOLATION_DEBUG_PROMPT}\n\n---\n\n{base_content}" if debug_mode else base_content
 
-    # ── 1. Claude CLI Pro → 2. Gemini → 3. Anthropic API (with tools) → 4. DeepSeek ──
-    # Tier 1: Claude CLI (free, preferred)
-    try:
-        from ..learning.pro_router import try_pro, should_attempt_cli
-        if should_attempt_cli():
-            cli_result = try_pro(f"{_SYSTEM_PROMPT}\n\n{user_content}")
-            if cli_result and not cli_result.startswith("["):
-                return cli_result
-    except Exception:
-        pass
-
-    # Tier 2: Gemini CLI (free fallback — informational only, no shell tools)
-    try:
-        from ..learning.gemini_cli_worker import ask_gemini_cli
-        gemini = ask_gemini_cli(f"{_SYSTEM_PROMPT}\n\n{user_content}")
-        if gemini and not gemini.startswith("["):
-            return gemini
-    except Exception:
-        pass
-
-    # Tier 3: LangGraph + Anthropic API — full shell + infrastructure tools
-    try:
-        from ..activity_log import bg_log as _bg
-        _bg("Shell agent: using LangGraph (Anthropic API) — CLI/Gemini unavailable", source="shell_agent")
-        _llm = ChatAnthropic(model="claude-sonnet-4-6", api_key=settings.anthropic_api_key, max_tokens=8192)
-        _agent = create_react_agent(_llm, tools)
-        _result = _agent.invoke({
-            "messages": [
-                {"role": "system", "content": _SYSTEM_PROMPT},
-                {"role": "user", "content": user_content},
-            ]
-        })
-        return extract_final_agent_text(_result) or "[shell agent: no response]"
-    except Exception as _e:
-        if "credit" in str(_e).lower():
-            pass  # fall through to DeepSeek
-        else:
-            return f"⚠️ Shell agent error: {_e}"
-
-    # Tier 4: DeepSeek (last resort)
-    try:
-        from ..models.deepseek import ask_deepseek
-        ds = ask_deepseek(user_content, system=_SYSTEM_PROMPT)
-        if ds and not ds.startswith("["):
-            return ds
-    except Exception as _e:
-        pass
-
-    return "⚠️ All response tiers unavailable (CLI, Gemini, Anthropic, DeepSeek). Please retry in a moment."
+    from .agent_routing import tiered_agent_invoke
+    return tiered_agent_invoke(
+        message=user_content,
+        system_prompt=_SYSTEM_PROMPT,
+        tools=tools,
+        agent_type="shell",
+        source="shell_agent",
+    )

@@ -320,7 +320,7 @@ def run_n8n_agent(message: str) -> str:
         except Exception:
             pass
 
-    # ── 3. LangGraph + Anthropic API — full Python n8n_tools, builds directly ──
+    # ── 3. LangGraph + Anthropic API → 3b. DeepSeek LangGraph (with tool access) ──
     # _N8N_TOOLS includes n8n_create_workflow, n8n_update_workflow, n8n_activate_workflow
     # etc. — these call the n8n REST API directly via httpx, no MCP, no CLI needed.
     _build_message = message
@@ -330,35 +330,20 @@ def run_n8n_agent(message: str) -> str:
             f"[WORKFLOW BLUEPRINT FROM GEMINI — build this exact design using n8n tools]:\n"
             f"{_gemini_blueprint}"
         )
-    try:
-        from ..activity_log import bg_log as _bg
-        _bg("n8n agent: using LangGraph (Anthropic API) — full n8n tool access", source="n8n_agent")
-        return _invoke(_build_message)
-    except Exception as _e:
-        err = str(_e)
-        # API key has no credits — retry immediately via CLI worker (free path)
-        # instead of surfacing a billing error to the user.
-        _no_credits = (
-            "credit balance is too low",
-            "insufficient credits",
-            "payment required",
-            "your credit balance",
-        )
-        if any(p in err.lower() for p in _no_credits):
-            from ..activity_log import bg_log as _bg
-            _bg("n8n agent: Anthropic API no credits — trying DeepSeek as last resort", source="n8n_agent")
-            # Tier 4: DeepSeek last resort
-            try:
-                from ..config import settings as _s
-                if _s.deepseek_api_key:
-                    from ..models.deepseek import ask_deepseek
-                    ds = ask_deepseek(_build_message, system=_SYSTEM)
-                    if ds and not ds.startswith("["):
-                        return ds
-            except Exception:
-                pass
-            return (
-                "⚠️ **Anthropic API key has no credits** and all free tiers are temporarily unavailable.\n\n"
-                "Please retry in 2 minutes — inspiring-cat CLI is restarting with the credential fix."
-            )
-        return f"⚠️ n8n agent error: {_e}"
+
+    # Use shared routing for LangGraph tiers (Anthropic API → DeepSeek LangGraph → text fallback)
+    # CLI/Gemini already tried above — _build_message contains "build" keywords so
+    # tiered_agent_invoke will skip text-only tiers and go straight to LangGraph.
+    from .agent_routing import tiered_agent_invoke
+    from ..activity_log import bg_log as _bg
+    _bg("n8n agent: using LangGraph tiers — full n8n tool access", source="n8n_agent")
+
+    # Since we already handled CLI/Gemini above, call tiered_agent_invoke with an
+    # operational-style message so it goes straight to LangGraph tiers.
+    return tiered_agent_invoke(
+        message=_build_message,
+        system_prompt=_SYSTEM,
+        tools=_N8N_TOOLS,
+        agent_type="n8n",
+        source="n8n_agent",
+    )

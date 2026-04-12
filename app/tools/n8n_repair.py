@@ -79,14 +79,60 @@ def _fix_check_api_key(error: str, context: dict) -> str | None:
 
 
 def _fix_check_base_url(error: str, context: dict) -> str | None:
-    """N8N_BASE_URL may be wrong or the service may have changed domain."""
+    """N8N_BASE_URL may be wrong or the service may have changed domain.
+
+    Attempts auto-detection: reads Railway services to find the n8n service URL
+    and compares it against the current N8N_BASE_URL variable. If they differ
+    (e.g. after a Railway domain change), updates the variable automatically.
+    """
+    import re as _re
     from ..tools.railway_tools import railway_list_services, railway_list_variables
+
     vars_raw = railway_list_variables.invoke({})
     services_raw = railway_list_services.invoke({})
     _log(f"URL check — N8N_BASE_URL in vars: {'N8N_BASE_URL' in vars_raw}")
+
+    # Extract the current N8N_BASE_URL value
+    current_url = ""
+    for line in vars_raw.splitlines():
+        if "N8N_BASE_URL" in line and "=" in line:
+            current_url = line.split("=", 1)[1].strip().strip('"').strip("'")
+            break
+
+    # Find Railway service URLs and identify the n8n one
+    service_urls = _re.findall(r'https://[\w.-]+\.up\.railway\.app', services_raw)
+    n8n_service_url = None
+    for url in service_urls:
+        # Check if the line/context mentioning this URL contains "n8n"
+        idx = services_raw.find(url)
+        context_window = services_raw[max(0, idx - 100):idx + len(url) + 50].lower()
+        if "n8n" in context_window:
+            n8n_service_url = url
+            break
+
+    if n8n_service_url and current_url and n8n_service_url != current_url:
+        # Domain mismatch detected — auto-fix
+        _log(f"Domain mismatch: current={current_url} actual={n8n_service_url} — auto-fixing")
+        try:
+            from ..tools.railway_tools import railway_set_variable
+            railway_set_variable.invoke({"key": "N8N_BASE_URL", "value": n8n_service_url})
+            # Also update the runtime config so the fix takes effect immediately
+            settings.n8n_base_url = n8n_service_url
+            return (
+                f"Auto-fixed N8N_BASE_URL domain mismatch: {current_url} → {n8n_service_url}. "
+                f"Railway variable updated and runtime config refreshed."
+            )
+        except Exception as e:
+            _log(f"Auto-fix failed: {e}")
+            return (
+                f"Domain mismatch detected: current={current_url} actual={n8n_service_url}. "
+                f"Auto-fix failed: {e}. Update N8N_BASE_URL manually in Railway."
+            )
+
     return (
-        f"N8N_BASE_URL config issue detected.\n"
-        f"Variables present: {'N8N_BASE_URL' in vars_raw}\n"
+        f"N8N_BASE_URL config check.\n"
+        f"Current URL: {current_url or '(not set)'}\n"
+        f"Detected n8n service: {n8n_service_url or '(not found in services)'}\n"
         f"Services: {services_raw[:300]}\n"
         f"Verify the n8n service domain in Railway matches the N8N_BASE_URL variable."
     )
@@ -109,6 +155,9 @@ _N8N_REPAIR_RULES: list[tuple[str, object]] = [
     ("invalid api key",             _fix_check_api_key),
     ("n8n_base_url not set",        _fix_check_base_url),
     ("not set",                     _fix_check_base_url),
+    ("domain",                      _fix_check_base_url),
+    ("name or service not known",   _fix_check_base_url),
+    ("name resolution",             _fix_check_base_url),
     ("workflow.*inactive",          _fix_reactivate_workflows),
     ("workflows.*deactivated",      _fix_reactivate_workflows),
 ]
@@ -179,10 +228,20 @@ def n8n_health_check() -> dict:
             "may have been deactivated by a redeploy"
         )
 
-    # 3. Recent execution failures
-    exec_raw = n8n_list_executions.invoke({"workflow_id": "", "limit": 20})
+    # 3. Recent execution failures (only count last 24 hours)
+    from datetime import datetime, timedelta, timezone
+    _cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+    exec_raw = n8n_list_executions.invoke({"workflow_id": "", "limit": 30})
     if isinstance(exec_raw, str) and not exec_raw.startswith("["):
         for line in exec_raw.splitlines():
+            # Format: STATUS | exec:ID | name | startedAt → stoppedAt
+            # Only count executions within the last 24 hours
+            _parts = line.split("|")
+            if len(_parts) >= 4:
+                _time_part = _parts[3].strip()  # "startedAt → stoppedAt"
+                _started = _time_part.split("→")[0].strip() if "→" in _time_part else ""
+                if _started and _started < _cutoff:
+                    continue  # stale execution — skip
             upper = line.upper()
             if "ERROR" in upper or "CRASHED" in upper or "FAILED" in upper:
                 result["recent_failures"] += 1

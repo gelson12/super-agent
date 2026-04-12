@@ -1,0 +1,571 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Super Agent - Office</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Press Start 2P', monospace;
+      background: #2d1f0e;
+      color: #e8e8e8;
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* ── Header ──────────────────────────────────────────────────── */
+    .header {
+      background: #1a1208;
+      border-bottom: 4px solid #4a3520;
+      padding: 12px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .header h1 {
+      font-size: 0.7rem;
+      color: #c9a96e;
+      letter-spacing: 1px;
+    }
+
+    .header .back-link {
+      font-size: 0.5rem;
+      color: #6cb4ff;
+      text-decoration: none;
+    }
+
+    .header .back-link:hover { text-decoration: underline; }
+
+    .header .status-dot {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #4ade80;
+      margin-right: 8px;
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
+    /* ── Office floor ────────────────────────────────────────────── */
+    .office {
+      background:
+        repeating-linear-gradient(
+          90deg,
+          #3d2b16 0px, #3d2b16 80px,
+          #4a3520 80px, #4a3520 82px
+        ),
+        repeating-linear-gradient(
+          0deg,
+          #3d2b16 0px, #3d2b16 40px,
+          #352517 40px, #352517 42px
+        );
+      padding: 30px 20px;
+      min-height: calc(100vh - 50px);
+    }
+
+    /* ── Section labels ──────────────────────────────────────────── */
+    .section-label {
+      font-size: 0.5rem;
+      color: #8b7355;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      margin-bottom: 16px;
+      padding-left: 8px;
+      border-left: 3px solid #6b5337;
+    }
+
+    /* ── Desk grid ───────────────────────────────────────────────── */
+    .desks {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+      gap: 20px;
+      margin-bottom: 36px;
+    }
+
+    /* ── Single desk ─────────────────────────────────────────────── */
+    .desk {
+      position: relative;
+      background: #2a1e10;
+      border: 2px solid #5a4430;
+      border-radius: 4px;
+      padding: 10px;
+      min-height: 200px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      transition: border-color 0.3s;
+    }
+
+    .desk:hover {
+      border-color: #8b7355;
+    }
+
+    /* Worker name */
+    .desk .name {
+      font-size: 0.45rem;
+      color: #d4b896;
+      text-align: center;
+      margin-bottom: 6px;
+      line-height: 1.6;
+    }
+
+    /* Status label */
+    .desk .status-label {
+      font-size: 0.4rem;
+      padding: 2px 6px;
+      border-radius: 2px;
+      margin-bottom: 8px;
+      text-transform: lowercase;
+    }
+
+    .status-label.working { background: #1e3a5f; color: #60a5fa; }
+    .status-label.idle { background: #14532d; color: #4ade80; }
+    .status-label.sleeping { background: #333; color: #888; }
+    .status-label.talking { background: #4c1d95; color: #c4b5fd; }
+    .status-label.strike { background: #7f1d1d; color: #fca5a5; }
+    .status-label.sick { background: #713f12; color: #fde68a; }
+
+    /* ── Monitor (screen) ────────────────────────────────────────── */
+    .monitor {
+      width: 100px;
+      height: 65px;
+      border: 3px solid #555;
+      border-radius: 4px;
+      margin-bottom: 4px;
+      position: relative;
+      overflow: hidden;
+      transition: all 0.3s;
+    }
+
+    /* Monitor stand */
+    .monitor::after {
+      content: "";
+      position: absolute;
+      bottom: -10px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 20px;
+      height: 8px;
+      background: #555;
+      border-radius: 0 0 3px 3px;
+    }
+
+    /* Screen states */
+    .monitor.off {
+      background: #111;
+      border-color: #444;
+    }
+
+    .monitor.on-blue {
+      background: linear-gradient(135deg, #1e3a5f 0%, #2563eb 100%);
+      border-color: #3b82f6;
+      box-shadow: 0 0 12px rgba(59, 130, 246, 0.3);
+    }
+
+    .monitor.on-green {
+      background: linear-gradient(135deg, #14532d 0%, #16a34a 100%);
+      border-color: #22c55e;
+      box-shadow: 0 0 8px rgba(34, 197, 94, 0.2);
+    }
+
+    .monitor.on-purple {
+      background: linear-gradient(135deg, #4c1d95 0%, #7c3aed 100%);
+      border-color: #8b5cf6;
+      box-shadow: 0 0 12px rgba(139, 92, 246, 0.3);
+    }
+
+    .monitor.on-red {
+      background: linear-gradient(135deg, #7f1d1d 0%, #dc2626 100%);
+      border-color: #ef4444;
+      box-shadow: 0 0 8px rgba(239, 68, 68, 0.3);
+    }
+
+    .monitor.on-yellow {
+      background: linear-gradient(135deg, #713f12 0%, #ca8a04 100%);
+      border-color: #eab308;
+      box-shadow: 0 0 8px rgba(234, 179, 8, 0.3);
+    }
+
+    /* Screen content */
+    .screen-content {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.35rem;
+      color: rgba(255,255,255,0.7);
+      text-align: center;
+      padding: 4px;
+      line-height: 1.4;
+    }
+
+    /* Blinking cursor on working screen */
+    .monitor.on-blue .screen-content::after {
+      content: "_";
+      animation: blink 1s step-end infinite;
+    }
+
+    @keyframes blink {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0; }
+    }
+
+    /* ── Worker avatar ───────────────────────────────────────────── */
+    .avatar {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      background: #3d2b16;
+      border: 2px solid #6b5337;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      margin-top: 12px;
+      position: relative;
+    }
+
+    /* Zzz animation for sleeping */
+    .zzz {
+      position: absolute;
+      top: -14px;
+      right: -10px;
+      font-size: 0.4rem;
+      color: #888;
+      animation: float-zzz 2s ease-in-out infinite;
+    }
+
+    @keyframes float-zzz {
+      0%, 100% { transform: translateY(0); opacity: 1; }
+      50% { transform: translateY(-6px); opacity: 0.4; }
+    }
+
+    /* Strike sign */
+    .strike-sign {
+      position: absolute;
+      top: -18px;
+      right: -14px;
+      font-size: 12px;
+      animation: shake 0.5s ease-in-out infinite alternate;
+    }
+
+    @keyframes shake {
+      0% { transform: rotate(-5deg); }
+      100% { transform: rotate(5deg); }
+    }
+
+    /* Sick indicator */
+    .sick-indicator {
+      position: absolute;
+      top: -16px;
+      right: -12px;
+      font-size: 12px;
+    }
+
+    /* Talk bubble */
+    .talk-bubble {
+      position: absolute;
+      top: -20px;
+      left: -14px;
+      font-size: 10px;
+      animation: talk-bounce 0.8s ease-in-out infinite alternate;
+    }
+
+    @keyframes talk-bounce {
+      0% { transform: translateY(0) scale(1); }
+      100% { transform: translateY(-3px) scale(1.1); }
+    }
+
+    /* ── Desk surface ────────────────────────────────────────────── */
+    .desk-surface {
+      width: 120px;
+      height: 8px;
+      background: linear-gradient(180deg, #8b6f47 0%, #6b5337 100%);
+      border-radius: 2px;
+      margin-top: 2px;
+    }
+
+    /* ── Last worked info ────────────────────────────────────────── */
+    .last-worked {
+      font-size: 0.3rem;
+      color: #666;
+      margin-top: 8px;
+      text-align: center;
+    }
+
+    /* ── Talking to info ─────────────────────────────────────────── */
+    .talking-to {
+      font-size: 0.3rem;
+      color: #c4b5fd;
+      margin-top: 4px;
+      text-align: center;
+    }
+
+    /* ── Task info ────────────────────────────────────────────────── */
+    .task-info {
+      font-size: 0.3rem;
+      color: #60a5fa;
+      margin-top: 4px;
+      text-align: center;
+      max-width: 160px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    /* ── Decorative elements ─────────────────────────────────────── */
+    .plant {
+      position: absolute;
+      font-size: 16px;
+    }
+
+    .filing-cabinet {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      font-size: 24px;
+      opacity: 0.5;
+    }
+
+    /* ── Legend ───────────────────────────────────────────────────── */
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-bottom: 24px;
+      padding: 10px;
+      background: #1a1208;
+      border-radius: 4px;
+      border: 1px solid #3d2b16;
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.35rem;
+      color: #8b7355;
+    }
+
+    .legend-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 2px;
+    }
+
+    /* ── Responsive ──────────────────────────────────────────────── */
+    @media (max-width: 600px) {
+      .desks {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 12px;
+      }
+      .desk { min-height: 170px; }
+      .monitor { width: 80px; height: 52px; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="header">
+  <div>
+    <span class="status-dot"></span>
+    <h1 style="display:inline">SUPER AGENT OFFICE</h1>
+  </div>
+  <a href="/" class="back-link">&larr; BACK TO CHAT</a>
+</div>
+
+<div class="office">
+  <!-- Legend -->
+  <div class="legend">
+    <div class="legend-item"><div class="legend-dot" style="background:#3b82f6"></div> Working</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#22c55e"></div> Idle</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#555"></div> Sleeping</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#8b5cf6"></div> Talking</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#ef4444"></div> Strike</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#eab308"></div> Sick</div>
+  </div>
+
+  <!-- Models section -->
+  <div class="section-label">LLM Models</div>
+  <div class="desks" id="models-desks"></div>
+
+  <!-- Agents section -->
+  <div class="section-label">Specialized Agents</div>
+  <div class="desks" id="agents-desks"></div>
+</div>
+
+<div class="filing-cabinet">🗄️</div>
+
+<script>
+const MODEL_WORKERS = [
+  "Claude CLI Pro", "Gemini CLI", "Anthropic Haiku",
+  "Sonnet Anthropic", "Opus Anthropic", "DeepSeek"
+];
+const AGENT_WORKERS = [
+  "Shell Agent", "GitHub Agent", "N8N Agent", "Self-Improve Agent"
+];
+
+const AVATARS = {
+  "Claude CLI Pro": "🤖",
+  "Gemini CLI": "💎",
+  "Anthropic Haiku": "🎋",
+  "Sonnet Anthropic": "🎵",
+  "Opus Anthropic": "🎼",
+  "DeepSeek": "🔍",
+  "Shell Agent": "🐚",
+  "GitHub Agent": "🐙",
+  "N8N Agent": "⚡",
+  "Self-Improve Agent": "🧠",
+};
+
+function formatTimeAgo(seconds) {
+  if (!seconds && seconds !== 0) return "never";
+  if (seconds < 60) return `${seconds}s ago`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+  return `${Math.floor(seconds / 86400)}d ago`;
+}
+
+function formatDateTime(ts) {
+  if (!ts) return "";
+  const d = new Date(ts * 1000);
+  return d.toLocaleString(undefined, {
+    month: "short", day: "numeric",
+    hour: "2-digit", minute: "2-digit"
+  });
+}
+
+function getMonitorClass(state) {
+  switch (state) {
+    case "working": return "on-blue";
+    case "idle": return "on-green";
+    case "talking": return "on-purple";
+    case "strike": return "on-red";
+    case "sick": return "on-yellow";
+    case "sleeping":
+    default: return "off";
+  }
+}
+
+function getScreenContent(worker) {
+  switch (worker.state) {
+    case "working":
+      return worker.task ? esc(worker.task.substring(0, 40)) : "Processing";
+    case "idle":
+      return "Ready";
+    case "sleeping":
+      return "";
+    case "talking":
+      return `w/ ${esc(worker.talking_to || "?")}`;
+    case "strike":
+      return "NO CREDITS!";
+    case "sick":
+      return "TOKEN ERR";
+    default:
+      return "";
+  }
+}
+
+function getOverlay(worker) {
+  switch (worker.state) {
+    case "sleeping":
+      return '<span class="zzz">Zzz</span>';
+    case "strike":
+      return '<span class="strike-sign">🪧</span>';
+    case "sick":
+      return '<span class="sick-indicator">🤒</span>';
+    case "talking":
+      return '<span class="talk-bubble">💬</span>';
+    default:
+      return "";
+  }
+}
+
+function renderDesk(worker) {
+  const monitorClass = getMonitorClass(worker.state);
+  const screenContent = getScreenContent(worker);
+  const overlay = getOverlay(worker);
+  const avatar = AVATARS[worker.id] || "👤";
+  const timeAgo = worker.last_worked_ago != null ? formatTimeAgo(worker.last_worked_ago) : "";
+  const dateStr = worker.last_worked ? formatDateTime(worker.last_worked) : "";
+
+  let extras = "";
+  if (worker.state === "talking" && worker.talking_to) {
+    extras += `<div class="talking-to">talking to ${esc(worker.talking_to)}</div>`;
+  }
+  if (worker.state === "working" && worker.task) {
+    extras += `<div class="task-info">${esc(worker.task)}</div>`;
+  }
+
+  return `
+    <div class="desk" data-worker="${esc(worker.id)}" data-state="${worker.state}">
+      <div class="name">${esc(worker.id)}</div>
+      <div class="status-label ${worker.state}">${worker.state}</div>
+      <div class="monitor ${monitorClass}">
+        <div class="screen-content">${screenContent}</div>
+      </div>
+      <div class="desk-surface"></div>
+      <div class="avatar">
+        ${avatar}
+        ${overlay}
+      </div>
+      ${timeAgo ? `<div class="last-worked">${timeAgo}${dateStr ? " (" + dateStr + ")" : ""}</div>` : ""}
+      ${extras}
+    </div>
+  `;
+}
+
+function renderAll(workers) {
+  const workerMap = {};
+  workers.forEach(w => workerMap[w.id] = w);
+
+  // Models
+  const modelsHtml = MODEL_WORKERS.map(id => {
+    const w = workerMap[id] || { id, state: "sleeping", last_worked: 0, last_worked_ago: null, talking_to: null, task: "" };
+    return renderDesk(w);
+  }).join("");
+  document.getElementById("models-desks").innerHTML = modelsHtml;
+
+  // Agents
+  const agentsHtml = AGENT_WORKERS.map(id => {
+    const w = workerMap[id] || { id, state: "sleeping", last_worked: 0, last_worked_ago: null, talking_to: null, task: "" };
+    return renderDesk(w);
+  }).join("");
+  document.getElementById("agents-desks").innerHTML = agentsHtml;
+}
+
+function esc(str) {
+  if (!str) return "";
+  const d = document.createElement("div");
+  d.textContent = String(str);
+  return d.innerHTML;
+}
+
+async function fetchAndRender() {
+  try {
+    const resp = await fetch("/dashboard/agents/status");
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    renderAll(data.workers || []);
+  } catch (err) {
+    console.error("Failed to fetch agent status:", err);
+  }
+}
+
+// Initial load + poll every 5 seconds
+fetchAndRender();
+setInterval(fetchAndRender, 5000);
+</script>
+</body>
+</html>

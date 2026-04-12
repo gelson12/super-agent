@@ -195,6 +195,13 @@ async def _lifespan(app: FastAPI):
     except Exception:
         pass
 
+    # Seed agent status tracker from insight log so dashboard doesn't show all sleeping
+    try:
+        from .learning.agent_status_tracker import seed_from_insight_log
+        seed_from_insight_log()
+    except Exception:
+        pass
+
     scheduler = BackgroundScheduler()
     # Health check: starts at 30min, dynamically respected via _hc_uses_llm() inside the job.
     # The interval itself stays at 30min but the job skips the LLM at reduced/critical tiers.
@@ -367,6 +374,34 @@ if os.path.isdir(_static_dir):
 def root():
     index = os.path.join(_static_dir, "index.html")
     return FileResponse(index)
+
+
+@app.get("/dashboard", include_in_schema=False)
+def dashboard_page():
+    """Serve the improvement reports dashboard."""
+    path = os.path.join(_static_dir, "dashboard.html")
+    if os.path.isfile(path):
+        return FileResponse(path)
+    return {"error": "dashboard.html not found in static/"}
+
+
+@app.get("/agents", include_in_schema=False)
+def agents_page():
+    """Serve the visual agents office dashboard."""
+    path = os.path.join(_static_dir, "agents.html")
+    if os.path.isfile(path):
+        return FileResponse(path)
+    return {"error": "agents.html not found in static/"}
+
+
+@app.get("/dashboard/agents/status", tags=["meta"])
+def agents_status():
+    """
+    Real-time status of all models and agents for the visual dashboard.
+    Each worker has: id, state (working/idle/sleeping/talking), last_worked, talking_to, task.
+    """
+    from .learning.agent_status_tracker import get_all_statuses
+    return {"workers": get_all_statuses()}
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
@@ -1088,6 +1123,70 @@ def improvement_status():
         "stable": sum(1 for m in monitors if m.get("status") == "stable"),
         "rolled_back": sum(1 for m in monitors if m.get("status") == "rolled_back"),
         "monitors": monitors,
+    }
+
+
+@app.get("/dashboard/improvements", tags=["meta"])
+def dashboard_improvements():
+    """
+    Aggregate improvement dashboard — combines daily review, weekly review,
+    cycle log, improvement monitors, and anomaly alerts into a single view.
+    """
+    from datetime import datetime, timezone
+    from .learning.nightly_review import get_latest_review as _daily
+    from .learning.weekly_review import get_latest_review as _weekly
+    from .learning.improvement_cycle import get_cycle_log, get_cycle_summary
+    from .learning.improvement_monitor import list_monitors
+    from .learning.anomaly_alerter import get_recent_alerts
+
+    # Daily review
+    daily = _daily()
+    daily_section = {"available": False}
+    if daily:
+        daily_section = {
+            "available": True,
+            "date": daily.get("date", ""),
+            "suggestions": daily.get("feature_improvements", daily.get("suggestions", [])),
+            "health": daily.get("overall_health", ""),
+            "auto_applied": daily.get("_auto_applied", []),
+        }
+
+    # Weekly review
+    weekly = _weekly()
+    weekly_section = {"available": False}
+    if weekly:
+        weekly_section = {
+            "available": True,
+            "week_ending": weekly.get("date", weekly.get("week_ending", "")),
+            "suggestions": weekly.get("feature_improvements", weekly.get("suggestions", [])),
+            "auto_applied": weekly.get("_auto_applied", []),
+        }
+
+    # Cycle log
+    cycle_summary = get_cycle_summary()
+    recent_cycles = get_cycle_log()[:20]  # last 20
+
+    # Improvement monitors
+    monitors = list_monitors()
+    improvements = {
+        "total": len(monitors),
+        "monitoring": sum(1 for m in monitors if m.get("status") == "monitoring"),
+        "stable": sum(1 for m in monitors if m.get("status") == "stable"),
+        "rolled_back": sum(1 for m in monitors if m.get("status") == "rolled_back"),
+        "monitors": monitors[-10:],  # last 10
+    }
+
+    # Recent alerts
+    alerts = get_recent_alerts(10)
+
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "daily_review": daily_section,
+        "weekly_review": weekly_section,
+        "cycle_summary": cycle_summary,
+        "recent_cycles": recent_cycles,
+        "applied_improvements": improvements,
+        "recent_alerts": alerts,
     }
 
 

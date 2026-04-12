@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Super Agent - Improvement Dashboard</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #0f0f0f;
+      color: #e8e8e8;
+      padding: 24px;
+      line-height: 1.5;
+    }
+
+    a { color: #6cb4ff; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    h1 {
+      font-size: 1.6rem;
+      margin-bottom: 8px;
+      color: #fff;
+    }
+
+    .subtitle {
+      color: #888;
+      font-size: 0.9rem;
+      margin-bottom: 24px;
+    }
+
+    .back-link {
+      display: inline-block;
+      margin-bottom: 16px;
+      font-size: 0.85rem;
+    }
+
+    /* ── Cards grid ──────────────────────────────────────────────────── */
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 16px;
+      margin-bottom: 32px;
+    }
+
+    .card {
+      background: #1a1a1a;
+      border: 1px solid #2a2a2a;
+      border-radius: 12px;
+      padding: 20px;
+      text-align: center;
+    }
+
+    .card .value {
+      font-size: 2rem;
+      font-weight: 700;
+      color: #fff;
+    }
+
+    .card .label {
+      font-size: 0.8rem;
+      color: #888;
+      margin-top: 4px;
+    }
+
+    .card.green .value { color: #4ade80; }
+    .card.yellow .value { color: #facc15; }
+    .card.red .value { color: #f87171; }
+    .card.blue .value { color: #60a5fa; }
+
+    /* ── Alert banner ────────────────────────────────────────────────── */
+    .alert-banner {
+      background: #2d1b1b;
+      border: 1px solid #7f1d1d;
+      border-radius: 8px;
+      padding: 12px 16px;
+      margin-bottom: 24px;
+      display: none;
+    }
+
+    .alert-banner.active { display: block; }
+
+    .alert-banner h3 {
+      color: #f87171;
+      font-size: 0.9rem;
+      margin-bottom: 8px;
+    }
+
+    .alert-item {
+      font-size: 0.85rem;
+      color: #fca5a5;
+      margin-bottom: 4px;
+    }
+
+    /* ── Section ─────────────────────────────────────────────────────── */
+    .section {
+      background: #1a1a1a;
+      border: 1px solid #2a2a2a;
+      border-radius: 12px;
+      padding: 20px;
+      margin-bottom: 24px;
+    }
+
+    .section h2 {
+      font-size: 1.1rem;
+      margin-bottom: 16px;
+      color: #fff;
+      border-bottom: 1px solid #2a2a2a;
+      padding-bottom: 8px;
+    }
+
+    .section .empty {
+      color: #666;
+      font-style: italic;
+      font-size: 0.9rem;
+    }
+
+    /* ── Table ────────────────────────────────────────────────────────── */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.85rem;
+    }
+
+    th {
+      text-align: left;
+      padding: 8px 12px;
+      background: #111;
+      color: #aaa;
+      font-weight: 600;
+      border-bottom: 1px solid #333;
+    }
+
+    td {
+      padding: 8px 12px;
+      border-bottom: 1px solid #222;
+      vertical-align: top;
+    }
+
+    tr:hover td { background: #1f1f1f; }
+
+    /* ── Status badges ───────────────────────────────────────────────── */
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+
+    .badge.accept { background: #14532d; color: #4ade80; }
+    .badge.reject { background: #7f1d1d; color: #f87171; }
+    .badge.no-safe { background: #713f12; color: #facc15; }
+    .badge.monitoring { background: #1e3a5f; color: #60a5fa; }
+    .badge.stable { background: #14532d; color: #4ade80; }
+    .badge.rolled-back { background: #7f1d1d; color: #f87171; }
+
+    .badge.yes { background: #14532d; color: #4ade80; }
+    .badge.no { background: #7f1d1d; color: #f87171; }
+    .badge.abstain { background: #333; color: #888; }
+
+    /* ── Suggestion list ─────────────────────────────────────────────── */
+    .suggestion {
+      background: #111;
+      border-radius: 8px;
+      padding: 12px 16px;
+      margin-bottom: 8px;
+      font-size: 0.85rem;
+    }
+
+    .suggestion .priority {
+      font-weight: 600;
+      margin-right: 8px;
+    }
+
+    .suggestion .priority.low { color: #4ade80; }
+    .suggestion .priority.medium { color: #facc15; }
+    .suggestion .priority.high { color: #f87171; }
+
+    /* ── Vote breakdown ──────────────────────────────────────────────── */
+    .votes {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      margin-top: 4px;
+    }
+
+    .vote-chip {
+      font-size: 0.7rem;
+      padding: 1px 6px;
+      border-radius: 3px;
+      background: #222;
+      color: #aaa;
+    }
+
+    /* ── Loading ──────────────────────────────────────────────────────── */
+    .loading {
+      text-align: center;
+      color: #666;
+      padding: 40px;
+      font-size: 0.9rem;
+    }
+
+    .loading::after {
+      content: "";
+      animation: dots 1.5s steps(3, end) infinite;
+    }
+
+    @keyframes dots {
+      0% { content: "."; }
+      33% { content: ".."; }
+      66% { content: "..."; }
+    }
+  </style>
+</head>
+<body>
+
+<a href="/" class="back-link">&larr; Back to chat</a>
+<h1>Improvement Dashboard</h1>
+<p class="subtitle" id="generated-at">Loading...</p>
+
+<div class="alert-banner" id="alert-banner">
+  <h3>Active Alerts</h3>
+  <div id="alert-list"></div>
+</div>
+
+<div class="cards" id="summary-cards">
+  <div class="card blue">
+    <div class="value" id="card-total-cycles">-</div>
+    <div class="label">Total Cycles</div>
+  </div>
+  <div class="card green">
+    <div class="value" id="card-accepted">-</div>
+    <div class="label">Accepted</div>
+  </div>
+  <div class="card red">
+    <div class="value" id="card-rejected">-</div>
+    <div class="label">Rejected</div>
+  </div>
+  <div class="card yellow">
+    <div class="value" id="card-no-safe">-</div>
+    <div class="label">No Safe Improvement</div>
+  </div>
+  <div class="card green">
+    <div class="value" id="card-stable">-</div>
+    <div class="label">Stable Applied</div>
+  </div>
+  <div class="card yellow">
+    <div class="value" id="card-monitoring">-</div>
+    <div class="label">Monitoring</div>
+  </div>
+  <div class="card red">
+    <div class="value" id="card-rolled-back">-</div>
+    <div class="label">Rolled Back</div>
+  </div>
+</div>
+
+<!-- Daily Review -->
+<div class="section" id="daily-section">
+  <h2>Latest Daily Review</h2>
+  <div id="daily-content" class="loading">Loading</div>
+</div>
+
+<!-- Weekly Review -->
+<div class="section" id="weekly-section">
+  <h2>Latest Weekly Review</h2>
+  <div id="weekly-content" class="loading">Loading</div>
+</div>
+
+<!-- Recent Cycle Decisions -->
+<div class="section">
+  <h2>Recent Cycle Decisions</h2>
+  <div id="cycles-content" class="loading">Loading</div>
+</div>
+
+<!-- Applied Improvements -->
+<div class="section">
+  <h2>Applied Improvements</h2>
+  <div id="improvements-content" class="loading">Loading</div>
+</div>
+
+<script>
+(async function() {
+  try {
+    const resp = await fetch("/dashboard/improvements");
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    render(data);
+  } catch (err) {
+    document.getElementById("generated-at").textContent = "Failed to load: " + err.message;
+  }
+})();
+
+function render(data) {
+  // Timestamp
+  const ts = data.generated_at ? new Date(data.generated_at).toLocaleString() : "unknown";
+  document.getElementById("generated-at").textContent = "Generated: " + ts;
+
+  // Summary cards
+  const cs = data.cycle_summary || {};
+  setText("card-total-cycles", cs.total || 0);
+  setText("card-accepted", cs.accepted || cs.ACCEPT || 0);
+  setText("card-rejected", cs.rejected || cs.REJECT || 0);
+  setText("card-no-safe", cs.no_safe || cs.NO_SAFE_IMPROVEMENT || 0);
+
+  const imp = data.applied_improvements || {};
+  setText("card-stable", imp.stable || 0);
+  setText("card-monitoring", imp.monitoring || 0);
+  setText("card-rolled-back", imp.rolled_back || 0);
+
+  // Alerts
+  const alerts = data.recent_alerts || [];
+  if (alerts.length > 0) {
+    const banner = document.getElementById("alert-banner");
+    banner.classList.add("active");
+    const list = document.getElementById("alert-list");
+    list.innerHTML = alerts.map(a =>
+      `<div class="alert-item">${esc(a.rule || a.type || "alert")} &mdash; ${esc(a.message || a.detail || JSON.stringify(a))}</div>`
+    ).join("");
+  }
+
+  // Daily review
+  renderReview("daily-content", data.daily_review);
+
+  // Weekly review
+  renderReview("weekly-content", data.weekly_review);
+
+  // Cycle decisions
+  renderCycles("cycles-content", data.recent_cycles || []);
+
+  // Applied improvements
+  renderImprovements("improvements-content", imp.monitors || []);
+}
+
+function renderReview(elementId, review) {
+  const el = document.getElementById(elementId);
+  if (!review || !review.available) {
+    el.innerHTML = '<div class="empty">No review available yet.</div>';
+    return;
+  }
+
+  let html = "";
+  if (review.date || review.week_ending) {
+    html += `<p style="color:#888;font-size:0.85rem;margin-bottom:12px">Date: ${esc(review.date || review.week_ending)}</p>`;
+  }
+  if (review.health) {
+    html += `<p style="margin-bottom:12px">Health: <strong>${esc(review.health)}</strong></p>`;
+  }
+
+  const suggestions = review.suggestions || [];
+  if (suggestions.length === 0) {
+    html += '<div class="empty">No suggestions in this review.</div>';
+  } else {
+    suggestions.forEach(s => {
+      const text = typeof s === "string" ? s : (s.description || s.suggestion || JSON.stringify(s));
+      const priority = (typeof s === "object" && s.priority) ? s.priority.toLowerCase() : "";
+      html += `<div class="suggestion">`;
+      if (priority) html += `<span class="priority ${priority}">[${priority.toUpperCase()}]</span>`;
+      html += esc(text);
+      html += `</div>`;
+    });
+  }
+
+  // Auto-applied changes
+  const applied = review.auto_applied || [];
+  if (applied.length > 0) {
+    html += `<h3 style="margin-top:16px;font-size:0.95rem;color:#4ade80">Auto-Applied Changes</h3>`;
+    applied.forEach(a => {
+      const desc = a.description || a.file || JSON.stringify(a);
+      html += `<div class="suggestion">`;
+      html += esc(desc);
+      if (a.vote_result) {
+        html += `<div class="votes">`;
+        (a.vote_result.votes || []).forEach(v => {
+          const cls = (v.vote || "").toLowerCase() === "yes" ? "yes" : (v.vote || "").toLowerCase() === "no" ? "no" : "abstain";
+          html += `<span class="vote-chip"><span class="badge ${cls}">${esc(v.vote || "?")}</span> ${esc(v.model || "?")}</span>`;
+        });
+        html += `</div>`;
+      }
+      html += `</div>`;
+    });
+  }
+
+  el.innerHTML = html;
+}
+
+function renderCycles(elementId, cycles) {
+  const el = document.getElementById(elementId);
+  if (cycles.length === 0) {
+    el.innerHTML = '<div class="empty">No cycle decisions recorded yet.</div>';
+    return;
+  }
+
+  let html = `<table>
+    <thead><tr><th>Date</th><th>Decision</th><th>Hypothesis</th><th>Bottleneck</th></tr></thead>
+    <tbody>`;
+
+  cycles.forEach(c => {
+    const decision = (c.cycle_decision || c.decision || "").toUpperCase();
+    const cls = decision === "ACCEPT" ? "accept" : decision === "REJECT" ? "reject" : "no-safe";
+    const date = (c.recorded_at || c.date || "").substring(0, 16);
+    html += `<tr>
+      <td style="white-space:nowrap">${esc(date)}</td>
+      <td><span class="badge ${cls}">${esc(decision)}</span></td>
+      <td>${esc((c.hypothesis || c.description || "").substring(0, 120))}</td>
+      <td>${esc(c.bottleneck_category || "")}</td>
+    </tr>`;
+  });
+
+  html += "</tbody></table>";
+  el.innerHTML = html;
+}
+
+function renderImprovements(elementId, monitors) {
+  const el = document.getElementById(elementId);
+  if (monitors.length === 0) {
+    el.innerHTML = '<div class="empty">No improvements applied yet.</div>';
+    return;
+  }
+
+  let html = `<table>
+    <thead><tr><th>Description</th><th>Status</th><th>Files Changed</th><th>Rollback Branch</th></tr></thead>
+    <tbody>`;
+
+  monitors.forEach(m => {
+    const status = (m.status || "unknown").toLowerCase();
+    const cls = status === "stable" ? "stable" : status === "monitoring" ? "monitoring" : status.includes("roll") ? "rolled-back" : "";
+    const files = (m.files_changed || []).join(", ") || "-";
+    html += `<tr>
+      <td>${esc(m.description || m.id || "?")}</td>
+      <td><span class="badge ${cls}">${esc(status)}</span></td>
+      <td style="font-size:0.8rem;color:#888">${esc(files)}</td>
+      <td style="font-size:0.8rem;color:#888">${esc(m.rollback_branch || "-")}</td>
+    </tr>`;
+  });
+
+  html += "</tbody></table>";
+  el.innerHTML = html;
+}
+
+function setText(id, val) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = val;
+}
+
+function esc(str) {
+  if (!str) return "";
+  const d = document.createElement("div");
+  d.textContent = String(str);
+  return d.innerHTML;
+}
+</script>
+</body>
+</html>
