@@ -1720,6 +1720,10 @@
 
     const info = _OFFICE_TITLES[workerId] || { title: workerId, full: workerId };
 
+    // Find the clicked desk element to position the popup near it
+    const deskEl = evt.target.closest('.o-desk');
+    const panel = document.getElementById('office-panel');
+
     const modal = document.createElement('div');
     modal.id = 'o-history-modal';
     modal.className = 'o-history-modal';
@@ -1735,7 +1739,18 @@
         <div style="color:#666;font-size:9px;padding:12px;text-align:center">Loading...</div>
       </div>
     `;
-    document.getElementById('office-panel').appendChild(modal);
+    panel.appendChild(modal);
+
+    // Position the popup near the clicked desk
+    if (deskEl && panel) {
+      const deskRect = deskEl.getBoundingClientRect();
+      const panelRect = panel.getBoundingClientRect();
+      const topOffset = deskRect.top - panelRect.top;
+      modal.style.position = 'absolute';
+      modal.style.top = Math.max(0, topOffset) + 'px';
+      modal.style.left = '0';
+      modal.style.right = '0';
+    }
 
     try {
       const res = await fetch('/dashboard/agents/' + encodeURIComponent(workerId) + '/history', { headers: authHeaders() });

@@ -212,10 +212,21 @@ def get_worker_history(worker_id: str, limit: int = 20) -> list[dict]:
             if wid == worker_id:
                 matching_models.add(model_key)
 
-        # Routes that indicate CLI Pro handled the request
+        # Routes that indicate which worker handled the request
         _CLI_PRO_ROUTES = {
             "conversational", "continuation", "trivial", "trivial_cache",
             "forced", "forced_cache",
+        }
+        # Route prefixes → worker mapping (routed_by is often more reliable than model)
+        _ROUTE_TO_WORKER = {
+            "n8n_early": "N8N Agent",
+            "n8n_keywords": "N8N Agent",
+            "github_keywords": "GitHub Agent",
+            "shell_keywords": "Shell Agent",
+            "build_continuation": "Shell Agent",
+            "self_improve": "Self-Improve Agent",
+            "isolation_debug": "Shell Agent",
+            "web_search": "Claude CLI Pro",
         }
 
         def _matches_worker(entry: dict) -> bool:
@@ -224,6 +235,11 @@ def get_worker_history(worker_id: str, limit: int = 20) -> list[dict]:
 
             # Direct model match (agents: SHELL, GITHUB, N8N, etc.)
             if model in matching_models:
+                return True
+
+            # Route-based matching (more reliable for agents)
+            route_worker = _ROUTE_TO_WORKER.get(route)
+            if route_worker == worker_id:
                 return True
 
             # Claude CLI Pro: CLAUDE model via conversational routes
