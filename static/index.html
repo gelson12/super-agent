@@ -671,6 +671,100 @@
       color: rgba(255,255,255,0.5);
     }
 
+    /* ── Office background mode ─────────────────────────────────────── */
+    #office-panel.bg-on {
+      background:
+        repeating-linear-gradient(
+          90deg,
+          #3d2b16 0px, #3d2b16 60px,
+          #4a3520 60px, #4a3520 62px
+        ),
+        repeating-linear-gradient(
+          0deg,
+          #3d2b16 0px, #3d2b16 30px,
+          #352517 30px, #352517 32px
+        );
+      background-color: #2d1f0e;
+    }
+
+    #office-panel.bg-on .office-header {
+      background: #1a0f05;
+      border-bottom-color: #6b4a2a;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+    }
+
+    #office-panel.bg-on .office-legend {
+      background: #2a1a0c;
+      border-bottom-color: #4a3520;
+    }
+
+    #office-panel.bg-on .o-desk {
+      background:
+        linear-gradient(180deg, #3d2b16 0%, #2a1e10 60%, #231508 100%);
+      border-color: #6b5337;
+      box-shadow: 2px 3px 6px rgba(0,0,0,0.4);
+    }
+
+    #office-panel.bg-on .o-desk:hover {
+      border-color: #a0845c;
+      box-shadow: 2px 3px 10px rgba(0,0,0,0.5);
+    }
+
+    #office-panel.bg-on .o-avatar {
+      background: #5a4020;
+      border-color: #a0845c;
+    }
+
+    #office-panel.bg-on .o-monitor {
+      border-width: 3px;
+    }
+
+    #office-panel.bg-on .o-monitor-stand {
+      background: linear-gradient(180deg, #a0845c 0%, #6b5337 100%);
+      height: 5px;
+    }
+
+    #office-panel.bg-on .office-decor-row {
+      background: #1a0f05;
+      border-bottom: 2px solid #6b4a2a;
+    }
+
+    #office-panel.bg-on .office-decor-shelf {
+      background: linear-gradient(180deg, #5a4020 0%, #3d2b16 100%);
+      border-top: 3px solid #a0845c;
+      border-bottom: 2px solid #4a3520;
+      box-shadow: 0 3px 6px rgba(0,0,0,0.3);
+    }
+
+    #office-panel.bg-on .office-decor-bottom {
+      background: #1a0f05;
+      border-top: 3px solid #6b4a2a;
+    }
+
+    #office-panel.bg-on .office-section-label {
+      color: #a0845c;
+      text-shadow: 1px 1px 2px rgba(0,0,0,0.5);
+    }
+
+    #office-panel.bg-on .o-name {
+      color: #e8d5b5;
+      text-shadow: 1px 1px 2px rgba(0,0,0,0.6);
+    }
+
+    #office-panel.bg-on .office-clock {
+      background: #1a0f05;
+      border-color: #a0845c;
+      color: #e8d5b5;
+      box-shadow: inset 0 1px 3px rgba(0,0,0,0.4);
+    }
+
+    /* BG toggle button active state */
+    #bg-toggle.active {
+      background: #4a3520 !important;
+      color: #e8d5b5 !important;
+      border-color: #a0845c !important;
+    }
+
     @media (max-width: 600px) {
       #office-panel { width: 100vw; }
     }
@@ -710,7 +804,10 @@
 <div id="office-panel" style="display:none;">
   <div class="office-header">
     <span>AGENT OFFICE</span>
-    <button onclick="toggleOfficePanel()" style="background:none;border:none;color:#888;font-size:18px;cursor:pointer;">&times;</button>
+    <div style="display:flex;gap:8px;align-items:center;">
+      <button id="bg-toggle" onclick="_oToggleBg()" title="Toggle office background" style="background:none;border:1px solid #4a3520;border-radius:4px;color:#c9a96e;font-size:9px;cursor:pointer;padding:2px 6px;font-family:inherit;">BG</button>
+      <button onclick="toggleOfficePanel()" style="background:none;border:none;color:#888;font-size:18px;cursor:pointer;">&times;</button>
+    </div>
   </div>
   <div class="office-legend">
     <span><span class="ol-dot" style="background:#3b82f6"></span>Working</span>
@@ -1457,6 +1554,32 @@
     d.textContent = String(s);
     return d.innerHTML;
   }
+
+  // Office background toggle (persists in localStorage)
+  let _officeBgOn = localStorage.getItem('sa_office_bg') === '1';
+
+  function _oToggleBg() {
+    _officeBgOn = !_officeBgOn;
+    localStorage.setItem('sa_office_bg', _officeBgOn ? '1' : '0');
+    _oApplyBg();
+  }
+
+  function _oApplyBg() {
+    const panel = document.getElementById('office-panel');
+    const btn = document.getElementById('bg-toggle');
+    if (_officeBgOn) {
+      panel.classList.add('bg-on');
+      btn.classList.add('active');
+      btn.textContent = 'BG ON';
+    } else {
+      panel.classList.remove('bg-on');
+      btn.classList.remove('active');
+      btn.textContent = 'BG';
+    }
+  }
+
+  // Apply on load
+  _oApplyBg();
 
   // Office clock
   function _updateOfficeClock() {
