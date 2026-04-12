@@ -81,6 +81,15 @@ def ask_gemini_cli(prompt: str) -> str:
     Returns the response string. Never raises — returns an error string
     prefixed with [ so callers know it's an error (same contract as ask_claude_code).
     """
+    def _track_gemini(state, task=""):
+        try:
+            from .agent_status_tracker import mark_working, mark_done, mark_sick
+            if state == "working": mark_working("Gemini CLI", task)
+            elif state == "done": mark_done("Gemini CLI")
+            elif state == "sick": mark_sick("Gemini CLI")
+        except Exception:
+            pass
+
     try:
         # Try response cache first (same TTL as Claude CLI cache)
         try:
@@ -90,6 +99,8 @@ def ask_gemini_cli(prompt: str) -> str:
                 return _hit
         except Exception:
             pass
+
+        _track_gemini("working", prompt[:100])
 
         # ── Route via CLI worker (durable) ───────────────────────────────────
         cli_url = _cli_worker_url()
@@ -119,6 +130,11 @@ def ask_gemini_cli(prompt: str) -> str:
                 return f"[gemini_cli error: {e}]"
 
         # Cache and track on success; alert on failure
+        if not output or output.startswith("["):
+            _track_gemini("sick")
+        else:
+            _track_gemini("done")
+
         if not output.startswith("["):
             try:
                 from ..cache.response_cache import cache as _cache

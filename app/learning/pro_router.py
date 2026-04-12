@@ -801,6 +801,20 @@ def _classify_and_set_flag(stdout: str, stderr: str) -> None:
 
 # ── Main entry point ───────────────────────────────────────────────────────────
 
+def _track_cli(state: str, task: str = "") -> None:
+    """Update Claude CLI Pro status in the dashboard tracker."""
+    try:
+        from .agent_status_tracker import mark_working, mark_done, mark_sick
+        if state == "working":
+            mark_working("Claude CLI Pro", task)
+        elif state == "done":
+            mark_done("Claude CLI Pro")
+        elif state == "sick":
+            mark_sick("Claude CLI Pro")
+    except Exception:
+        pass
+
+
 def try_pro(prompt: str, system: str = "") -> str | None:
     """
     Attempt to answer via Claude Code CLI (Pro subscription).
@@ -826,10 +840,12 @@ def try_pro(prompt: str, system: str = "") -> str | None:
     # Check BURST separately so we skip inspiring-cat but still try local CLI.
     _burst_active = _flag_active(_BURST_FLAG, _BURST_TTL)
     if not _burst_active and not is_pro_available():
+        _track_cli("sick")  # Dashboard: CLI is down/daily limit
         return None  # DAILY or CLI_DOWN — full skip (inspiring-cat AND local)
 
     full_prompt = f"{system}\n\n{prompt}" if system and system.strip() else prompt
     _timeout = _dynamic_timeout(full_prompt)
+    _track_cli("working", prompt[:100])
 
     # ── Try via CLI worker (skipped when BURST active — saves 15-50s per call) ─
     cli_result = None
@@ -840,6 +856,7 @@ def try_pro(prompt: str, system: str = "") -> str | None:
             _cli_lower = cli_result.lower()
             if any(p in _cli_lower for p in _DAILY_PHRASES):
                 _classify_and_set_flag(cli_result, "")
+                _track_cli("sick")  # Daily limit hit
                 return None  # Daily quota same account — local subprocess won't help
             elif any(p in _cli_lower for p in _BURST_PHRASES + _CLI_DOWN_PHRASES):
                 _classify_and_set_flag(cli_result, "")
@@ -868,6 +885,7 @@ def try_pro(prompt: str, system: str = "") -> str | None:
                 _queue_progress("🔑 Auto-accepting MCP tool permissions…")
                 # Fall through to direct subprocess below (which uses stdin=PIPE with auto-accept)
             else:
+                _track_cli("done")  # Clean response
                 return cli_result or None  # Clean response — use it
     else:
         _queue_progress("⚠️ inspiring-cat in cooldown — routing to local Claude CLI…")
@@ -881,6 +899,7 @@ def try_pro(prompt: str, system: str = "") -> str | None:
     # restarted and /root/.claude/ was wiped), preventing a 360s hang.
     # Also attempts autonomous credential restore before giving up.
     if not _pre_flight_auth_ok():
+        _track_cli("sick")  # Auth failed
         return None
 
     def _run_subprocess(t: int):
@@ -923,9 +942,12 @@ def try_pro(prompt: str, system: str = "") -> str | None:
                 clean = "\n".join(content_lines).strip()
                 if clean and len(clean) > 20:
                     _log("Local CLI: extracted content past MCP permission lines — using it.")
+                    _track_cli("done")
                     return clean
                 _log("Local CLI returned only MCP permission request — falling through to Gemini/API.")
+                _track_cli("sick")
                 return None
+            _track_cli("done")
             return stdout
 
         if stdout or stderr:
@@ -939,6 +961,7 @@ def try_pro(prompt: str, system: str = "") -> str | None:
             else:
                 _classify_and_set_flag(stdout, stderr)
 
+        _track_cli("sick")  # Non-zero exit / error output
         return None
 
     except FileNotFoundError:
@@ -947,6 +970,7 @@ def try_pro(prompt: str, system: str = "") -> str | None:
             "Pro CLI binary not found — setting CLI_DOWN flag (10 min). "
             "Switching to Gemini/API. Watchdog will auto-revert when CLI is available."
         )
+        _track_cli("sick")
         return None
 
     except subprocess.TimeoutExpired:

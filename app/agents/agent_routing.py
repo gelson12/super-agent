@@ -155,43 +155,32 @@ def tiered_agent_invoke(
             pass
 
     # ── Tiers 1-2: text-only (skip for operational requests) ─────────────
+    # Status tracking for CLI/Gemini is handled inside pro_router.py and
+    # gemini_cli_worker.py directly — they mark working/done/sick at source.
     if not operational:
         # Tier 1: Claude CLI Pro (free)
         try:
             from ..learning.pro_router import try_pro, should_attempt_cli
             if should_attempt_cli():
-                _track("Claude CLI Pro", message[:100])
                 cli_result = try_pro(f"{system_prompt}\n\n{message}")
                 if cli_result and not cli_result.startswith("["):
                     _log(f"✓ CLI Pro responded ({len(cli_result)} chars)", _source)
-                    _done("Claude CLI Pro")
                     return cli_result
-                _done("Claude CLI Pro")
                 _log(f"CLI returned error/empty — trying Gemini", _source)
             else:
                 _log("CLI flagged down — skipping to Gemini", _source)
-                try:
-                    from ..learning.agent_status_tracker import mark_sick
-                    mark_sick("Claude CLI Pro")
-                except Exception:
-                    pass
         except Exception as e:
-            _done("Claude CLI Pro")
             _log(f"CLI exception: {e} — trying Gemini", _source)
 
         # Tier 2: Gemini CLI (free)
         try:
             from ..learning.gemini_cli_worker import ask_gemini_cli
-            _track("Gemini CLI", message[:100])
             gemini = ask_gemini_cli(f"{system_prompt}\n\n{message}")
             if gemini and not gemini.startswith("["):
                 _log(f"✓ Gemini CLI responded ({len(gemini)} chars)", _source)
-                _done("Gemini CLI")
                 return gemini
-            _done("Gemini CLI")
             _log(f"Gemini returned error/empty — trying Anthropic API", _source)
         except Exception as e:
-            _done("Gemini CLI")
             _log(f"Gemini exception: {e} — trying Anthropic API", _source)
     else:
         _log(f"Operational request detected — skipping text-only tiers, using LangGraph directly", _source)
