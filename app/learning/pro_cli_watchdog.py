@@ -101,12 +101,41 @@ def maybe_recover() -> bool:
         # CLI binary is present — now verify actual auth state
         auth = verify_pro_auth()
         if not auth.get("pro_valid"):
+            # Auth invalid — attempt credential restore from env var before giving up
             bg_log(
-                f"Pro CLI watchdog: CLI binary found but auth still invalid — "
-                f"{auth.get('message', '')}. Continuing API fallback.",
+                f"Pro CLI watchdog: auth invalid — attempting credential restore from env var…",
                 source="pro_cli_watchdog",
             )
-            return False
+            try:
+                from .pro_router import _try_restore_claude_auth
+                if _try_restore_claude_auth():
+                    auth = verify_pro_auth()
+                    if auth.get("pro_valid"):
+                        bg_log(
+                            "Pro CLI watchdog: credential restore SUCCESS — auth now valid ✓",
+                            source="pro_cli_watchdog",
+                        )
+                        # Fall through to the recovery block below
+                    else:
+                        bg_log(
+                            "Pro CLI watchdog: restore succeeded but auth still invalid. "
+                            "CLAUDE_SESSION_TOKEN env var may be stale. Manual login required.",
+                            source="pro_cli_watchdog",
+                        )
+                        return False
+                else:
+                    bg_log(
+                        "Pro CLI watchdog: credential restore failed (no env var or decode error). "
+                        "Manual login required.",
+                        source="pro_cli_watchdog",
+                    )
+                    return False
+            except Exception as _e:
+                bg_log(
+                    f"Pro CLI watchdog: restore attempt error — {_e}. Continuing API fallback.",
+                    source="pro_cli_watchdog",
+                )
+                return False
 
         # verify_pro_auth() already cleared CLI_DOWN flag on success
         bg_log(

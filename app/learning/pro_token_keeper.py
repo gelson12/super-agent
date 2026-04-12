@@ -224,7 +224,25 @@ def run_token_keeper() -> dict:
     if not ping_ok:
         result["message"] = f"CLI ping failed: {ping_msg}"
         _log(f"Token keeper: CLI ping failed — {ping_msg}")
-        # Still attempt to save existing credentials even if ping failed
+
+        # NEW: If ping failed (token expired), attempt to restore from env var
+        # before giving up. This breaks the stale-token cycle.
+        _log("Token keeper: attempting credential restore from CLAUDE_SESSION_TOKEN env var…")
+        try:
+            from .pro_router import _try_restore_claude_auth
+            if _try_restore_claude_auth():
+                _log("Token keeper: credential restore SUCCESS — retrying ping…")
+                ping_ok, ping_msg = _ping_cli_to_refresh()
+                result["ping_ok"] = ping_ok
+                if ping_ok:
+                    _log("Token keeper: CLI ping OK after restore ✓")
+                    time.sleep(2)
+                else:
+                    _log(f"Token keeper: CLI ping still failed after restore — {ping_msg}")
+            else:
+                _log("Token keeper: credential restore failed (env var may be stale too)")
+        except Exception as _e:
+            _log(f"Token keeper: restore attempt error — {_e}")
     else:
         # Small delay to ensure file write completes after token refresh
         time.sleep(2)
