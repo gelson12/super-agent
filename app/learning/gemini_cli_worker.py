@@ -62,7 +62,22 @@ def _poll_task(cli_url: str, task_id: str, timeout: int = _POLL_TIMEOUT) -> str:
 
 
 def is_gemini_cli_available() -> bool:
-    """Return True if the gemini CLI binary is installed and credentials exist."""
+    """Return True if Gemini CLI is available — checks CLI worker health endpoint
+    first (since Gemini CLI lives on inspiring-cat, not super-agent), falls back
+    to local binary check."""
+    # Try CLI worker health endpoint first (the actual source of truth)
+    cli_url = _cli_worker_url()
+    if cli_url:
+        try:
+            import urllib.request
+            import json
+            with urllib.request.urlopen(f"{cli_url}/health", timeout=5) as resp:
+                body = json.loads(resp.read().decode("utf-8"))
+                return body.get("gemini_available", False)
+        except Exception:
+            pass
+
+    # Fallback: local binary check (only works if gemini is installed locally)
     try:
         result = subprocess.run(
             ["gemini", "--version"],
