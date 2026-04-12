@@ -3,7 +3,9 @@ Agent/model status tracker — provides real-time state for the visual dashboard
 
 Each worker (model or agent) has a state:
   - "working"   — currently processing a request (set on entry, cleared on exit)
-  - "idle"      — finished recently (< 6 hours since last work)
+  - "idle"      — finished recently (< 30 min since last work)
+  - "break"     — taking a short break (30 min to 3 hours since last work)
+  - "idle"      — idle but available (3 to 6 hours since last work)
   - "sleeping"  — no work for 6+ hours
   - "talking"   — two workers collaborating (ensemble, peer review, CoT handoff)
   - "strike"    — Anthropic API credits insufficient ("salary insufficient")
@@ -60,6 +62,8 @@ _MODEL_MAP = {
     "ENSEMBLE": "Sonnet Anthropic",  # ensemble uses Claude as primary
 }
 
+_THIRTY_MIN = 30 * 60
+_THREE_HOURS = 3 * 3600
 _SIX_HOURS = 6 * 3600
 
 
@@ -150,9 +154,13 @@ def get_worker_status(worker_id: str) -> dict:
         now = time.time()
         state = w["state"]
 
-        # Auto-transition idle → sleeping after 6 hours
-        if state == "idle" and w["last_worked"] > 0 and (now - w["last_worked"]) > _SIX_HOURS:
-            state = "sleeping"
+        # Auto-transition idle based on time since last work
+        if state == "idle" and w["last_worked"] > 0:
+            elapsed = now - w["last_worked"]
+            if elapsed > _SIX_HOURS:
+                state = "sleeping"
+            elif elapsed > _THIRTY_MIN and elapsed <= _THREE_HOURS:
+                state = "break"
 
         return {
             "id": worker_id,

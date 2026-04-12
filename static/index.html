@@ -532,6 +532,7 @@
 
     .o-status.working  { background: #1e3a5f; color: #60a5fa; }
     .o-status.idle     { background: #14532d; color: #4ade80; }
+    .o-status.break    { background: #0c4a6e; color: #38bdf8; }
     .o-status.sleeping { background: #333;    color: #888; }
     .o-status.talking  { background: #4c1d95; color: #c4b5fd; }
     .o-status.strike   { background: #7f1d1d; color: #fca5a5; }
@@ -555,6 +556,7 @@
     }
 
     .o-monitor.off        { background: #111; border-color: #333; }
+    .o-monitor.on-cyan    { background: linear-gradient(135deg,#0c4a6e,#0ea5e9); border-color: #38bdf8; box-shadow: 0 0 8px rgba(56,189,248,0.2); }
     .o-monitor.on-blue    { background: linear-gradient(135deg,#1e3a5f,#2563eb); border-color: #3b82f6; box-shadow: 0 0 8px rgba(59,130,246,0.3); }
     .o-monitor.on-green   { background: linear-gradient(135deg,#14532d,#16a34a); border-color: #22c55e; }
     .o-monitor.on-purple  { background: linear-gradient(135deg,#4c1d95,#7c3aed); border-color: #8b5cf6; box-shadow: 0 0 8px rgba(139,92,246,0.3); }
@@ -603,6 +605,7 @@
     }
     @keyframes o-shake { 0% { transform: rotate(-5deg); } 100% { transform: rotate(5deg); } }
 
+    .o-break  { position: absolute; top: -12px; right: -10px; font-size: 10px; }
     .o-sick   { position: absolute; top: -12px; right: -10px; font-size: 10px; }
     .o-bubble { position: absolute; top: -14px; left: -10px; font-size: 9px;
                 animation: o-bounce 0.8s ease-in-out infinite alternate; }
@@ -812,6 +815,7 @@
   <div class="office-legend">
     <span><span class="ol-dot" style="background:#3b82f6"></span>Working</span>
     <span><span class="ol-dot" style="background:#22c55e"></span>Idle</span>
+    <span><span class="ol-dot" style="background:#38bdf8"></span>Break</span>
     <span><span class="ol-dot" style="background:#555"></span>Sleeping</span>
     <span><span class="ol-dot" style="background:#8b5cf6"></span>Talking</span>
     <span><span class="ol-dot" style="background:#ef4444"></span>Strike</span>
@@ -1461,13 +1465,14 @@
   }
 
   function _oMonClass(state) {
-    return ({working:'on-blue',idle:'on-green',talking:'on-purple',strike:'on-red',sick:'on-yellow'})[state] || 'off';
+    return ({working:'on-blue',idle:'on-green',break:'on-cyan',talking:'on-purple',strike:'on-red',sick:'on-yellow'})[state] || 'off';
   }
 
   function _oScreen(w) {
     switch(w.state) {
       case 'working': return w.task ? _oEsc(w.task.substring(0,30)) : 'Processing...';
       case 'idle': return 'Ready';
+      case 'break': return 'Short break';
       case 'talking': return 'w/ '+ _oEsc(w.talking_to||'?');
       case 'strike': return 'NO CREDITS!';
       case 'sick': return 'TOKEN ERR';
@@ -1478,6 +1483,7 @@
   function _oOverlay(w) {
     switch(w.state) {
       case 'sleeping': return '<span class="o-zzz">Zzz</span>';
+      case 'break': return '<span class="o-break">☕</span>';
       case 'strike': return '<span class="o-strike-sign">🪧</span>';
       case 'sick': return '<span class="o-sick">🤒</span>';
       case 'talking': return '<span class="o-bubble">💬</span>';
@@ -1501,7 +1507,7 @@
 
   function _oDesk(w) {
     const av = _OFFICE_AVATARS[w.id]||'👤';
-    const showTime = (w.state==='idle'||w.state==='sleeping') && w.last_worked>0;
+    const showTime = (w.state==='idle'||w.state==='sleeping'||w.state==='break') && w.last_worked>0;
     const timeAgo = w.last_worked_ago!=null ? _oTimeAgo(w.last_worked_ago) : '';
     const dateStr = w.last_worked ? _oDateTime(w.last_worked) : '';
 
@@ -1516,6 +1522,7 @@
     } else {
       popupRows += `<div class="o-popup-row">Never been active yet</div>`;
     }
+    if (w.state === 'break') popupRows += `<div class="o-popup-row" style="color:#38bdf8">Taking a short break ☕</div>`;
     if (w.state === 'strike') popupRows += `<div class="o-popup-row" style="color:#fca5a5">API credits exhausted</div>`;
     if (w.state === 'sick') popupRows += `<div class="o-popup-row" style="color:#fde68a">Auth token invalid/expired</div>`;
     if (w.state === 'talking' && w.talking_to) popupRows += `<div class="o-popup-row">Collaborating with: <span>${_oEsc(w.talking_to)}</span></div>`;
