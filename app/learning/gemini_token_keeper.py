@@ -200,7 +200,20 @@ def run_token_keeper() -> dict:
     if not ping_ok:
         result["message"] = f"Gemini CLI ping failed: {ping_msg}"
         _log(f"Gemini token keeper: CLI ping failed — {ping_msg}")
-        # Still attempt to save existing credentials even if ping failed
+
+        # Recovery: restore from env var then retry
+        _log("Gemini token keeper: attempting restore from GEMINI_SESSION_TOKEN env var…")
+        if _try_restore_gemini_auth():
+            _log("Gemini token keeper: restore succeeded — retrying ping…")
+            ping_ok, ping_msg = _ping_gemini_cli()
+            result["ping_ok"] = ping_ok
+            if ping_ok:
+                _log("Gemini token keeper: CLI ping OK after restore ✓")
+                time.sleep(2)
+            else:
+                _log(f"Gemini token keeper: ping still failed after restore — {ping_msg}")
+        else:
+            _log("Gemini token keeper: restore failed (env var stale or missing)")
     else:
         time.sleep(2)  # allow file write to complete after any token refresh
 
@@ -238,6 +251,152 @@ def run_token_keeper() -> dict:
                 pass
 
     return result
+
+
+def _try_restore_gemini_auth() -> bool:
+    """
+    Restore Gemini CLI credentials from GEMINI_SESSION_TOKEN env var.
+    Returns True if restored and CLI is now responsive.
+    """
+    token = os.environ.get("GEMINI_SESSION_TOKEN", "")
+    if not token:
+        _log("Gemini restore: GEMINI_SESSION_TOKEN not set.")
+        return False
+
+    try:
+        decoded = base64.b64decode(token + "==")
+    except Exception as e:
+        _log(f"Gemini restore: base64 decode failed — {e}")
+        return False
+
+    _GEMINI_DIR.mkdir(parents=True, exist_ok=True)
+    for fpath in _CREDS_CANDIDATES:
+        try:
+            fpath.write_bytes(decoded)
+            fpath.chmod(0o600)
+        except Exception:
+            pass
+
+    # Verify
+    try:
+        result = subprocess.run(
+            ["gemini", "--version"],
+            capture_output=True, text=True, timeout=15,
+            env={**os.environ, "HOME": "/root"},
+        )
+        if result.returncode == 0:
+            _log("Gemini restore: credentials restored and CLI responding ✓")
+            try:
+                from .agent_status_tracker import mark_done
+                mark_done("Gemini CLI")
+            except Exception:
+                pass
+            return True
+    except Exception:
+        pass
+
+    _log("Gemini restore: credentials written but CLI still not responding.")
+    try:
+        from .agent_status_tracker import mark_sick
+        mark_sick("Gemini CLI")
+    except Exception:
+        pass
+    return False
+
+
+def _try_direct_gemini_refresh() -> bool:
+    """
+    Attempt to refresh the Google OAuth token directly using the refresh_token
+    from the credentials file. Google's OAuth2 endpoint is standard and well-documented.
+    """
+    try:
+        creds_file = _find_creds_file()
+        if not creds_file:
+            return False
+
+        creds = json.loads(creds_file.read_text())
+
+        # Google credentials format: {"client_id", "client_secret", "refresh_token", ...}
+        refresh_token = creds.get("refresh_token")
+        client_id = creds.get("client_id")
+        client_secret = creds.get("client_secret")
+
+        if not all([refresh_token, client_id, client_secret]):
+            _log("Gemini direct refresh: missing refresh_token/client_id/client_secret in credentials.")
+            return False
+
+        _log("Gemini direct refresh: attempting Google OAuth token refresh…")
+
+        data = json.dumps({
+            "grant_type": "refresh_token",
+            "refresh_token": refresh_token,
+            "client_id": client_id,
+            "client_secret": client_secret,
+        }).encode()
+
+        import urllib.request
+        req = urllib.request.Request(
+            "https://oauth2.googleapis.com/token",
+            data=data,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            result = json.loads(resp.read().decode())
+            new_access = result.get("access_token")
+            new_refresh = result.get("refresh_token", refresh_token)
+
+            if new_access:
+                _log("Gemini direct refresh: got new access_token ✓")
+                creds["access_token"] = new_access
+                if new_refresh != refresh_token:
+                    creds["refresh_token"] = new_refresh
+                    _log("Gemini direct refresh: refresh_token also rotated.")
+
+                creds_file.write_text(json.dumps(creds, indent=2))
+                creds_file.chmod(0o600)
+
+                # Push updated token to Railway
+                encoded = base64.b64encode(creds_file.read_bytes()).decode("ascii")
+                _update_railway_variable(_RAILWAY_VAR_NAME, encoded)
+                _log("Gemini direct refresh: credentials refreshed and saved to Railway ✓")
+
+                try:
+                    from .agent_status_tracker import mark_done
+                    mark_done("Gemini CLI")
+                except Exception:
+                    pass
+                return True
+
+        _log("Gemini direct refresh: no access_token in response.")
+        return False
+
+    except Exception as e:
+        _log(f"Gemini direct refresh error: {e}")
+        return False
+
+
+def gemini_full_recovery() -> bool:
+    """
+    Full Gemini CLI recovery chain:
+      1. Direct Google OAuth refresh (lightweight)
+      2. Restore from env var
+    Returns True if any method succeeded.
+    """
+    _log("=== Gemini recovery chain starting ===")
+
+    # Attempt 1: Direct OAuth refresh
+    if _try_direct_gemini_refresh():
+        _log("=== Gemini recovery SUCCESS via direct refresh ===")
+        return True
+
+    # Attempt 2: Restore from env var
+    if _try_restore_gemini_auth():
+        _log("=== Gemini recovery SUCCESS via env var restore ===")
+        return True
+
+    _log("=== Gemini recovery FAILED — manual 'gemini auth login' required ===")
+    return False
 
 
 def _log(msg: str) -> None:
