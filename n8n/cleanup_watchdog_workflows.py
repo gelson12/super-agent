@@ -49,11 +49,29 @@ if __name__ == "__main__":
     workflows = list_all()
     print(f"Total workflows: {len(workflows)}")
 
-    # Junk patterns: watchdog tests, default template names, obvious copies
-    _JUNK_PREFIXES = ("Watchdog-Health-Test", "Watchdog-CLI-Build-Test", "My workflow")
+    # Junk patterns: watchdog tests, default template names, test workflows, debug tools
+    _JUNK_PREFIXES = (
+        "Watchdog-Health-Test", "Watchdog-CLI-Build-Test", "My workflow",
+        "Test ", "Test-", "Test_",
+        "Catch-All ",
+    )
     _JUNK_CONTAINS = ("(copy)", " copy ", " test ")
+    # Exact names to always delete (known junk)
+    _JUNK_EXACT = {
+        "Health Monitor - Success Generator",
+        "AI Finance Operations Assistant for Small Businesses",
+    }
+    # Workflows to NEVER delete regardless of pattern match
+    _PROTECTED = {
+        "Super Agent Chat", "Business Hub", "Daily-SuperAgent-Report",
+        "Claude-Verification-Monitor",
+    }
 
     def _is_junk(name: str) -> bool:
+        if name in _PROTECTED:
+            return False
+        if name in _JUNK_EXACT:
+            return True
         if name.startswith(_JUNK_PREFIXES):
             return True
         lower = name.lower()

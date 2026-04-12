@@ -292,6 +292,72 @@ def n8n_delete_workflow(workflow_id: str) -> str:
 
 
 @tool
+def n8n_cleanup_test_workflows() -> str:
+    """
+    Delete all test/junk workflows from n8n (Test*, Catch-All*, Watchdog*, etc).
+    Protected workflows (Super Agent Chat, Business Hub, Daily Report, etc) are never deleted.
+    Returns a summary of what was deleted.
+    """
+    _JUNK_PREFIXES = (
+        "Watchdog-Health-Test", "Watchdog-CLI-Build-Test", "My workflow",
+        "Test ", "Test-", "Test_", "Catch-All ",
+    )
+    _JUNK_EXACT = {
+        "Health Monitor - Success Generator",
+        "AI Finance Operations Assistant for Small Businesses",
+    }
+    _PROTECTED_LOWER = {
+        "super agent chat", "business hub", "daily-superagent-report",
+        "claude-verification-monitor",
+    }
+
+    def _is_junk(name: str) -> bool:
+        if name.lower() in _PROTECTED_LOWER:
+            return False
+        if name in _JUNK_EXACT:
+            return True
+        if name.startswith(_JUNK_PREFIXES):
+            return True
+        lower = name.lower()
+        return any(p in lower for p in ("(copy)", " copy "))
+
+    # List all workflows
+    all_wf = []
+    cursor = None
+    while True:
+        path = "/api/v1/workflows?limit=250"
+        if cursor:
+            path += f"&cursor={cursor}"
+        result = _get(path)
+        if isinstance(result, str):
+            return f"Failed to list workflows: {result}"
+        all_wf.extend(result.get("data", []))
+        cursor = result.get("nextCursor")
+        if not cursor:
+            break
+
+    junk = [w for w in all_wf if _is_junk(w["name"])]
+    if not junk:
+        return f"No junk workflows found. Total workflows: {len(all_wf)}"
+
+    deleted, errors = [], []
+    for w in junk:
+        resp = _delete(f"/api/v1/workflows/{w['id']}")
+        if isinstance(resp, str) and "error" in resp.lower():
+            errors.append(f"{w['name']}: {resp}")
+        else:
+            deleted.append(w["name"])
+
+    lines = [f"Cleanup complete: {len(deleted)} deleted, {len(errors)} errors."]
+    if deleted:
+        lines.append("Deleted: " + ", ".join(deleted))
+    if errors:
+        lines.append("Errors: " + "; ".join(errors))
+    lines.append(f"Remaining workflows: {len(all_wf) - len(deleted)}")
+    return "\n".join(lines)
+
+
+@tool
 def n8n_activate_workflow(workflow_id: str) -> str:
     """Activate an n8n workflow so it runs automatically on its triggers."""
     result = _post(f"/api/v1/workflows/{workflow_id}/activate")

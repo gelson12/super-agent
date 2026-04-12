@@ -59,6 +59,7 @@ from ..tools.n8n_tools import (
     n8n_create_workflow,
     n8n_update_workflow,
     n8n_execute_workflow,
+    n8n_cleanup_test_workflows,
 )
 from ..tools.railway_tools import (
     railway_list_services,
@@ -201,6 +202,7 @@ _SELF_IMPROVE_TOOLS = [
     n8n_list_workflows, n8n_get_workflow, n8n_list_executions,
     n8n_get_execution, n8n_activate_workflow, n8n_deactivate_workflow,
     n8n_create_workflow, n8n_update_workflow, n8n_execute_workflow,
+    n8n_cleanup_test_workflows,
     # Cloudinary
     check_storage, upload_to_storage,
     # Algorithms

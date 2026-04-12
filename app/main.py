@@ -120,11 +120,15 @@ def _scheduled_health_check() -> None:
             "SCHEDULED HEALTH CHECK — investigate ALL services autonomously:\n"
             "1. railway_get_deployment_status + railway_get_logs — deployed and healthy?\n"
             "2. db_health_check + db_get_failure_patterns — DB healthy? Recurring errors?\n"
-            "3. n8n_list_workflows — is n8n reachable?\n"
+            "3. n8n_list_workflows — CALL THIS to verify n8n is LIVE and reachable.\n"
+            "   If it returns data: report workflow count, how many active vs inactive.\n"
+            "   If it returns an error: n8n is DOWN — report as CRITICAL.\n"
+            "   DO NOT just check config files — you must verify the live instance.\n"
             "4. run_shell_command('supervisorctl status') — are all processes running?\n"
             "5. db_get_error_stats — which models/routes are failing most?\n"
             "Auto-fix any SAFE issues. Record findings in a brief internal log. "
-            "Only notify the user if you find something critical that needs their input.",
+            "Only notify the user if you find something critical that needs their input.\n"
+            "IMPORTANT: Do NOT create test workflows during health checks. Only READ.",
             authorized=False,
         )
         _elapsed = __import__("time").time() - _t0
