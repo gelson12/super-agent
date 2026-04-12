@@ -147,6 +147,31 @@ def _post_deploy_check() -> None:
         except Exception:
             pass
 
+        # Auto-create Claude Verification Code Monitor workflow if not exists
+        try:
+            from .tools.n8n_tools import n8n_list_workflows, n8n_create_workflow
+            import json as _json
+            _wf_list = n8n_list_workflows.invoke({})
+            if "Claude Verification Code Monitor" not in _wf_list:
+                _wf_json_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "n8n", "claude_verification_monitor.json")
+                if os.path.isfile(_wf_json_path):
+                    with open(_wf_json_path) as _f:
+                        _wf_data = _json.load(_f)
+                    _nodes = _json.dumps(_wf_data.get("nodes", []))
+                    _conns = _json.dumps(_wf_data.get("connections", {}))
+                    _result = n8n_create_workflow.invoke({
+                        "name": "Claude Verification Code Monitor",
+                        "nodes_json": _nodes,
+                        "connections_json": _conns,
+                    })
+                    bg_log(f"Post-deploy: created Claude Verification Code Monitor workflow in n8n: {str(_result)[:200]}", source="post_deploy")
+                else:
+                    bg_log("Post-deploy: claude_verification_monitor.json not found in repo", source="post_deploy")
+            else:
+                bg_log("Post-deploy: Claude Verification Code Monitor workflow already exists in n8n", source="post_deploy")
+        except Exception as _e:
+            bg_log(f"Post-deploy: n8n workflow auto-create skipped — {_e}", source="post_deploy")
+
         run_self_improve_agent(
             "POST-DEPLOY STARTUP CHECK — this container just started. Do ALL of:\n"
             "1. railway_get_deployment_status — confirm this deploy succeeded\n"
