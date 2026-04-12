@@ -508,8 +508,12 @@ function renderDesk(worker) {
     extras += `<div class="task-info">${esc(worker.task)}</div>`;
   }
 
+  const tooltip = worker.last_worked > 0
+    ? `Last active: ${dateStr} (${timeAgo})`
+    : `${worker.id} — never active`;
+
   return `
-    <div class="desk" data-worker="${esc(worker.id)}" data-state="${worker.state}">
+    <div class="desk" data-worker="${esc(worker.id)}" data-state="${worker.state}" title="${esc(tooltip)}">
       <div class="name">${esc(worker.id)}</div>
       <div class="status-label ${worker.state}">${worker.state}</div>
       <div class="monitor ${monitorClass}">

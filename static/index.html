@@ -1360,7 +1360,10 @@
     const showTime = (w.state==='idle'||w.state==='sleeping') && w.last_worked>0;
     const timeAgo = w.last_worked_ago!=null ? _oTimeAgo(w.last_worked_ago) : '';
     const dateStr = w.last_worked ? _oDateTime(w.last_worked) : '';
-    return `<div class="o-desk">
+    const tooltip = w.last_worked > 0
+      ? `Last active: ${_oDateTime(w.last_worked)} (${timeAgo})`
+      : `${w.id} — never active`;
+    return `<div class="o-desk" title="${_oEsc(tooltip)}">
       <div class="o-name">${_oEsc(w.id)}</div>
       <div class="o-status ${w.state}">${w.state}</div>
       <div class="o-monitor ${_oMonClass(w.state)}">${_oScreen(w)}</div>
