@@ -794,11 +794,17 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
     def _agent_response_is_error(resp: str) -> bool:
         """
         Detect when an agent returned a structural error string rather than a
-        real response. These start with [ and contain error/failed/error keywords.
+        real response. These start with [ and contain error/failed/error keywords,
+        OR raw API error JSON (e.g. {"type":"error",...}).
         We intercept these to trigger autonomous self-investigation before
         surfacing the error to the user.
         """
-        if not resp or not resp.startswith("["):
+        if not resp:
+            return False
+        # Catch raw Anthropic API error JSON leaked from CLI
+        if resp.lstrip().startswith('{"type":"error"'):
+            return True
+        if not resp.startswith("["):
             return False
         lower = resp.lower()
         return any(k in lower for k in (

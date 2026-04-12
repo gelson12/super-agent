@@ -712,7 +712,7 @@ def chat_stream(req: ChatRequest, request: Request):
                 # Surface any self-healing events that fired during the CLI call
                 for _ev in _drain_conv():
                     yield f"data: [PROGRESS:{_ev}]\n\n"
-                if cli_resp and not cli_resp.startswith("["):
+                if cli_resp and not cli_resp.startswith("[") and not cli_resp.lstrip().startswith('{"type":"error"'):
                     _store_mem(req.session_id, f"Q: {msg[:300]} A: {cli_resp[:300]}")
                     append_exchange(req.session_id, msg, cli_resp)
                     normalized = cli_resp.replace("\n", " \n ")

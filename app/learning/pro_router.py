@@ -192,6 +192,8 @@ _CLI_DOWN_PHRASES = (
     "not logged in",
     "auth failed",
     "invalid credentials",
+    "invalid authentication credentials",
+    "authentication_error",
     "credentials expired",
     "no valid credentials",
     # NOTE: "credentials" alone was too broad — matched file paths like
