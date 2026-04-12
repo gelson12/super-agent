@@ -84,6 +84,28 @@ _MCP_PERMISSION_PHRASES = (
     "mcp tool permissions",
 )
 
+_MCP_TOOL_FAILURE_PHRASES = (
+    "mcp error",
+    "mcp tool error",
+    "connection refused",
+    "econnrefused",
+    "n8n error",
+    "n8n is unreachable",
+    "n8n is not reachable",
+    "tool execution failed",
+    "tool call failed",
+    "failed to execute tool",
+    "could not connect to",
+    "timed out waiting for",
+    "unable to reach n8n",
+    "workflow execution failed",
+    "502 bad gateway",
+    "503 service unavailable",
+    "socket hang up",
+    "etimedout",
+    "enotfound",
+)
+
 # Auto-accept input: answer "1" (Allow once) to any interactive MCP permission prompts.
 # Provides up to 30 answers so any sequence of permission requests is handled.
 _AUTO_ACCEPT_INPUT = "1\n" * 30
@@ -110,6 +132,9 @@ def _run_subprocess(cmd: list[str], cwd: str | None, timeout: int) -> str:
             clean = "\n".join(clean_lines).strip()
             if clean and len(clean) > 20:
                 return clean
+        # Detect MCP tool execution failures — signal with "[" prefix for upstream fallback
+        if any(p in lower for p in _MCP_TOOL_FAILURE_PHRASES):
+            return f"[mcp_tool_error: {output[:200]}]"
         return output
     except subprocess.TimeoutExpired:
         return f"[cli_worker: timed out after {timeout}s]"

@@ -364,6 +364,46 @@
       border-radius: 2px;
     }
 
+    /* ── Stats bar ────────────────────────────────────────────────── */
+    .stats-bar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 16px;
+      margin-bottom: 20px;
+      padding: 10px 14px;
+      background: #1a1208;
+      border-radius: 4px;
+      border: 1px solid #3d2b16;
+      align-items: center;
+    }
+
+    .stat-item {
+      font-size: 0.4rem;
+      color: #8b7355;
+    }
+
+    .stat-item .stat-value {
+      font-size: 0.55rem;
+      color: #c9a96e;
+      margin-left: 6px;
+    }
+
+    .refresh-indicator {
+      font-size: 0.35rem;
+      color: #555;
+      margin-left: auto;
+    }
+
+    .refresh-indicator .dot {
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #4ade80;
+      margin-right: 4px;
+      vertical-align: middle;
+    }
+
     /* ── Responsive ──────────────────────────────────────────────── */
     @media (max-width: 600px) {
       .desks {
@@ -372,6 +412,16 @@
       }
       .desk { min-height: 170px; }
       .monitor { width: 80px; height: 52px; }
+      .header h1 { font-size: 0.55rem; }
+      .stats-bar { gap: 10px; }
+    }
+
+    @media (max-width: 380px) {
+      .desks {
+        grid-template-columns: 1fr;
+        gap: 10px;
+      }
+      .desk { min-height: 150px; }
     }
   </style>
 </head>
@@ -394,6 +444,15 @@
     <div class="legend-item"><div class="legend-dot" style="background:#8b5cf6"></div> Talking</div>
     <div class="legend-item"><div class="legend-dot" style="background:#ef4444"></div> Strike</div>
     <div class="legend-item"><div class="legend-dot" style="background:#eab308"></div> Sick</div>
+  </div>
+
+  <!-- Summary stats -->
+  <div class="stats-bar" id="stats-bar">
+    <div class="stat-item">Working: <span class="stat-value" id="count-working">0</span></div>
+    <div class="stat-item">Idle: <span class="stat-value" id="count-idle">0</span></div>
+    <div class="stat-item">Sleeping: <span class="stat-value" id="count-sleeping">0</span></div>
+    <div class="stat-item">Issues: <span class="stat-value" id="count-issues">0</span></div>
+    <div class="refresh-indicator"><span class="dot"></span>Live (5s)</div>
   </div>
 
   <!-- Models section -->
@@ -533,6 +592,24 @@ function renderDesk(worker) {
 function renderAll(workers) {
   const workerMap = {};
   workers.forEach(w => workerMap[w.id] = w);
+
+  const allIds = [...MODEL_WORKERS, ...AGENT_WORKERS];
+  const allWorkers = allIds.map(id =>
+    workerMap[id] || { id, state: "sleeping", last_worked: 0, last_worked_ago: null, talking_to: null, task: "" }
+  );
+
+  // Update stats bar
+  const counts = { working: 0, idle: 0, sleeping: 0, issues: 0 };
+  allWorkers.forEach(w => {
+    if (w.state === "working") counts.working++;
+    else if (w.state === "idle") counts.idle++;
+    else if (w.state === "strike" || w.state === "sick") counts.issues++;
+    else counts.sleeping++;
+  });
+  document.getElementById("count-working").textContent = counts.working;
+  document.getElementById("count-idle").textContent = counts.idle;
+  document.getElementById("count-sleeping").textContent = counts.sleeping;
+  document.getElementById("count-issues").textContent = counts.issues;
 
   // Models
   const modelsHtml = MODEL_WORKERS.map(id => {

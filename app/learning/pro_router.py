@@ -222,6 +222,31 @@ _CREDIT_ERROR_PHRASES = (
     "credits left",
 )
 
+# MCP tool execution failures — CLI returned exit 0 but output describes a tool error.
+# When detected, return None so the caller falls through to Python tools.
+_MCP_TOOL_ERROR_PHRASES = (
+    "mcp error",
+    "mcp tool error",
+    "mcp_tool_error",
+    "connection refused",
+    "econnrefused",
+    "n8n error",
+    "n8n is unreachable",
+    "n8n is not reachable",
+    "tool execution failed",
+    "tool call failed",
+    "failed to execute tool",
+    "could not connect to",
+    "timed out waiting for",
+    "unable to reach n8n",
+    "workflow execution failed",
+    "502 bad gateway",
+    "503 service unavailable",
+    "socket hang up",
+    "etimedout",
+    "enotfound",
+)
+
 
 # ── Reset time parser ──────────────────────────────────────────────────────────
 
@@ -956,6 +981,11 @@ def try_pro(prompt: str, system: str = "") -> str | None:
                     _track_cli("done")
                     return clean
                 _log("Local CLI returned only MCP permission request — falling through to Gemini/API.")
+                _track_cli("sick")
+                return None
+            # Check for MCP tool execution errors — CLI succeeded but output describes a failure
+            if any(p in stdout.lower() for p in _MCP_TOOL_ERROR_PHRASES):
+                _log(f"Local CLI: MCP tool error detected — falling through. Snippet: {stdout[:150]!r}")
                 _track_cli("sick")
                 return None
             _track_cli("done")

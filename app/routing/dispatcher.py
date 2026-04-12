@@ -465,8 +465,13 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
                 f"[Conversation history — this session]\n{_session_ctx}\n\n"
                 f"[Current message]\n{augmented_message}"
             )
-    except Exception:
-        pass  # Never let session history crash dispatch
+    except Exception as _session_err:
+        from ..activity_log import bg_log as _bg_session
+        _bg_session(
+            f"Session context injection failed for session={session_id}: {_session_err}",
+            source="dispatcher",
+        )
+        # Never let session history crash dispatch
 
     # ── 0c-extra. Continuation detection ─────────────────────────────────────
     # Short follow-up messages ("nothing", "you didn't give", "what about",
@@ -617,6 +622,9 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
         )
         _ctx_lower = (_session_ctx + " " + _active_task_desc).lower()
         _is_build_continuation = any(h in _ctx_lower for h in _BUILD_CONTINUATION_HINTS)
+        # Don't hijack messages that explicitly target a different agent
+        if _is_n8n_request(message) or _is_github_request(message):
+            _is_build_continuation = False
 
         if _is_build_continuation:
             # Re-route to shell agent — call build_flutter_voice_app() unconditionally.

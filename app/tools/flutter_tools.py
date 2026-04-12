@@ -10,6 +10,7 @@ Capabilities:
 
 All commands run inside the container; git uses GITHUB_PAT from env.
 """
+import json
 import os
 import subprocess
 import time
@@ -885,6 +886,56 @@ def _github_release_upload(fp: Path, project_name: str) -> str | None:
 _CLOUDINARY_MAX_MB    = 50    # Cloudinary free/basic plans reject files > this size
 _GITHUB_WARN_MB       = 100   # APKs over this size are large; warn but still attempt upload
 _APK_DOWNLOADS_DIR    = Path("/workspace/apk_downloads")
+_APK_REGISTRY_PATH    = Path("/workspace/apk_downloads/registry.json")
+
+
+def _load_apk_registry() -> list[dict]:
+    """Load the persistent APK download token registry."""
+    try:
+        if _APK_REGISTRY_PATH.exists():
+            return json.loads(_APK_REGISTRY_PATH.read_text())
+    except Exception:
+        pass
+    return []
+
+
+def _save_apk_registry(registry: list[dict]) -> None:
+    """Persist the APK download token registry."""
+    try:
+        _APK_REGISTRY_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _APK_REGISTRY_PATH.write_text(json.dumps(registry, indent=2))
+    except Exception:
+        pass
+
+
+def _register_apk_link(token: str, filename: str, apk_path: str, url: str) -> None:
+    """Record a new APK download link in the persistent registry."""
+    import time
+    registry = _load_apk_registry()
+    registry.append({
+        "token": token,
+        "filename": filename,
+        "apk_path": apk_path,
+        "url": url,
+        "created_at": time.time(),
+    })
+    # Keep only last 20 entries
+    _save_apk_registry(registry[-20:])
+
+
+def get_apk_download_status() -> list[dict]:
+    """Return all registered APK links with their current validity."""
+    registry = _load_apk_registry()
+    results = []
+    for entry in registry:
+        token = entry.get("token", "")
+        filename = entry.get("filename", "")
+        file_path = _APK_DOWNLOADS_DIR / token / filename
+        results.append({
+            **entry,
+            "valid": file_path.exists(),
+        })
+    return results
 
 
 def _serve_apk_from_railway(fp: Path) -> str | None:
@@ -913,7 +964,9 @@ def _serve_apk_from_railway(fp: Path) -> str | None:
         print(f"[serve_apk_from_railway] copy failed: {e}")
         return None
 
-    return f"https://{domain}/downloads/{token}/{fp.name}"
+    url = f"https://{domain}/downloads/{token}/{fp.name}"
+    _register_apk_link(token, fp.name, str(fp), url)
+    return url
 
 
 @tool

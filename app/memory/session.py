@@ -13,9 +13,12 @@ Also provides get_compressed_context() which returns the last 6 messages
 verbatim plus a Haiku-generated bullet-point summary of older messages,
 keeping token usage bounded on long sessions.
 """
+import logging
 import os
 from langchain_community.chat_message_histories import SQLChatMessageHistory
 from langchain_core.messages import BaseMessage
+
+_log = logging.getLogger("session")
 
 
 def _resolve_db_path() -> str:
@@ -53,14 +56,21 @@ def clear_session(session_id: str) -> None:
 
 def append_exchange(session_id: str, user_msg: str, ai_msg: str) -> None:
     """Save one human→AI exchange to the session store."""
-    history = get_session_history(session_id)
-    history.add_user_message(user_msg)
-    history.add_ai_message(ai_msg)
+    try:
+        history = get_session_history(session_id)
+        history.add_user_message(user_msg)
+        history.add_ai_message(ai_msg)
+    except Exception as e:
+        _log.warning("append_exchange failed for session %s: %s", session_id, e)
 
 
 def get_messages(session_id: str) -> list[BaseMessage]:
     """Return all messages for a session."""
-    return get_session_history(session_id).messages
+    try:
+        return get_session_history(session_id).messages
+    except Exception as e:
+        _log.warning("get_messages failed for session %s: %s", session_id, e)
+        return []
 
 
 def get_compressed_context(session_id: str) -> str:
@@ -95,9 +105,11 @@ def get_compressed_context(session_id: str) -> str:
         from ..prompts import COMPRESSION_PROMPT
         summary_prompt = COMPRESSION_PROMPT.format(history=history_text)
         summary = ask_claude_haiku(summary_prompt)
-    except Exception:
-        # If summarisation fails, fall back to last 6 only
-        summary = "[Earlier context unavailable]"
+    except Exception as e:
+        _log.warning("Haiku compression failed for session: %s", e)
+        # Fallback: show last few old messages instead of losing all context
+        fallback_old = old_msgs[-3:] if len(old_msgs) > 3 else old_msgs
+        summary = "[Earlier context — recent excerpt]\n" + _format(fallback_old)
 
     recent_text = _format(recent_msgs)
     return f"[Summary of earlier conversation]\n{summary}\n\n[Recent messages]\n{recent_text}"

@@ -176,6 +176,21 @@ def _invoke(message: str) -> str:
     return text or "[n8n agent: no response]"
 
 
+def _is_mcp_error_response(text: str) -> bool:
+    """Detect MCP tool errors in CLI response that should trigger fallback."""
+    if not text:
+        return True
+    lower = text.lower()
+    _error_signals = (
+        "mcp error", "mcp_tool_error", "connection refused", "n8n error",
+        "n8n is unreachable", "tool execution failed", "tool call failed",
+        "failed to execute", "could not connect", "timed out waiting",
+        "502 bad gateway", "503 service", "unable to reach n8n",
+        "workflow execution failed", "econnrefused", "etimedout",
+    )
+    return text.startswith("[") or any(sig in lower for sig in _error_signals)
+
+
 def run_n8n_agent(message: str) -> str:
     """
     Run the n8n agent with pre-execution model competition + self-healing.
@@ -232,7 +247,7 @@ def run_n8n_agent(message: str) -> str:
         from ..learning.pro_router import try_pro, should_attempt_cli
         if should_attempt_cli():
             cli_result = try_pro(f"{_SYSTEM}\n\n{message}")
-            if cli_result and not cli_result.startswith("["):
+            if cli_result and not _is_mcp_error_response(cli_result):
                 from ..activity_log import bg_log as _bg
                 _bg("n8n agent: ✓ Claude CLI Pro responded", source="n8n_agent")
                 return cli_result

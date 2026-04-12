@@ -131,6 +131,54 @@ class InsightLog:
             "error_rate_pct": round(error_count / total * 100, 1),
         }
 
+    def normalized_summary(self) -> dict:
+        """Summary with normalized model names for reporting.
+
+        Composite names like CLAUDE+SEARCH, SELF_IMPROVE, GEMINI_CLI are
+        mapped back to their base model so reports aggregate correctly.
+        """
+        all_entries = self._load_all()
+        total = len(all_entries)
+        if not total:
+            return {"total_interactions": 0}
+
+        raw_counts: dict[str, int] = {}
+        normalized_counts: dict[str, int] = {}
+        route_counts: dict[str, int] = {}
+        error_count = 0
+        for e in all_entries:
+            raw_model = e.get("model", "?")
+            raw_counts[raw_model] = raw_counts.get(raw_model, 0) + 1
+            norm = _normalize_model(raw_model)
+            normalized_counts[norm] = normalized_counts.get(norm, 0) + 1
+            route = e.get("routed_by", "?")
+            route_counts[route] = route_counts.get(route, 0) + 1
+            if e.get("error"):
+                error_count += 1
+
+        return {
+            "total_interactions": total,
+            "model_distribution": normalized_counts,
+            "raw_model_distribution": raw_counts,
+            "route_distribution": route_counts,
+            "error_count": error_count,
+            "error_rate_pct": round(error_count / total * 100, 1),
+        }
+
+
+def _normalize_model(raw: str) -> str:
+    """Normalize composite model names to base model for aggregation."""
+    m = (raw or "UNKNOWN").upper()
+    _MAP = {
+        "CLAUDE+SEARCH": "CLAUDE",
+        "SELF_IMPROVE": "CLAUDE",
+        "SHELL": "CLAUDE",
+        "GITHUB": "CLAUDE",
+        "N8N": "CLAUDE",
+        "GEMINI_CLI": "GEMINI",
+    }
+    return _MAP.get(m, m)
+
 
 # Singleton
 insight_log = InsightLog()

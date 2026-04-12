@@ -220,6 +220,17 @@ async def _lifespan(app: FastAPI):
     except Exception:
         pass
 
+    # Validate session DB is reachable — log result so silent failures are visible
+    def _validate_session_db():
+        try:
+            from .memory.session import DB_PATH, get_session_history
+            test = get_session_history("__startup_test__")
+            _ = test.messages  # Force connection
+            bg_log(f"Session DB OK: {DB_PATH[:80]}", source="startup")
+        except Exception as e:
+            bg_log(f"SESSION DB FAILED at startup: {e} — session memory unavailable", source="startup")
+    _threading.Thread(target=_validate_session_db, daemon=True).start()
+
     # Seed agent status tracker from insight log so dashboard doesn't show all sleeping
     try:
         from .learning.agent_status_tracker import seed_from_insight_log, seed_live_status
@@ -1011,6 +1022,19 @@ def stats():
     }
 
 
+@app.get("/stats/report", tags=["meta"])
+def stats_report():
+    """
+    Combined model usage + cost data for daily reports.
+    Returns normalized model names compatible with cost_ledger naming.
+    """
+    return {
+        "interactions": insight_log.normalized_summary(),
+        "spend": _spend_summary(),
+        "cache": cache.stats(),
+    }
+
+
 @app.get("/daily-review", tags=["meta"])
 def daily_review():
     """
@@ -1394,6 +1418,13 @@ def activity_recent(lines: int = 50):
         "total_returned": len(entries),
         "log_path": str(ACTIVITY_LOG),
     }
+
+
+@app.get("/downloads/status", tags=["build"])
+def download_status():
+    """List all registered APK download links and whether they are still valid."""
+    from .tools.flutter_tools import get_apk_download_status
+    return get_apk_download_status()
 
 
 @app.get("/downloads/{token}/{filename}", tags=["build"])
