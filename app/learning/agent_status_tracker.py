@@ -193,6 +193,12 @@ def get_worker_history(worker_id: str, limit: int = 20) -> list[dict]:
     """
     Return recent activity history for a worker from the insight log.
     Each entry: {ts, date, model, routed_by, complexity, error, msg_preview}
+
+    Uses both model name AND routed_by to map entries to workers:
+    - Claude CLI Pro: model=CLAUDE with routed_by in {conversational, continuation, trivial}
+      (these routes use CLI Pro via the dispatcher's main path)
+    - Gemini CLI: model=GEMINI_CLI or routed_by contains 'gemini'
+    - Specialized agents: matched by model name (SHELL, GITHUB, N8N, etc.)
     """
     try:
         from .insight_log import insight_log
@@ -205,10 +211,33 @@ def get_worker_history(worker_id: str, limit: int = 20) -> list[dict]:
             if wid == worker_id:
                 matching_models.add(model_key)
 
+        # Routes that indicate CLI Pro handled the request
+        _CLI_PRO_ROUTES = {
+            "conversational", "continuation", "trivial", "trivial_cache",
+            "forced", "forced_cache",
+        }
+
+        def _matches_worker(entry: dict) -> bool:
+            model = entry.get("model", "").upper()
+            route = entry.get("routed_by", "")
+
+            # Direct model match (agents: SHELL, GITHUB, N8N, etc.)
+            if model in matching_models:
+                return True
+
+            # Claude CLI Pro: CLAUDE model via conversational routes
+            if worker_id == "Claude CLI Pro":
+                return model == "CLAUDE" and route in _CLI_PRO_ROUTES
+
+            # Gemini CLI: explicit GEMINI_CLI model
+            if worker_id == "Gemini CLI":
+                return model in ("GEMINI_CLI", "GEMINI")
+
+            return False
+
         history = []
         for entry in reversed(entries):
-            model = entry.get("model", "").upper()
-            if model in matching_models:
+            if _matches_worker(entry):
                 ts = entry.get("ts", 0)
                 dt = datetime.fromtimestamp(ts, tz=timezone.utc) if ts else None
                 history.append({

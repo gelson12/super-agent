@@ -2434,17 +2434,14 @@ def credits_pro_status():
         except Exception:
             status["gemini_available"] = False
 
-        # Add Anthropic API availability
+        # Add Anthropic API availability — check strike state (free, no API call)
         try:
-            from .config import settings as _s
-            status["api_available"] = bool(_s.anthropic_api_key)
-            if _s.anthropic_api_key:
-                # Quick credit check via the spend summary
-                try:
-                    spend = _spend_summary()
-                    status["api_available"] = not spend.get("over_budget", False)
-                except Exception:
-                    pass
+            from .learning.agent_status_tracker import get_all_statuses
+            workers = get_all_statuses()
+            # If Haiku/Sonnet/Opus are all on strike, API has no credits
+            api_workers = [w for w in workers if w["id"] in ("Anthropic Haiku", "Sonnet Anthropic", "Opus Anthropic")]
+            all_strike = api_workers and all(w["state"] == "strike" for w in api_workers)
+            status["api_available"] = not all_strike
         except Exception:
             status["api_available"] = False
 
