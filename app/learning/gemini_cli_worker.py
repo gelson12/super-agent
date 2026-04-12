@@ -135,7 +135,7 @@ def ask_gemini_cli(prompt: str) -> str:
         else:
             _track_gemini("done")
 
-        if not output.startswith("["):
+        if output and not output.startswith("["):
             try:
                 from ..cache.response_cache import cache as _cache
                 _cache.set(prompt, "GEMINI_CLI", output)

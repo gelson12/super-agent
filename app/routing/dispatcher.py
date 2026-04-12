@@ -20,11 +20,35 @@ from ..learning.peer_review import peer_reviewer
 from ..learning.ensemble import ensemble_voter
 from ..learning.red_team import red_team
 from ..learning.cot_handoff import cot_handoff
-from ..learning.agent_status_tracker import (
-    mark_working as _mark_working, mark_done as _mark_done,
-    mark_talking as _mark_talking, clear_talking as _clear_talking,
-    resolve_worker as _resolve_worker, mark_strike as _mark_strike,
-)
+# Dashboard status tracker — all calls are best-effort, never crash dispatch
+try:
+    from ..learning.agent_status_tracker import (
+        mark_working as _mark_working_raw, mark_done as _mark_done_raw,
+        mark_talking as _mark_talking_raw, clear_talking as _clear_talking_raw,
+        resolve_worker as _resolve_worker, mark_strike as _mark_strike_raw,
+    )
+    def _mark_working(w, t=""):
+        try: _mark_working_raw(w, t)
+        except Exception: pass
+    def _mark_done(w):
+        try: _mark_done_raw(w)
+        except Exception: pass
+    def _mark_talking(a, b):
+        try: _mark_talking_raw(a, b)
+        except Exception: pass
+    def _clear_talking(a, b):
+        try: _clear_talking_raw(a, b)
+        except Exception: pass
+    def _mark_strike(w):
+        try: _mark_strike_raw(w)
+        except Exception: pass
+except Exception:
+    def _mark_working(w, t=""): pass
+    def _mark_done(w): pass
+    def _mark_talking(a, b): pass
+    def _clear_talking(a, b): pass
+    def _resolve_worker(m): return m
+    def _mark_strike(w): pass
 from ..memory.vector_memory import get_memory_context, store_memory, store_enriched_memory
 from ..memory.session import get_compressed_context, append_exchange
 from ..prompts import (
