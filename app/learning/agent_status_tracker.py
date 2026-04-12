@@ -287,13 +287,14 @@ def seed_live_status() -> None:
     except Exception:
         pass
 
-    # Check Claude CLI Pro status
+    # Check Claude CLI Pro status — only mark sick for genuine failures,
+    # NOT for transient rate limits (burst/daily flags)
     try:
-        from .pro_router import should_attempt_cli
-        if not should_attempt_cli():
+        from .pro_router import is_cli_down
+        if is_cli_down():
             mark_sick("Claude CLI Pro")
         else:
-            # CLI recovered — clear stale sick status
+            # CLI is reachable — clear stale sick status
             with _lock:
                 w = _workers.get("Claude CLI Pro")
                 if w and w["state"] == "sick":
