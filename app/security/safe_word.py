@@ -1,8 +1,12 @@
 """
 Safe word authorization guard.
 
-Critical operations (GitHub writes, n8n workflow changes, shell write commands)
-are blocked unless the owner's safe word is present in the request message.
+Critical operations (GitHub writes, shell write commands) are blocked unless
+the owner's safe word is present in the request message.
+
+n8n workflow operations are EXEMPT — the n8n instance is already protected
+by its own API key, and the n8n agent is behind the dispatcher's routing
+so external users cannot directly call n8n tools.
 
 The safe word is stored in the OWNER_SAFE_WORD environment variable.
 Default: alpha0  (change via Railway env var — do NOT commit the real word).
@@ -18,13 +22,6 @@ _GITHUB_WRITE_KEYWORDS = {
     "fork repo", "rename repo", "archive repo", "add collaborator",
 }
 
-# ── Keywords that signal an n8n workflow modification ─────────────────────────
-_N8N_WRITE_KEYWORDS = {
-    "create workflow", "update workflow", "delete workflow", "modify workflow",
-    "activate workflow", "deactivate workflow", "add node", "remove node",
-    "edit workflow", "change workflow",
-}
-
 # ── Keywords that signal a dangerous shell write operation ────────────────────
 _SHELL_WRITE_KEYWORDS = {
     "rm ", "rmdir", "mv ", "sudo ", "chmod", "chown",
@@ -38,7 +35,6 @@ def is_critical_request(message: str) -> bool:
     lower = message.lower()
     return (
         any(k in lower for k in _GITHUB_WRITE_KEYWORDS)
-        or any(k in lower for k in _N8N_WRITE_KEYWORDS)
         or any(k in lower for k in _SHELL_WRITE_KEYWORDS)
     )
 
