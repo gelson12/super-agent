@@ -165,6 +165,29 @@ def _probe(cmd: list[str], timeout: int = 10) -> bool:
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
+def _gemini_auth_ok() -> bool:
+    """Check Gemini CLI binary AND credentials — version alone is not enough."""
+    if not _probe(["gemini", "--version"]):
+        return False
+    # Verify credentials file exists and contains auth data
+    import json as _json
+    creds_path = os.path.expanduser("/root/.gemini/credentials.json")
+    try:
+        with open(creds_path, "r") as f:
+            creds = _json.load(f)
+        # Must have either client credentials or an API key configured
+        return bool(creds.get("client_id") or creds.get("api_key"))
+    except Exception:
+        # Also check settings.json for API key auth
+        settings_path = os.path.expanduser("/root/.gemini/settings.json")
+        try:
+            with open(settings_path, "r") as f:
+                settings = _json.load(f)
+            return bool(settings.get("apiKey"))
+        except Exception:
+            return False
+
+
 @app.get("/health")
 def health():
     """
@@ -172,7 +195,7 @@ def health():
     Called by pro_cli_watchdog and pro_router.verify_pro_auth().
     """
     claude_ok  = _probe(["claude", "--version"])
-    gemini_ok  = _probe(["gemini", "--version"])
+    gemini_ok  = _gemini_auth_ok()
     db_ok = False
     try:
         with _db_conn() as conn:

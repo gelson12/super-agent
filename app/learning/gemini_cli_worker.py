@@ -144,6 +144,20 @@ def ask_gemini_cli(prompt: str) -> str:
             except Exception as e:
                 return f"[gemini_cli error: {e}]"
 
+        # Detect Gemini auth errors that don't follow the "[" prefix convention
+        _GEMINI_AUTH_ERRORS = (
+            "please set an auth method",
+            "gemini_api_key",
+            "google_genai_use_vertexai",
+            "failed to authenticate",
+            "authentication error",
+            "credentials not found",
+        )
+        if output and not output.startswith("[") and any(
+            p in output.lower() for p in _GEMINI_AUTH_ERRORS
+        ):
+            output = f"[gemini_cli auth error: {output[:200]}]"
+
         # Cache and track on success; alert on failure
         if not output or output.startswith("["):
             _track_gemini("sick")
