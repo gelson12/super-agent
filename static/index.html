@@ -573,16 +573,17 @@
     }
 
     .o-avatar {
-      width: 38px; height: 38px;
+      width: 48px; height: 48px;
       border-radius: 50%;
       background: #4a3520;
       border: 2px solid #8b7355;
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 22px;
+      font-size: 28px;
       margin-top: 6px;
       position: relative;
+      filter: contrast(1.15) saturate(1.1);
     }
 
     .o-zzz {
@@ -908,6 +909,9 @@
     <span>🗄️</span><span>📁</span><span>🖨️</span><span>🗑️</span><span>🪴</span>
   </div>
 </div>
+
+<!-- ── Talking Lines SVG overlay ──────────────────────────────────────────── -->
+<svg id="talking-lines" style="position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:999;"></svg>
 
 <!-- ── Status bar ────────────────────────────────────────────────────────── -->
 <div id="status-bar">
@@ -1682,7 +1686,7 @@
     if (w.state === 'talking' && w.talking_to) popupRows += `<div class="o-popup-row">Collaborating with: <span>${_oEsc(w.talking_to)}</span></div>`;
     popupRows += `<div class="o-popup-row" style="margin-top:4px"><a href="#" onclick="_oShowHistory('${_oEsc(w.id)}',event)" style="color:#c9a96e;font-size:8px;text-decoration:underline;">View Activity Report</a></div>`;
 
-    return `<div class="o-desk" onclick="_oTogglePopup(this)">
+    return `<div class="o-desk" data-worker="${_oEsc(w.id)}" onclick="_oTogglePopup(this)">
       <div class="o-popup">
         <div class="o-popup-title">${_oEsc(info.title)}</div>
         ${popupRows}
@@ -1820,18 +1824,66 @@
   }
   setInterval(_updateOfficeClock, 1000);
 
+  function _drawTalkingLines(workers) {
+    const svg = document.getElementById('talking-lines');
+    if (!svg) return;
+    svg.innerHTML = '';
+    const pairs = new Set();
+    workers.forEach(w => {
+      if (w.state === 'talking' && w.talking_to) {
+        const key = [w.id, w.talking_to].sort().join('|');
+        if (pairs.has(key)) return;
+        pairs.add(key);
+        const a = document.querySelector(`[data-worker="${CSS.escape(w.id)}"]`);
+        const b = document.querySelector(`[data-worker="${CSS.escape(w.talking_to)}"]`);
+        if (!a || !b) return;
+        const ra = a.getBoundingClientRect();
+        const rb = b.getBoundingClientRect();
+        const x1 = ra.left + ra.width / 2;
+        const y1 = ra.top + ra.height / 2;
+        const x2 = rb.left + rb.width / 2;
+        const y2 = rb.top + rb.height / 2;
+        const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        line.setAttribute('x1', x1);
+        line.setAttribute('y1', y1);
+        line.setAttribute('x2', x2);
+        line.setAttribute('y2', y2);
+        line.setAttribute('stroke', '#8b5cf6');
+        line.setAttribute('stroke-width', '2');
+        line.setAttribute('stroke-dasharray', '6,4');
+        line.setAttribute('opacity', '0.7');
+        const anim = document.createElementNS('http://www.w3.org/2000/svg', 'animate');
+        anim.setAttribute('attributeName', 'stroke-dashoffset');
+        anim.setAttribute('from', '0');
+        anim.setAttribute('to', '20');
+        anim.setAttribute('dur', '1s');
+        anim.setAttribute('repeatCount', 'indefinite');
+        line.appendChild(anim);
+        svg.appendChild(line);
+      }
+    });
+  }
+
   async function _fetchOffice() {
     try {
       const res = await fetch('/dashboard/agents/status', { headers: authHeaders() });
       if (!res.ok) return;
       const data = await res.json();
+      const workers = data.workers || [];
       const map = {};
-      (data.workers||[]).forEach(w => map[w.id]=w);
+      workers.forEach(w => map[w.id]=w);
       const defW = id => map[id] || {id, state:'sleeping', last_worked:0, last_worked_ago:null, talking_to:null, task:''};
       document.getElementById('office-models').innerHTML = _OFFICE_MODELS.map(id => _oDesk(defW(id))).join('');
       document.getElementById('office-agents').innerHTML = _OFFICE_AGENTS.map(id => _oDesk(defW(id))).join('');
+      // Draw violet talking lines between collaborating avatars
+      _drawTalkingLines(workers);
     } catch(e) { console.error('Office fetch error:', e); }
   }
+
+  // Auto-open the office panel on page load
+  setTimeout(() => {
+    if (!_officeOpen) toggleOfficePanel();
+  }, 500);
 </script>
 </body>
 </html>
