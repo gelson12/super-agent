@@ -125,11 +125,25 @@ def maybe_recover() -> bool:
                         return False
                 else:
                     bg_log(
-                        "Pro CLI watchdog: credential restore failed (no env var or decode error). "
-                        "Manual login required.",
+                        "Pro CLI watchdog: env var restore failed — trying full recovery chain (direct refresh + auto-login)…",
                         source="pro_cli_watchdog",
                     )
-                    return False
+                    try:
+                        from .cli_auto_login import full_recovery_chain
+                        if full_recovery_chain():
+                            auth = verify_pro_auth()
+                            if auth.get("pro_valid"):
+                                bg_log("Pro CLI watchdog: full recovery SUCCESS ✓", source="pro_cli_watchdog")
+                                # Fall through to the recovery success block below
+                            else:
+                                bg_log("Pro CLI watchdog: recovery chain ran but auth still invalid.", source="pro_cli_watchdog")
+                                return False
+                        else:
+                            bg_log("Pro CLI watchdog: full recovery chain FAILED.", source="pro_cli_watchdog")
+                            return False
+                    except Exception as _re:
+                        bg_log(f"Pro CLI watchdog: recovery chain error — {_re}", source="pro_cli_watchdog")
+                        return False
             except Exception as _e:
                 bg_log(
                     f"Pro CLI watchdog: restore attempt error — {_e}. Continuing API fallback.",

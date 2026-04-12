@@ -240,7 +240,18 @@ def run_token_keeper() -> dict:
                 else:
                     _log(f"Token keeper: CLI ping still failed after restore — {ping_msg}")
             else:
-                _log("Token keeper: credential restore failed (env var may be stale too)")
+                _log("Token keeper: env var restore failed — trying full recovery chain…")
+                try:
+                    from .cli_auto_login import full_recovery_chain
+                    if full_recovery_chain():
+                        _log("Token keeper: full recovery chain SUCCESS ✓")
+                        ping_ok = True
+                        result["ping_ok"] = True
+                        time.sleep(2)
+                    else:
+                        _log("Token keeper: full recovery chain FAILED — manual login required")
+                except Exception as _re:
+                    _log(f"Token keeper: recovery chain error — {_re}")
         except Exception as _e:
             _log(f"Token keeper: restore attempt error — {_e}")
     else:

@@ -94,6 +94,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY cli_worker/requirements.txt /tmp/cli_worker_requirements.txt
 RUN pip install --no-cache-dir -r /tmp/cli_worker_requirements.txt
 
+# ── Playwright + Chromium (for automated Claude CLI OAuth login) ──────────────
+RUN pip install --no-cache-dir playwright \
+    && playwright install --with-deps chromium \
+    && echo "[docker] Playwright + Chromium installed for auto-login."
+
 # ── Application source ────────────────────────────────────────────────────────
 COPY . .
 
