@@ -155,11 +155,12 @@ def get_worker_status(worker_id: str) -> dict:
         state = w["state"]
 
         # Auto-transition idle based on time since last work
+        # idle → break after 30min, idle → sleeping after 3 hours
         if state == "idle" and w["last_worked"] > 0:
             elapsed = now - w["last_worked"]
-            if elapsed > _SIX_HOURS:
+            if elapsed > _THREE_HOURS:
                 state = "sleeping"
-            elif elapsed > _THIRTY_MIN and elapsed <= _THREE_HOURS:
+            elif elapsed > _THIRTY_MIN:
                 state = "break"
 
         return {

@@ -59,7 +59,6 @@ if __name__ == "__main__":
     # Exact names to always delete (known junk)
     _JUNK_EXACT = {
         "Health Monitor - Success Generator",
-        "AI Finance Operations Assistant for Small Businesses",
     }
     # Workflows to NEVER delete regardless of pattern match
     _PROTECTED = {

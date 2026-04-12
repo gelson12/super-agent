@@ -304,7 +304,6 @@ def n8n_cleanup_test_workflows() -> str:
     )
     _JUNK_EXACT = {
         "Health Monitor - Success Generator",
-        "AI Finance Operations Assistant for Small Businesses",
     }
     _PROTECTED_LOWER = {
         "super agent chat", "business hub", "daily-superagent-report",

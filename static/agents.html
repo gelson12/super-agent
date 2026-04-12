@@ -465,6 +465,7 @@
 </div>
 
 <div class="filing-cabinet">🗄️</div>
+<svg id="talking-lines" style="position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:999;"></svg>
 
 <script>
 const MODEL_WORKERS = [
@@ -626,6 +627,46 @@ function renderAll(workers) {
   document.getElementById("agents-desks").innerHTML = agentsHtml;
 }
 
+function drawTalkingLines(workers) {
+  const svg = document.getElementById('talking-lines');
+  if (!svg) return;
+  svg.innerHTML = '';
+  const pairs = new Set();
+  workers.forEach(w => {
+    if (w.state === 'talking' && w.talking_to) {
+      const key = [w.id, w.talking_to].sort().join('|');
+      if (pairs.has(key)) return;
+      pairs.add(key);
+      const a = document.querySelector(`[data-worker="${CSS.escape(w.id)}"]`);
+      const b = document.querySelector(`[data-worker="${CSS.escape(w.talking_to)}"]`);
+      if (!a || !b) return;
+      const ra = a.getBoundingClientRect();
+      const rb = b.getBoundingClientRect();
+      const x1 = ra.left + ra.width / 2;
+      const y1 = ra.top + ra.height / 2;
+      const x2 = rb.left + rb.width / 2;
+      const y2 = rb.top + rb.height / 2;
+      const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+      line.setAttribute('x1', x1);
+      line.setAttribute('y1', y1);
+      line.setAttribute('x2', x2);
+      line.setAttribute('y2', y2);
+      line.setAttribute('stroke', '#8b5cf6');
+      line.setAttribute('stroke-width', '2');
+      line.setAttribute('stroke-dasharray', '6,4');
+      line.setAttribute('opacity', '0.7');
+      const anim = document.createElementNS('http://www.w3.org/2000/svg', 'animate');
+      anim.setAttribute('attributeName', 'stroke-dashoffset');
+      anim.setAttribute('from', '0');
+      anim.setAttribute('to', '20');
+      anim.setAttribute('dur', '1s');
+      anim.setAttribute('repeatCount', 'indefinite');
+      line.appendChild(anim);
+      svg.appendChild(line);
+    }
+  });
+}
+
 function esc(str) {
   if (!str) return "";
   const d = document.createElement("div");
@@ -638,7 +679,9 @@ async function fetchAndRender() {
     const resp = await fetch("/dashboard/agents/status");
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const data = await resp.json();
-    renderAll(data.workers || []);
+    const workers = data.workers || [];
+    renderAll(workers);
+    drawTalkingLines(workers);
   } catch (err) {
     console.error("Failed to fetch agent status:", err);
   }

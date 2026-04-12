@@ -849,7 +849,9 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
     if _kw_route == "GITHUB":
         _write_active_task(session_id, message)
         _mark_working("GitHub Agent", message[:100])
+        _mark_talking("Claude CLI Pro", "GitHub Agent")
         response = run_github_agent(augmented_message)
+        _clear_talking("Claude CLI Pro", "GitHub Agent")
         _mark_done("GitHub Agent")
         _clear_active_task()
         if _agent_response_is_error(response):
@@ -873,7 +875,9 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
     if _kw_route == "N8N":
         _write_active_task(session_id, message)
         _mark_working("N8N Agent", message[:100])
+        _mark_talking("Claude CLI Pro", "N8N Agent")
         response = run_n8n_agent(augmented_message)
+        _clear_talking("Claude CLI Pro", "N8N Agent")
         _mark_done("N8N Agent")
         _clear_active_task()
         if _agent_response_is_error(response):
