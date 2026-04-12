@@ -135,26 +135,53 @@ def _update_via_cli(name: str, value: str) -> tuple[bool, str]:
 
 def _ping_gemini_cli() -> tuple[bool, str]:
     """
-    Call `gemini --version` to verify the CLI is alive and reachable.
-    This also ensures the OAuth token is validated (Gemini CLI auto-refreshes
-    access tokens from the stored refresh token on any invocation).
+    Verify Gemini CLI is alive AND auth is valid by making a real API call.
+
+    `gemini --version` only checks the binary, not auth. We need to force
+    an actual API call so the OAuth library refreshes the access token
+    from the stored refresh_token. This keeps the session alive indefinitely.
     """
+    # Step 1: check binary exists
     try:
         result = subprocess.run(
             ["gemini", "--version"],
             capture_output=True, text=True, timeout=_TIMEOUT,
             env={**os.environ, "HOME": "/root"},
         )
-        output = (result.stdout + result.stderr).strip()
-        if result.returncode == 0:
-            return True, output[:100]
-        return False, f"Non-zero exit ({result.returncode}): {output[:200]}"
+        if result.returncode != 0:
+            output = (result.stdout + result.stderr).strip()
+            return False, f"Non-zero exit ({result.returncode}): {output[:200]}"
     except FileNotFoundError:
         return False, "gemini CLI not found — install: npm install -g @google/gemini-cli"
     except subprocess.TimeoutExpired:
         return False, "gemini --version timed out"
     except Exception as e:
         return False, f"CLI ping error: {e}"
+
+    # Step 2: force a real API call to trigger OAuth token refresh
+    try:
+        result = subprocess.run(
+            ["gemini", "--prompt", "Reply with only the word: OK"],
+            capture_output=True, text=True, timeout=60,
+            cwd="/workspace",
+            env={**os.environ, "HOME": "/root"},
+        )
+        output = (result.stdout + result.stderr).strip()
+        _auth_errors = (
+            "please set an auth method",
+            "failed to authenticate",
+            "authentication error",
+            "gemini_api_key",
+        )
+        if any(e in output.lower() for e in _auth_errors):
+            return False, f"Auth failed: {output[:200]}"
+        if result.returncode == 0 and output:
+            return True, f"Auth OK — response: {output[:50]}"
+        return False, f"Unexpected: rc={result.returncode} output={output[:200]}"
+    except subprocess.TimeoutExpired:
+        return False, "gemini prompt timed out (60s)"
+    except Exception as e:
+        return False, f"CLI auth check error: {e}"
 
 
 def _read_and_encode_credentials() -> tuple[str | None, str]:
@@ -216,6 +243,14 @@ def run_token_keeper() -> dict:
             _log("Gemini token keeper: restore failed (env var stale or missing)")
     else:
         time.sleep(2)  # allow file write to complete after any token refresh
+        # Proactive: also do a direct OAuth refresh to keep refresh_token alive
+        # Google refresh tokens can expire if unused for 6 months (or sooner
+        # if the project is in "testing" mode — 7 days). Regular refreshes
+        # prevent expiry.
+        try:
+            _try_direct_gemini_refresh()
+        except Exception:
+            pass  # non-fatal — CLI call already refreshed the token
 
     # Step 2 — read and encode credentials
     encoded, enc_msg = _read_and_encode_credentials()
