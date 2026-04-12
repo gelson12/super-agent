@@ -292,6 +292,12 @@ def seed_live_status() -> None:
         from .pro_router import should_attempt_cli
         if not should_attempt_cli():
             mark_sick("Claude CLI Pro")
+        else:
+            # CLI recovered — clear stale sick status
+            with _lock:
+                w = _workers.get("Claude CLI Pro")
+                if w and w["state"] == "sick":
+                    mark_done("Claude CLI Pro")
     except Exception:
         pass
 
@@ -300,5 +306,11 @@ def seed_live_status() -> None:
         from .gemini_cli_worker import is_gemini_cli_available
         if not is_gemini_cli_available():
             mark_sick("Gemini CLI")
+        else:
+            # Gemini recovered — clear stale sick status
+            with _lock:
+                w = _workers.get("Gemini CLI")
+                if w and w["state"] == "sick":
+                    mark_done("Gemini CLI")
     except Exception:
         pass

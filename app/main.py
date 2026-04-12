@@ -99,6 +99,12 @@ def _scheduled_health_check() -> None:
                     )
             except Exception:
                 pass
+            # Refresh CLI worker statuses — clears stale sick/strike states
+            try:
+                from .learning.agent_status_tracker import seed_live_status
+                seed_live_status()
+            except Exception:
+                pass
         except Exception:
             pass
 
