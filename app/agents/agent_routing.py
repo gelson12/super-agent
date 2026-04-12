@@ -155,17 +155,20 @@ def tiered_agent_invoke(
 
     # ── Tier 1: Claude CLI Pro (ALWAYS try first — it's free) ────────────
     # CLI Pro on inspiring-cat has shell access, n8n MCP, and full tool
-    # capability. There is NO reason to skip it for "operational" requests.
+    # capability. It's FREE so we should always prefer it over paid API.
+    # Only skip if the CLI is genuinely down (not just rate-limited).
     try:
-        from ..learning.pro_router import try_pro, should_attempt_cli
-        if should_attempt_cli():
+        from ..learning.pro_router import try_pro, should_attempt_cli, is_cli_down
+        # Always attempt CLI unless genuinely unreachable — burst/daily
+        # cooldowns should NOT push traffic to the paid Anthropic API
+        if not is_cli_down():
             cli_result = try_pro(f"{system_prompt}\n\n{message}")
             if cli_result and not cli_result.startswith("["):
                 _log(f"✓ CLI Pro responded ({len(cli_result)} chars)", _source)
                 return cli_result
             _log(f"CLI returned error/empty — trying Gemini", _source)
         else:
-            _log("CLI flagged down — skipping to Gemini", _source)
+            _log("CLI genuinely down — skipping to Gemini", _source)
     except Exception as e:
         _log(f"CLI exception: {e} — trying Gemini", _source)
 
