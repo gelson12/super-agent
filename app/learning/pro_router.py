@@ -113,9 +113,9 @@ _RESET_BUFFER      = 15 * 60    # 15-min buffer added to parsed reset time
 
 # Dynamic timeouts — scale with prompt complexity so large tasks never time out.
 # Thresholds are character counts of the FULL prompt (system + user combined).
-_TIMEOUT_SMALL  = 120   # < 1 500 chars  — quick chat / trivial query
-_TIMEOUT_MEDIUM = 200   # 1 500 – 4 000  — moderate complexity
-_TIMEOUT_LARGE  = 360   # > 4 000 chars  — n8n design, big analysis, agent planning
+_TIMEOUT_SMALL  = 180   # < 1 500 chars  — quick chat / trivial query
+_TIMEOUT_MEDIUM = 360   # 1 500 – 4 000  — moderate complexity (n8n, builds, agents)
+_TIMEOUT_LARGE  = 480   # > 4 000 chars  — big analysis, multi-step agent planning
 
 # Back-compat alias used elsewhere in this file
 _TIMEOUT = _TIMEOUT_SMALL

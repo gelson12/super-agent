@@ -351,6 +351,12 @@ async def _lifespan(app: FastAPI):
 
     scheduler.start()
     yield
+    # Flush insight log on shutdown so activity history survives redeploys
+    try:
+        from .learning.insight_log import insight_log as _il
+        _il._flush()
+    except Exception:
+        pass
     scheduler.shutdown(wait=False)
 
 

@@ -57,7 +57,7 @@ class InsightLog:
         }
         self._buffer.append(entry)
         self._total += 1
-        if len(self._buffer) >= 10:
+        if len(self._buffer) >= 3:
             self._flush()
 
     def _flush(self) -> None:

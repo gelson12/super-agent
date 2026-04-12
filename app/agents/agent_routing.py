@@ -178,7 +178,7 @@ def tiered_agent_invoke(
     except Exception as e:
         _log(f"CLI exception: {e} — trying Gemini", _source)
 
-    # ── Tier 2: Gemini CLI (free, but text-only — skip for operational) ──
+    # ── Tier 2: Gemini CLI (free, text-only — try for informational) ────
     operational = is_operational(message, agent_type)
     if not operational:
         try:
@@ -187,13 +187,29 @@ def tiered_agent_invoke(
             if gemini and not gemini.startswith("["):
                 _log(f"✓ Gemini CLI responded ({len(gemini)} chars)", _source)
                 return gemini
-            _log(f"Gemini returned error/empty — trying Anthropic API", _source)
+            _log(f"Gemini returned error/empty — trying DeepSeek", _source)
         except Exception as e:
-            _log(f"Gemini exception: {e} — trying Anthropic API", _source)
+            _log(f"Gemini exception: {e} — trying DeepSeek", _source)
     else:
-        _log(f"Operational request — skipping Gemini (no tools), using LangGraph", _source)
+        _log(f"Operational request — skipping Gemini (no tools), trying DeepSeek LangGraph", _source)
 
-    # ── Tier 3: LangGraph + Anthropic API (full tool access) ─────────────
+    # ── Tier 3: LangGraph + DeepSeek (cheap, full tool access) ──────────
+    # DeepSeek is cheaper than Anthropic — try it first
+    if settings.deepseek_api_key:
+        try:
+            _log(f"Using LangGraph (DeepSeek) — tool-calling fallback", _source)
+            _track("DeepSeek", message[:100])
+            llm = _get_deepseek_llm()
+            result = _invoke_langgraph(llm, tools, system_prompt, message)
+            _done("DeepSeek")
+            return result
+        except Exception as e:
+            _done("DeepSeek")
+            _log(f"DeepSeek LangGraph error: {e} — trying Anthropic API", _source)
+    else:
+        _log("No DEEPSEEK_API_KEY — skipping to Anthropic API", _source)
+
+    # ── Tier 4: LangGraph + Anthropic API (expensive, last resort) ──────
     if settings.anthropic_api_key:
         try:
             _log(f"Using LangGraph (Anthropic API) — full tool access", _source)
@@ -216,24 +232,10 @@ def tiered_agent_invoke(
                     pass
             else:
                 _log(f"Anthropic API error: {e}", _source)
-                # Non-credit errors: still try DeepSeek as last resort
     else:
-        _log("No ANTHROPIC_API_KEY — skipping to DeepSeek", _source)
+        _log("No ANTHROPIC_API_KEY — skipping", _source)
 
-    # ── Tier 3b: LangGraph + DeepSeek (tool-calling fallback) ────────────
-    if settings.deepseek_api_key:
-        try:
-            _log("Using LangGraph (DeepSeek) — tool-calling fallback", _source)
-            _track("DeepSeek", message[:100])
-            llm = _get_deepseek_llm()
-            result = _invoke_langgraph(llm, tools, system_prompt, message)
-            _done("DeepSeek")
-            return result
-        except Exception as e:
-            _done("DeepSeek")
-            _log(f"DeepSeek LangGraph error: {e}", _source)
-
-    # ── Tier 4: DeepSeek text-only (last resort) ────────────────────────
+    # ── Tier 5: DeepSeek text-only (absolute last resort) ───────────────
     try:
         from ..models.deepseek import ask_deepseek
         ds = ask_deepseek(message, system=system_prompt)
