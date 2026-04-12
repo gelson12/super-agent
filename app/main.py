@@ -2426,6 +2426,10 @@ def credits_pro_status():
         auth = _verify()
         status = _pro_status()
         status["auth"] = auth
+        # Override pro_available with the live verify result — flags can be
+        # stale but the verify result is always current
+        if auth.get("pro_valid"):
+            status["pro_available"] = True
 
         # Add Gemini CLI availability (widget reads this)
         try:

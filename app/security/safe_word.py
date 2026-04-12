@@ -11,32 +11,49 @@ so external users cannot directly call n8n tools.
 The safe word is stored in the OWNER_SAFE_WORD environment variable.
 Default: alpha0  (change via Railway env var — do NOT commit the real word).
 """
+import re
 
 from ..config import settings
 
-# ── Keywords that signal a GitHub write operation ──────────────────────────────
-_GITHUB_WRITE_KEYWORDS = {
-    "create file", "update file", "delete file", "create repo",
-    "delete repo", "push", "commit", "merge", "create pr",
-    "open pr", "create pull request", "create branch", "delete branch",
-    "fork repo", "rename repo", "archive repo", "add collaborator",
-}
+# ── GitHub write: verb + object pairs (matched with flexible word gaps) ───────
+# These match "create file", "create a file", "create the file", etc.
+_GITHUB_WRITE_PATTERNS = [
+    r"\bcreate\b.*\bfile\b",
+    r"\bupdate\b.*\bfile\b",
+    r"\bdelete\b.*\bfile\b",
+    r"\bcreate\b.*\brepo\b",
+    r"\bdelete\b.*\brepo\b",
+    r"\bcreate\b.*\bpull request\b",
+    r"\bcreate\b.*\bbranch\b",
+    r"\bdelete\b.*\bbranch\b",
+    r"\bcreate\b.*\bpr\b",
+    r"\bopen\b.*\bpr\b",
+    r"\bfork\b.*\brepo\b",
+    r"\brename\b.*\brepo\b",
+    r"\barchive\b.*\brepo\b",
+    r"\badd\b.*\bcollaborator\b",
+]
 
-# ── Keywords that signal a dangerous shell write operation ────────────────────
-_SHELL_WRITE_KEYWORDS = {
+# ── Exact substring matches (shell commands, git operations) ─────────────────
+_EXACT_WRITE_KEYWORDS = {
+    "push", "commit", "merge",
     "rm ", "rmdir", "mv ", "sudo ", "chmod", "chown",
     "git push", "git commit", "git merge", "git rebase",
     "git reset --hard", "dd ", "> /", "mkfs",
 }
 
+# Pre-compile patterns for performance
+_GITHUB_COMPILED = [re.compile(p, re.IGNORECASE) for p in _GITHUB_WRITE_PATTERNS]
+
 
 def is_critical_request(message: str) -> bool:
     """Return True if the message is requesting a critical write operation."""
     lower = message.lower()
-    return (
-        any(k in lower for k in _GITHUB_WRITE_KEYWORDS)
-        or any(k in lower for k in _SHELL_WRITE_KEYWORDS)
-    )
+    # Check regex patterns (flexible matching for GitHub writes)
+    if any(pat.search(lower) for pat in _GITHUB_COMPILED):
+        return True
+    # Check exact substrings (shell commands)
+    return any(k in lower for k in _EXACT_WRITE_KEYWORDS)
 
 
 def has_safe_word(message: str) -> bool:
