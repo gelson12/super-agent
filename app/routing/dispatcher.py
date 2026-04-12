@@ -317,6 +317,20 @@ def _is_n8n_request(message: str) -> bool:
     return any(k in lower for k in _N8N_KEYWORDS)
 
 
+def _safe_agent_call(agent_fn, *args, agent_name: str = "agent", **kwargs) -> str:
+    """Call an agent function, catching any exception and returning a friendly error."""
+    try:
+        return agent_fn(*args, **kwargs)
+    except Exception as e:
+        err_msg = str(e)[:300].replace("\n", " ")
+        try:
+            from ..activity_log import bg_log
+            bg_log(f"{agent_name} crashed: {err_msg}", source="dispatcher")
+        except Exception:
+            pass
+        return f"[{agent_name} error: {err_msg}]"
+
+
 def _is_self_improve_request(message: str) -> bool:
     lower = message.lower()
     return any(k in lower for k in _SELF_IMPROVE_KEYWORDS)
@@ -639,7 +653,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
                 f"Return only the download URL and install instructions when done."
             )
             _write_active_task(session_id, message)
-            response = run_shell_agent(_resume_msg + "\n\n" + augmented_message, authorized=authorized)
+            response = _safe_agent_call(run_shell_agent, _resume_msg + "\n\n" + augmented_message, authorized=authorized, agent_name="shell_agent")
             _clear_active_task()
             store_memory(session_id, f"Q: {message[:300]} A: {response[:300]}")
             insight_log.record(message, "SHELL", response, "build_continuation", 1, session_id)
@@ -652,7 +666,10 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
                 "cache_hit": False,
             }, memory_count=_memory_count)
 
-        response = ask_claude(augmented_message, system=_system_claude)
+        try:
+            response = ask_claude(augmented_message, system=_system_claude)
+        except Exception as _claude_err:
+            response = f"[Claude API error: {str(_claude_err)[:200]}]"
         store_memory(session_id, f"Q: {message[:300]} A: {response[:300]}")
         insight_log.record(message, "CLAUDE", response, "continuation", 1, session_id)
         adapter.tick()
@@ -702,7 +719,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
     if _is_n8n_request(message):
         from ..agents.n8n_agent import run_n8n_agent
         _write_active_task(session_id, message)
-        response = run_n8n_agent(augmented_message)
+        response = _safe_agent_call(run_n8n_agent, augmented_message, agent_name="n8n_agent")
         _clear_active_task()
         insight_log.record(message, "N8N", response, "n8n_early", complexity, session_id)
         adapter.tick()
@@ -825,7 +842,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
         )
         _write_active_task(session_id, message)
         _mark_working("Shell Agent", message[:100])
-        response = run_shell_agent(_shell_payload, authorized=authorized)
+        response = _safe_agent_call(run_shell_agent, _shell_payload, authorized=authorized, agent_name="shell_agent")
         _mark_done("Shell Agent")
         _clear_active_task()
         if _agent_response_is_error(response):
@@ -850,7 +867,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
         _write_active_task(session_id, message)
         _mark_working("GitHub Agent", message[:100])
         _mark_talking("Claude CLI Pro", "GitHub Agent")
-        response = run_github_agent(augmented_message)
+        response = _safe_agent_call(run_github_agent, augmented_message, agent_name="github_agent")
         _clear_talking("Claude CLI Pro", "GitHub Agent")
         _mark_done("GitHub Agent")
         _clear_active_task()
@@ -876,7 +893,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
         _write_active_task(session_id, message)
         _mark_working("N8N Agent", message[:100])
         _mark_talking("Claude CLI Pro", "N8N Agent")
-        response = run_n8n_agent(augmented_message)
+        response = _safe_agent_call(run_n8n_agent, augmented_message, agent_name="n8n_agent")
         _clear_talking("Claude CLI Pro", "N8N Agent")
         _mark_done("N8N Agent")
         _clear_active_task()

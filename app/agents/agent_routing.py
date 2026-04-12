@@ -64,6 +64,12 @@ _NO_CREDIT_PHRASES = (
     "payment required",
     "your credit balance",
     "no credits",
+    "invalid authentication",
+    "authentication_error",
+    "invalid api key",
+    "invalid x-api-key",
+    "unauthorized",
+    "401",
 )
 
 
@@ -237,4 +243,13 @@ def tiered_agent_invoke(
     except Exception:
         pass
 
-    return "⚠️ All response tiers unavailable (CLI, Gemini, Anthropic, DeepSeek). Please retry in a moment."
+    _log("ALL tiers exhausted — CLI, Gemini, Anthropic API, DeepSeek all failed", _source)
+    return (
+        "⚠️ **All models currently unavailable.**\n\n"
+        "Tried: Claude CLI Pro → Gemini CLI → Anthropic API → DeepSeek\n\n"
+        "Likely causes:\n"
+        "1. ANTHROPIC_API_KEY invalid or expired (check Railway Variables)\n"
+        "2. DeepSeek API key issue\n"
+        "3. CLI worker down\n\n"
+        "Check the activity log or /credits/pro-status for details."
+    )

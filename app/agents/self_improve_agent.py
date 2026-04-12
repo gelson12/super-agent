@@ -229,23 +229,26 @@ def _get_agent():
 
 
 def _invoke(message: str) -> str:
-    agent = _get_agent()
-    result = agent.invoke({
-        "messages": [
-            {"role": "system", "content": _SYSTEM},
-            {"role": "user", "content": message},
-        ]
-    })
-    for msg in reversed(result.get("messages", [])):
-        if hasattr(msg, "type") and msg.type in ("ai", "assistant"):
-            content = msg.content
-            if isinstance(content, list):
-                return " ".join(
-                    block.get("text", "") for block in content
-                    if isinstance(block, dict)
-                ).strip()
-            return str(content).strip()
-    return "[Self-improve agent: no response]"
+    try:
+        agent = _get_agent()
+        result = agent.invoke({
+            "messages": [
+                {"role": "system", "content": _SYSTEM},
+                {"role": "user", "content": message},
+            ]
+        })
+        for msg in reversed(result.get("messages", [])):
+            if hasattr(msg, "type") and msg.type in ("ai", "assistant"):
+                content = msg.content
+                if isinstance(content, list):
+                    return " ".join(
+                        block.get("text", "") for block in content
+                        if isinstance(block, dict)
+                    ).strip()
+                return str(content).strip()
+        return "[Self-improve agent: no response]"
+    except Exception as e:
+        return f"[Self-improve agent error: {str(e)[:200]}]"
 
 
 def run_self_improve_agent(message: str, authorized: bool = False) -> str:

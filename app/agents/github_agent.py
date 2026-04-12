@@ -96,15 +96,18 @@ def _get_agent():
 
 def _invoke(message: str) -> str:
     """Raw agent invoke via LangGraph + Anthropic API (last resort)."""
-    agent = _get_agent()
-    result = agent.invoke({
-        "messages": [
-            {"role": "system", "content": _SYSTEM},
-            {"role": "user", "content": message},
-        ]
-    })
-    text = extract_final_agent_text(result)
-    return text or "[GitHub agent: no response]"
+    try:
+        agent = _get_agent()
+        result = agent.invoke({
+            "messages": [
+                {"role": "system", "content": _SYSTEM},
+                {"role": "user", "content": message},
+            ]
+        })
+        text = extract_final_agent_text(result)
+        return text or "[GitHub agent: no response]"
+    except Exception as e:
+        return f"[GitHub agent error: {str(e)[:200]}]"
 
 
 def run_github_agent(message: str) -> str:
