@@ -459,7 +459,22 @@ def _chat_response_from_result(result: dict, session_id: str) -> ChatResponse:
 @limiter.limit("30/minute")
 def chat(req: ChatRequest, request: Request):
     """Auto-route message to best model via semantic classifier."""
-    result = dispatch(req.message, session_id=req.session_id)
+    try:
+        result = dispatch(req.message, session_id=req.session_id)
+    except Exception as _e:
+        # Never crash — return a graceful error response
+        bg_log(f"Dispatch crash caught: {_e}", source="chat_endpoint")
+        result = {
+            "model_used": "ERROR",
+            "response": (
+                "All models are currently unavailable. "
+                "Claude CLI Pro may need a token refresh, and Anthropic API may have no credits. "
+                "The system will auto-recover — please try again in a few minutes."
+            ),
+            "routed_by": "error_handler",
+            "complexity": 0,
+            "cache_hit": False,
+        }
     if not result["response"].startswith("["):
         append_exchange(req.session_id, req.message, result["response"])
         _cat = "n8n_workflow" if req.session_id.startswith("n8n") else "chat"

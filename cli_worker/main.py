@@ -124,14 +124,14 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(_worker_loop())
 
     # Start CLI maintenance scheduler
-    _scheduler.add_job(_pro_token_keeper_job, "interval", hours=1,
+    _scheduler.add_job(_pro_token_keeper_job, "interval", minutes=15,
                        id="pro_token_keeper", replace_existing=True)
-    _scheduler.add_job(_gemini_token_keeper_job, "cron", hour=4, minute=0,
+    _scheduler.add_job(_gemini_token_keeper_job, "interval", hours=4,
                        id="gemini_token_keeper", replace_existing=True)
-    _scheduler.add_job(_pro_cli_watchdog_job, "interval", minutes=5,
+    _scheduler.add_job(_pro_cli_watchdog_job, "interval", minutes=3,
                        id="pro_cli_watchdog", replace_existing=True)
     _scheduler.start()
-    _bg_log("CLI maintenance scheduler started (pro_keeper hourly, gemini_keeper 04:00, watchdog 5min)", "boot")
+    _bg_log("CLI maintenance scheduler started (pro_keeper 15min, gemini_keeper 4h, watchdog 3min)", "boot")
 
     yield
     _scheduler.shutdown(wait=False)
