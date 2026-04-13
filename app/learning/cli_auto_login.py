@@ -707,33 +707,27 @@ def full_recovery_chain() -> bool:
     """
     Complete recovery chain — try everything in order:
       1. Direct OAuth refresh (lightweight, no browser)
-      2. Restore from env var (in case it was updated externally)
-      3. Full browser auto-login (nuclear option)
+      2. Full browser auto-login (Playwright — nuclear option)
+
+    NOTE: Env-var restore (previously step 2) is intentionally OMITTED here.
+    This function is only called after _try_restore_claude_auth() has already
+    been exhausted N times by pro_router — repeating it here would just write
+    the same expired token to disk again and short-circuit before Playwright runs.
 
     Returns True if ANY method succeeded.
     """
     _log("=== Starting full CLI recovery chain ===")
 
-    # Attempt 1: Direct OAuth refresh
-    _log("Recovery attempt 1/3: Direct OAuth refresh...")
+    # Attempt 1: Direct OAuth refresh (no browser, uses refresh_token)
+    _log("Recovery attempt 1/2: Direct OAuth refresh...")
     if _try_direct_refresh():
-        _log("=== Recovery SUCCESS via direct refresh ===")
+        _log("=== Recovery SUCCESS via direct OAuth refresh ===")
         return True
 
-    # Attempt 2: Restore from env var
-    _log("Recovery attempt 2/3: Restore from env var...")
-    try:
-        from .pro_router import _try_restore_claude_auth
-        if _try_restore_claude_auth():
-            _log("=== Recovery SUCCESS via env var restore ===")
-            return True
-    except Exception as e:
-        _log(f"Env var restore failed: {e}")
-
-    # Attempt 3: Full browser auto-login
-    _log("Recovery attempt 3/3: Full browser auto-login...")
+    # Attempt 2: Full browser auto-login (Playwright + n8n email monitor)
+    _log("Recovery attempt 2/2: Full browser auto-login via Playwright...")
     if auto_login_claude():
-        _log("=== Recovery SUCCESS via browser auto-login ===")
+        _log("=== Recovery SUCCESS via browser auto-login (Playwright) ===")
         return True
 
     _log("=== ALL recovery methods FAILED — manual login required ===")

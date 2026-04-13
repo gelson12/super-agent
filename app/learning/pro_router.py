@@ -814,10 +814,20 @@ def _classify_and_set_flag(stdout: str, stderr: str) -> None:
                 def _bg_recover():
                     ok = full_recovery_chain()
                     if ok:
-                        _log("full_recovery_chain: Playwright login SUCCESS ✓ — CLI restored.")
-                        clear_cli_down_flag()
+                        _log("full_recovery_chain: CLI recovery SUCCESS ✓ — token restored. "
+                             "Clearing ALL routing flags (CLI_DOWN + BURST) so next request uses CLI.")
+                        # reset_pro_flag clears CLI_DOWN + BURST + DAILY so the healed CLI
+                        # is actually used on the next request (clear_cli_down_flag alone
+                        # leaves the BURST flag active which would still skip inspiring-cat).
+                        reset_pro_flag()
+                        try:
+                            from .agent_status_tracker import mark_done as _md
+                            _md("Claude CLI Pro")
+                        except Exception:
+                            pass
                     else:
-                        _log("full_recovery_chain: Playwright login FAILED — manual login required.")
+                        _log("full_recovery_chain: CLI recovery FAILED — all methods exhausted. "
+                             "Manual login required (claude login in terminal + update Railway Variable).")
                 _threading.Thread(target=_bg_recover, daemon=True).start()
                 _log("Playwright auto-login started in background thread.")
             except Exception as _re:
