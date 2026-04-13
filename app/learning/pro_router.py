@@ -105,6 +105,10 @@ _FLAG_DIR      = Path("/workspace") if os.access("/workspace", os.W_OK) else Pat
 _DAILY_FLAG    = _FLAG_DIR / ".pro_daily"
 _BURST_FLAG    = _FLAG_DIR / ".pro_burst"
 _CLI_DOWN_FLAG = _FLAG_DIR / ".pro_cli_down"
+# Tracks how many consecutive times we've "restored" credentials but CLI still fails.
+# When this exceeds _RESTORE_ATTEMPT_LIMIT, we escalate to full Playwright recovery.
+_RESTORE_COUNT_FLAG = _FLAG_DIR / ".pro_restore_count"
+_RESTORE_ATTEMPT_LIMIT = 2  # after 2 failed restores, escalate to Playwright auto-login
 
 _DEFAULT_DAILY_TTL = 4 * 3600   # fallback if reset time can't be parsed from message
 _BURST_TTL         = 30 * 60    # 30 minutes
@@ -387,16 +391,17 @@ def is_cli_down() -> bool:
 
 
 def clear_cli_down_flag() -> None:
-    """Clear the CLI_DOWN flag — called by watchdog when CLI recovers."""
-    try:
-        _CLI_DOWN_FLAG.unlink(missing_ok=True)
-    except Exception:
-        pass
+    """Clear the CLI_DOWN flag and restore counter — called by watchdog when CLI recovers."""
+    for f in (_CLI_DOWN_FLAG, _RESTORE_COUNT_FLAG):
+        try:
+            f.unlink(missing_ok=True)
+        except Exception:
+            pass
 
 
 def reset_pro_flag() -> None:
     """Clear all flags — Pro becomes primary immediately."""
-    for f in (_DAILY_FLAG, _BURST_FLAG, _CLI_DOWN_FLAG):
+    for f in (_DAILY_FLAG, _BURST_FLAG, _CLI_DOWN_FLAG, _RESTORE_COUNT_FLAG):
         try:
             f.unlink(missing_ok=True)
         except Exception:
@@ -772,22 +777,62 @@ def _classify_and_set_flag(stdout: str, stderr: str) -> None:
     # CLI DOWN: auth failure / token expired
     if any(p in combined for p in _CLI_DOWN_PHRASES):
         _log("Pro CLI AUTH FAILURE detected — attempting autonomous credential restore…")
+
+        # Read current restore attempt count
+        try:
+            _restore_count = int(_RESTORE_COUNT_FLAG.read_text().strip())
+        except Exception:
+            _restore_count = 0
+
+        # If we've already restored N times but CLI keeps failing, the stored token
+        # is expired — escalate immediately to Playwright full recovery chain.
+        if _restore_count >= _RESTORE_ATTEMPT_LIMIT:
+            _log(
+                f"Pro CLI AUTH FAILURE — restore attempted {_restore_count}x but token "
+                "is still expired. Escalating to Playwright auto-login via n8n email monitor…"
+            )
+            _RESTORE_COUNT_FLAG.unlink(missing_ok=True)
+            try:
+                import threading as _threading
+                from .cli_auto_login import full_recovery_chain
+                def _bg_recover():
+                    ok = full_recovery_chain()
+                    if ok:
+                        _log("full_recovery_chain: Playwright login SUCCESS ✓ — CLI restored.")
+                        clear_cli_down_flag()
+                    else:
+                        _log("full_recovery_chain: Playwright login FAILED — manual login required.")
+                _threading.Thread(target=_bg_recover, daemon=True).start()
+                _log("Playwright auto-login started in background thread.")
+            except Exception as _re:
+                _log(f"Could not start full_recovery_chain: {_re}")
+            # Set CLI_DOWN during recovery (watchdog will clear when done)
+            _write_flag(_CLI_DOWN_FLAG, f"{datetime.datetime.utcnow().isoformat()}|{_CLI_DOWN_TTL}")
+            _queue_progress("🔄 Token expired — auto-login via email verification in progress…")
+            return
+
         # Before flagging CLI as down: try to re-write credentials from env var.
         # This handles the common case where the container restarted and wiped
         # /root/.claude/ from the ephemeral filesystem.
         if _try_restore_claude_auth():
-            # Credentials restored successfully — DON'T set CLI_DOWN, just log
+            # Credentials restored successfully — increment counter so we know
+            # if the NEXT call also fails (meaning the token itself is expired)
+            try:
+                _RESTORE_COUNT_FLAG.write_text(str(_restore_count + 1))
+            except Exception:
+                pass
             _log(
-                "Pro CLI auth SELF-HEALED ✓ — credentials restored from "
-                "CLAUDE_SESSION_TOKEN env var. CLI_DOWN flag NOT set. "
-                "Next call will retry Claude CLI normally."
+                f"Pro CLI auth SELF-HEALED ✓ — credentials restored from "
+                f"CLAUDE_SESSION_TOKEN env var (attempt {_restore_count + 1}/{_RESTORE_ATTEMPT_LIMIT}). "
+                "CLI_DOWN flag NOT set. Next call will retry Claude CLI normally."
             )
             _queue_progress(
                 "🔑 Auth restored from env var — Claude CLI is back (self-heal ✓)"
             )
             return  # Do not set CLI_DOWN — retry next call
 
-        # Auto-restore failed (token expired or env var not set)
+        # Auto-restore failed (token expired or env var not set) — escalate immediately
+        _RESTORE_COUNT_FLAG.unlink(missing_ok=True)
         _write_flag(_CLI_DOWN_FLAG, f"{datetime.datetime.utcnow().isoformat()}|{_CLI_DOWN_TTL}")
         _log(
             "Pro CLI AUTH FAILURE — token expired or not logged in. "
@@ -926,6 +971,7 @@ def try_pro(prompt: str, system: str = "") -> str | None:
                 # Fall through to direct subprocess below (which uses stdin=PIPE with auto-accept)
             else:
                 _track_cli("done")  # Clean response
+                _RESTORE_COUNT_FLAG.unlink(missing_ok=True)  # success — reset restore counter
                 return cli_result or None  # Clean response — use it
     else:
         _queue_progress("⚠️ inspiring-cat in cooldown — routing to local Claude CLI…")
