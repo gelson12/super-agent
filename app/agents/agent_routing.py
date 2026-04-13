@@ -39,6 +39,7 @@ _OPERATIONAL_KEYWORDS: dict[str, tuple[str, ...]] = {
     "github": (
         "create", "update", "delete", "push", "commit", "branch", "pull request",
         "open pr", "merge", "write file", "edit file",
+        "modify", "change", "fix", "rename", "replace", "update the",
     ),
     "n8n": (
         "create", "build", "make", "add", "generate", "set up", "setup",

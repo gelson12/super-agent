@@ -178,6 +178,11 @@ _GITHUB_KEYWORDS = {
     "github", "repo", "repository", "repositories", "commit", "pull request",
     "open pr", "create pr", "branch", "list files in", "read file", "create file",
     "update file", "delete file", "push to repo", "merge branch",
+    # Website / HTML modification triggers
+    "website", "modify website", "update website", "change website", "edit website",
+    "html", "index.html", "modify the", "change the link", "update the link",
+    "instagram link", "instagram icon", "instagram url", "social link",
+    "bridge-digital-solution", "bridge digital",
 }
 
 _SHELL_KEYWORDS = {
@@ -341,34 +346,67 @@ def _is_search_request(message: str) -> bool:
     return any(k in lower for k in _SEARCH_KEYWORDS)
 
 
+def _parse_classify_result(result: str) -> tuple[str, float]:
+    """Parse CATEGORY / CONFIDENCE lines from a classifier response."""
+    category, confidence = "GENERAL", 0.0
+    for line in result.splitlines():
+        line = line.strip()
+        if line.startswith("CATEGORY:"):
+            category = line.split(":", 1)[1].strip().upper()
+        elif line.startswith("CONFIDENCE:"):
+            try:
+                confidence = float(line.split(":", 1)[1].strip())
+            except ValueError:
+                pass
+    return category, confidence
+
+
 def _classify_route_with_confidence(message: str) -> tuple[str, float]:
     """
-    Feature 5: Use Haiku to classify the route with a confidence score.
-    Falls back to ("GENERAL", 0.0) on any error — never blocks dispatch.
-    ~200ms overhead — only called when no keyword match was found.
+    Feature 5: Classify the route using a 3-tier CLI-first strategy.
+
+    Tier 1 — Claude CLI Pro  (subscription, zero extra cost)
+    Tier 2 — Gemini CLI      (free ~1 500 req/day)
+    Tier 3 — Haiku API       (last resort — costs money)
+
+    Falls back to ("GENERAL", 0.0) on total failure — never blocks dispatch.
     """
     prompt = (
         f'Classify this user message into exactly one category.\n'
         f'Message: "{message}"\n\n'
         f'Categories: SHELL, GITHUB, N8N, SELF_IMPROVE, SEARCH, GENERAL\n'
         f'Confidence: 0.0 to 1.0\n\n'
-        f'Reply in exactly this format:\n'
+        f'Reply in exactly this format (two lines only, nothing else):\n'
         f'CATEGORY: <category>\n'
         f'CONFIDENCE: <0.0-1.0>'
     )
+
+    # ── Tier 1: Claude CLI Pro ────────────────────────────────────────────────
+    try:
+        from ..learning.claude_code_worker import ask_claude_code
+        result = ask_claude_code(prompt)
+        if result and not result.startswith("["):
+            category, confidence = _parse_classify_result(result)
+            if category != "GENERAL" or confidence > 0.0:
+                return category, confidence
+    except Exception:
+        pass
+
+    # ── Tier 2: Gemini CLI ────────────────────────────────────────────────────
+    try:
+        from ..learning.gemini_cli_worker import ask_gemini_cli
+        result = ask_gemini_cli(prompt)
+        if result and not result.startswith("["):
+            category, confidence = _parse_classify_result(result)
+            if category != "GENERAL" or confidence > 0.0:
+                return category, confidence
+    except Exception:
+        pass
+
+    # ── Tier 3: Haiku API (last resort) ──────────────────────────────────────
     try:
         result = ask_claude_haiku(prompt)
-        category, confidence = "GENERAL", 0.0
-        for line in result.splitlines():
-            line = line.strip()
-            if line.startswith("CATEGORY:"):
-                category = line.split(":", 1)[1].strip().upper()
-            elif line.startswith("CONFIDENCE:"):
-                try:
-                    confidence = float(line.split(":", 1)[1].strip())
-                except ValueError:
-                    pass
-        return category, confidence
+        return _parse_classify_result(result)
     except Exception:
         return "GENERAL", 0.0
 
@@ -774,8 +812,8 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
         })
 
     # ── 5. Keyword routing + confidence boost (Features 1 & 5) ───────────────
-    # Keywords give immediate 1.0 confidence. If no keyword matches, Haiku
-    # classifies with a confidence score — only routes if >= 0.7.
+    # Keywords give immediate 1.0 confidence. If no keyword matches, the CLI-first
+    # classifier runs (Claude CLI Pro → Gemini CLI → Haiku API as last resort).
     _kw_route = None
     if _is_shell_request(message):
         _kw_route = "SHELL"

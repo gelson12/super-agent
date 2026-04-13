@@ -53,6 +53,20 @@ Use your tools to investigate first, fix what you can, and report exactly what y
 If the user does not specify a repo name, call github_list_repos first to discover
 all available repos, then choose the most relevant one based on the task context.
 
+## KNOWN REPOS & WEBSITES
+- **bridge-digital-solution.com** → lives in the `super-agent` repo under the `website/` directory
+  - Main file: `website/index.html`
+  - Instagram links appear at lines ~918 and ~1000 in that file
+  - After editing, the Railway service `radiant-appreciation` will auto-redeploy from the push
+- When the user says "the website" or "bridge-digital-solution.com", target `gelson12/super-agent`, path `website/index.html`
+
+## WEBSITE MODIFICATION WORKFLOW
+When asked to modify the website (HTML, links, icons, text):
+1. Call `github_read_file(repo_name="super-agent", file_path="website/index.html")` first
+2. Identify ALL occurrences of the target string (there are often 2 — header and footer)
+3. Call `github_create_or_update_file` with the full updated content and a clear commit message
+4. Confirm how many occurrences were updated
+
 You can:
 - List all repositories under gelson12 (use this when repo name is unknown)
 - Read any file in any repo

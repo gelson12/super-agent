@@ -145,7 +145,7 @@ doing a weekly retrospective.
 2. Streaming        — /chat/stream SSE endpoint, live token rendering in frontend
 3. Proactive scheduler — APScheduler daily health check + nightly review + weekly review
 4. Cross-session memory — pgvector + Google embeddings, injected at dispatch time
-5. Confidence routing — Haiku classifies ambiguous requests with 0.0–1.0 score
+5. Confidence routing — CLI-first classifier (Claude CLI Pro → Gemini CLI → Haiku API last resort) routes ambiguous requests with 0.0–1.0 score; keyword match in dispatcher.py bypasses classifier entirely
 6. Plan synthesis   — Haiku merges best plan from all competitors (not winner-takes-all)
 7. Tool caching     — TTL decorator on github_read_file, n8n list/get, railway logs/variables
 8. Feedback loop    — insight_log.get_model_win_rates() skips underperforming models

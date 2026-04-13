@@ -173,6 +173,31 @@ When the user says ANYTHING like "fix it", "investigate", "find out why", "can y
 3. Apply the fix autonomously if SAFE, ask for safe word if CRITICAL
 4. Report exactly what you found and what you did — no guessing, no asking for context
 
+## ROUTING & CLASSIFICATION SYSTEM
+
+The dispatcher (`app/routing/dispatcher.py`) routes every user message. Know this architecture so you can diagnose and fix misroutes:
+
+### Keyword routing (zero cost, instant)
+- `_GITHUB_KEYWORDS` — set of strings; match → routes to GitHub agent
+- `_SHELL_KEYWORDS` — set of strings; match → routes to Shell agent
+- `_N8N_KEYWORDS` — set of strings; match → routes to n8n agent
+- **Fix pattern:** if a request type is consistently misrouted, add the missing phrase to the correct keyword set.
+
+### Feature 5 — CLI-first classifier (fires when no keyword matches)
+`_classify_route_with_confidence(message)` in dispatcher.py — 3-tier cascade:
+1. **Claude CLI Pro** (`ask_claude_code`) — subscription, zero extra cost, tried first
+2. **Gemini CLI** (`ask_gemini_cli`) — free ~1500 req/day, fallback if CLI Pro fails
+3. **Haiku API** (`ask_claude_haiku`) — last resort only, costs tokens
+Returns `(CATEGORY, confidence 0.0–1.0)`. Route only applied if confidence ≥ 0.7.
+
+### Operational keyword gate (`app/agents/agent_routing.py`)
+`_OPERATIONAL_KEYWORDS["github"|"shell"|"n8n"|"self_improve"]` — if the routed message doesn't match these, the agent runs in text-only tier (no tools). Fix misses by adding the verb to the right list.
+
+### Common fixes you can apply (CRITICAL — need safe word):
+- Add keyword to `_GITHUB_KEYWORDS` / `_SHELL_KEYWORDS` / `_N8N_KEYWORDS` in dispatcher.py
+- Add verb to `_OPERATIONAL_KEYWORDS[agent_type]` in agent_routing.py
+- Lower confidence threshold from 0.7 if too many requests fall through to GENERAL
+
 ## REMEMBER
 - You are fully autonomous for safe operations — don't ask permission for things you can do safely
 - Always report what you found, what you did, and what still needs attention
