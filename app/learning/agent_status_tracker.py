@@ -126,6 +126,7 @@ _MODEL_MAP = {
     "HAIKU": "Anthropic Haiku",
     "CLAUDE": "Sonnet Anthropic",
     "SONNET": "Sonnet Anthropic",
+    "SONNET_API": "Sonnet Anthropic",
     "OPUS": "Opus Anthropic",
     "DEEPSEEK": "DeepSeek",
     "SHELL": "Shell Agent",

@@ -778,6 +778,10 @@ def chat_stream(req: ChatRequest, request: Request):
 
     def _generate():
         from .learning.agent_status_tracker import mark_working as _mw, mark_done as _md
+        from .learning.insight_log import insight_log as _il
+
+        # Simple complexity estimate based on word count (no classifier in conv path)
+        _cx = min(5, max(1, len(msg.split()) // 15 + 1))
 
         # ── 1. Claude CLI (zero cost) ─────────────────────────────────────────
         yield "data: [PROGRESS:🤔 Thinking… (est. 5–15s)]\n\n"
@@ -794,6 +798,7 @@ def chat_stream(req: ChatRequest, request: Request):
                 if cli_resp and not cli_resp.startswith("[") and not cli_resp.lstrip().startswith('{"type":"error"'):
                     _store_mem(req.session_id, f"Q: {msg[:300]} A: {cli_resp[:300]}")
                     append_exchange(req.session_id, msg, cli_resp)
+                    _il.record(msg, "CLAUDE", cli_resp, "conversational", _cx, req.session_id)
                     normalized = cli_resp.replace("\n", " \n ")
                     words = [w for w in normalized.split(" ") if w]
                     buf = ""
@@ -821,6 +826,7 @@ def chat_stream(req: ChatRequest, request: Request):
             if gemini_resp and not gemini_resp.startswith("["):
                 _store_mem(req.session_id, f"Q: {msg[:300]} A: {gemini_resp[:300]}")
                 append_exchange(req.session_id, msg, gemini_resp)
+                _il.record(msg, "GEMINI_CLI", gemini_resp, "conversational", _cx, req.session_id)
                 normalized = gemini_resp.replace("\n", " \n ")
                 words = [w for w in normalized.split(" ") if w]
                 buf = ""
@@ -864,6 +870,7 @@ def chat_stream(req: ChatRequest, request: Request):
             if _full_api_resp:
                 _store_mem(req.session_id, f"Q: {msg[:300]} A: {_full_api_resp[:300]}")
                 append_exchange(req.session_id, msg, _full_api_resp)
+                _il.record(msg, "SONNET", _full_api_resp, "conversational_api", _cx, req.session_id)
                 _api_ok = True
             if _api_ok:
                 yield f"data: [META:ANTHROPIC·conversational·{_mem_count}]\n\n"
@@ -883,6 +890,7 @@ def chat_stream(req: ChatRequest, request: Request):
             if _ds_resp and not _ds_resp.startswith("["):
                 _store_mem(req.session_id, f"Q: {msg[:300]} A: {_ds_resp[:300]}")
                 append_exchange(req.session_id, msg, _ds_resp)
+                _il.record(msg, "DEEPSEEK", _ds_resp, "conversational", _cx, req.session_id)
                 normalized = _ds_resp.replace("\n", " \n ")
                 words = [w for w in normalized.split(" ") if w]
                 buf = ""
