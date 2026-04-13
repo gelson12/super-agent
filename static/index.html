@@ -1864,9 +1864,19 @@
     });
   }
 
+  // Render default sleeping desks immediately (before any API call)
+  function _renderDefaultDesks() {
+    const defW = id => ({id, state:'sleeping', last_worked:0, last_worked_ago:null, talking_to:null, task:''});
+    document.getElementById('office-models').innerHTML = _OFFICE_MODELS.map(id => _oDesk(defW(id))).join('');
+    document.getElementById('office-agents').innerHTML = _OFFICE_AGENTS.map(id => _oDesk(defW(id))).join('');
+  }
+
   async function _fetchOffice() {
     try {
-      const res = await fetch('/dashboard/agents/status', { headers: authHeaders() });
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 8000);
+      const res = await fetch('/dashboard/agents/status', { headers: authHeaders(), signal: controller.signal });
+      clearTimeout(timeoutId);
       if (!res.ok) return;
       const data = await res.json();
       const workers = data.workers || [];
@@ -1877,13 +1887,18 @@
       document.getElementById('office-agents').innerHTML = _OFFICE_AGENTS.map(id => _oDesk(defW(id))).join('');
       // Draw violet talking lines between collaborating avatars
       _drawTalkingLines(workers);
-    } catch(e) { console.error('Office fetch error:', e); }
+    } catch(e) {
+      // On failure, ensure default desks are shown (not empty)
+      if (!document.querySelector('.o-desk')) _renderDefaultDesks();
+      console.error('Office fetch error:', e);
+    }
   }
 
-  // Auto-open the office panel on page load
+  // Auto-open the office panel on page load with default desks
   setTimeout(() => {
     if (!_officeOpen) toggleOfficePanel();
-  }, 500);
+    _renderDefaultDesks(); // Show desks immediately
+  }, 300);
 </script>
 </body>
 </html>
