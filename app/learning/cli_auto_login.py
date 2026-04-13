@@ -66,7 +66,8 @@ def _log(msg: str) -> None:
 # waiting browser automation thread.
 import queue
 _verification_code_queue: queue.Queue = queue.Queue()  # carries the magic link URL
-_VERIFICATION_CODE_TIMEOUT = 120  # max seconds to wait for magic URL from n8n
+_VERIFICATION_CODE_TIMEOUT = 180  # max seconds to wait for magic URL from n8n
+# 180s = 3 minutes: email delivery (~15s) + n8n poll interval (up to 60s) + POST + buffer
 
 
 def receive_verification_code(code: str) -> None:
