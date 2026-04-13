@@ -2502,6 +2502,27 @@ def credits_pro_reset_get():
         return HTMLResponse(f"<h2 style='color:red'>Error: {e}</h2>")
 
 
+@app.post("/webhook/verification-code", tags=["auth"])
+def webhook_verification_code(payload: dict):
+    """
+    Receive verification code from n8n email monitor for automated Claude CLI re-login.
+
+    n8n monitors the Hotmail inbox for Anthropic verification emails, extracts
+    the 6-digit code, and POSTs here so the Playwright auto-login flow can complete.
+
+    Expected payload: {"code": "123456"}
+    """
+    code = str(payload.get("code", "")).strip()
+    if not code or not code.isdigit():
+        raise HTTPException(status_code=400, detail="payload must include numeric 'code' field")
+    try:
+        from .learning.cli_auto_login import receive_verification_code
+        receive_verification_code(code)
+        return {"ok": True, "code_received": code[:2] + "****"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to relay code: {e}")
+
+
 @app.get("/benchmark/latest", tags=["benchmark"])
 def benchmark_latest():
     """Return the most recent benchmark report (runs every Monday 01:00 UTC)."""
