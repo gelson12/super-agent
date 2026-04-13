@@ -408,6 +408,40 @@ def reset_pro_flag() -> None:
             pass
 
 
+def _creds_token_expired() -> bool:
+    """
+    Read the OAuth access token expiry from the credentials file.
+    Returns True if the token is KNOWN to be expired (timestamp in the past).
+    Returns False if not expired or if the expiry cannot be determined.
+
+    This catches the case where `claude auth status` says "logged in via claude.ai"
+    but the actual access_token has been revoked/expired by Anthropic's servers —
+    the CLI does not make a live API call, so it reports the file as valid.
+    """
+    import json as _j
+    import time as _t
+    for _p in ["/root/.claude/.credentials.json", "/root/.claude/credentials.json"]:
+        try:
+            _data = _j.loads(Path(_p).read_text())
+            # Try various expiry field names used across CLI versions
+            _exp = (
+                _data.get("expiresAt")
+                or _data.get("expires_at")
+                or (_data.get("oauth") or {}).get("expiresAt")
+                or (_data.get("oauth") or {}).get("expires_at")
+            )
+            if _exp is None:
+                continue
+            # Some CLIs store milliseconds, some seconds
+            _ts = float(_exp) / 1000.0 if float(_exp) > 1e10 else float(_exp)
+            if _t.time() > _ts + 60:  # 60s grace
+                return True   # Definitely expired
+            return False      # Not yet expired
+        except Exception:
+            continue
+    return False  # Can't determine — assume valid
+
+
 def verify_pro_auth() -> dict:
     """
     Run `claude auth status` and return the ACTUAL verified auth state.
@@ -467,6 +501,14 @@ def verify_pro_auth() -> dict:
             is_pro       = logged_in and auth_method == "claude.ai"
 
             if is_pro:
+                # Extra guard: check expiry timestamp in creds file so we don't
+                # declare "valid" for a token that's already expired server-side.
+                if _creds_token_expired():
+                    _write_flag(_CLI_DOWN_FLAG, f"{datetime.datetime.utcnow().isoformat()}|{_CLI_DOWN_TTL}")
+                    msg = "Claude auth status says claude.ai but access token is EXPIRED (expiresAt in past) — CLI_DOWN flag set."
+                    _log(f"verify_pro_auth: {msg}")
+                    return {"verified": True, "pro_valid": False, "logged_in": True,
+                            "auth_method": auth_method, "subscription": subscription, "message": msg}
                 clear_cli_down_flag()
                 msg = f"Claude Pro auth VERIFIED ✓ (via CLI worker) — authMethod=claude.ai subscription={subscription or 'unknown'}"
                 _log(f"verify_pro_auth: {msg}")
@@ -509,6 +551,17 @@ def verify_pro_auth() -> dict:
         is_pro      = logged_in and auth_method == "claude.ai"
 
         if is_pro:
+            # Extra guard: check expiry timestamp in creds file so we don't
+            # declare "valid" for a token that's already expired server-side.
+            if _creds_token_expired():
+                _write_flag(_CLI_DOWN_FLAG, f"{datetime.datetime.utcnow().isoformat()}|{_CLI_DOWN_TTL}")
+                msg = "Claude auth status says claude.ai but access token is EXPIRED (expiresAt in past) — CLI_DOWN flag set."
+                _log(f"verify_pro_auth: {msg}")
+                return {
+                    "verified": True, "pro_valid": False,
+                    "logged_in": True, "auth_method": auth_method,
+                    "subscription": subscription, "message": msg,
+                }
             # Verified valid — clear CLI_DOWN if it was stale
             clear_cli_down_flag()
             msg = f"Claude Pro auth VERIFIED ✓ — authMethod=claude.ai subscription={subscription or 'unknown'}"

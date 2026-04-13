@@ -95,6 +95,10 @@ RUN code-server --install-extension Dart-Code.dart-code \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# ── Playwright + Chromium (for automated Claude CLI re-authentication) ─────────
+# playwright is in requirements.txt; this installs the Chromium binary + its deps.
+RUN playwright install --with-deps chromium
+
 # ── Application source ────────────────────────────────────────────────────────
 COPY . .
 
