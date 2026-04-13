@@ -2674,8 +2674,12 @@ def webhook_store_memory(payload: dict):
     Optional: {"memory_type": "fact", "importance": 4}   (defaults: general, 3)
     """
     import os as _os
-    n8n_key = _os.environ.get("N8N_API_KEY", "")
-    if not n8n_key or payload.get("api_key", "") != n8n_key:
+    # Accept either N8N_API_KEY or GITHUB_PAT as the auth key
+    valid_keys = {k for k in [
+        _os.environ.get("N8N_API_KEY", ""),
+        _os.environ.get("GITHUB_PAT", ""),
+    ] if k}
+    if not valid_keys or payload.get("api_key", "") not in valid_keys:
         raise HTTPException(status_code=403, detail="Invalid api_key")
     content = str(payload.get("content", "")).strip()
     if not content:
