@@ -221,9 +221,12 @@ def mark_sick(worker_id: str) -> None:
     then escalates to 'sick' (TOKEN ERR) only if recovery hasn't happened."""
     with _lock:
         w = _ensure_worker(worker_id)
-        # Only stamp sick_since on the first sick call — don't reset it on repeated calls
-        # so the 15-min grace period counts from the original failure, not the last retry.
-        if w["state"] != "sick":
+        # Only stamp sick_since if it has never been set (or was explicitly cleared by
+        # a CONFIRMED recovery via mark_done). Do NOT reset it just because state
+        # briefly transitioned away from "sick" (e.g. a false-positive restore attempt
+        # that set state="idle" before re-failing). This ensures the 15-min grace
+        # period always counts from the ORIGINAL failure, not the last retry.
+        if w.get("sick_since") is None:
             w["sick_since"] = time.time()
         w["state"] = "sick"
         w["task"] = "Recovering…"

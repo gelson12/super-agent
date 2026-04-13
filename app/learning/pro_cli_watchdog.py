@@ -157,6 +157,14 @@ def maybe_recover() -> bool:
             "Reverting to Claude Pro as primary model. ANTHROPIC_API_KEY fallback deactivated.",
             source="pro_cli_watchdog",
         )
+        # ✅ Mark dashboard healthy — clears sick_since so grace period resets correctly
+        # This is the ONLY place that should call mark_done for CLI recovery;
+        # it only runs after verify_pro_auth() confirms authMethod=claude.ai.
+        try:
+            from .agent_status_tracker import mark_done as _md
+            _md("Claude CLI Pro")
+        except Exception:
+            pass
         try:
             from ..alerts.notifier import alert_claude_recovered
             subscription = auth.get("subscription", "")
