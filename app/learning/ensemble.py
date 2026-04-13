@@ -23,6 +23,20 @@ from .claude_code_worker import ask_claude_code as _ensemble_ask_cli
 from ..prompts import ENSEMBLE_SYNTHESIS_PROMPT
 from ..learning.insight_log import insight_log
 
+def _talking(a: str, b: str) -> None:
+    try:
+        from .agent_status_tracker import mark_talking as _mt
+        _mt(a, b)
+    except Exception:
+        pass
+
+def _clear(a: str, b: str) -> None:
+    try:
+        from .agent_status_tracker import clear_talking as _ct
+        _ct(a, b)
+    except Exception:
+        pass
+
 _LONG_RESPONSE_THRESHOLD = 2000
 
 
@@ -63,6 +77,10 @@ class EnsembleVoter:
             ("DEEPSEEK", ask_deepseek),
         ]
 
+        # Show all 3 models communicating during parallel ensemble vote
+        _talking("Claude CLI Pro", "Gemini CLI")
+        _talking("Claude CLI Pro", "DeepSeek")
+        _talking("Gemini CLI", "DeepSeek")
         responses: dict[str, str] = {}
         try:
             with ThreadPoolExecutor(max_workers=3) as executor:
@@ -77,7 +95,13 @@ class EnsembleVoter:
                     except Exception as e:
                         responses[label] = f"[{label} error: {e}]"
         except Exception:
+            _clear("Claude CLI Pro", "Gemini CLI")
+            _clear("Claude CLI Pro", "DeepSeek")
+            _clear("Gemini CLI", "DeepSeek")
             return _not_run
+        _clear("Claude CLI Pro", "Gemini CLI")
+        _clear("Claude CLI Pro", "DeepSeek")
+        _clear("Gemini CLI", "DeepSeek")
 
         # Disagreement detection
         lengths = [len(r) for r in responses.values() if r]
@@ -94,7 +118,12 @@ class EnsembleVoter:
             response_b=responses.get("GEMINI", "[no response]"),
             response_c=responses.get("DEEPSEEK", "[no response]"),
         )
+        # Synthesis: Claude CLI Pro reads all 3 responses and produces final answer
+        _talking("Claude CLI Pro", "DeepSeek")
+        _talking("Claude CLI Pro", "Gemini CLI")
         synthesis = ask_internal(synthesis_prompt)
+        _clear("Claude CLI Pro", "DeepSeek")
+        _clear("Claude CLI Pro", "Gemini CLI")
 
         if synthesis.startswith("[") and synthesis.endswith("]"):
             # Synthesis failed — return the Claude answer as best fallback

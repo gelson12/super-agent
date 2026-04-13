@@ -20,6 +20,22 @@ model still sees the context, just in a single string.
 from __future__ import annotations
 
 
+def _talking(a: str, b: str) -> None:
+    try:
+        from ..learning.agent_status_tracker import mark_talking as _mt
+        _mt(a, b)
+    except Exception:
+        pass
+
+
+def _clear(a: str, b: str) -> None:
+    try:
+        from ..learning.agent_status_tracker import clear_talking as _ct
+        _ct(a, b)
+    except Exception:
+        pass
+
+
 def _merge(prompt: str, system: str) -> str:
     """Merge system + user prompt into a single string for CLI workers."""
     if not system or not system.strip():
@@ -45,20 +61,26 @@ def ask_internal(prompt: str, system: str = "") -> str:
     except Exception:
         pass
 
-    # ── Tier 2: Gemini CLI ────────────────────────────────────────────────────
+    # ── Tier 2: Gemini CLI (Claude CLI failed — show handoff line) ────────────
     try:
         from .gemini_cli_worker import ask_gemini_cli
+        _talking("Claude CLI Pro", "Gemini CLI")
         result = ask_gemini_cli(full_prompt)
+        _clear("Claude CLI Pro", "Gemini CLI")
         if result and not result.startswith("["):
             return result
     except Exception:
-        pass
+        _clear("Claude CLI Pro", "Gemini CLI")
 
-    # ── Tier 3: Haiku API (last resort) ──────────────────────────────────────
+    # ── Tier 3: Haiku API (both CLIs failed — show handoff line) ─────────────
     try:
         from ..models.claude import ask_claude_haiku
-        return ask_claude_haiku(prompt, system=system) if system else ask_claude_haiku(prompt)
+        _talking("Gemini CLI", "Anthropic Haiku")
+        result = ask_claude_haiku(prompt, system=system) if system else ask_claude_haiku(prompt)
+        _clear("Gemini CLI", "Anthropic Haiku")
+        return result
     except Exception as e:
+        _clear("Gemini CLI", "Anthropic Haiku")
         return f"[ask_internal: all tiers failed — {e}]"
 
 
@@ -77,8 +99,13 @@ def ask_internal_fast(prompt: str, system: str = "") -> str:
     except Exception:
         pass
 
+    # Tier 2 skipped (fast path) — go straight to Haiku
     try:
         from ..models.claude import ask_claude_haiku
-        return ask_claude_haiku(prompt, system=system) if system else ask_claude_haiku(prompt)
+        _talking("Claude CLI Pro", "Anthropic Haiku")
+        result = ask_claude_haiku(prompt, system=system) if system else ask_claude_haiku(prompt)
+        _clear("Claude CLI Pro", "Anthropic Haiku")
+        return result
     except Exception as e:
+        _clear("Claude CLI Pro", "Anthropic Haiku")
         return f"[ask_internal_fast: all tiers failed — {e}]"

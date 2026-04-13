@@ -20,6 +20,25 @@ from .internal_llm import ask_internal
 from ..prompts import COT_REASONING_PROMPT, COT_ANSWER_PROMPT
 from ..learning.insight_log import insight_log
 
+_WORKER_IDS = {
+    "CLAUDE": "Claude CLI Pro", "DEEPSEEK": "DeepSeek",
+    "GEMINI": "Gemini CLI", "HAIKU": "Anthropic Haiku",
+}
+
+def _talking(a: str, b: str) -> None:
+    try:
+        from .agent_status_tracker import mark_talking as _mt
+        _mt(a, b)
+    except Exception:
+        pass
+
+def _clear(a: str, b: str) -> None:
+    try:
+        from .agent_status_tracker import clear_talking as _ct
+        _ct(a, b)
+    except Exception:
+        pass
+
 # (reasoning_model, answer_model) pairs
 _COT_PAIRS: dict[str, tuple[str, str]] = {
     "DEEPSEEK": ("DEEPSEEK", "CLAUDE"),
@@ -77,16 +96,22 @@ class CoTHandoff:
             return _not_used
 
         try:
-            # Step 1: Reasoning trace
+            _wa = _WORKER_IDS.get(reasoning_model, reasoning_model)
+            _wb = _WORKER_IDS.get(answer_model, answer_model)
+
+            # Step 1: Reasoning trace — show reasoning model working
+            _talking(_wa, _wb)
             reasoning_prompt = COT_REASONING_PROMPT.format(query=query)
             trace = reasoning_fn(reasoning_prompt, system="")
 
             if trace.startswith("[") and trace.endswith("]"):
+                _clear(_wa, _wb)
                 return _not_used
 
-            # Step 2: Answer using trace
+            # Step 2: Answer using trace — handoff visible on dashboard
             answer_prompt = COT_ANSWER_PROMPT.format(trace=trace, query=query)
             response = answer_fn(answer_prompt, system="")
+            _clear(_wa, _wb)
 
             if response.startswith("[") and response.endswith("]"):
                 return _not_used

@@ -25,6 +25,25 @@ from .internal_llm import ask_internal
 from ..prompts import PEER_REVIEW_PROMPT
 from ..learning.insight_log import insight_log
 
+_WORKER_IDS = {
+    "CLAUDE": "Claude CLI Pro", "GEMINI": "Gemini CLI",
+    "DEEPSEEK": "DeepSeek", "HAIKU": "Anthropic Haiku",
+}
+
+def _talking(a: str, b: str) -> None:
+    try:
+        from .agent_status_tracker import mark_talking as _mt
+        _mt(a, b)
+    except Exception:
+        pass
+
+def _clear(a: str, b: str) -> None:
+    try:
+        from .agent_status_tracker import clear_talking as _ct
+        _ct(a, b)
+    except Exception:
+        pass
+
 # ── Constants ─────────────────────────────────────────────────────────────────
 
 _CRITIC_MAP: dict[str, str] = {
@@ -91,9 +110,13 @@ class PeerReviewer:
             return _not_reviewed
 
         try:
-            # Step 1: Critique
+            # Step 1: Critique — show line between primary and critic
+            _wa = _WORKER_IDS.get(primary_model, primary_model)
+            _wb = _WORKER_IDS.get(critic_model, critic_model)
+            _talking(_wa, _wb)
             critique_prompt = PEER_REVIEW_PROMPT.format(query=query, response=response)
             critique = critic_fn(critique_prompt, system="")
+            _clear(_wa, _wb)
 
             # Error from critic model — skip synthesis
             if critique.startswith("[") and critique.endswith("]"):

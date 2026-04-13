@@ -1030,11 +1030,14 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
 
     # ── 8a. Ensemble (complexity == 5) ────────────────────────────────────────
     if complexity == 5:
-        _mark_talking("Sonnet Anthropic", "DeepSeek")
-        _mark_talking("Sonnet Anthropic", "Gemini CLI")
+        # All 3 models talk to each other during parallel ensemble voting
+        _mark_talking("Claude CLI Pro", "Gemini CLI")
+        _mark_talking("Claude CLI Pro", "DeepSeek")
+        _mark_talking("Gemini CLI", "DeepSeek")
         ensemble_result = ensemble_voter.vote(message, complexity, session_id)
-        _clear_talking("Sonnet Anthropic", "DeepSeek")
-        _clear_talking("Sonnet Anthropic", "Gemini CLI")
+        _clear_talking("Claude CLI Pro", "Gemini CLI")
+        _clear_talking("Claude CLI Pro", "DeepSeek")
+        _clear_talking("Gemini CLI", "DeepSeek")
         if ensemble_result["is_ensemble"]:
             response = ensemble_result["response"]
             if model in _CACHEABLE_MODELS:
@@ -1068,28 +1071,60 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
     _mark_done(_worker_id)
 
     # Layer 1: CoT handoff (complexity >= 4, classifier-routed)
+    # Visualise: reasoning model talks to answer model
     cot_result = {
         "cot_used": False, "response": "", "reasoning_model": None,
         "answer_model": None, "trace_length": 0,
     }
     if complexity >= 4 and routed_by == "classifier":
+        # Map model → worker ID for talking line
+        _cot_worker_map = {
+            "CLAUDE": "Claude CLI Pro", "DEEPSEEK": "DeepSeek",
+            "GEMINI": "Gemini CLI", "HAIKU": "Anthropic Haiku",
+        }
+        _cot_a = _cot_worker_map.get(model.upper(), _worker_id)
+        _cot_b = "DeepSeek" if model.upper() == "CLAUDE" else "Claude CLI Pro"
+        _mark_talking(_cot_a, _cot_b)
         cot_result = cot_handoff.handoff(message, model, routed_by, complexity, session_id)
+        _clear_talking(_cot_a, _cot_b)
         if cot_result["cot_used"] and cot_result["response"] and not cot_result["response"].startswith("["):
             response = cot_result["response"]
 
     # Layer 2: Peer review (complexity >= 4)
+    # Visualise: primary model talks to its critic
     review_result = {
         "was_reviewed": False, "critic_model": None,
         "critique_was_substantive": False, "critique": None,
     }
     if complexity >= 4:
+        _peer_worker_map = {
+            "CLAUDE": "Claude CLI Pro", "DEEPSEEK": "DeepSeek",
+            "GEMINI": "Gemini CLI", "HAIKU": "Anthropic Haiku",
+        }
+        _critic_map = {
+            "CLAUDE": "GEMINI", "DEEPSEEK": "HAIKU",
+            "GEMINI": "DEEPSEEK", "HAIKU": "CLAUDE",
+        }
+        _peer_primary = _peer_worker_map.get(model.upper(), _worker_id)
+        _peer_critic  = _peer_worker_map.get(_critic_map.get(model.upper(), ""), None)
+        if _peer_critic:
+            _mark_talking(_peer_primary, _peer_critic)
         review_result = peer_reviewer.review(message, response, model, complexity, session_id)
+        if _peer_critic:
+            _clear_talking(_peer_primary, _peer_critic)
         response = review_result["final_response"]
 
     # Layer 3: Red team (complexity >= 3, confidence_mode enabled)
+    # Visualise: internal model challenges the answer, then escalates if flaw found
     rt_result = {"red_team_ran": False, "escalated": False, "red_verdict": None}
     if complexity >= 3:
+        _mark_talking("Anthropic Haiku", _worker_id)
         rt_result = red_team.challenge(message, response, complexity, session_id)
+        _clear_talking("Anthropic Haiku", _worker_id)
+        if rt_result.get("escalated"):
+            # Escalation: Claude CLI Pro re-answers with flaw context
+            _mark_talking("Claude CLI Pro", _worker_id)
+            _clear_talking("Claude CLI Pro", _worker_id)
         response = rt_result["response"]
 
     # ── 9. Cache + log + adapt + wisdom + memory ─────────────────────────────
