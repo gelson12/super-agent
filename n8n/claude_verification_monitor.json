@@ -39,7 +39,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://super-agent-production.up.railway.app/webhook/verification-code",
+        "url": "https://inspiring-cat-production.up.railway.app/webhook/verification-code",
         "authentication": "none",
         "sendBody": true,
         "contentType": "json",
