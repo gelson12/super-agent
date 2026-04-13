@@ -551,6 +551,46 @@ def agent_log(worker_id: str, limit: int = 60):
     return {"worker": decoded, "events": unique, "total": len(unique)}
 
 
+@app.get("/debug/talking-test", tags=["meta"])
+def debug_talking_test(seconds: int = 30):
+    """
+    Force two workers into 'talking' state for N seconds (default 30).
+    Use this to visually verify the talking-lines animation on the dashboard.
+    E.g. GET /debug/talking-test?seconds=60
+    """
+    import threading
+    from .learning.agent_status_tracker import mark_talking, clear_talking
+    worker_a = "Sonnet Anthropic"
+    worker_b = "Claude CLI Pro"
+    mark_talking(worker_a, worker_b)
+
+    def _clear_later():
+        import time as _t
+        _t.sleep(max(5, min(seconds, 300)))
+        clear_talking(worker_a, worker_b)
+
+    threading.Thread(target=_clear_later, daemon=True).start()
+    return {
+        "status": "ok",
+        "message": f"'{worker_a}' ↔ '{worker_b}' set to talking for {seconds}s — open /agents to verify",
+    }
+
+
+@app.post("/debug/n8n-cleanup", tags=["meta"])
+def debug_n8n_cleanup():
+    """
+    Directly invoke the n8n_cleanup_test_workflows tool — deletes junk/test
+    workflows from n8n while protecting production ones.
+    Protected: 'super agent chat', 'business hub', 'daily report', etc.
+    """
+    try:
+        from .tools.n8n_tools import n8n_cleanup_test_workflows
+        result = n8n_cleanup_test_workflows.invoke({})
+        return {"status": "ok", "result": result}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 @app.get("/health", tags=["meta"])

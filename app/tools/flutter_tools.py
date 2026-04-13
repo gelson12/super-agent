@@ -486,6 +486,33 @@ def build_flutter_voice_app(dummy: str = "") -> str:
         log.append(f"[build.gradle] WARNING: {e}")
         _progress(f"  ⚠️ build.gradle patch warning: {e}")
 
+    # ── Step 4c: Write memory-efficient gradle.properties ────────────────────
+    # Railway containers have limited RAM. Gradle's default JVM args can OOM.
+    # We cap the heap at 512 MB and disable the Gradle daemon (which keeps a
+    # persistent JVM alive, doubling peak memory usage).
+    _progress("🔧 Step 4c — Configuring Gradle JVM heap limits (prevent OOM)...")
+    try:
+        props_path = proj / "android" / "gradle.properties"
+        existing = props_path.read_text(encoding="utf-8") if props_path.exists() else ""
+        if "org.gradle.jvmargs" not in existing:
+            _jvm_block = (
+                "\n# Memory-efficient build settings (added by Super Agent)\n"
+                "org.gradle.daemon=false\n"
+                "org.gradle.jvmargs=-Xmx512m -Xms256m -XX:MaxMetaspaceSize=256m "
+                "-XX:+HeapDumpOnOutOfMemoryError\n"
+                "org.gradle.parallel=false\n"
+                "org.gradle.caching=false\n"
+            )
+            props_path.write_text(existing.rstrip() + _jvm_block, encoding="utf-8")
+            log.append("[gradle.properties] JVM heap capped at 512 MB, daemon disabled")
+            _progress("  → Gradle JVM limited to 512 MB (prevents OOM on Railway)")
+        else:
+            log.append("[gradle.properties] jvmargs already set — skipping")
+            _progress("  → gradle.properties already has JVM settings")
+    except Exception as _pe:
+        log.append(f"[gradle.properties] WARNING: {_pe}")
+        _progress(f"  ⚠️ gradle.properties warning: {_pe}")
+
     # ── Step 5: flutter pub get ───────────────────────────────────────────────
     _progress("📦 Step 5/8 — Running flutter pub get (downloading packages)...")
     _progress("  → This downloads speech_to_text, flutter_tts, http (~30-60s)...")
@@ -527,7 +554,10 @@ def build_flutter_voice_app(dummy: str = "") -> str:
     _hb = _threading.Thread(target=_heartbeat, daemon=True)
     _hb.start()
 
-    build_out = _run(f"{_FLUTTER_BIN} build apk --debug", str(proj), timeout=600)
+    build_out = _run(
+        f"{_FLUTTER_BIN} build apk --debug --no-tree-shake-icons",
+        str(proj), timeout=600,
+    )
     _build_done[0] = True
 
     log.append(f"[build apk] {build_out[-800:]}")
@@ -546,7 +576,10 @@ def build_flutter_voice_app(dummy: str = "") -> str:
             _build_done[0] = False
             _hb2 = _threading.Thread(target=_heartbeat, daemon=True)
             _hb2.start()
-            build_out = _run(f"{_FLUTTER_BIN} build apk --debug", str(proj), timeout=600)
+            build_out = _run(
+                f"{_FLUTTER_BIN} build apk --debug --no-tree-shake-icons",
+                str(proj), timeout=600,
+            )
             _build_done[0] = True
             log.append(f"[build apk retry] {build_out[-800:]}")
             if not apk.exists():
