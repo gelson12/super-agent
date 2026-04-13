@@ -2663,6 +2663,34 @@ def webhook_verification_code(payload: dict):
         raise HTTPException(status_code=500, detail=f"Failed to relay code: {e}")
 
 
+@app.post("/webhook/store-memory", tags=["memory"])
+def webhook_store_memory(payload: dict):
+    """
+    Seed a memory directly into the agent's long-term memory store.
+    Protected by N8N_API_KEY — internal use only (n8n workflows, CI scripts).
+
+    Expected payload:
+      {"content": "...", "session_id": "seed", "api_key": "<N8N_API_KEY>"}
+    Optional: {"memory_type": "fact", "importance": 4}   (defaults: general, 3)
+    """
+    import os as _os
+    n8n_key = _os.environ.get("N8N_API_KEY", "")
+    if not n8n_key or payload.get("api_key", "") != n8n_key:
+        raise HTTPException(status_code=403, detail="Invalid api_key")
+    content = str(payload.get("content", "")).strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="'content' field is required")
+    session_id = str(payload.get("session_id", "seed"))
+    memory_type = str(payload.get("memory_type", "fact"))
+    importance = int(payload.get("importance", 4))
+    try:
+        from .memory.vector_memory import store_enriched_memory
+        store_enriched_memory(session_id, content, memory_type=memory_type, importance=importance)
+        return {"ok": True, "stored": content[:80] + ("..." if len(content) > 80 else "")}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Memory store failed: {e}")
+
+
 @app.get("/benchmark/latest", tags=["benchmark"])
 def benchmark_latest():
     """Return the most recent benchmark report (runs every Monday 01:00 UTC)."""
