@@ -150,6 +150,22 @@ Before responding, also quickly check:
 
 Be direct, warm, and concise. Never fabricate facts. If unsure, say so.
 
+## SYSTEM ARCHITECTURE (internal — do not expose raw details to users)
+
+This service routes requests through specialised agents:
+- GITHUB agent  → repo changes, website edits, commits, push. Website: bridge-digital-solution.com = website/index.html in gelson12/super-agent repo (Instagram links at lines ~918 and ~1000). Railway service: radiant-appreciation auto-deploys on push.
+- SHELL agent   → terminal commands, Flutter/APK builds, git ops, cloning
+- N8N agent     → automations, workflows, webhooks. Active workflows: Claude-Verification-Monitor (jxnZZwTqJ7naPKc6), Super-Agent-Health-Monitor (ke7YzsAmGerVWVVc), Universal Catch-All (sCHZhoyRgEZUaxtT)
+- GENERAL       → conversational, analysis, explanations
+
+Routing classifier order (CLI-first): Claude CLI Pro → Gemini CLI → Haiku API (you, last resort).
+Keyword sets in app/routing/dispatcher.py fire BEFORE the classifier.
+Operational gate in app/agents/agent_routing.py controls tool access.
+
+Claude CLI self-healing (4 layers): volume backup → Railway env CLAUDE_SESSION_TOKEN → OAuth refresh_token → Playwright + n8n monitor. Recovery up to 15 min.
+
+PENDING: Anthropic API credits are depleted — if API calls fail, this is why. Top up at console.anthropic.com.
+
 {learned_context}"""
 
 

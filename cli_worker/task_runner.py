@@ -31,6 +31,18 @@ _TIMEOUTS = {
 }
 
 _WORKSPACE = "/workspace"
+_REPO_WORKSPACE = "/workspace/super-agent"  # cloned repo — contains CLAUDE.md + GEMINI.md
+
+
+def _repo_cwd() -> str:
+    """Return /workspace/super-agent if already cloned, else /workspace.
+    Claude CLI and Gemini CLI read their context files (CLAUDE.md / GEMINI.md)
+    from the cwd, so running inside the repo root gives them full architectural
+    awareness on every invocation."""
+    import os as _os
+    return _REPO_WORKSPACE if _os.path.isdir(_REPO_WORKSPACE) else _WORKSPACE
+
+
 # Strip ANTHROPIC_API_KEY so claude CLI uses OAuth (claude.ai Pro subscription)
 # instead of the API key. When ANTHROPIC_API_KEY is present, claude -p always
 # prefers it over OAuth — causing "Credit balance is too low" even when Pro
@@ -169,10 +181,12 @@ def _run_shell(command: str, cwd: str, timeout: int) -> str:
 def _dispatch(task_type: str, payload: dict, timeout: int) -> str:
     """Central dispatch — maps task type to execution. Returns result string."""
     if task_type == "claude_pro":
-        return _run_subprocess(["claude", "-p", payload.get("prompt", "")], _WORKSPACE, timeout)
+        # cwd = repo root so CLAUDE.md is auto-loaded by Claude CLI on every call
+        return _run_subprocess(["claude", "-p", payload.get("prompt", "")], _repo_cwd(), timeout)
 
     elif task_type == "gemini_cli":
-        return _run_subprocess(["gemini", "--prompt", payload.get("prompt", "")], _WORKSPACE, timeout)
+        # cwd = repo root so GEMINI.md is auto-loaded by Gemini CLI on every call
+        return _run_subprocess(["gemini", "--prompt", payload.get("prompt", "")], _repo_cwd(), timeout)
 
     elif task_type == "claude_auth":
         return _run_subprocess(["claude", "auth", "status"], None, timeout)
