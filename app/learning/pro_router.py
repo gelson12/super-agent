@@ -615,12 +615,14 @@ def _try_restore_claude_auth() -> bool:
             env=_nokey,
         )
         out = r.stdout + r.stderr
-        # Handle both compact JSON ("authMethod":"claude.ai") and pretty-printed ("authMethod": "claude.ai")
+        # Require authMethod=claude.ai specifically — "loggedIn":true alone
+        # also matches API-key auth which won't give Pro CLI access.
         _out_compact = out.replace(": ", ":")
-        if '"authMethod":"claude.ai"' in _out_compact or '"loggedIn":true' in _out_compact:
+        if '"authMethod":"claude.ai"' in _out_compact:
             _log(f"Auto-restore VERIFIED ✓ — credentials written to {written} paths.")
             return True
-        _log(f"Auto-restore wrote files but auth still invalid: {out[:200]!r}")
+        # loggedIn but wrong authMethod means token is for API key, not Pro OAuth
+        _log(f"Auto-restore: token is NOT Pro OAuth (authMethod≠claude.ai): {out[:200]!r}")
         return False
     except subprocess.TimeoutExpired:
         _log("Auto-restore: auth verify timed out — token may be expired.")
