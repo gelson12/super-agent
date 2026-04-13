@@ -1541,7 +1541,10 @@
     }, 100);
 
     try {
-      const res = await fetch('/credits/pro-status');
+      const _cliCtrl = new AbortController();
+      const _cliTimeout = setTimeout(() => _cliCtrl.abort(), 10000);
+      const res = await fetch('/credits/pro-status', { signal: _cliCtrl.signal });
+      clearTimeout(_cliTimeout);
       const data = await res.json();
       const body = document.getElementById('cli-status-body');
       if (!body) return;
@@ -1570,7 +1573,7 @@
       body.innerHTML = html;
     } catch (e) {
       const body = document.getElementById('cli-status-body');
-      if (body) body.innerHTML = '<span style="color:#f87171;">Failed to fetch status: ' + _oEsc(e.message) + '</span>';
+      if (body) body.innerHTML = '<span style="color:#f87171;">Failed to fetch status: ' + _oEsc(e.name === 'AbortError' ? 'Request timed out — server may be busy' : e.message) + '</span>';
     }
   }
 

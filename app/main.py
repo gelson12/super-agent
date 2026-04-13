@@ -702,13 +702,17 @@ def chat_stream(req: ChatRequest, request: Request):
     _mem_count = _mem_ctx.count("\n-") if _mem_ctx else 0
 
     def _generate():
+        from .learning.agent_status_tracker import mark_working as _mw, mark_done as _md
+
         # ── 1. Claude CLI (zero cost) ─────────────────────────────────────────
         yield "data: [PROGRESS:🤔 Thinking… (est. 5–15s)]\n\n"
         try:
             from .learning.pro_router import try_pro, should_attempt_cli, drain_progress_events as _drain_conv
             if should_attempt_cli():
+                _mw("Claude CLI Pro", msg[:100])
                 yield "data: [PROGRESS:⚡ Using Claude CLI… (est. 5–15s)]\n\n"
                 cli_resp = try_pro(f"{system}\n\n{msg}")
+                _md("Claude CLI Pro")
                 # Surface any self-healing events that fired during the CLI call
                 for _ev in _drain_conv():
                     yield f"data: [PROGRESS:{_ev}]\n\n"
@@ -729,13 +733,16 @@ def chat_stream(req: ChatRequest, request: Request):
                     yield "data: [DONE]\n\n"
                     return
         except Exception:
-            pass
+            try: _md("Claude CLI Pro")
+            except Exception: pass
 
         # ── 2. Gemini CLI (free fallback) ─────────────────────────────────────
         yield "data: [PROGRESS:🤖 Trying Gemini… (est. 5–10s)]\n\n"
         try:
             from .learning.gemini_cli_worker import ask_gemini_cli
+            _mw("Gemini CLI", msg[:100])
             gemini_resp = ask_gemini_cli(msg)
+            _md("Gemini CLI")
             if gemini_resp and not gemini_resp.startswith("["):
                 _store_mem(req.session_id, f"Q: {msg[:300]} A: {gemini_resp[:300]}")
                 append_exchange(req.session_id, msg, gemini_resp)
@@ -753,12 +760,14 @@ def chat_stream(req: ChatRequest, request: Request):
                 yield "data: [DONE]\n\n"
                 return
         except Exception:
-            pass
+            try: _md("Gemini CLI")
+            except Exception: pass
 
         # ── 3. Anthropic API ──────────────────────────────────────────────────
         yield "data: [PROGRESS:🔄 Trying Anthropic API…]\n\n"
         _api_ok = False
         try:
+            _mw("Sonnet Anthropic", msg[:100])
             _client = _anthropic.Anthropic(api_key=settings.anthropic_api_key)
             with _client.messages.stream(
                 model="claude-sonnet-4-6",
@@ -776,6 +785,7 @@ def chat_stream(req: ChatRequest, request: Request):
                         _buf = ""
                 if _buf.strip():
                     yield f"data: {_buf.replace(chr(10), chr(92) + 'n')}\n\n"
+            _md("Sonnet Anthropic")
             if _full_api_resp:
                 _store_mem(req.session_id, f"Q: {msg[:300]} A: {_full_api_resp[:300]}")
                 append_exchange(req.session_id, msg, _full_api_resp)
@@ -785,13 +795,16 @@ def chat_stream(req: ChatRequest, request: Request):
                 yield "data: [DONE]\n\n"
                 return
         except Exception:
-            pass
+            try: _md("Sonnet Anthropic")
+            except Exception: pass
 
         # ── 4. DeepSeek (last resort) ─────────────────────────────────────────
         yield "data: [PROGRESS:🔄 Trying DeepSeek (last resort)…]\n\n"
         try:
             from .models.deepseek import ask_deepseek
+            _mw("DeepSeek", msg[:100])
             _ds_resp = ask_deepseek(msg, system=system)
+            _md("DeepSeek")
             if _ds_resp and not _ds_resp.startswith("["):
                 _store_mem(req.session_id, f"Q: {msg[:300]} A: {_ds_resp[:300]}")
                 append_exchange(req.session_id, msg, _ds_resp)
@@ -809,7 +822,8 @@ def chat_stream(req: ChatRequest, request: Request):
                 yield "data: [DONE]\n\n"
                 return
         except Exception:
-            pass
+            try: _md("DeepSeek")
+            except Exception: pass
 
         # ── 5. All tiers failed ───────────────────────────────────────────────
         yield "data: ⚠️ All response tiers unavailable (CLI, Gemini, Anthropic, DeepSeek). Please retry in a moment.\n\n"
@@ -2429,22 +2443,13 @@ def credits_breakdown():
 @app.get("/credits/pro-status", tags=["meta"])
 def credits_pro_status():
     """
-    Returns VERIFIED current Pro subscription routing status.
-    Runs 'claude auth status' live — never returns assumed/stale state.
-    mode=pro_primary        — Pro subscription active and verified
-    mode=api_fallback_*     — Pro unavailable, using ANTHROPIC_API_KEY
-    auth.pro_valid=true/false — actual verified auth result
+    Returns current Pro subscription routing status using cached state.
+    Uses get_status() (instant) instead of verify_pro_auth() (blocks 20-35s).
+    Live verification happens automatically via health checks every 30 min.
     """
     try:
-        from .learning.pro_router import get_status as _pro_status, verify_pro_auth as _verify
-        # Live auth check first — syncs flags before reading status
-        auth = _verify()
+        from .learning.pro_router import get_status as _pro_status
         status = _pro_status()
-        status["auth"] = auth
-        # Override pro_available with the live verify result — flags can be
-        # stale but the verify result is always current
-        if auth.get("pro_valid"):
-            status["pro_available"] = True
 
         # Add Gemini CLI availability (widget reads this)
         try:
