@@ -157,9 +157,16 @@ def maybe_recover() -> bool:
             "Reverting to Claude Pro as primary model. ANTHROPIC_API_KEY fallback deactivated.",
             source="pro_cli_watchdog",
         )
+        # ✅ Clear ALL routing flags — verify_pro_auth() confirmed real auth.
+        # reset_pro_flag() clears BURST + CLI_DOWN + DAILY (not quota-based ones).
+        # Without clearing BURST, super-agent skips inspiring-cat for 30 min
+        # even after a genuine recovery.
+        try:
+            from .pro_router import reset_pro_flag
+            reset_pro_flag()
+        except Exception:
+            pass
         # ✅ Mark dashboard healthy — clears sick_since so grace period resets correctly
-        # This is the ONLY place that should call mark_done for CLI recovery;
-        # it only runs after verify_pro_auth() confirms authMethod=claude.ai.
         try:
             from .agent_status_tracker import mark_done as _md
             _md("Claude CLI Pro")

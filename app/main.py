@@ -2772,10 +2772,14 @@ def webhook_refresh_cli_token(payload: dict):
     # Update in-memory env var so _try_restore_claude_auth() finds it immediately
     _os.environ["CLAUDE_SESSION_TOKEN"] = token_b64
 
-    # Clear CLI_DOWN flag — next request will try claude immediately
+    # Clear ALL routing flags — Playwright is a full recovery, BURST included.
+    # clear_cli_down_flag() only clears CLI_DOWN; reset_pro_flag() also clears
+    # BURST (30-min flag set when inspiring-cat returns token/credit errors).
+    # Without clearing BURST, super-agent skips inspiring-cat for 30 min and
+    # falls to its own broken local CLI even after Playwright heals the token.
     try:
-        from .learning.pro_router import clear_cli_down_flag
-        clear_cli_down_flag()
+        from .learning.pro_router import reset_pro_flag
+        reset_pro_flag()
     except Exception:
         pass
 
