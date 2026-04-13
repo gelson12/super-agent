@@ -570,6 +570,50 @@ def apply_env_var_proposals(review: dict) -> list[dict]:
     return results
 
 
+def _refresh_claude_md(review: dict) -> None:
+    """
+    Ask the self-improve agent to patch CLAUDE.md (and GEMINI.md) with any
+    facts that went stale since the last update — Railway services, n8n workflow
+    IDs, pending issues, etc.
+
+    Uses run_self_improve_agent (authorized=True for CLAUDE.md — it's a context
+    file, not production source code). Skips silently on any error so the
+    nightly review always completes even if the refresh fails.
+    """
+    try:
+        from ..agents.self_improve_agent import run_self_improve_agent
+        today = datetime.datetime.utcnow().strftime("%Y-%m-%d")
+        health = review.get("health_summary", "")
+        tomorrow = review.get("tomorrow_priorities", [])
+        routing_obs = review.get("routing_observations", "")
+
+        prompt = (
+            f"PRE-APPROVED: Refresh CLAUDE.md and GEMINI.md to reflect today's ({today}) "
+            f"nightly review findings. Do NOT rewrite the files from scratch — make ONLY "
+            f"targeted patches to stale facts.\n\n"
+            f"Steps:\n"
+            f"1. github_read_file('CLAUDE.md') — read the current content.\n"
+            f"2. github_read_file('GEMINI.md') — read the current content.\n"
+            f"3. github_get_recent_commits(limit=5) — check what changed recently.\n"
+            f"4. Update the **Last updated** line in both files to: {today}\n"
+            f"5. Update the PENDING ISSUES section in both files to reflect:\n"
+            f"   - Health: {health}\n"
+            f"   - Priorities for tomorrow: {', '.join(tomorrow) if tomorrow else 'none'}\n"
+            f"   - Routing observations: {routing_obs}\n"
+            f"6. If any Railway service names, n8n workflow IDs, or file paths appear "
+            f"incorrect based on recent commits, fix them.\n"
+            f"7. Commit both files with message: 'chore: nightly CLAUDE.md/GEMINI.md refresh {today}'\n"
+            f"8. Report which lines changed.\n\n"
+            f"IMPORTANT: Only patch the PENDING ISSUES section and Last updated line. "
+            f"Do not alter the architecture descriptions, routing docs, or git workflow sections."
+        )
+        _log(f"Refreshing CLAUDE.md/GEMINI.md for {today}")
+        run_self_improve_agent(prompt, authorized=True)
+        _log(f"CLAUDE.md/GEMINI.md refresh complete for {today}")
+    except Exception as e:
+        _log(f"CLAUDE.md refresh skipped: {e}")
+
+
 def run_nightly_review() -> dict:
     """
     Entry point called by APScheduler at 23:00 UTC.
@@ -632,6 +676,9 @@ def run_nightly_review() -> dict:
         if applied or env_applied:
             out_path.write_text(json.dumps(review, indent=2))
             _log(f"Applied {len(applied)} suggestion(s), {len(env_applied)} env var(s)")
+
+        # Refresh CLAUDE.md + GEMINI.md with today's findings (last step — non-blocking)
+        _refresh_claude_md(review)
 
         return review
 

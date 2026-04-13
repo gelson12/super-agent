@@ -1,4 +1,5 @@
 # Super-Agent — Claude CLI Context
+**Last updated:** 2026-04-13
 
 This file is auto-loaded by `claude -p` on every invocation inside this repo.
 It gives Claude CLI situational awareness of the system architecture.
@@ -58,6 +59,7 @@ Controls whether an agent gets tool access or text-only.
 | `inspiring-cat` (VS Code) | CLI worker container — runs `claude -p`, `gemini`, shell tasks |
 | `n8n` | Automation workflows |
 | `divine-contentment` | PostgreSQL + pgvector |
+| `honest-analysis` | **UNKNOWN** — visible in Railway dashboard, zero codebase references. Not part of the CLI cascade. Needs audit: `railway service list` to confirm purpose. |
 
 ---
 

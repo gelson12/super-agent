@@ -43,6 +43,19 @@ def _repo_cwd() -> str:
     return _REPO_WORKSPACE if _os.path.isdir(_REPO_WORKSPACE) else _WORKSPACE
 
 
+def _read_gemini_md() -> str:
+    """Read GEMINI.md from the repo root and return its content.
+    Gemini CLI does not guarantee auto-loading of GEMINI.md (unlike Claude CLI
+    with CLAUDE.md), so we prepend it manually to every prompt.
+    Returns empty string silently if the file is missing or unreadable."""
+    try:
+        path = os.path.join(_repo_cwd(), "GEMINI.md")
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read().strip()
+    except Exception:
+        return ""
+
+
 # Strip ANTHROPIC_API_KEY so claude CLI uses OAuth (claude.ai Pro subscription)
 # instead of the API key. When ANTHROPIC_API_KEY is present, claude -p always
 # prefers it over OAuth — causing "Credit balance is too low" even when Pro
@@ -185,8 +198,12 @@ def _dispatch(task_type: str, payload: dict, timeout: int) -> str:
         return _run_subprocess(["claude", "-p", payload.get("prompt", "")], _repo_cwd(), timeout)
 
     elif task_type == "gemini_cli":
-        # cwd = repo root so GEMINI.md is auto-loaded by Gemini CLI on every call
-        return _run_subprocess(["gemini", "--prompt", payload.get("prompt", "")], _repo_cwd(), timeout)
+        # Prepend GEMINI.md explicitly — Gemini CLI does not guarantee auto-loading
+        # of GEMINI.md the way Claude CLI auto-loads CLAUDE.md.
+        gemini_ctx = _read_gemini_md()
+        raw_prompt = payload.get("prompt", "")
+        full_prompt = f"{gemini_ctx}\n\n---\n\n{raw_prompt}" if gemini_ctx else raw_prompt
+        return _run_subprocess(["gemini", "--prompt", full_prompt], _repo_cwd(), timeout)
 
     elif task_type == "claude_auth":
         return _run_subprocess(["claude", "auth", "status"], None, timeout)

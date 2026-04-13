@@ -26,6 +26,7 @@ try:
         mark_working as _mark_working_raw, mark_done as _mark_done_raw,
         mark_talking as _mark_talking_raw, clear_talking as _clear_talking_raw,
         resolve_worker as _resolve_worker, mark_strike as _mark_strike_raw,
+        mark_error as _mark_error_raw,
     )
     def _mark_working(w, t=""):
         try: _mark_working_raw(w, t)
@@ -42,6 +43,9 @@ try:
     def _mark_strike(w):
         try: _mark_strike_raw(w)
         except Exception: pass
+    def _mark_error(w, detail=""):
+        try: _mark_error_raw(w, detail)
+        except Exception: pass
 except Exception:
     def _mark_working(w, t=""): pass
     def _mark_done(w): pass
@@ -49,6 +53,7 @@ except Exception:
     def _clear_talking(a, b): pass
     def _resolve_worker(m): return m
     def _mark_strike(w): pass
+    def _mark_error(w, detail=""): pass
 from ..memory.vector_memory import get_memory_context, store_memory, store_enriched_memory
 from ..memory.session import get_compressed_context, append_exchange
 from ..prompts import (
@@ -890,6 +895,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
         _mark_done("Shell Agent")
         _clear_active_task()
         if _agent_response_is_error(response):
+            _mark_error("Shell Agent", response[:200])
             response = _auto_investigate("SHELL", message, response)
         store_memory(session_id, f"Q: {message[:300]} A: {response[:300]}")
         _sav = _detect_saveable_content(message, response)
@@ -916,6 +922,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
         _mark_done("GitHub Agent")
         _clear_active_task()
         if _agent_response_is_error(response):
+            _mark_error("GitHub Agent", response[:200])
             response = _auto_investigate("GITHUB", message, response)
         store_memory(session_id, f"Q: {message[:300]} A: {response[:300]}")
         _sav = _detect_saveable_content(message, response)
@@ -942,6 +949,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
         _mark_done("N8N Agent")
         _clear_active_task()
         if _agent_response_is_error(response):
+            _mark_error("N8N Agent", response[:200])
             response = _auto_investigate("N8N", message, response)
         store_memory(session_id, f"Q: {message[:300]} A: {response[:300]}")
         _sav = _detect_saveable_content(message, response)
@@ -1069,6 +1077,9 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
     else:
         response = _HANDLERS[model](augmented_message)
     _mark_done(_worker_id)
+    # If the model returned a structural error, surface it on the avatar immediately
+    if _agent_response_is_error(response):
+        _mark_error(_worker_id, response[:200])
 
     # Layer 1: CoT handoff (complexity >= 4, classifier-routed)
     # Visualise: reasoning model talks to answer model

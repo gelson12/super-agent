@@ -10,6 +10,7 @@ Each worker (model or agent) has a state:
   - "talking"   — two workers collaborating (ensemble, peer review, CoT handoff)
   - "strike"    — Anthropic API credits insufficient ("salary insufficient")
   - "sick"      — CLI token invalid/expired (Claude CLI Pro or Gemini CLI)
+  - "error"     — last request returned a structural error response (auto-clears on next success)
 
 Public API:
     mark_working(worker_id)        — called when a model/agent starts processing
@@ -18,6 +19,7 @@ Public API:
     clear_talking(worker_a, worker_b)
     mark_strike(worker_id)         — called when API credits run out
     mark_sick(worker_id)           — called when CLI token is invalid/expired
+    mark_error(worker_id, detail)  — called when a structural error response is returned
     get_all_statuses()             — returns dict of all workers with states
     get_worker_status(worker_id)   — returns single worker state
 """
@@ -151,7 +153,8 @@ def _ensure_worker(worker_id: str) -> dict:
             "last_worked": 0,
             "talking_to": None,
             "task": "",
-            "sick_since": None,  # timestamp when sick state was entered
+            "sick_since": None,   # timestamp when sick state was entered
+            "error_detail": None, # last error message, cleared on mark_done()
         }
     return _workers[worker_id]
 
@@ -185,8 +188,22 @@ def mark_done(worker_id: str) -> None:
         w["last_worked"] = time.time()
         w["task"] = ""
         w["talking_to"] = None
-        w["sick_since"] = None  # clear grace period timer on recovery
+        w["sick_since"] = None   # clear sick grace period on recovery
+        w["error_detail"] = None  # clear any error state on success
     _log_agent_event(worker_id, "done")
+
+
+def mark_error(worker_id: str, detail: str = "") -> None:
+    """Mark a worker as having returned a structural error response.
+    This is distinct from sick/strike — the infrastructure is fine but the last
+    response was an error token or failed task. Auto-clears on the next mark_done()."""
+    with _lock:
+        w = _ensure_worker(worker_id)
+        w["state"] = "error"
+        w["task"] = detail[:200] if detail else "Last response was an error"
+        w["error_detail"] = detail[:400] if detail else ""
+        w["last_worked"] = time.time()
+    _log_agent_event(worker_id, "error", detail[:200])
 
 
 def mark_strike(worker_id: str) -> None:
@@ -272,7 +289,8 @@ def get_worker_status(worker_id: str) -> dict:
             "last_worked_ago": round(now - w["last_worked"]) if w["last_worked"] > 0 else None,
             "talking_to": w["talking_to"],
             "task": w["task"],
-            "sick_for_seconds": sick_for_seconds,  # how long truly sick (None if healthy)
+            "sick_for_seconds": sick_for_seconds,       # how long truly sick (None if healthy)
+            "error_detail": w.get("error_detail"),      # last error message (None if healthy)
         }
 
 
@@ -287,9 +305,9 @@ def get_all_statuses() -> list[dict]:
             if wid not in _KNOWN_WORKERS:
                 result.append(get_worker_status(wid))
 
-    # Sort: working > talking > idle > sleeping
-    order = {"working": 0, "talking": 1, "idle": 2, "sleeping": 3}
-    result.sort(key=lambda x: order.get(x["state"], 4))
+    # Sort: error/strike/sick first (need attention), then working, then idle/sleeping
+    order = {"error": 0, "strike": 1, "sick": 2, "working": 3, "talking": 4, "idle": 5, "break": 6, "sleeping": 7}
+    result.sort(key=lambda x: order.get(x["state"], 8))
     return result
 
 
@@ -442,12 +460,16 @@ def seed_live_status() -> None:
         from .pro_router import is_cli_down
         if is_cli_down():
             mark_sick("Claude CLI Pro")
-        else:
-            # CLI is reachable — clear stale sick status
-            with _lock:
-                w = _workers.get("Claude CLI Pro")
-                if w and w["state"] == "sick":
-                    mark_done("Claude CLI Pro")
+        # ⚠️  Do NOT call mark_done("Claude CLI Pro") here.
+        # is_cli_down() only checks whether a flag file has expired (10-min TTL) —
+        # it does NOT verify that auth is actually valid.  Calling mark_done when the
+        # flag has merely expired would:
+        #   • set last_worked = now  (a lie — no real work happened)
+        #   • clear sick_since       (resets the 15-min grace-period clock)
+        # …causing the dashboard to loop forever in "short break" instead of
+        # ever showing "sick".  Real recovery + mark_done is handled by:
+        #   • pro_router.py / pro_cli_watchdog.py after verify_pro_auth() passes
+        #   • cli_auto_login.py after successful Playwright login
     except Exception:
         pass
 
@@ -456,11 +478,9 @@ def seed_live_status() -> None:
         from .gemini_cli_worker import is_gemini_cli_available
         if not is_gemini_cli_available():
             mark_sick("Gemini CLI")
-        else:
-            # Gemini recovered — clear stale sick status
-            with _lock:
-                w = _workers.get("Gemini CLI")
-                if w and w["state"] == "sick":
-                    mark_done("Gemini CLI")
+        # ⚠️  Same reasoning as Claude CLI Pro above — do NOT call mark_done here.
+        # is_gemini_cli_available() is a quick binary probe, not an auth check.
+        # mark_done("Gemini CLI") is called by gemini_cli_worker / gemini_token_keeper
+        # only after a genuine successful response or confirmed credential restore.
     except Exception:
         pass

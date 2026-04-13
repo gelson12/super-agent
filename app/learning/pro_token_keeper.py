@@ -323,6 +323,65 @@ def run_token_keeper() -> dict:
     return result
 
 
+def run_proactive_refresh() -> dict:
+    """
+    Proactive OAuth token renewal — runs every 12 hours even when CLI is healthy.
+
+    Unlike run_token_keeper() which pings the CLI and relies on it to internally
+    refresh the access token, this function:
+      1. Attempts a direct OAuth refresh_token exchange (lightweight HTTP call)
+      2. If that succeeds: persists updated credentials to volume + Railway
+      3. If that fails (refresh_token dead): escalates to full_recovery_chain()
+
+    Running proactively every 12 hours means the refresh token is exercised
+    well before it could expire from inactivity (typical expiry: 30–90 days
+    with zero activity), giving the self-healing system a clean recovery path.
+
+    Never raises — all errors captured in return value.
+    """
+    result: dict = {
+        "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "direct_refresh_ok": False,
+        "recovery_ok": False,
+        "message": "",
+    }
+
+    _log("Proactive token refresh: starting scheduled 12-hour OAuth renewal...")
+
+    try:
+        from .cli_auto_login import _try_direct_refresh
+        if _try_direct_refresh():
+            _log("Proactive token refresh: direct OAuth refresh SUCCESS ✓ — credentials updated.")
+            result["direct_refresh_ok"] = True
+            result["message"] = "Direct OAuth refresh succeeded."
+            return result
+    except Exception as e:
+        _log(f"Proactive token refresh: direct refresh error — {e}")
+
+    # Direct refresh failed — credentials may be stale or refresh token expired.
+    # Escalate to full recovery chain before things get worse.
+    _log("Proactive token refresh: direct refresh failed — escalating to full recovery chain...")
+    try:
+        from .cli_auto_login import full_recovery_chain
+        if full_recovery_chain():
+            _log("Proactive token refresh: full recovery chain SUCCESS ✓")
+            result["recovery_ok"] = True
+            result["message"] = "Full recovery chain succeeded after direct refresh failed."
+        else:
+            _log("Proactive token refresh: full recovery chain FAILED — manual login may be required.")
+            result["message"] = "Both direct refresh and full recovery chain failed."
+            try:
+                from .agent_status_tracker import mark_sick
+                mark_sick("Claude CLI Pro")
+            except Exception:
+                pass
+    except Exception as e:
+        _log(f"Proactive token refresh: recovery chain error — {e}")
+        result["message"] = f"Recovery chain exception: {e}"
+
+    return result
+
+
 def _log(msg: str) -> None:
     try:
         from ..activity_log import bg_log

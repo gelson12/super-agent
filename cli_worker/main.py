@@ -105,6 +105,29 @@ def _pro_cli_watchdog_job() -> None:
         _bg_log(f"Pro CLI watchdog error: {e}", "pro_cli_watchdog")
 
 
+def _proactive_token_refresh_job() -> None:
+    """
+    Runs every 12 hours. Proactively renews the OAuth refresh_token even when
+    the CLI is healthy — prevents silent expiry from inactivity.
+    Escalates to full_recovery_chain() if the direct refresh fails.
+    """
+    try:
+        import sys
+        sys.path.insert(0, "/app")
+        from app.learning.pro_token_keeper import run_proactive_refresh
+        result = run_proactive_refresh()
+        status = "OK" if (result.get("direct_refresh_ok") or result.get("recovery_ok")) else "FAILED"
+        _bg_log(
+            f"Proactive token refresh: {status} — "
+            f"direct={result.get('direct_refresh_ok')} "
+            f"recovery={result.get('recovery_ok')} "
+            f"msg={result.get('message', '')[:120]}",
+            "proactive_refresh",
+        )
+    except Exception as e:
+        _bg_log(f"Proactive token refresh error: {e}", "proactive_refresh")
+
+
 # ── Lifespan ──────────────────────────────────────────────────────────────────
 
 @asynccontextmanager
@@ -130,8 +153,10 @@ async def lifespan(app: FastAPI):
                        id="gemini_token_keeper", replace_existing=True)
     _scheduler.add_job(_pro_cli_watchdog_job, "interval", minutes=3,
                        id="pro_cli_watchdog", replace_existing=True)
+    _scheduler.add_job(_proactive_token_refresh_job, "interval", hours=12,
+                       id="proactive_token_refresh", replace_existing=True)
     _scheduler.start()
-    _bg_log("CLI maintenance scheduler started (pro_keeper 15min, gemini_keeper 4h, watchdog 3min)", "boot")
+    _bg_log("CLI maintenance scheduler started (pro_keeper 15min, gemini_keeper 4h, watchdog 3min, proactive_refresh 12h)", "boot")
 
     yield
     _scheduler.shutdown(wait=False)

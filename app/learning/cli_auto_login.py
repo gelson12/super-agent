@@ -203,9 +203,24 @@ def _do_auto_login(email: str) -> bool:
     _log("Step 3a: Triggering n8n email monitor...")
     _trigger_n8n_email_monitor()
 
+    # Show violet talking line: N8N Agent ↔ Claude CLI Pro
+    # This is the communication channel during self-healing (n8n reads email → sends code)
+    try:
+        from .agent_status_tracker import mark_talking
+        mark_talking("N8N Agent", "Claude CLI Pro")
+    except Exception:
+        pass
+
     # Step 3b: Automate the browser flow
     _log("Step 3b: Opening headless browser...")
     browser_ok = _automate_browser(oauth_url, email)
+
+    # Clear talking line once browser flow completes (success or failure)
+    try:
+        from .agent_status_tracker import clear_talking
+        clear_talking("N8N Agent", "Claude CLI Pro")
+    except Exception:
+        pass
 
     if not browser_ok:
         _log("Step 3 FAILED: Browser automation failed.")

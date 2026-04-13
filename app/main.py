@@ -817,7 +817,7 @@ def chat_stream(req: ChatRequest, request: Request):
     _mem_count = _mem_ctx.count("\n-") if _mem_ctx else 0
 
     def _generate():
-        from .learning.agent_status_tracker import mark_working as _mw, mark_done as _md
+        from .learning.agent_status_tracker import mark_working as _mw, mark_done as _md, mark_error as _me
         from .learning.insight_log import insight_log as _il
 
         # Simple complexity estimate based on word count (no classifier in conv path)
@@ -835,6 +835,8 @@ def chat_stream(req: ChatRequest, request: Request):
                 # Surface any self-healing events that fired during the CLI call
                 for _ev in _drain_conv():
                     yield f"data: [PROGRESS:{_ev}]\n\n"
+                if cli_resp and (cli_resp.startswith("[") or cli_resp.lstrip().startswith('{"type":"error"')):
+                    _me("Claude CLI Pro", cli_resp[:200])
                 if cli_resp and not cli_resp.startswith("[") and not cli_resp.lstrip().startswith('{"type":"error"'):
                     _store_mem(req.session_id, f"Q: {msg[:300]} A: {cli_resp[:300]}")
                     append_exchange(req.session_id, msg, cli_resp)
@@ -863,6 +865,8 @@ def chat_stream(req: ChatRequest, request: Request):
             _mw("Gemini CLI", msg[:100])
             gemini_resp = ask_gemini_cli(msg)
             _md("Gemini CLI")
+            if gemini_resp and gemini_resp.startswith("["):
+                _me("Gemini CLI", gemini_resp[:200])
             if gemini_resp and not gemini_resp.startswith("["):
                 _store_mem(req.session_id, f"Q: {msg[:300]} A: {gemini_resp[:300]}")
                 append_exchange(req.session_id, msg, gemini_resp)
@@ -916,8 +920,15 @@ def chat_stream(req: ChatRequest, request: Request):
                 yield f"data: [META:ANTHROPIC·conversational·{_mem_count}]\n\n"
                 yield "data: [DONE]\n\n"
                 return
-        except Exception:
-            try: _md("Sonnet Anthropic")
+        except Exception as _api_exc:
+            try:
+                _md("Sonnet Anthropic")
+                _no_credit = ("credit balance", "insufficient", "payment required", "no credits")
+                if any(p in str(_api_exc).lower() for p in _no_credit):
+                    from .learning.agent_status_tracker import mark_strike as _ms
+                    _ms("Sonnet Anthropic")
+                else:
+                    _me("Sonnet Anthropic", str(_api_exc)[:200])
             except Exception: pass
 
         # ── 4. DeepSeek (last resort) ─────────────────────────────────────────
@@ -927,6 +938,8 @@ def chat_stream(req: ChatRequest, request: Request):
             _mw("DeepSeek", msg[:100])
             _ds_resp = ask_deepseek(msg, system=system)
             _md("DeepSeek")
+            if _ds_resp and _ds_resp.startswith("["):
+                _me("DeepSeek", _ds_resp[:200])
             if _ds_resp and not _ds_resp.startswith("["):
                 _store_mem(req.session_id, f"Q: {msg[:300]} A: {_ds_resp[:300]}")
                 append_exchange(req.session_id, msg, _ds_resp)
@@ -2038,6 +2051,20 @@ async def railway_webhook(request: Request):
                         _ledger_record("CLAUDE", 1500, 600, category="code_review")
                 except Exception:
                     pass
+                # Seed deploy event into agent memory so future queries can reference it
+                try:
+                    from .memory.vector_memory import store_enriched_memory as _sem
+                    _commit_msg = payload.get("commitMessage") or payload.get("deployment", {}).get("meta", {}).get("commitMessage", "unknown")
+                    _commit_hash = payload.get("commitHash") or payload.get("deployment", {}).get("meta", {}).get("commitHash", "")
+                    _sem(
+                        "system",
+                        f"Railway deploy SUCCEEDED for service '{service}'. "
+                        f"Commit: {_commit_msg}. Hash: {_commit_hash[:8] if _commit_hash else 'unknown'}.",
+                        memory_type="deploy_event",
+                        importance=6,
+                    )
+                except Exception:
+                    pass
                 # Cost for success webhook handler
                 _ledger_record("CLAUDE", 1500, 500, category="health_check")
             elif status in ("FAILED", "DEPLOY_FAILED", "CRASHED", "ERROR", "REMOVED"):
@@ -2054,6 +2081,19 @@ async def railway_webhook(request: Request):
                     authorized=False,
                 )
                 bg_log(f"Railway webhook: autonomous investigation complete for '{service}'", source="railway_webhook")
+                # Seed failure event into agent memory (higher importance — failures are critical)
+                try:
+                    from .memory.vector_memory import store_enriched_memory as _sem
+                    _commit_msg = payload.get("commitMessage") or payload.get("deployment", {}).get("meta", {}).get("commitMessage", "unknown")
+                    _sem(
+                        "system",
+                        f"Railway deploy FAILED/CRASHED for service '{service}'. "
+                        f"Status: {status}. Commit: {_commit_msg}. Autonomous investigation launched.",
+                        memory_type="deploy_event",
+                        importance=8,
+                    )
+                except Exception:
+                    pass
                 _ledger_record("CLAUDE", 2000, 1000, category="auto_fix")
         except Exception as _e:
             bg_log(f"Railway webhook handler error: {_e}", source="railway_webhook")

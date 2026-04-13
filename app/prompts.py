@@ -6,7 +6,44 @@ get_prompt(name) returns the currently active version from the prompt library
 (versioned, error-rate tracked). Falls back to the static constant below on
 any error, so the dispatch pipeline is never blocked.
 """
+import os as _os
 import sys as _sys
+
+
+def _load_claude_md_section(heading: str) -> str:
+    """Extract one section from CLAUDE.md by heading text.
+    Returns the content between this heading and the next ## heading.
+    Returns empty string silently if the file is missing or the section is not found.
+    Read once per module import — acceptable startup cost."""
+    try:
+        _root = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+        _path = _os.path.join(_root, "CLAUDE.md")
+        with open(_path, "r", encoding="utf-8") as _f:
+            _text = _f.read()
+        # Find the heading line (## heading or ## heading ...)
+        import re as _re
+        _pattern = rf"##\s+{_re.escape(heading)}[^\n]*\n(.*?)(?=\n##|\Z)"
+        _m = _re.search(_pattern, _text, _re.DOTALL)
+        return _m.group(1).strip() if _m else ""
+    except Exception:
+        return ""
+
+
+# Architecture context loaded once at startup from CLAUDE.md.
+# Sections: KNOWN SERVICES + n8n ACTIVE WORKFLOWS — both go stale quickly.
+# Fallback to static strings if CLAUDE.md is missing.
+_SERVICES_SECTION = _load_claude_md_section("KNOWN SERVICES") or (
+    "| super-agent | Main AI agent FastAPI app |\n"
+    "| radiant-appreciation | Website host — auto-deploys from website/index.html |\n"
+    "| inspiring-cat (VS Code) | CLI worker container — runs claude -p, gemini, shell tasks |\n"
+    "| n8n | Automation workflows |\n"
+    "| divine-contentment | PostgreSQL + pgvector |"
+)
+_N8N_SECTION = _load_claude_md_section("n8n ACTIVE WORKFLOWS") or (
+    "| jxnZZwTqJ7naPKc6 | Claude-Verification-Monitor | ACTIVE |\n"
+    "| ke7YzsAmGerVWVVc | Super-Agent-Health-Monitor | ACTIVE |\n"
+    "| sCHZhoyRgEZUaxtT | Universal Catch-All | ACTIVE |"
+)
 
 
 def get_prompt(name: str) -> str | None:
@@ -155,7 +192,7 @@ Be direct, warm, and concise. Never fabricate facts. If unsure, say so.
 This service routes requests through specialised agents:
 - GITHUB agent  → repo changes, website edits, commits, push. Website: bridge-digital-solution.com = website/index.html in gelson12/super-agent repo (Instagram links at lines ~918 and ~1000). Railway service: radiant-appreciation auto-deploys on push.
 - SHELL agent   → terminal commands, Flutter/APK builds, git ops, cloning
-- N8N agent     → automations, workflows, webhooks. Active workflows: Claude-Verification-Monitor (jxnZZwTqJ7naPKc6), Super-Agent-Health-Monitor (ke7YzsAmGerVWVVc), Universal Catch-All (sCHZhoyRgEZUaxtT)
+- N8N agent     → automations, workflows, webhooks
 - GENERAL       → conversational, analysis, explanations
 
 Routing classifier order (CLI-first): Claude CLI Pro → Gemini CLI → Haiku API (you, last resort).
@@ -163,6 +200,12 @@ Keyword sets in app/routing/dispatcher.py fire BEFORE the classifier.
 Operational gate in app/agents/agent_routing.py controls tool access.
 
 Claude CLI self-healing (4 layers): volume backup → Railway env CLAUDE_SESSION_TOKEN → OAuth refresh_token → Playwright + n8n monitor. Recovery up to 15 min.
+
+### Railway Services (live from CLAUDE.md)
+""" + _SERVICES_SECTION + """
+
+### n8n Active Workflows (live from CLAUDE.md)
+""" + _N8N_SECTION + """
 
 PENDING: Anthropic API credits are depleted — if API calls fail, this is why. Top up at console.anthropic.com.
 
