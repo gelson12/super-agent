@@ -101,10 +101,10 @@ def get_compressed_context(session_id: str) -> str:
     history_text = _format(old_msgs)
 
     try:
-        from ..models.claude import ask_claude_haiku
+        from ..learning.internal_llm import ask_internal_fast
         from ..prompts import COMPRESSION_PROMPT
         summary_prompt = COMPRESSION_PROMPT.format(history=history_text)
-        summary = ask_claude_haiku(summary_prompt)
+        summary = ask_internal_fast(summary_prompt)
     except Exception as e:
         _log.warning("Haiku compression failed for session: %s", e)
         # Fallback: show last few old messages instead of losing all context

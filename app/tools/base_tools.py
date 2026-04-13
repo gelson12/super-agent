@@ -1,5 +1,5 @@
 from langchain_core.tools import tool
-from ..models.claude import ask_claude
+from ..learning.internal_llm import ask_internal as ask_claude
 from ..models.gemini import ask_gemini
 from ..models.deepseek import ask_deepseek
 

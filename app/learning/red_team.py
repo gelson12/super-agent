@@ -13,7 +13,7 @@ in Railway environment variables. The extra cost per query is:
 
 Red team runs AFTER peer review so it validates the already-improved answer.
 """
-from ..models.claude import ask_claude, ask_claude_haiku
+from .internal_llm import ask_internal
 from ..prompts import RED_TEAM_PROMPT
 from ..learning.insight_log import insight_log
 from ..config import settings
@@ -55,7 +55,7 @@ class RedTeam:
 
         try:
             attack_prompt = RED_TEAM_PROMPT.format(query=query, response=response)
-            verdict = ask_claude_haiku(attack_prompt, system="")
+            verdict = ask_internal(attack_prompt)
 
             if verdict.startswith("[") and verdict.endswith("]"):
                 # Haiku call failed — pass through silently
@@ -87,7 +87,7 @@ class RedTeam:
                 f"A reviewer found this specific flaw:\n{verdict}\n\n"
                 f"Provide a corrected, definitive answer that fixes this flaw:"
             )
-            escalated_response = ask_claude(escalation_prompt)
+            escalated_response = ask_internal(escalation_prompt)
 
             if escalated_response.startswith("[") and escalated_response.endswith("]"):
                 # Escalation failed — keep peer-reviewed answer

@@ -50,8 +50,8 @@ def _ask_sonnet(prompt: str) -> str:
 
 
 def _ask_haiku(prompt: str) -> str:
-    from ..models.claude import ask_claude_haiku
-    return ask_claude_haiku(prompt)
+    from .internal_llm import ask_internal
+    return ask_internal(prompt)
 
 
 def _ask_deepseek(prompt: str) -> str:

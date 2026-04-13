@@ -16,9 +16,10 @@ import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional
 
-from ..models.claude import ask_claude, ask_claude_haiku
 from ..models.gemini import ask_gemini
 from ..models.deepseek import ask_deepseek
+from .internal_llm import ask_internal
+from .claude_code_worker import ask_claude_code as _ensemble_ask_cli
 from ..prompts import ENSEMBLE_SYNTHESIS_PROMPT
 from ..learning.insight_log import insight_log
 
@@ -57,7 +58,7 @@ class EnsembleVoter:
 
         # Parallel calls to three models
         tasks = [
-            ("CLAUDE",   ask_claude),
+            ("CLAUDE",   _ensemble_ask_cli),  # Claude CLI Pro first (free)
             ("GEMINI",   ask_gemini),
             ("DEEPSEEK", ask_deepseek),
         ]
@@ -93,7 +94,7 @@ class EnsembleVoter:
             response_b=responses.get("GEMINI", "[no response]"),
             response_c=responses.get("DEEPSEEK", "[no response]"),
         )
-        synthesis = ask_claude_haiku(synthesis_prompt, system="")
+        synthesis = ask_internal(synthesis_prompt)
 
         if synthesis.startswith("[") and synthesis.endswith("]"):
             # Synthesis failed — return the Claude answer as best fallback

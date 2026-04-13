@@ -15,8 +15,8 @@ Model pairs:
 An empty response string is returned when the gate condition is not met,
 signalling the dispatcher to keep the standard single-model result.
 """
-from ..models.claude import ask_claude
 from ..models.deepseek import ask_deepseek
+from .internal_llm import ask_internal
 from ..prompts import COT_REASONING_PROMPT, COT_ANSWER_PROMPT
 from ..learning.insight_log import insight_log
 
@@ -27,7 +27,7 @@ _COT_PAIRS: dict[str, tuple[str, str]] = {
 }
 
 _MODEL_CALLERS = {
-    "CLAUDE":   ask_claude,
+    "CLAUDE":   ask_internal,   # CLI-first cascade instead of direct API
     "DEEPSEEK": ask_deepseek,
 }
 

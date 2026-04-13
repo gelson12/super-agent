@@ -15,7 +15,7 @@ Self-healing loop (wraps the agent invoke):
 This module is model-agnostic — it wraps any callable agent function.
 """
 import concurrent.futures
-from ..models.claude import ask_claude, ask_claude_haiku
+from ..learning.internal_llm import ask_internal as ask_claude, ask_internal_fast as ask_claude_haiku
 from ..models.deepseek import ask_deepseek
 from ..learning.claude_code_worker import ask_claude_code, log_claude_code_result
 from ..learning.insight_log import insight_log

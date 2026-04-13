@@ -44,8 +44,8 @@ def _ask_model(route: str, prompt: str) -> tuple[str, str]:
     try:
         from ..config import settings
         if route in ("claude", "summarise", "creative", "conversational", "code_explain", "code_write"):
-            from ..models.claude import ask_claude
-            return ask_claude(prompt), "CLAUDE"
+            from .internal_llm import ask_internal
+            return ask_internal(prompt), "CLAUDE_CLI"
         elif route == "deepseek":
             from ..models.deepseek import ask_deepseek
             return ask_deepseek(prompt), "DEEPSEEK"
@@ -53,8 +53,8 @@ def _ask_model(route: str, prompt: str) -> tuple[str, str]:
             from ..models.gemini import ask_gemini
             return ask_gemini(prompt), "GEMINI"
         else:
-            from ..models.claude import ask_claude
-            return ask_claude(prompt), "CLAUDE"
+            from .internal_llm import ask_internal
+            return ask_internal(prompt), "CLAUDE_CLI"
     except Exception as e:
         return f"[error: {e}]", "ERROR"
 
@@ -62,8 +62,8 @@ def _ask_model(route: str, prompt: str) -> tuple[str, str]:
 def _judge(question: str, response: str) -> dict:
     """Use Haiku to score a response. Returns {score, reason}."""
     try:
-        from ..models.claude import ask_claude_haiku
-        raw = ask_claude_haiku(_JUDGE_PROMPT.format(question=question, response=response[:800]))
+        from .internal_llm import ask_internal
+        raw = ask_internal(_JUDGE_PROMPT.format(question=question, response=response[:800]))
         cleaned = raw.strip()
         if cleaned.startswith("```"):
             cleaned = cleaned.split("```")[1].lstrip("json").strip()

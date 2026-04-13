@@ -18,10 +18,10 @@ DeepSeek's code is spot-checked cheaply by Haiku, etc.
 """
 from typing import Optional
 
-from ..models.claude import ask_claude, ask_claude_haiku
 from ..models.gemini import ask_gemini
 from ..models.deepseek import ask_deepseek
 from .claude_code_worker import ask_claude_code as _peer_ask_cli
+from .internal_llm import ask_internal
 from ..prompts import PEER_REVIEW_PROMPT
 from ..learning.insight_log import insight_log
 
@@ -38,7 +38,7 @@ _MODEL_CALLERS = {
     "CLAUDE":   lambda prompt, system="": _peer_ask_cli(prompt),
     "DEEPSEEK": ask_deepseek,
     "GEMINI":   ask_gemini,
-    "HAIKU":    ask_claude_haiku,
+    "HAIKU":    lambda prompt, system="": ask_internal(prompt, system),
 }
 
 _SUBSTANTIVE_WORD_THRESHOLD = 50
