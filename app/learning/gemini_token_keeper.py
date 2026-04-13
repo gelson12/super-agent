@@ -260,6 +260,21 @@ def run_token_keeper() -> dict:
         return result
     result["encode_ok"] = True
 
+    # Step 2b — volume backup (primary persistence, survives container restarts
+    # without needing Railway API — mirrors pro_token_keeper behaviour).
+    # entrypoint.cli.sh reads this on boot before falling back to GEMINI_SESSION_TOKEN.
+    try:
+        _vol = Path("/workspace/.gemini_credentials_backup.json")
+        creds_file = _find_creds_file()
+        if creds_file:
+            _vol.write_bytes(creds_file.read_bytes())
+            _vol.chmod(0o600)
+            _log("Gemini token keeper: credentials backed up to volume (/workspace/.gemini_credentials_backup.json) ✓")
+            result["volume_ok"] = True
+    except Exception as _ve:
+        _log(f"Gemini token keeper: volume backup failed — {_ve}")
+        result["volume_ok"] = False
+
     # Step 3 — push to Railway (API first, CLI fallback)
     ok, msg = _update_railway_variable(_RAILWAY_VAR_NAME, encoded)
     if ok:

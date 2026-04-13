@@ -106,20 +106,42 @@ fi
 # Store as GEMINI_SESSION_TOKEN in Railway: base64 -w0 /root/.gemini/credentials.json
 # After 'gemini auth login' in VS Code terminal, encode the credentials file and
 # paste the output as GEMINI_SESSION_TOKEN in Railway Variables → redeploy.
-if [ -n "$GEMINI_SESSION_TOKEN" ]; then
-    mkdir -p /root/.gemini
+mkdir -p /root/.gemini
+_gemini_valid=false
+
+# PRIMARY: restore from volume-persisted backup (survives container restarts
+# without needing Railway API — the token keeper writes here every 4 hours).
+_GEMINI_VOLUME_CREDS="/workspace/.gemini_credentials_backup.json"
+if [ -f "$_GEMINI_VOLUME_CREDS" ] && [ ! -f /root/.gemini/credentials.json ]; then
+    cp "$_GEMINI_VOLUME_CREDS" /root/.gemini/credentials.json
+    chmod 600 /root/.gemini/credentials.json
+    echo "[entrypoint] Gemini credentials restored from volume backup ($_GEMINI_VOLUME_CREDS)."
+fi
+
+# Check if volume credentials are already good
+if [ -f /root/.gemini/credentials.json ]; then
+    if gemini --version >/dev/null 2>&1; then
+        echo "[entrypoint] Gemini CLI AVAILABLE from volume credentials — skipping env var restore."
+        _gemini_valid=true
+    else
+        echo "[entrypoint] Volume Gemini credentials present but CLI not responding — will restore from env var."
+    fi
+fi
+
+# Fallback: restore from GEMINI_SESSION_TOKEN env var
+if [ "$_gemini_valid" = "false" ] && [ -n "$GEMINI_SESSION_TOKEN" ]; then
     echo "$GEMINI_SESSION_TOKEN" | base64 -d > /root/.gemini/credentials.json
     chmod 600 /root/.gemini/credentials.json
-    echo "[entrypoint] Gemini CLI credentials restored."
+    echo "[entrypoint] Gemini CLI credentials restored from GEMINI_SESSION_TOKEN env var."
 
-    # Verify the CLI is alive (also triggers silent OAuth token refresh)
     if gemini --version >/dev/null 2>&1; then
         echo "[entrypoint] Gemini CLI AVAILABLE — free-tier backup active ($(gemini --version 2>/dev/null | head -1))."
+        _gemini_valid=true
     else
         echo "[entrypoint] WARNING: Gemini CLI not responding — check credentials or reinstall: npm install -g @google/gemini-cli"
     fi
-else
-    echo "[entrypoint] INFO: GEMINI_SESSION_TOKEN not set — Gemini CLI backup inactive."
+elif [ "$_gemini_valid" = "false" ]; then
+    echo "[entrypoint] INFO: GEMINI_SESSION_TOKEN not set and no volume backup — Gemini CLI backup inactive."
     echo "[entrypoint] TO ENABLE: VS Code terminal → 'gemini auth login' → base64 -w0 /root/.gemini/credentials.json → add as GEMINI_SESSION_TOKEN in Railway."
 fi
 
