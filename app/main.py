@@ -933,37 +933,43 @@ def chat_stream(req: ChatRequest, request: Request):
 
         # ── 4. DeepSeek (last resort) ─────────────────────────────────────────
         yield "data: [PROGRESS:🔄 Trying DeepSeek (last resort)…]\n\n"
+        _ds_resp = None
         try:
             from .models.deepseek import ask_deepseek
-            _mw("DeepSeek", msg[:100])
-            _ds_resp = ask_deepseek(msg, system=system)
-            _md("DeepSeek")
-            if _ds_resp and _ds_resp.startswith("["):
-                _me("DeepSeek", _ds_resp[:200])
-            if _ds_resp and not _ds_resp.startswith("["):
-                _store_mem(req.session_id, f"Q: {msg[:300]} A: {_ds_resp[:300]}")
-                append_exchange(req.session_id, msg, _ds_resp)
-                _il.record(msg, "DEEPSEEK", _ds_resp, "conversational", _cx, req.session_id)
-                normalized = _ds_resp.replace("\n", " \n ")
-                words = [w for w in normalized.split(" ") if w]
-                buf = ""
-                for word in words:
-                    buf += word + " "
-                    if len(buf) >= 60:
-                        yield f"data: {buf.replace(chr(10), chr(92) + 'n')}\n\n"
-                        buf = ""
-                if buf.strip():
-                    yield f"data: {buf.replace(chr(10), chr(92) + 'n')}\n\n"
-                yield f"data: [META:DEEPSEEK·conversational·{_mem_count}]\n\n"
-                yield "data: [DONE]\n\n"
-                return
+            if not settings.deepseek_api_key:
+                yield "data: [PROGRESS:⚠️ DeepSeek skipped — DEEPSEEK_API_KEY not set in Railway Variables]\n\n"
+            else:
+                _mw("DeepSeek", msg[:100])
+                _ds_resp = ask_deepseek(msg, system=system)
+                if _ds_resp and _ds_resp.startswith("["):
+                    _me("DeepSeek", _ds_resp[:200])
+                    yield f"data: [PROGRESS:⚠️ DeepSeek error: {_ds_resp[:120]}]\n\n"
+                else:
+                    _md("DeepSeek")
         except Exception as _ds_exc:
             try:
                 _md("DeepSeek")
                 _me("DeepSeek", str(_ds_exc)[:200])
             except Exception:
                 pass
-            yield f"data: [PROGRESS:⚠️ DeepSeek failed: {str(_ds_exc)[:80]}]\n\n"
+            yield f"data: [PROGRESS:⚠️ DeepSeek exception: {str(_ds_exc)[:100]}]\n\n"
+        if _ds_resp and not _ds_resp.startswith("["):
+            _store_mem(req.session_id, f"Q: {msg[:300]} A: {_ds_resp[:300]}")
+            append_exchange(req.session_id, msg, _ds_resp)
+            _il.record(msg, "DEEPSEEK", _ds_resp, "conversational", _cx, req.session_id)
+            normalized = _ds_resp.replace("\n", " \n ")
+            words = [w for w in normalized.split(" ") if w]
+            buf = ""
+            for word in words:
+                buf += word + " "
+                if len(buf) >= 60:
+                    yield f"data: {buf.replace(chr(10), chr(92) + 'n')}\n\n"
+                    buf = ""
+            if buf.strip():
+                yield f"data: {buf.replace(chr(10), chr(92) + 'n')}\n\n"
+            yield f"data: [META:DEEPSEEK·conversational·{_mem_count}]\n\n"
+            yield "data: [DONE]\n\n"
+            return
 
         # ── 5. All tiers failed ───────────────────────────────────────────────
         yield "data: ⚠️ All response tiers unavailable (CLI, Gemini, Anthropic, DeepSeek). Please retry in a moment.\n\n"
