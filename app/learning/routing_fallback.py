@@ -63,7 +63,7 @@ def route_logged(prompt: str, system: str = "", source: str = "") -> tuple[str, 
     except Exception as e:
         _log(f"CLI exception: {e}", source)
 
-    # ── Tier 2: Gemini CLI ────────────────────────────────────────────────────
+    # ── Tier 2a: Gemini CLI (via inspiring-cat CLI worker) ───────────────────
     try:
         from .gemini_cli_worker import ask_gemini_cli
         result = ask_gemini_cli(full_prompt)
@@ -71,9 +71,29 @@ def route_logged(prompt: str, system: str = "", source: str = "") -> tuple[str, 
             _log(f"✓ Gemini CLI responded ({len(result)} chars)", source)
             return result, "GEMINI"
         if result:
-            _log(f"Gemini returned error token: {result[:120]}", source)
+            _log(f"Gemini CLI returned error token: {result[:120]}", source)
     except Exception as e:
-        _log(f"Gemini exception: {e}", source)
+        _log(f"Gemini CLI exception: {e}", source)
+
+    # ── Tier 2b: Gemini API direct (GEMINI_API_KEY — free, no CLI needed) ────
+    # Fallback when the CLI worker is unauthenticated or inspiring-cat is down.
+    try:
+        _gemini_key = os.environ.get("GEMINI_API_KEY", "")
+        if _gemini_key:
+            import google.genai as _genai
+            _gclient = _genai.Client(api_key=_gemini_key)
+            _gresp = _gclient.models.generate_content(
+                model="gemini-2.0-flash",
+                contents=full_prompt,
+            )
+            result = (_gresp.text or "").strip()
+            if result:
+                _log(f"✓ Gemini API (direct) responded ({len(result)} chars)", source)
+                return result, "GEMINI_API"
+        else:
+            _log("Gemini API skipped (no GEMINI_API_KEY)", source)
+    except Exception as e:
+        _log(f"Gemini API direct exception: {e}", source)
 
     # ── Tier 3: Anthropic API (direct — CLI and Gemini both failed) ──────────
     try:

@@ -439,7 +439,7 @@ def _creds_token_expired() -> bool:
             return False      # Not yet expired
         except Exception:
             continue
-    return False  # Can't determine — assume valid
+    return False  # Can't determine expiry from file — assume valid (live check needed)
 
 
 def verify_pro_auth() -> dict:
@@ -562,6 +562,32 @@ def verify_pro_auth() -> dict:
                     "logged_in": True, "auth_method": auth_method,
                     "subscription": subscription, "message": msg,
                 }
+            # If expiry field wasn't in the credentials file, do a live test prompt
+            # to confirm the token actually works — claude auth status doesn't make
+            # an API call and can't detect server-side token revocation.
+            try:
+                _nokey2 = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
+                _nokey2["HOME"] = "/root"
+                _test = subprocess.run(
+                    ["claude", "-p", "OK", "--max-tokens", "5", "--output-format", "text"],
+                    capture_output=True, text=True, timeout=20,
+                    env=_nokey2,
+                )
+                _test_out = (_test.stdout + _test.stderr).lower()
+                _AUTH_FAIL_SIGNALS = ("invalid", "expired", "unauthorized", "auth", "login", "token")
+                if any(s in _test_out for s in _AUTH_FAIL_SIGNALS) and len(_test_out) < 300:
+                    _write_flag(_CLI_DOWN_FLAG, f"{datetime.datetime.utcnow().isoformat()}|{_CLI_DOWN_TTL}")
+                    msg = f"Live test prompt revealed token is invalid — CLI_DOWN flag set. Output: {_test_out[:150]!r}"
+                    _log(f"verify_pro_auth: {msg}")
+                    return {
+                        "verified": True, "pro_valid": False,
+                        "logged_in": True, "auth_method": auth_method,
+                        "subscription": subscription, "message": msg,
+                    }
+            except subprocess.TimeoutExpired:
+                _log("verify_pro_auth: live test prompt timed out (20s) — treating as valid to avoid false negative")
+            except Exception as _te:
+                _log(f"verify_pro_auth: live test prompt error — {_te}")
             # Verified valid — clear CLI_DOWN if it was stale
             clear_cli_down_flag()
             msg = f"Claude Pro auth VERIFIED ✓ — authMethod=claude.ai subscription={subscription or 'unknown'}"
