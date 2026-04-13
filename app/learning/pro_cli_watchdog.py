@@ -117,12 +117,32 @@ def maybe_recover() -> bool:
                         )
                         # Fall through to the recovery block below
                     else:
+                        # _try_restore_claude_auth() returned True but verify_pro_auth() says
+                        # invalid — this is the classic false-positive: `claude auth status`
+                        # reports "claude.ai" even when the OAuth token has expired server-side.
+                        # The stored CLAUDE_SESSION_TOKEN env var is stale — escalate to
+                        # full_recovery_chain() so Playwright can obtain a fresh token.
                         bg_log(
-                            "Pro CLI watchdog: restore succeeded but auth still invalid. "
-                            "CLAUDE_SESSION_TOKEN env var may be stale. Manual login required.",
+                            "Pro CLI watchdog: env var token appears expired (restore reported success "
+                            "but live auth check failed) — escalating to full recovery chain (Playwright)…",
                             source="pro_cli_watchdog",
                         )
-                        return False
+                        try:
+                            from .cli_auto_login import full_recovery_chain
+                            if full_recovery_chain():
+                                auth = verify_pro_auth()
+                                if auth.get("pro_valid"):
+                                    bg_log("Pro CLI watchdog: full recovery SUCCESS ✓ (after false-positive restore)", source="pro_cli_watchdog")
+                                    # Fall through to the recovery success block below
+                                else:
+                                    bg_log("Pro CLI watchdog: recovery chain ran but auth still invalid.", source="pro_cli_watchdog")
+                                    return False
+                            else:
+                                bg_log("Pro CLI watchdog: full recovery chain FAILED.", source="pro_cli_watchdog")
+                                return False
+                        except Exception as _re2:
+                            bg_log(f"Pro CLI watchdog: recovery chain error (after false-positive restore) — {_re2}", source="pro_cli_watchdog")
+                            return False
                 else:
                     bg_log(
                         "Pro CLI watchdog: env var restore failed — trying full recovery chain (direct refresh + auto-login)…",
