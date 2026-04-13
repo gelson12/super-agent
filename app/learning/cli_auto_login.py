@@ -146,6 +146,17 @@ def auto_login_claude() -> bool:
 def _do_auto_login(email: str) -> bool:
     """Core login flow — start CLI, capture URL, automate browser with n8n verification."""
 
+    # Step 0: Record current creds file mtime (or delete it) so Step 5 can
+    # confirm the file was FRESHLY WRITTEN during this login — not the old
+    # expired file that was already on disk giving a false-positive auth check.
+    _creds_mtime_before = None
+    if _CREDS_FILE.exists():
+        try:
+            _creds_mtime_before = _CREDS_FILE.stat().st_mtime
+            _log(f"Step 0: existing creds file mtime={_creds_mtime_before:.0f} — will verify it changes after login.")
+        except Exception:
+            pass
+
     # Step 1: Start `claude login` subprocess
     _log("Step 1: Starting `claude login` subprocess...")
     env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
@@ -242,11 +253,22 @@ def _do_auto_login(email: str) -> bool:
         _log("Step 4: CLI didn't exit in 30s — killing (token may still be saved).")
         proc.kill()
 
-    # Step 5: Verify the token was saved
+    # Step 5: Verify the token was FRESHLY saved (not the old expired file)
     _log("Step 5: Verifying credentials...")
     time.sleep(2)  # Give CLI time to write the file
 
     if _CREDS_FILE.exists():
+        # Confirm the file was actually written during THIS login attempt
+        try:
+            _creds_mtime_after = _CREDS_FILE.stat().st_mtime
+            if _creds_mtime_before is not None and _creds_mtime_after <= _creds_mtime_before:
+                _log(f"Step 5 FAILED: credentials file was NOT updated (mtime unchanged: {_creds_mtime_after:.0f}). "
+                     "CLI likely did not complete the OAuth callback — the old expired token is still on disk.")
+                return False
+            _log(f"Step 5: credentials file updated (mtime {_creds_mtime_before} → {_creds_mtime_after:.0f}) ✓")
+        except Exception:
+            pass
+
         try:
             r = subprocess.run(
                 ["claude", "auth", "status"],
