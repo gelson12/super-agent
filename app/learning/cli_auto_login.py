@@ -409,14 +409,49 @@ def _automate_browser(oauth_url: str, email: str) -> bool:
                 page.keyboard.press("Enter")
                 _log("Browser: pressed Enter to verify")
 
-            time.sleep(5)
+            # Wait for next page to fully load — networkidle is more reliable than fixed sleep
+            try:
+                page.wait_for_load_state("networkidle", timeout=15000)
+            except Exception:
+                time.sleep(5)
             _log(f"Browser: after verification, URL = {page.url[:100]}")
+            _log(f"Browser: page title = {page.title()!r}")
 
             # ── Step 4: Click Approve on consent screen ──────────────────
+            # If already on the callback URL, the CLI got its token — no consent needed.
+            if "localhost" in page.url or "/callback" in page.url:
+                _log("Browser: already redirected to callback after verify — no consent screen needed ✓")
+                browser.close()
+                return True
+
             _log("Browser: looking for Approve button...")
-            _click_approve(page)
-            time.sleep(3)
-            _log(f"Browser: final URL = {page.url[:100]}")
+            _log(f"Browser: consent page content sample: {page.content()[:600]}")
+            approved = _click_approve(page)
+
+            if approved:
+                _log("Browser: Approve clicked — waiting for callback redirect to CLI...")
+                # Wait for redirect to localhost. A navigation/net error here is expected —
+                # the CLI's local HTTP server returns a minimal response (sometimes no HTML).
+                try:
+                    page.wait_for_url("*localhost*", timeout=20000)
+                    _log(f"Browser: redirected to localhost callback ✓ URL={page.url[:100]}")
+                except Exception as _nav_err:
+                    try:
+                        cur_url = page.url or ""
+                    except Exception:
+                        cur_url = ""
+                    if "localhost" in cur_url or "/callback" in cur_url:
+                        _log(f"Browser: callback redirect completed (nav error expected): {_nav_err}")
+                    else:
+                        _log(f"Browser: wait_for_url timeout — {_nav_err}. "
+                             f"Current URL: {cur_url[:100]}. CLI may still get callback via network.")
+                time.sleep(2)
+            else:
+                _log(f"Browser: WARNING — no Approve button found after verification. "
+                     f"Final URL: {page.url[:100]}. "
+                     "Consent screen selectors may need updating — check the content sample above.")
+                browser.close()
+                return False
 
             browser.close()
             return True
@@ -429,6 +464,11 @@ def _automate_browser(oauth_url: str, email: str) -> bool:
 def _click_approve(page) -> bool:
     """Find and click the OAuth Approve/Allow button."""
     try:
+        # Check if we're already on a success/callback page before looking for buttons
+        if "localhost" in page.url or "callback" in page.url:
+            _log("Browser: already redirected to callback — auto-approved.")
+            return True
+
         selectors = [
             'button:has-text("Approve")',
             'button:has-text("Allow")',
@@ -436,23 +476,44 @@ def _click_approve(page) -> bool:
             'button:has-text("Accept")',
             'button:has-text("Grant")',
             'button:has-text("Yes")',
+            'button:has-text("Allow access")',
+            'button:has-text("Continue")',
+            'button:has-text("Sign in")',
+            'button:has-text("Log in")',
             'input[type="submit"][value*="Approve" i]',
             'input[type="submit"][value*="Allow" i]',
+            'a:has-text("Approve")',
+            'a:has-text("Allow")',
+            # Data attribute patterns used by some OAuth UIs
+            '[data-testid*="approve" i]',
+            '[data-testid*="allow" i]',
+            '[data-testid*="authorize" i]',
+            '[aria-label*="approve" i]',
+            '[aria-label*="allow" i]',
         ]
         for sel in selectors:
-            btn = page.query_selector(sel)
-            if btn:
-                btn.click()
-                _log(f"Browser: clicked '{sel}'")
-                return True
+            try:
+                btn = page.query_selector(sel)
+                if btn and btn.is_visible():
+                    btn.click()
+                    _log(f"Browser: clicked '{sel}'")
+                    return True
+            except Exception:
+                continue
 
-        # If no button found, the page might have auto-approved
-        # Check if we're already on a success/callback page
-        if "localhost" in page.url or "callback" in page.url:
-            _log("Browser: already redirected to callback — auto-approved.")
-            return True
+        # Try wait_for_selector as last resort — button may still be loading
+        for sel in ['button:has-text("Approve")', 'button:has-text("Allow")', 'button:has-text("Authorize")']:
+            try:
+                page.wait_for_selector(sel, timeout=3000)
+                btn = page.query_selector(sel)
+                if btn:
+                    btn.click()
+                    _log(f"Browser: clicked deferred '{sel}'")
+                    return True
+            except Exception:
+                continue
 
-        _log("Browser: no approve button found. Page content sample: " + page.content()[:300])
+        _log("Browser: no approve button found. Page content sample: " + page.content()[:400])
         return False
 
     except Exception as e:
