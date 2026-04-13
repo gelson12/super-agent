@@ -2451,10 +2451,11 @@ def credits_pro_status():
         from .learning.pro_router import get_status as _pro_status
         status = _pro_status()
 
-        # Add Gemini CLI availability (widget reads this)
+        # Add Gemini CLI availability — use cached flag only, no subprocess
         try:
-            from .learning.gemini_cli_worker import is_gemini_cli_available
-            status["gemini_available"] = is_gemini_cli_available()
+            from pathlib import Path as _Path
+            _gemini_flag = _Path("/workspace/.gemini_down")
+            status["gemini_available"] = not _gemini_flag.exists()
         except Exception:
             status["gemini_available"] = False
 
