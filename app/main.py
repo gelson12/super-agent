@@ -2695,22 +2695,28 @@ def credits_pro_reset_get():
 @app.post("/webhook/verification-code", tags=["auth"])
 def webhook_verification_code(payload: dict):
     """
-    Receive verification code from n8n email monitor for automated Claude CLI re-login.
+    Receive magic link URL (or 6-digit code) from n8n for automated Claude CLI re-login.
 
-    n8n monitors the Hotmail inbox for Anthropic verification emails, extracts
-    the 6-digit code, and POSTs here so the Playwright auto-login flow can complete.
+    Claude.ai passwordless auth sends a MAGIC LINK email, not a 6-digit code.
+    n8n monitors the Hotmail inbox, extracts the magic link URL from the email,
+    and POSTs it here so Playwright can navigate to it and complete the auth.
 
-    Expected payload: {"code": "123456"}
+    Expected payload: {"url": "https://claude.ai/..."} or legacy {"code": "123456"}
     """
-    code = str(payload.get("code", "")).strip()
-    if not code or not code.isdigit():
-        raise HTTPException(status_code=400, detail="payload must include numeric 'code' field")
+    # Accept magic link URL (new) or legacy 6-digit code
+    auth_payload = (
+        str(payload.get("url", "")).strip()
+        or str(payload.get("code", "")).strip()
+    )
+    if not auth_payload:
+        raise HTTPException(status_code=400, detail="payload must include 'url' or 'code' field")
     try:
         from .learning.cli_auto_login import receive_verification_code
-        receive_verification_code(code)
-        return {"ok": True, "code_received": code[:2] + "****"}
+        receive_verification_code(auth_payload)
+        preview = auth_payload[:40] + "..." if len(auth_payload) > 40 else auth_payload
+        return {"ok": True, "received": preview}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to relay code: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to relay auth payload: {e}")
 
 
 @app.post("/webhook/refresh-cli-token", tags=["auth"])

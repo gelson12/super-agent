@@ -252,22 +252,27 @@ def health():
 @app.post("/webhook/verification-code")
 def receive_verification_code(request: dict):
     """
-    Receive a Claude.ai email verification code from n8n.
-    The n8n workflow monitors the Hotmail inbox for Anthropic verification emails,
-    extracts the code, and POSTs it here. The waiting Playwright thread picks it up.
+    Receive magic link URL (or 6-digit code) from n8n for automated Claude CLI re-login.
+    Claude.ai sends a MAGIC LINK email — n8n extracts the URL and POSTs it here.
+    The waiting Playwright thread navigates the browser to the magic link URL.
     """
-    code = request.get("code", "")
-    if not code:
-        return {"ok": False, "error": "No code provided"}
+    # Accept magic link URL (new) or legacy 6-digit code
+    auth_payload = (
+        str(request.get("url", "")).strip()
+        or str(request.get("code", "")).strip()
+    )
+    if not auth_payload:
+        return {"ok": False, "error": "No 'url' or 'code' field in payload"}
     try:
         import sys
         sys.path.insert(0, "/app")
         from app.learning.cli_auto_login import receive_verification_code as _recv
-        _recv(code)
-        _bg_log(f"Verification code received from n8n: {code[:2]}****", "webhook")
-        return {"ok": True, "message": "Code received — auto-login proceeding"}
+        _recv(auth_payload)
+        preview = auth_payload[:40] + "..." if len(auth_payload) > 40 else auth_payload
+        _bg_log(f"Auth payload received from n8n: {preview}", "webhook")
+        return {"ok": True, "message": "Magic link received — auto-login proceeding"}
     except Exception as e:
-        _bg_log(f"Verification code webhook error: {e}", "webhook")
+        _bg_log(f"Verification webhook error: {e}", "webhook")
         return {"ok": False, "error": str(e)}
 
 

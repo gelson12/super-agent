@@ -59,29 +59,34 @@ def _log(msg: str) -> None:
         pass
 
 
-# ── Verification code exchange ────────────────────────────────────────────────
-# The Playwright script waits for an n8n webhook to POST the verification code.
-# Thread-safe queue used to pass the code from the webhook handler to the
+# ── Magic link exchange ───────────────────────────────────────────────────────
+# Claude.ai passwordless auth sends a MAGIC LINK email, NOT a 6-digit code.
+# The Playwright script waits for n8n to POST the magic link URL.
+# Thread-safe queue used to pass the URL from the webhook handler to the
 # waiting browser automation thread.
 import queue
-_verification_code_queue: queue.Queue = queue.Queue()
-_VERIFICATION_CODE_TIMEOUT = 120  # max seconds to wait for code from n8n
+_verification_code_queue: queue.Queue = queue.Queue()  # carries the magic link URL
+_VERIFICATION_CODE_TIMEOUT = 120  # max seconds to wait for magic URL from n8n
 
 
 def receive_verification_code(code: str) -> None:
-    """Called by the webhook endpoint when n8n sends the verification code."""
-    _log(f"Received verification code from n8n webhook: {code[:2]}****")
+    """
+    Called by the webhook endpoint when n8n sends the magic link URL
+    (or a 6-digit code if Claude ever reverts to code-based auth).
+    The name is kept for backward-compatibility with all webhook endpoints.
+    """
+    _log(f"Received auth payload from n8n webhook: {code[:40]}...")
     _verification_code_queue.put(code)
 
 
 def _wait_for_verification_code() -> str | None:
-    """Block until verification code arrives from n8n, or timeout."""
-    _log(f"Waiting for verification code from n8n (timeout: {_VERIFICATION_CODE_TIMEOUT}s)...")
+    """Block until magic link URL arrives from n8n, or timeout."""
+    _log(f"Waiting for magic link URL from n8n (timeout: {_VERIFICATION_CODE_TIMEOUT}s)...")
     try:
         code = _verification_code_queue.get(timeout=_VERIFICATION_CODE_TIMEOUT)
         return code.strip()
     except queue.Empty:
-        _log("Verification code TIMEOUT — n8n did not send the code in time.")
+        _log("Magic link TIMEOUT — n8n did not send the URL in time.")
         return None
 
 
@@ -365,56 +370,50 @@ def _automate_browser(oauth_url: str, email: str) -> bool:
                 browser.close()
                 return False
 
-            # ── Step 2: Wait for verification code from n8n ──────────────
-            # The n8n workflow was triggered before the browser opened.
-            # It monitors the Hotmail inbox and will POST the code to our webhook.
-            verification_field = (
-                page.query_selector('input[placeholder*="verification" i]')
-                or page.query_selector('input[placeholder*="code" i]')
-                or page.query_selector('input[type="text"]')
-                or page.query_selector('input[type="number"]')
-            )
-            if not verification_field:
-                _log("Browser: no verification code field found — page may have changed.")
-                _log(f"Browser: page content: {page.content()[:500]}")
-                # Maybe already approved (Google SSO or remembered session)
-                if _click_approve(page):
-                    browser.close()
-                    return True
+            # ── Step 2: Wait for magic link URL from n8n ─────────────────
+            # Claude.ai sends a MAGIC LINK email (not a 6-digit code).
+            # The page now shows "Check your email for a sign-in link".
+            # n8n monitors Hotmail, extracts the URL from the email body,
+            # and POSTs it to /webhook/verification-code.
+            # We then navigate THIS browser session to that magic link URL
+            # so the auth cookies are set in the same session.
+            _log(f"Browser: after email submit, URL = {page.url[:100]}")
+            _log(f"Browser: page content sample: {page.content()[:400]}")
+
+            # Check if we already got a redirect (session remembered / SSO)
+            if "localhost" in page.url or "/callback" in page.url:
+                _log("Browser: already redirected to callback after email submit ✓")
+                browser.close()
+                return True
+            if _click_approve(page):
+                # Approve button present immediately — no email link needed
+                try:
+                    page.wait_for_url("*localhost*", timeout=20000)
+                except Exception:
+                    pass
+                browser.close()
+                return True
+
+            _log("Browser: waiting for magic link URL from n8n email monitor...")
+            magic_url = _wait_for_verification_code()  # returns the magic link URL
+            if not magic_url:
+                _log("Browser: TIMEOUT — n8n did not deliver the magic link URL.")
                 browser.close()
                 return False
 
-            _log("Browser: verification code field found — waiting for code from n8n...")
-            code = _wait_for_verification_code()
-            if not code:
-                _log("Browser: no verification code received — aborting.")
-                browser.close()
-                return False
-
-            # ── Step 3: Enter code and verify ────────────────────────────
-            verification_field.fill(code)
-            _log(f"Browser: entered verification code ({code[:2]}****)")
-            time.sleep(0.5)
-
-            verify_btn = (
-                page.query_selector('button:has-text("Verify")')
-                or page.query_selector('button:has-text("Submit")')
-                or page.query_selector('button:has-text("Continue")')
-                or page.query_selector('button[type="submit"]')
-            )
-            if verify_btn:
-                verify_btn.click()
-                _log("Browser: clicked Verify button")
-            else:
-                page.keyboard.press("Enter")
-                _log("Browser: pressed Enter to verify")
-
-            # Wait for next page to fully load — networkidle is more reliable than fixed sleep
+            # ── Step 3: Navigate to the magic link ───────────────────────
+            # The magic link authenticates the current browser session when visited.
+            # Must use the same browser context so auth cookies transfer correctly.
+            _log(f"Browser: navigating to magic link: {magic_url[:80]}...")
+            try:
+                page.goto(magic_url, timeout=30000)
+            except Exception as _nav_e:
+                _log(f"Browser: magic link navigation error (may be normal if redirect to localhost): {_nav_e}")
             try:
                 page.wait_for_load_state("networkidle", timeout=15000)
             except Exception:
-                time.sleep(5)
-            _log(f"Browser: after verification, URL = {page.url[:100]}")
+                time.sleep(3)
+            _log(f"Browser: after magic link, URL = {page.url[:100]}")
             _log(f"Browser: page title = {page.title()!r}")
 
             # ── Step 4: Click Approve on consent screen ──────────────────

@@ -6,11 +6,13 @@
         "pollTimes": {
           "item": [{ "mode": "everyMinute" }]
         },
+        "triggerOn": "messageReceived",
         "filters": {
-          "sender": "noreply@anthropic.com",
           "readStatus": "unread"
         },
-        "options": {}
+        "options": {
+          "downloadAttachments": false
+        }
       },
       "id": "outlook-trigger",
       "name": "Watch Outlook for Anthropic Emails",
@@ -28,10 +30,10 @@
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
-        "jsCode": "const items = $input.all();\nconst results = [];\nfor (const item of items) {\n  const subject = (item.json.subject || '').toLowerCase();\n  const body = item.json.bodyPreview || item.json.body?.content || '';\n\n  // Only process Anthropic verification emails\n  if (!subject.includes('verification') && !subject.includes('code') && !subject.includes('anthropic') && !subject.includes('claude')) {\n    continue;\n  }\n\n  // Extract 6-digit code from email body\n  const codeMatch = body.match(/\\b(\\d{6})\\b/);\n  if (codeMatch) {\n    results.push({\n      json: {\n        code: codeMatch[1],\n        subject: item.json.subject,\n        from: item.json.from?.emailAddress?.address || '',\n        timestamp: new Date().toISOString()\n      }\n    });\n  }\n}\n\nif (results.length === 0) {\n  return [];\n}\nreturn results;"
+        "jsCode": "const items = $input.all();\nconst results = [];\nfor (const item of items) {\n  const subject = (item.json.subject || '').toLowerCase();\n  const from = (item.json.from?.emailAddress?.address || item.json.from || '').toLowerCase();\n  const body = item.json.bodyPreview || (item.json.body && item.json.body.content) || '';\n\n  // Only process Anthropic login emails — match on subject OR sender domain\n  const isAnthropicSender = from.includes('anthropic.com');\n  const isLoginEmail = subject.includes('claude') || subject.includes('sign in') || subject.includes('secure link') || subject.includes('log in');\n  if (!isAnthropicSender && !isLoginEmail) {\n    continue;\n  }\n\n  // Extract the magic link URL from the email body.\n  // Claude.ai sends a sign-in link like: https://claude.ai/login?token=...\n  // or https://claude.ai/magic-link?... or similar OAuth callback URLs.\n  const urlPatterns = [\n    /https:\\/\\/claude\\.ai\\/[^\\s\"'<>\\)]+/i,\n    /https:\\/\\/[^\\s\"'<>\\)]*anthropic\\.com\\/[^\\s\"'<>\\)]+/i,\n    /https:\\/\\/[^\\s\"'<>\\)]*magic[^\\s\"'<>\\)]+/i,\n  ];\n  let magicUrl = null;\n  for (const pattern of urlPatterns) {\n    const m = body.match(pattern);\n    if (m) {\n      // Clean up trailing punctuation that may have been included\n      magicUrl = m[0].replace(/[.,;!?]+$/, '');\n      break;\n    }\n  }\n\n  if (magicUrl) {\n    results.push({\n      json: {\n        url: magicUrl,\n        subject: item.json.subject,\n        from: from,\n        timestamp: new Date().toISOString()\n      }\n    });\n  }\n}\n\nif (results.length === 0) {\n  return [];\n}\nreturn results;"
       },
-      "id": "extract-code",
-      "name": "Extract Verification Code",
+      "id": "extract-url",
+      "name": "Extract Magic Link URL",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [480, 400]
@@ -44,13 +46,13 @@
         "sendBody": true,
         "contentType": "json",
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ code: $json.code }) }}",
+        "jsonBody": "={{ JSON.stringify({ url: $json.url }) }}",
         "options": {
           "timeout": 10000
         }
       },
-      "id": "post-code",
-      "name": "POST Code to CLI Worker",
+      "id": "post-url",
+      "name": "POST Magic Link to CLI Worker",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
       "position": [720, 400]
@@ -58,10 +60,10 @@
   ],
   "connections": {
     "Watch Outlook for Anthropic Emails": {
-      "main": [[{ "node": "Extract Verification Code", "type": "main", "index": 0 }]]
+      "main": [[{ "node": "Extract Magic Link URL", "type": "main", "index": 0 }]]
     },
-    "Extract Verification Code": {
-      "main": [[{ "node": "POST Code to CLI Worker", "type": "main", "index": 0 }]]
+    "Extract Magic Link URL": {
+      "main": [[{ "node": "POST Magic Link to CLI Worker", "type": "main", "index": 0 }]]
     }
   },
   "settings": {
