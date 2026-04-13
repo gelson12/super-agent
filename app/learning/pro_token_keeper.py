@@ -266,6 +266,19 @@ def run_token_keeper() -> dict:
         return result
     result["encode_ok"] = True
 
+    # Step 2b — volume backup (primary persistence, no Railway API needed)
+    # Writes raw credentials to /workspace/ which is mounted as a persistent volume.
+    # entrypoint.sh reads this on boot before falling back to CLAUDE_SESSION_TOKEN env var.
+    try:
+        _vol = _Path("/workspace/.claude_credentials_backup.json")
+        _vol.write_bytes(_CREDS_FILE.read_bytes())
+        _vol.chmod(0o600)
+        _log("Token keeper: credentials backed up to volume (/workspace/.claude_credentials_backup.json) ✓")
+        result["volume_ok"] = True
+    except Exception as _ve:
+        _log(f"Token keeper: volume backup failed — {_ve}")
+        result["volume_ok"] = False
+
     # Step 3 — push to THIS service (super-agent) via API, CLI fallback
     ok, msg = _update_railway_variable("CLAUDE_SESSION_TOKEN", encoded)
     if ok:

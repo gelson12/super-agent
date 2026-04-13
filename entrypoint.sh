@@ -73,6 +73,15 @@ _CLI_FLAG_DIR="/workspace"
 [ -w "/workspace" ] || _CLI_FLAG_DIR="/app"
 _claude_valid=false
 
+# PRIMARY: restore from volume-persisted backup (survives container restarts without
+# needing RAILWAY_TOKEN — the volume is always available even when Railway API is down).
+_VOLUME_CREDS="/workspace/.claude_credentials_backup.json"
+if [ -f "$_VOLUME_CREDS" ] && [ ! -f /root/.claude/.credentials.json ]; then
+    cp "$_VOLUME_CREDS" /root/.claude/.credentials.json
+    chmod 600 /root/.claude/.credentials.json
+    echo "[entrypoint] Claude credentials restored from volume backup ($_VOLUME_CREDS)."
+fi
+
 # Check if existing credentials are already valid (volume-persisted or from a previous boot)
 if [ -f /root/.claude/.credentials.json ]; then
     _auth_status=$(timeout 15 claude auth status 2>/dev/null || echo "{}")

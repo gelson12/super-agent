@@ -424,12 +424,32 @@ def _click_approve(page) -> bool:
 
 
 def _push_token_to_railway() -> None:
-    """Encode credentials and push to Railway Variables."""
+    """
+    Persist fresh credentials after a successful Playwright login.
+
+    THREE-LAYER persistence (most reliable first):
+      1. Volume backup  — write raw JSON to /workspace/.claude_credentials_backup.json
+                          Survives container restarts without Railway API. Always works.
+      2. Railway API    — update CLAUDE_SESSION_TOKEN env var via GraphQL (needs RAILWAY_TOKEN)
+      3. Railway CLI    — fallback if API fails (also needs RAILWAY_TOKEN)
+
+    Layer 1 alone is enough to survive restarts: entrypoint.sh reads the volume
+    backup on boot before falling back to the env var.
+    """
     try:
         if not _CREDS_FILE.exists():
             return
         raw = _CREDS_FILE.read_bytes()
         encoded = base64.b64encode(raw).decode("ascii")
+
+        # ── Layer 1: volume backup (always attempted, no Railway API needed) ────
+        _VOLUME_BACKUP = Path("/workspace/.claude_credentials_backup.json")
+        try:
+            _VOLUME_BACKUP.write_bytes(raw)
+            _VOLUME_BACKUP.chmod(0o600)
+            _log(f"Token saved to volume backup ({_VOLUME_BACKUP}) ✓ — persists across restarts without Railway API.")
+        except Exception as _ve:
+            _log(f"Volume backup failed (workspace not writable?): {_ve}")
 
         from .pro_token_keeper import _update_railway_variable, _update_via_cli
         ok, msg = _update_railway_variable("CLAUDE_SESSION_TOKEN", encoded)
