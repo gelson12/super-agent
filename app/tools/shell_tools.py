@@ -159,3 +159,65 @@ def run_claude_cli(prompt: str) -> str:
     Best for: code review, auto-fix suggestions, and explaining code in a repo.
     """
     return _run(f'claude -p "{prompt}"', _WORKSPACE, timeout=120)
+
+
+@tool
+def run_shell_via_cli_worker(command: str) -> str:
+    """
+    Run a shell command (curl, git, any binary) inside the inspiring-cat CLI worker
+    container and return the output.
+
+    Use this as a SECOND PATH when direct Python tools are unavailable or failing.
+    Particularly useful for:
+    - Calling n8n REST API via curl (alternative to n8n Python tools)
+    - Calling Railway API via curl (alternative to railway Python tools)
+    - Any HTTP request: curl -s URL -H 'Header: value' -d '{...}'
+    - Checking remote service health from the CLI worker environment
+
+    Examples:
+      run_shell_via_cli_worker("curl -s https://n8n-url/api/v1/workflows -H 'X-N8N-API-KEY: ...'")
+      run_shell_via_cli_worker("curl -s https://api.github.com/repos/gelson12/super-agent/commits?per_page=1")
+
+    The command runs in the inspiring-cat container with a 30-second timeout.
+    Returns output string or an error string starting with '['.
+    """
+    import json as _json
+    import os as _os
+    import time as _time
+    import urllib.request as _req
+
+    cli_url = _os.environ.get("CLI_WORKER_URL", "").rstrip("/")
+    if not cli_url:
+        # Fallback: run locally if CLI worker URL not configured
+        return _run(command, _WORKSPACE, timeout=30)
+
+    try:
+        # Submit task
+        data = _json.dumps({"type": "shell", "payload": {"command": command}}).encode()
+        request = _req.Request(
+            f"{cli_url}/tasks",
+            data=data,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with _req.urlopen(request, timeout=10) as resp:
+            task_id = _json.loads(resp.read()).get("task_id")
+        if not task_id:
+            return "[cli_worker: no task_id returned]"
+
+        # Poll for result
+        deadline = _time.time() + 40
+        while _time.time() < deadline:
+            with _req.urlopen(f"{cli_url}/tasks/{task_id}", timeout=10) as resp:
+                body = _json.loads(resp.read())
+            status = body.get("status")
+            if status == "done":
+                return body.get("result", "(no output)")
+            if status == "failed":
+                return f"[cli_worker shell failed: {body.get('error', 'unknown')}]"
+            _time.sleep(2)
+
+        return "[cli_worker: shell task timed out while polling]"
+
+    except Exception as e:
+        return f"[cli_worker shell error: {e}]"

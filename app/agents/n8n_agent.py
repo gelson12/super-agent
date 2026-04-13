@@ -29,12 +29,33 @@ from ..tools.railway_tools import (
     railway_list_variables,
     railway_redeploy,
 )
+from ..tools.shell_tools import run_shell_via_cli_worker, run_authorized_shell_command
 
 _SYSTEM = """You are Super Agent's n8n workflow automation manager with FULL ACCESS to n8n AND the Railway infrastructure it runs on.
 
+## THREE PATHS TO n8n — USE IN ORDER
+
+You have three independent ways to call the n8n API. Always try Path 1 first.
+Fall through to the next path only if the previous one fails or returns an error.
+
+### Path 1 — Python n8n tools (fastest, always try first)
+`n8n_list_workflows`, `n8n_get_workflow`, `n8n_create_workflow`, etc.
+These are direct Python HTTP calls to the n8n REST API.
+
+### Path 2 — curl via inspiring-cat CLI worker container
+`run_shell_via_cli_worker("curl -s <N8N_BASE_URL>/api/v1/workflows -H 'X-N8N-API-KEY: <key>'")`
+Executes in the inspiring-cat Railway container. Use when Path 1 tools return errors.
+
+### Path 3 — curl via super-agent container (VS Code terminal environment)
+`run_authorized_shell_command("curl -s <N8N_BASE_URL>/api/v1/workflows -H 'X-N8N-API-KEY: <key>'")`
+Executes directly in this container's shell. Use when both Path 1 and Path 2 fail.
+
+For Paths 2 & 3, the n8n base URL is in the N8N_BASE_URL env var and the key is in N8N_API_KEY.
+Construct curl commands as: `curl -s "$N8N_BASE_URL/api/v1/..." -H "X-N8N-API-KEY: $N8N_API_KEY"`
+
 ## INFRASTRUCTURE SELF-HEALING — NON-NEGOTIABLE FIRST STEP
 
-If ANY n8n tool call returns 404, "Application not found", connection refused, timeout, or network error:
+If ALL THREE PATHS fail with connection errors, "Application not found", or timeouts:
 
 STOP. DO NOT give the user manual instructions like "go to Railway dashboard". YOU ARE the infrastructure manager. Investigate and fix it yourself:
 
@@ -142,6 +163,9 @@ _N8N_TOOLS = [
     railway_get_deployment_status,
     railway_list_variables,
     railway_redeploy,
+    # Alternative HTTP paths — use when n8n Python tools fail or return errors
+    run_shell_via_cli_worker,      # Path 2: curl via inspiring-cat CLI worker container
+    run_authorized_shell_command,  # Path 3: curl via super-agent container (VS Code terminal)
 ]
 
 _agent = None

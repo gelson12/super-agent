@@ -8,6 +8,7 @@ Task types:
   claude_probe  → claude --version              (timeout=15s)
   gemini_probe  → gemini --version              (timeout=15s)
   flutter_build → flutter build apk --release  (cwd=/workspace, timeout=600s)
+  shell         → bash -c "{command}"           (cwd=/workspace, timeout=30s)
 
 Each task: pending → running → done | failed
 Never raises — writes error string on any exception.
@@ -26,6 +27,7 @@ _TIMEOUTS = {
     "claude_probe":  15,
     "gemini_probe":  15,
     "flutter_build": 600,
+    "shell":         30,   # generic shell command — curl, git, any binary
 }
 
 _WORKSPACE = "/workspace"
@@ -144,6 +146,61 @@ def _run_subprocess(cmd: list[str], cwd: str | None, timeout: int) -> str:
         return f"[cli_worker error: {e}]"
 
 
+def _run_shell(command: str, cwd: str, timeout: int) -> str:
+    """Run an arbitrary bash command and return output. Never raises."""
+    try:
+        proc = subprocess.run(
+            command,
+            shell=True,
+            executable="/bin/bash",
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            cwd=cwd,
+            env=_CLI_ENV,
+        )
+        return proc.stdout.strip() or proc.stderr.strip() or "(no output)"
+    except subprocess.TimeoutExpired:
+        return f"[cli_worker: shell timed out after {timeout}s]"
+    except Exception as e:
+        return f"[cli_worker: shell error — {e}]"
+
+
+def _dispatch(task_type: str, payload: dict, timeout: int) -> str:
+    """Central dispatch — maps task type to execution. Returns result string."""
+    if task_type == "claude_pro":
+        return _run_subprocess(["claude", "-p", payload.get("prompt", "")], _WORKSPACE, timeout)
+
+    elif task_type == "gemini_cli":
+        return _run_subprocess(["gemini", "--prompt", payload.get("prompt", "")], _WORKSPACE, timeout)
+
+    elif task_type == "claude_auth":
+        return _run_subprocess(["claude", "auth", "status"], None, timeout)
+
+    elif task_type == "claude_probe":
+        return _run_subprocess(["claude", "--version"], None, timeout)
+
+    elif task_type == "gemini_probe":
+        return _run_subprocess(["gemini", "--version"], None, timeout)
+
+    elif task_type == "flutter_build":
+        extra_args = payload.get("args", [])
+        return _run_subprocess(
+            ["flutter", "build", "apk", "--release"] + extra_args,
+            payload.get("cwd", _WORKSPACE),
+            timeout,
+        )
+
+    elif task_type == "shell":
+        command = payload.get("command", "").strip()
+        if not command:
+            return "[cli_worker: shell task requires 'command' in payload]"
+        return _run_shell(command, payload.get("cwd", _WORKSPACE), timeout)
+
+    else:
+        return f"[cli_worker: unknown task type '{task_type}']"
+
+
 def execute_task(task_id: str, task_type: str, payload: dict) -> None:
     """
     Execute one CLI task end-to-end: mark running → run subprocess → mark done/failed.
@@ -152,37 +209,8 @@ def execute_task(task_id: str, task_type: str, payload: dict) -> None:
     try:
         _mark_running(task_id)
         timeout = _TIMEOUTS.get(task_type, 120)
-
-        if task_type == "claude_pro":
-            prompt = payload.get("prompt", "")
-            result = _run_subprocess(["claude", "-p", prompt], _WORKSPACE, timeout)
-
-        elif task_type == "gemini_cli":
-            prompt = payload.get("prompt", "")
-            result = _run_subprocess(["gemini", "--prompt", prompt], _WORKSPACE, timeout)
-
-        elif task_type == "claude_auth":
-            result = _run_subprocess(["claude", "auth", "status"], None, timeout)
-
-        elif task_type == "claude_probe":
-            result = _run_subprocess(["claude", "--version"], None, timeout)
-
-        elif task_type == "gemini_probe":
-            result = _run_subprocess(["gemini", "--version"], None, timeout)
-
-        elif task_type == "flutter_build":
-            extra_args = payload.get("args", [])
-            result = _run_subprocess(
-                ["flutter", "build", "apk", "--release"] + extra_args,
-                payload.get("cwd", _WORKSPACE),
-                timeout,
-            )
-
-        else:
-            result = f"[cli_worker: unknown task type '{task_type}']"
-
+        result = _dispatch(task_type, payload, timeout)
         _mark_done(task_id, result)
-
     except Exception as e:
         try:
             _mark_failed(task_id, str(e))
@@ -233,36 +261,8 @@ def run_task_from_record(task: dict) -> None:
     timeout   = _TIMEOUTS.get(task_type, 120)
 
     try:
-        if task_type == "claude_pro":
-            prompt = payload.get("prompt", "")
-            result = _run_subprocess(["claude", "-p", prompt], _WORKSPACE, timeout)
-
-        elif task_type == "gemini_cli":
-            prompt = payload.get("prompt", "")
-            result = _run_subprocess(["gemini", "--prompt", prompt], _WORKSPACE, timeout)
-
-        elif task_type == "claude_auth":
-            result = _run_subprocess(["claude", "auth", "status"], None, timeout)
-
-        elif task_type == "claude_probe":
-            result = _run_subprocess(["claude", "--version"], None, timeout)
-
-        elif task_type == "gemini_probe":
-            result = _run_subprocess(["gemini", "--version"], None, timeout)
-
-        elif task_type == "flutter_build":
-            extra_args = payload.get("args", [])
-            result = _run_subprocess(
-                ["flutter", "build", "apk", "--release"] + extra_args,
-                payload.get("cwd", _WORKSPACE),
-                timeout,
-            )
-
-        else:
-            result = f"[cli_worker: unknown task type '{task_type}']"
-
+        result = _dispatch(task_type, payload, timeout)
         _mark_done(task_id, result)
-
     except Exception as e:
         try:
             _mark_failed(task_id, str(e))
