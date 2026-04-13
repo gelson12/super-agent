@@ -141,6 +141,9 @@ _THREE_HOURS = 3 * 3600
 _SIX_HOURS = 6 * 3600
 
 
+_SICK_GRACE_PERIOD = 15 * 60  # 15 minutes — show "break" before escalating to "sick"
+
+
 def _ensure_worker(worker_id: str) -> dict:
     if worker_id not in _workers:
         _workers[worker_id] = {
@@ -148,6 +151,7 @@ def _ensure_worker(worker_id: str) -> dict:
             "last_worked": 0,
             "talking_to": None,
             "task": "",
+            "sick_since": None,  # timestamp when sick state was entered
         }
     return _workers[worker_id]
 
@@ -181,6 +185,7 @@ def mark_done(worker_id: str) -> None:
         w["last_worked"] = time.time()
         w["task"] = ""
         w["talking_to"] = None
+        w["sick_since"] = None  # clear grace period timer on recovery
     _log_agent_event(worker_id, "done")
 
 
@@ -194,12 +199,18 @@ def mark_strike(worker_id: str) -> None:
 
 
 def mark_sick(worker_id: str) -> None:
-    """Mark a CLI worker as sick — token invalid/expired."""
+    """Mark a CLI worker as sick — token invalid/expired.
+    Dashboard shows 'break' for the first 15 min (self-healing window),
+    then escalates to 'sick' (TOKEN ERR) only if recovery hasn't happened."""
     with _lock:
         w = _ensure_worker(worker_id)
+        # Only stamp sick_since on the first sick call — don't reset it on repeated calls
+        # so the 15-min grace period counts from the original failure, not the last retry.
+        if w["state"] != "sick":
+            w["sick_since"] = time.time()
         w["state"] = "sick"
-        w["task"] = "Token invalid"
-    _log_agent_event(worker_id, "sick", "Token invalid or expired")
+        w["task"] = "Recovering…"
+    _log_agent_event(worker_id, "sick", "Token invalid or expired — self-healing active")
 
 
 def mark_talking(worker_a: str, worker_b: str) -> None:
@@ -236,6 +247,13 @@ def get_worker_status(worker_id: str) -> dict:
         now = time.time()
         state = w["state"]
 
+        # Sick grace period: show "break" for first 15 min, "sick" only after that.
+        # This covers the self-healing window — the system is recovering, not truly broken.
+        if state == "sick":
+            sick_since = w.get("sick_since")
+            if sick_since and (now - sick_since) < _SICK_GRACE_PERIOD:
+                state = "break"  # still within healing window — show as on break
+
         # Auto-transition idle based on time since last work
         # idle → break after 1 hour, idle → sleeping after 6 hours
         if state == "idle" and w["last_worked"] > 0:
@@ -245,6 +263,8 @@ def get_worker_status(worker_id: str) -> dict:
             elif elapsed > _ONE_HOUR:
                 state = "break"
 
+        sick_since = w.get("sick_since")
+        sick_for_seconds = round(now - sick_since) if sick_since else None
         return {
             "id": worker_id,
             "state": state,
@@ -252,6 +272,7 @@ def get_worker_status(worker_id: str) -> dict:
             "last_worked_ago": round(now - w["last_worked"]) if w["last_worked"] > 0 else None,
             "talking_to": w["talking_to"],
             "task": w["task"],
+            "sick_for_seconds": sick_for_seconds,  # how long truly sick (None if healthy)
         }
 
 

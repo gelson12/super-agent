@@ -694,7 +694,17 @@ function getMonitorClass(state) {
   }
 }
 
+function isRecovering(worker) {
+  // Break state caused by a sick worker in grace period (sick_for_seconds set but < 900)
+  return worker.state === "break" && worker.sick_for_seconds != null && worker.sick_for_seconds < 900;
+}
+
 function getScreenContent(worker) {
+  if (isRecovering(worker)) {
+    const remaining = Math.max(0, 900 - (worker.sick_for_seconds || 0));
+    const mins = Math.ceil(remaining / 60);
+    return `healing… ~${mins}m`;
+  }
   switch (worker.state) {
     case "working":  return worker.task ? esc(worker.task.substring(0, 40)) : "Processing";
     case "idle":     return "Ready";
@@ -707,6 +717,7 @@ function getScreenContent(worker) {
 }
 
 function getOverlay(worker) {
+  if (isRecovering(worker)) return '<span class="talk-bubble">☕</span>';
   switch (worker.state) {
     case "sleeping": return '<span class="zzz">Zzz</span>';
     case "strike":   return '<span class="strike-sign">🪧</span>';
@@ -739,9 +750,16 @@ function renderDesk(worker) {
   if (worker.state === "working" && worker.task)
     extras += `<div class="task-info">${esc(worker.task)}</div>`;
 
-  const tooltip = worker.last_worked > 0
-    ? `Last active: ${dateStr} (${timeAgo}) — click for activity log`
-    : `${worker.id} — never active — click for activity log`;
+  let tooltip;
+  if (isRecovering(worker)) {
+    const remaining = Math.max(0, 900 - (worker.sick_for_seconds || 0));
+    const mins = Math.ceil(remaining / 60);
+    tooltip = `${worker.id} — self-healing in progress (~${mins} min remaining). TOKEN ERR shown only if not recovered by then.`;
+  } else {
+    tooltip = worker.last_worked > 0
+      ? `Last active: ${dateStr} (${timeAgo}) — click for activity log`
+      : `${worker.id} — never active — click for activity log`;
+  }
 
   return `
     <div class="desk" data-worker="${esc(worker.id)}" data-state="${worker.state}"
@@ -774,10 +792,11 @@ function renderAll(workers) {
   // Update stats bar
   const counts = { working: 0, idle: 0, sleeping: 0, issues: 0 };
   allWorkers.forEach(w => {
-    if (w.state === "working")                         counts.working++;
-    else if (w.state === "idle")                       counts.idle++;
-    else if (w.state === "strike" || w.state === "sick") counts.issues++;
-    else                                               counts.sleeping++;
+    if (w.state === "working")                              counts.working++;
+    else if (w.state === "idle")                            counts.idle++;
+    else if (w.state === "strike" || w.state === "sick")    counts.issues++;
+    else if (isRecovering(w))                               counts.sleeping++; // healing = not an issue yet
+    else                                                    counts.sleeping++;
   });
   document.getElementById("count-working").textContent  = counts.working;
   document.getElementById("count-idle").textContent     = counts.idle;
