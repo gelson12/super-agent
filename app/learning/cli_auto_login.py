@@ -487,6 +487,32 @@ def _push_token_to_railway() -> None:
             if ok3:
                 _log("Token also pushed to inspiring-cat ✓")
 
+        # ── Push fresh token to super-agent in-memory via HTTP ────────────────
+        # This is the critical bridge: Playwright runs on inspiring-cat, but
+        # super-agent's local claude fallback uses its own /root/.claude/ which
+        # still has the expired token.  Posting here updates super-agent's
+        # in-memory env var + disk creds immediately — no redeploy required.
+        _sa_url = os.environ.get("SUPER_AGENT_URL", "").rstrip("/")
+        _api_key = os.environ.get("N8N_API_KEY", "") or os.environ.get("GITHUB_PAT", "")
+        if _sa_url and _api_key:
+            try:
+                import urllib.request
+                import json
+                _refresh_payload = json.dumps({"token_b64": encoded, "api_key": _api_key}).encode()
+                _req = urllib.request.Request(
+                    f"{_sa_url}/webhook/refresh-cli-token",
+                    data=_refresh_payload,
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with urllib.request.urlopen(_req, timeout=10) as _resp:
+                    _log(f"Fresh token pushed to super-agent in-memory ✓ (status {_resp.status})")
+            except Exception as _pe:
+                _log(f"Token push to super-agent failed (SUPER_AGENT_URL={_sa_url!r}): {_pe}")
+        else:
+            _log("SUPER_AGENT_URL or API key not set — skipping in-memory token push to super-agent. "
+                 "Add SUPER_AGENT_URL=https://super-agent-production.up.railway.app to inspiring-cat Railway Variables.")
+
     except Exception as e:
         _log(f"Token push error: {e}")
 

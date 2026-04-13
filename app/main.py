@@ -2703,6 +2703,98 @@ def webhook_verification_code(payload: dict):
         raise HTTPException(status_code=500, detail=f"Failed to relay code: {e}")
 
 
+@app.post("/webhook/refresh-cli-token", tags=["auth"])
+def webhook_refresh_cli_token(payload: dict):
+    """
+    Receive a fresh Claude CLI token from inspiring-cat after Playwright auto-login.
+
+    When Playwright runs on inspiring-cat and obtains a new OAuth token, it pushes
+    the fresh base64-encoded credentials here so super-agent can:
+      1. Write them to /root/.claude/.credentials.json (local claude fallback path)
+      2. Update os.environ["CLAUDE_SESSION_TOKEN"] in-memory (no redeploy needed)
+      3. Clear the CLI_DOWN flag so the next request uses CLI again
+
+    This bridges the gap between inspiring-cat's volume (where Playwright writes)
+    and super-agent's local claude binary (which reads from its own /root/.claude/).
+
+    Protected by N8N_API_KEY or GITHUB_PAT.
+    Expected payload: {"token_b64": "<base64-encoded credentials.json>", "api_key": "..."}
+    """
+    import os as _os
+    import base64 as _b64
+    from pathlib import Path as _Path
+
+    # Auth check — same pattern as store-memory
+    valid_keys = {k for k in [
+        _os.environ.get("N8N_API_KEY", ""),
+        _os.environ.get("GITHUB_PAT", ""),
+    ] if k}
+    if not valid_keys or payload.get("api_key", "") not in valid_keys:
+        raise HTTPException(status_code=403, detail="Invalid api_key")
+
+    token_b64 = str(payload.get("token_b64", "")).strip()
+    if not token_b64:
+        raise HTTPException(status_code=400, detail="payload must include 'token_b64' field")
+
+    try:
+        decoded = _b64.b64decode(token_b64 + "==")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid base64 token: {e}")
+
+    # Sanity check — must look like a JSON credentials file
+    if not decoded.startswith(b"{"):
+        raise HTTPException(status_code=400, detail="Decoded token does not look like JSON credentials")
+
+    # Write to all credential paths
+    _cred_dir = _Path("/root/.claude")
+    _cred_dir.mkdir(parents=True, exist_ok=True)
+    written = 0
+    for fpath in [
+        _cred_dir / ".credentials.json",
+        _cred_dir / "credentials.json",
+        _Path("/root/.claude.json"),
+    ]:
+        try:
+            fpath.write_bytes(decoded)
+            fpath.chmod(0o600)
+            written += 1
+        except Exception:
+            pass
+
+    # Also write volume backup so entrypoint.sh picks it up on next restart
+    try:
+        _vol = _Path("/workspace/.claude_credentials_backup.json")
+        _vol.write_bytes(decoded)
+        _vol.chmod(0o600)
+    except Exception:
+        pass
+
+    # Update in-memory env var so _try_restore_claude_auth() finds it immediately
+    _os.environ["CLAUDE_SESSION_TOKEN"] = token_b64
+
+    # Clear CLI_DOWN flag — next request will try claude immediately
+    try:
+        from .learning.pro_router import clear_cli_down_flag
+        clear_cli_down_flag()
+    except Exception:
+        pass
+
+    # Mark dashboard healthy
+    try:
+        from .learning.agent_status_tracker import mark_done as _md
+        _md("Claude CLI Pro")
+    except Exception:
+        pass
+
+    try:
+        from .activity_log import bg_log
+        bg_log("✅ CLI token pushed from inspiring-cat — credentials refreshed in-memory, CLI_DOWN cleared.", source="refresh_cli_token")
+    except Exception:
+        pass
+
+    return {"ok": True, "paths_written": written, "message": "Token refreshed in super-agent memory and disk"}
+
+
 @app.post("/webhook/store-memory", tags=["memory"])
 def webhook_store_memory(payload: dict):
     """
