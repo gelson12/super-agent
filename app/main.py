@@ -957,9 +957,13 @@ def chat_stream(req: ChatRequest, request: Request):
                 yield f"data: [META:DEEPSEEK·conversational·{_mem_count}]\n\n"
                 yield "data: [DONE]\n\n"
                 return
-        except Exception:
-            try: _md("DeepSeek")
-            except Exception: pass
+        except Exception as _ds_exc:
+            try:
+                _md("DeepSeek")
+                _me("DeepSeek", str(_ds_exc)[:200])
+            except Exception:
+                pass
+            yield f"data: [PROGRESS:⚠️ DeepSeek failed: {str(_ds_exc)[:80]}]\n\n"
 
         # ── 5. All tiers failed ───────────────────────────────────────────────
         yield "data: ⚠️ All response tiers unavailable (CLI, Gemini, Anthropic, DeepSeek). Please retry in a moment.\n\n"

@@ -115,6 +115,17 @@ def ask_gemini_cli(prompt: str) -> str:
         except Exception:
             pass
 
+        # Skip CLI worker when inspiring-cat is in BURST cooldown — avoids a
+        # 120-second hang before the timeout. BURST means inspiring-cat returned
+        # a token/credit error; Gemini CLI lives there too so it will fail the
+        # same way. Fall through to direct subprocess or return error immediately.
+        try:
+            from .pro_router import _flag_active, _BURST_FLAG, _BURST_TTL
+            if _flag_active(_BURST_FLAG, _BURST_TTL):
+                return "[gemini_cli: inspiring-cat in BURST cooldown — skipping to avoid timeout]"
+        except Exception:
+            pass
+
         _track_gemini("working", prompt[:100])
 
         # ── Route via CLI worker (durable) ───────────────────────────────────
