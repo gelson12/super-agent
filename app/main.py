@@ -1455,6 +1455,23 @@ def activity_recent(lines: int = 50):
     }
 
 
+@app.post("/activity/log", tags=["activity"])
+def activity_log_external(payload: dict):
+    """
+    Write an external log entry to the Super Agent activity log.
+    Used by n8n workflows to report health checks, anomalies, and agent status
+    so Super Agent can see patterns across time and anticipate issues.
+
+    Expected payload: {"source": "n8n_health_monitor", "message": "..."}
+    """
+    source = str(payload.get("source", "external"))[:40]
+    message = str(payload.get("message", ""))[:1000]
+    if not message:
+        raise HTTPException(status_code=400, detail="message required")
+    bg_log(message, source=source)
+    return {"ok": True, "logged": message[:80]}
+
+
 @app.get("/downloads/status", tags=["build"])
 def download_status():
     """List all registered APK download links and whether they are still valid."""

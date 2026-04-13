@@ -1,0 +1,155 @@
+{
+  "name": "Super-Agent-Health-Monitor",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": { "interval": [{ "field": "minutes", "minutesInterval": 30 }] }
+      },
+      "id": "trigger",
+      "name": "Every 30 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://super-agent-production.up.railway.app/dashboard/agents/status",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [{ "name": "X-Token", "value": "shadow" }]
+        },
+        "options": { "timeout": 15000 }
+      },
+      "id": "get-agent-status",
+      "name": "Get Agent Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [460, 200]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://super-agent-production.up.railway.app/credits/pro-status",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [{ "name": "X-Token", "value": "shadow" }]
+        },
+        "options": { "timeout": 10000 }
+      },
+      "id": "get-pro-status",
+      "name": "Get CLI Pro Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [460, 400]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://inspiring-cat-production.up.railway.app/health",
+        "options": { "timeout": 10000 }
+      },
+      "id": "get-cli-health",
+      "name": "Get CLI Worker Health",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [460, 600]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Collect all inputs\nconst agentData = $('Get Agent Status').first().json;\nconst proData = $('Get CLI Pro Status').first().json;\nconst cliHealth = $('Get CLI Worker Health').first().json;\n\nconst workers = agentData.workers || [];\nconst issues = [];\nconst insights = [];\nconst now = Date.now() / 1000;\n\n// ── Check each agent ────────────────────────────────────────────────────\nfor (const w of workers) {\n  if (w.state === 'strike') {\n    issues.push(`${w.id} on STRIKE (${w.task || 'no credits'})`);\n  } else if (w.state === 'sick') {\n    issues.push(`${w.id} is SICK — needs attention`);\n  } else if (w.state === 'idle' && w.last_worked_ago !== null && w.last_worked_ago > 3600) {\n    insights.push(`${w.id} idle for ${Math.round(w.last_worked_ago/60)}min`);\n  } else if (w.last_worked === 0 && !['Gemini CLI','DeepSeek','Shell Agent','GitHub Agent'].includes(w.id)) {\n    insights.push(`${w.id} has NEVER been active`);\n  }\n}\n\n// ── Check Claude CLI Pro ────────────────────────────────────────────────\nconst proAvailable = proData.pro_available;\nconst proMode = proData.mode || '';\nconst cliDown = proData.cli_down || false;\n\nif (cliDown) {\n  issues.push(`Claude CLI Pro is DOWN (mode: ${proMode})`);\n} else if (proAvailable === false) {\n  issues.push(`Claude CLI Pro UNAVAILABLE — ${proMode}`);\n} else if (proAvailable === true) {\n  insights.push(`Claude CLI Pro: OK (mode: ${proMode})`);\n}\n\n// ── Check CLI worker ────────────────────────────────────────────────────\nconst cliWorkerOk = cliHealth.status === 'ok';\nconst claudeAvail = cliHealth.claude_available;\nconst geminiAvail = cliHealth.gemini_available;\n\nif (!cliWorkerOk) {\n  issues.push(`CLI Worker (inspiring-cat) DEGRADED — claude=${claudeAvail} gemini=${geminiAvail}`);\n} else {\n  if (!claudeAvail) issues.push('CLI Worker: Claude binary unavailable');\n  if (!geminiAvail) insights.push('Gemini CLI: not available on worker');\n}\n\n// ── Gemini on dashboard ─────────────────────────────────────────────────\nconst geminiWorker = workers.find(w => w.id === 'Gemini CLI');\nif (geminiWorker && geminiWorker.state === 'sleeping' && !proData.gemini_available) {\n  insights.push('Gemini CLI: not configured (no GEMINI_SESSION_TOKEN)');\n}\n\n// ── Strike count ────────────────────────────────────────────────────────\nconst onStrike = workers.filter(w => w.state === 'strike').length;\nconst apiAvailable = proData.api_available;\nif (onStrike >= 2 && apiAvailable === false) {\n  issues.push(`ALL Anthropic API agents on strike — ANTHROPIC_API_KEY has no credits`);\n}\n\n// ── Build report ────────────────────────────────────────────────────────\nconst hasIssues = issues.length > 0;\nconst status = hasIssues ? '⚠️ ISSUES DETECTED' : '✅ ALL SYSTEMS OK';\n\nconst lines = [\n  `${status} | ${new Date().toISOString()}`,\n  ...issues.map(i => `  ❌ ${i}`),\n  ...insights.map(i => `  ℹ️  ${i}`),\n  `  Workers: ${workers.filter(w=>w.state==='idle'||w.state==='working').length} active, ${onStrike} on strike, ${workers.filter(w=>w.state==='sick').length} sick`,\n];\n\nconst message = lines.join(' | ');\n\nreturn [{ json: { message, hasIssues, issueCount: issues.length, issues, insights, status } }];"
+      },
+      "id": "analyze",
+      "name": "Analyze Agent Health",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [700, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://super-agent-production.up.railway.app/activity/log",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [{ "name": "X-Token", "value": "shadow" }]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ source: 'n8n_health_monitor', message: $json.message }) }}",
+        "options": { "timeout": 10000 }
+      },
+      "id": "log-to-activity",
+      "name": "Log to Super Agent Activity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [940, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.hasIssues }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ]
+        }
+      },
+      "id": "if-issues",
+      "name": "Issues Found?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [940, 500]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://super-agent-production.up.railway.app/chat",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [{ "name": "X-Token", "value": "shadow" }]
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ message: '[HEALTH ALERT] n8n monitor detected issues: ' + $json.issues.join('; ') + '. Please investigate and self-heal where possible.', session_id: 'n8n_health_monitor' }) }}",
+        "options": { "timeout": 60000 }
+      },
+      "id": "alert-super-agent",
+      "name": "Alert Super Agent",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [1180, 440]
+    }
+  ],
+  "connections": {
+    "Every 30 Minutes": {
+      "main": [[
+        { "node": "Get Agent Status", "type": "main", "index": 0 },
+        { "node": "Get CLI Pro Status", "type": "main", "index": 0 },
+        { "node": "Get CLI Worker Health", "type": "main", "index": 0 }
+      ]]
+    },
+    "Get Agent Status": { "main": [[{ "node": "Analyze Agent Health", "type": "main", "index": 0 }]] },
+    "Get CLI Pro Status": { "main": [[{ "node": "Analyze Agent Health", "type": "main", "index": 1 }]] },
+    "Get CLI Worker Health": { "main": [[{ "node": "Analyze Agent Health", "type": "main", "index": 2 }]] },
+    "Analyze Agent Health": {
+      "main": [[
+        { "node": "Log to Super Agent Activity", "type": "main", "index": 0 },
+        { "node": "Issues Found?", "type": "main", "index": 0 }
+      ]]
+    },
+    "Issues Found?": {
+      "main": [
+        [{ "node": "Alert Super Agent", "type": "main", "index": 0 }],
+        []
+      ]
+    }
+  },
+  "settings": { "executionOrder": "v1" }
+}
