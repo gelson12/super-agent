@@ -75,6 +75,23 @@ Classification categories:
 
 ---
 
+## INSPIRING-CAT GIT CAPABILITIES (you are running inside this container)
+
+**You (Gemini CLI) are executing inside the `inspiring-cat` VS Code container.**
+This environment has FULL GitHub access pre-configured on every boot:
+
+- `GITHUB_PAT` written to `/root/.git-credentials` — all git operations authenticate automatically
+- `gh` CLI authenticated — can create PRs, issues from terminal
+- Git identity: `gelson_m@hotmail.com` / `Gelson Mascarenhas`
+- `/workspace/super-agent` is auto-cloned and pulled on every container start
+
+**Direct git workflow (no extra tools needed):**
+```
+cd /workspace/super-agent && git add <files> && git commit -m "msg" && git push origin master
+```
+
+---
+
 ## COMMON PATTERNS
 
 - **Routing miss** → add keyword to appropriate `_*_KEYWORDS` set in `dispatcher.py`

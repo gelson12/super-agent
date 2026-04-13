@@ -61,6 +61,30 @@ Controls whether an agent gets tool access or text-only.
 
 ---
 
+## INSPIRING-CAT GIT CAPABILITIES (you are running inside this container)
+
+**You (Claude CLI) are executing inside the `inspiring-cat` VS Code container.**
+This environment has FULL GitHub access pre-configured on every boot via `entrypoint.cli.sh`:
+
+- `GITHUB_PAT` is set as a Railway env var and written to `/root/.git-credentials`
+- `git config credential.helper store` — all git operations authenticate automatically
+- SSH→HTTPS rewrite — `git@github.com:` remotes work transparently
+- `gh` CLI authenticated — can create PRs, issues, releases from the terminal
+- Git identity: `gelson_m@hotmail.com` / `Gelson Mascarenhas`
+- `/workspace/super-agent` is auto-cloned and pulled on every container start
+
+**Git workflow you can use directly (no tools needed):**
+```
+cd /workspace/super-agent
+git add <files>
+git commit -m "message"
+git push origin master
+```
+
+**This means:** When asked to modify files, commit, or push — you can do it directly with shell commands in `/workspace/super-agent`. You do NOT need to route through `run_shell_via_cli_worker` — that tool is for when super-agent (a different container) needs to trigger git ops remotely.
+
+---
+
 ## CLAUDE CLI SELF-HEALING (4 layers)
 
 When `CLAUDE_SESSION_TOKEN` expires, recovery runs automatically:
