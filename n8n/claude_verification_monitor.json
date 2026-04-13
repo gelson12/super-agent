@@ -1,18 +1,15 @@
 {
-  "name": "Claude-Verification-Monitor",
+  "name": "Claude Verification Code Monitor",
   "nodes": [
     {
       "parameters": {
         "pollTimes": {
           "item": [{ "mode": "everyMinute" }]
         },
-        "triggerOn": "messageReceived",
         "filters": {
           "readStatus": "unread"
         },
-        "options": {
-          "downloadAttachments": false
-        }
+        "options": {}
       },
       "id": "outlook-trigger",
       "name": "Watch Outlook for Anthropic Emails",
@@ -21,7 +18,7 @@
       "position": [240, 400],
       "credentials": {
         "microsoftOutlookOAuth2Api": {
-          "id": "",
+          "id": "9paQ8IJLgiLbjEYI",
           "name": "Microsoft Outlook account"
         }
       }
@@ -30,9 +27,9 @@
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
-        "jsCode": "const items = $input.all();\nconst results = [];\nfor (const item of items) {\n  const subject = (item.json.subject || '').toLowerCase();\n  const from = (item.json.from?.emailAddress?.address || item.json.from || '').toLowerCase();\n  const body = item.json.bodyPreview || (item.json.body && item.json.body.content) || '';\n\n  // Only process Anthropic login emails — match on subject OR sender domain\n  const isAnthropicSender = from.includes('anthropic.com');\n  const isLoginEmail = subject.includes('claude') || subject.includes('sign in') || subject.includes('secure link') || subject.includes('log in');\n  if (!isAnthropicSender && !isLoginEmail) {\n    continue;\n  }\n\n  // Extract the magic link URL from the email body.\n  // Claude.ai sends a sign-in link like: https://claude.ai/login?token=...\n  // or https://claude.ai/magic-link?... or similar OAuth callback URLs.\n  const urlPatterns = [\n    /https:\\/\\/claude\\.ai\\/[^\\s\"'<>\\)]+/i,\n    /https:\\/\\/[^\\s\"'<>\\)]*anthropic\\.com\\/[^\\s\"'<>\\)]+/i,\n    /https:\\/\\/[^\\s\"'<>\\)]*magic[^\\s\"'<>\\)]+/i,\n  ];\n  let magicUrl = null;\n  for (const pattern of urlPatterns) {\n    const m = body.match(pattern);\n    if (m) {\n      // Clean up trailing punctuation that may have been included\n      magicUrl = m[0].replace(/[.,;!?]+$/, '');\n      break;\n    }\n  }\n\n  if (magicUrl) {\n    results.push({\n      json: {\n        url: magicUrl,\n        subject: item.json.subject,\n        from: from,\n        timestamp: new Date().toISOString()\n      }\n    });\n  }\n}\n\nif (results.length === 0) {\n  return [];\n}\nreturn results;"
+        "jsCode": "const items = $input.all();\nconst results = [];\nfor (const item of items) {\n  const subject = (item.json.subject || '').toLowerCase();\n  const from = (item.json.from && item.json.from.emailAddress && item.json.from.emailAddress.address || item.json.from || '').toLowerCase();\n  const bodyHtml = (item.json.body && item.json.body.content) || '';\n  const bodyText = item.json.bodyPreview || '';\n  const searchIn = bodyHtml || bodyText;\n  const isAnthropicSender = from.includes('anthropic.com');\n  const isLoginSubject = subject.includes('claude') || subject.includes('sign in') || subject.includes('secure link') || subject.includes('log in') || subject.includes('magic') || subject.includes('verify');\n  if (!isAnthropicSender && !isLoginSubject) continue;\n  let magicUrl = null;\n  const patterns = [\n    new RegExp('https://platform\\\\.claude\\\\.com/magic-link[^\\\\s\"\\' <>)\\\\\\\\]+', 'i'),\n    new RegExp('https://claude\\\\.ai/magic-link[^\\\\s\"\\' <>)\\\\\\\\]+', 'i'),\n    new RegExp('https://platform\\\\.claude\\\\.com/[^\\\\s\"\\' <>)\\\\\\\\]+', 'i'),\n  ];\n  for (const pattern of patterns) {\n    const m = searchIn.match(pattern);\n    if (m) { magicUrl = m[0].replace(/&amp;/g, '&').replace(/[.,;!?]+$/, ''); break; }\n  }\n  if (magicUrl) results.push({ json: { url: magicUrl, subject: item.json.subject, from: from, timestamp: new Date().toISOString() } });\n}\nreturn results.length ? results : [];"
       },
-      "id": "extract-url",
+      "id": "extract-code",
       "name": "Extract Magic Link URL",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -51,7 +48,7 @@
           "timeout": 10000
         }
       },
-      "id": "post-url",
+      "id": "post-code",
       "name": "POST Magic Link to CLI Worker",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
@@ -67,6 +64,8 @@
     }
   },
   "settings": {
-    "executionOrder": "v1"
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
   }
 }
