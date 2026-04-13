@@ -562,33 +562,49 @@ def _log(msg: str) -> None:
 
 def _try_restore_claude_auth() -> bool:
     """
-    Attempt to restore Claude CLI credentials from the CLAUDE_SESSION_TOKEN
-    env var — the same token that entrypoint.sh writes on container start.
+    Attempt to restore Claude CLI credentials.
 
-    Called automatically when an auth error is detected mid-session (e.g.
-    after a container restart where the credentials file was wiped from the
-    ephemeral filesystem before the app had a chance to read it, or when the
-    credentials file was written to the wrong path).
+    Source priority (freshest first):
+      1. /workspace/.claude_credentials_backup.json  — written by Playwright auto-login
+         on inspiring-cat; shared via Railway volume; may be NEWER than the env var
+         that was baked in at container start.
+      2. CLAUDE_SESSION_TOKEN env var (base64) — set at deploy time.
 
-    Writes to all known credential paths so different Claude CLI versions
-    all find the token regardless of which file they look for.
+    Called automatically when an auth error is detected mid-session.
+    Writes to all known credential paths so different CLI versions all find
+    the token regardless of which file they look for.
 
     Returns True if credentials were restored AND `claude auth status` confirms
     that the session is now valid.
     """
     import base64 as _b64
 
-    token = os.environ.get("CLAUDE_SESSION_TOKEN", "")
-    if not token:
-        _log("Auto-restore skipped — CLAUDE_SESSION_TOKEN env var not set.")
-        return False
+    # ── Source 1: volume backup (may be fresher than env var) ────────────────
+    _volume_backup = Path("/workspace/.claude_credentials_backup.json")
+    decoded: bytes | None = None
 
-    try:
-        # base64-decode with padding tolerance
-        decoded = _b64.b64decode(token + "==")
-    except Exception as e:
-        _log(f"Auto-restore failed: cannot base64-decode CLAUDE_SESSION_TOKEN — {e}")
-        return False
+    if _volume_backup.exists():
+        try:
+            _vol_bytes = _volume_backup.read_bytes()
+            # Sanity-check: must look like a JSON credentials file
+            if _vol_bytes.startswith(b"{") and b"token" in _vol_bytes.lower():
+                decoded = _vol_bytes
+                _log("Auto-restore: using volume backup credentials (written by latest Playwright login).")
+        except Exception as _ve:
+            _log(f"Auto-restore: volume backup unreadable — {_ve}")
+
+    # ── Source 2: env var fallback ────────────────────────────────────────────
+    if decoded is None:
+        token = os.environ.get("CLAUDE_SESSION_TOKEN", "")
+        if not token:
+            _log("Auto-restore skipped — CLAUDE_SESSION_TOKEN env var not set and no volume backup.")
+            return False
+        try:
+            decoded = _b64.b64decode(token + "==")
+            _log("Auto-restore: using CLAUDE_SESSION_TOKEN env var (volume backup absent or invalid).")
+        except Exception as e:
+            _log(f"Auto-restore failed: cannot base64-decode CLAUDE_SESSION_TOKEN — {e}")
+            return False
 
     # Write to EVERY location Claude Code CLI may look for credentials
     cred_dir = Path("/root/.claude")
