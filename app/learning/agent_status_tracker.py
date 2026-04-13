@@ -21,10 +21,83 @@ Public API:
     get_all_statuses()             — returns dict of all workers with states
     get_worker_status(worker_id)   — returns single worker state
 """
+import json
+import os
 import time
 import threading
+from pathlib import Path
 
 _lock = threading.Lock()
+
+# ── Per-agent persistent event log ────────────────────────────────────────────
+_AGENT_LOG_BASE = (
+    Path("/workspace/agent_logs")
+    if os.access("/workspace", os.W_OK)
+    else Path("./agent_logs")
+)
+_AGENT_LOG_MAX_LINES = 500
+_AGENT_LOG_TRIM_TO   = 400
+
+
+def _log_agent_event(worker_id: str, event: str, detail: str = "") -> None:
+    """
+    Append a timestamped event to the per-agent JSONL log file.
+    Called OUTSIDE _lock to avoid blocking state updates.
+    """
+    try:
+        _AGENT_LOG_BASE.mkdir(parents=True, exist_ok=True)
+        safe = worker_id.replace(" ", "_").replace("/", "_")
+        log_file = _AGENT_LOG_BASE / f"{safe}.jsonl"
+
+        entry = json.dumps({
+            "ts": round(time.time(), 2),
+            "event": event,
+            "detail": (detail or "")[:200],
+        })
+        with log_file.open("a", encoding="utf-8") as f:
+            f.write(entry + "\n")
+
+        # Trim periodically so files don't grow unbounded
+        try:
+            lines = log_file.read_text(encoding="utf-8").splitlines()
+            if len(lines) > _AGENT_LOG_MAX_LINES:
+                log_file.write_text(
+                    "\n".join(lines[-_AGENT_LOG_TRIM_TO:]) + "\n",
+                    encoding="utf-8",
+                )
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+
+def read_agent_log(worker_id: str, limit: int = 100) -> list[dict]:
+    """Return the last `limit` events from a worker's log file, newest first."""
+    try:
+        base = (
+            Path("/workspace/agent_logs")
+            if Path("/workspace/agent_logs").exists()
+            else Path("./agent_logs")
+        )
+        safe = worker_id.replace(" ", "_").replace("/", "_")
+        log_file = base / f"{safe}.jsonl"
+        if not log_file.exists():
+            return []
+        lines = log_file.read_text(encoding="utf-8").splitlines()
+        events = []
+        for line in reversed(lines[-limit * 2:]):  # read extra to filter
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                events.append(json.loads(line))
+            except Exception:
+                pass
+            if len(events) >= limit:
+                break
+        return events  # already newest-first (reversed)
+    except Exception:
+        return []
 
 # worker_id → {"state": str, "last_worked": float, "talking_to": str|None, "task": str}
 _workers: dict[str, dict] = {}
@@ -97,6 +170,7 @@ def mark_working(worker_id: str, task: str = "") -> None:
         w = _ensure_worker(worker_id)
         w["state"] = "working"
         w["task"] = task[:200]
+    _log_agent_event(worker_id, "working", task[:100])
 
 
 def mark_done(worker_id: str) -> None:
@@ -106,6 +180,7 @@ def mark_done(worker_id: str) -> None:
         w["last_worked"] = time.time()
         w["task"] = ""
         w["talking_to"] = None
+    _log_agent_event(worker_id, "done")
 
 
 def mark_strike(worker_id: str) -> None:
@@ -114,6 +189,7 @@ def mark_strike(worker_id: str) -> None:
         w = _ensure_worker(worker_id)
         w["state"] = "strike"
         w["task"] = "Salary insufficient"
+    _log_agent_event(worker_id, "strike", "No API credits — salary insufficient")
 
 
 def mark_sick(worker_id: str) -> None:
@@ -122,6 +198,7 @@ def mark_sick(worker_id: str) -> None:
         w = _ensure_worker(worker_id)
         w["state"] = "sick"
         w["task"] = "Token invalid"
+    _log_agent_event(worker_id, "sick", "Token invalid or expired")
 
 
 def mark_talking(worker_a: str, worker_b: str) -> None:
@@ -132,6 +209,8 @@ def mark_talking(worker_a: str, worker_b: str) -> None:
         a["talking_to"] = worker_b
         b["state"] = "talking"
         b["talking_to"] = worker_a
+    _log_agent_event(worker_a, "talking", f"Collaborating with {worker_b}")
+    _log_agent_event(worker_b, "talking", f"Collaborating with {worker_a}")
 
 
 def clear_talking(worker_a: str, worker_b: str) -> None:
@@ -146,6 +225,8 @@ def clear_talking(worker_a: str, worker_b: str) -> None:
             b["talking_to"] = None
             b["state"] = "idle"
             b["last_worked"] = time.time()
+    _log_agent_event(worker_a, "done_talking", f"Collaboration with {worker_b} ended")
+    _log_agent_event(worker_b, "done_talking", f"Collaboration with {worker_a} ended")
 
 
 def get_worker_status(worker_id: str) -> dict:

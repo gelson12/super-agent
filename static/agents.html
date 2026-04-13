@@ -404,6 +404,138 @@
       vertical-align: middle;
     }
 
+    /* Clickable cursor on desks */
+    .desk { cursor: pointer; }
+
+    /* ── Log panel drawer ────────────────────────────────────────────── */
+    #log-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.5);
+      z-index: 1000;
+    }
+    #log-overlay.open { display: block; }
+
+    #log-panel {
+      position: fixed;
+      top: 0;
+      right: -440px;
+      width: 420px;
+      max-width: 95vw;
+      height: 100vh;
+      background: #1a1208;
+      border-left: 3px solid #4a3520;
+      z-index: 1001;
+      display: flex;
+      flex-direction: column;
+      transition: right 0.28s ease;
+      overflow: hidden;
+    }
+    #log-panel.open { right: 0; }
+
+    .log-panel-header {
+      background: #0f0b05;
+      border-bottom: 2px solid #3d2b16;
+      padding: 14px 16px 10px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-shrink: 0;
+    }
+    .log-panel-avatar { font-size: 28px; }
+    .log-panel-title { flex: 1; }
+    .log-panel-name {
+      font-size: 0.55rem;
+      color: #c9a96e;
+      display: block;
+      margin-bottom: 4px;
+    }
+    .log-panel-state {
+      font-size: 0.38rem;
+      padding: 2px 6px;
+      border-radius: 2px;
+    }
+    .log-close-btn {
+      background: none;
+      border: 1px solid #4a3520;
+      color: #8b7355;
+      font-family: 'Press Start 2P', monospace;
+      font-size: 0.5rem;
+      padding: 4px 8px;
+      cursor: pointer;
+      border-radius: 2px;
+    }
+    .log-close-btn:hover { border-color: #c9a96e; color: #c9a96e; }
+
+    .log-panel-refresh {
+      padding: 5px 16px;
+      font-size: 0.3rem;
+      color: #555;
+      border-bottom: 1px solid #2a1e10;
+      flex-shrink: 0;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .log-refresh-dot {
+      display: inline-block;
+      width: 5px; height: 5px;
+      border-radius: 50%;
+      background: #4ade80;
+      margin-right: 5px;
+      vertical-align: middle;
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    #log-entries {
+      flex: 1;
+      overflow-y: auto;
+      padding: 6px 0;
+    }
+    #log-entries::-webkit-scrollbar { width: 4px; }
+    #log-entries::-webkit-scrollbar-track { background: #111; }
+    #log-entries::-webkit-scrollbar-thumb { background: #4a3520; }
+
+    .log-empty {
+      padding: 24px 16px;
+      font-size: 0.38rem;
+      color: #555;
+      text-align: center;
+    }
+    .log-entry {
+      padding: 7px 16px;
+      border-bottom: 1px solid #1f1508;
+      display: flex;
+      gap: 10px;
+      align-items: flex-start;
+    }
+    .log-entry:hover { background: #1f1508; }
+    .log-entry-icon { font-size: 12px; flex-shrink: 0; margin-top: 1px; }
+    .log-entry-body { flex: 1; min-width: 0; }
+    .log-entry-event {
+      font-size: 0.35rem;
+      font-weight: bold;
+      margin-bottom: 2px;
+    }
+    .log-entry-detail {
+      font-size: 0.3rem;
+      color: #8b7355;
+      word-break: break-all;
+      line-height: 1.5;
+    }
+    .log-entry-time { font-size: 0.28rem; color: #555; margin-top: 3px; }
+
+    /* Event-type colours */
+    .log-entry.ev-working   .log-entry-event { color: #60a5fa; }
+    .log-entry.ev-done      .log-entry-event { color: #4ade80; }
+    .log-entry.ev-sick      .log-entry-event { color: #fde68a; }
+    .log-entry.ev-strike    .log-entry-event { color: #fca5a5; }
+    .log-entry.ev-talking   .log-entry-event { color: #c4b5fd; }
+    .log-entry.ev-done_talking .log-entry-event { color: #a78bfa; }
+    .log-entry.ev-request   .log-entry-event { color: #34d399; }
+    .log-entry.ev-error     .log-entry-event { color: #f87171; }
+
     /* ── Responsive ──────────────────────────────────────────────── */
     @media (max-width: 600px) {
       .desks {
@@ -414,6 +546,7 @@
       .monitor { width: 80px; height: 52px; }
       .header h1 { font-size: 0.55rem; }
       .stats-bar { gap: 10px; }
+      #log-panel { width: 100vw; }
     }
 
     @media (max-width: 380px) {
@@ -467,6 +600,26 @@
 <div class="filing-cabinet">🗄️</div>
 <svg id="talking-lines" style="position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:999;"></svg>
 
+<!-- Log panel overlay + drawer -->
+<div id="log-overlay"></div>
+<div id="log-panel">
+  <div class="log-panel-header">
+    <div class="log-panel-avatar" id="log-avatar">👤</div>
+    <div class="log-panel-title">
+      <span class="log-panel-name" id="log-worker-name">Agent</span>
+      <span class="log-panel-state status-label sleeping" id="log-worker-state">sleeping</span>
+    </div>
+    <button class="log-close-btn" onclick="closeLog()">✕</button>
+  </div>
+  <div class="log-panel-refresh">
+    <span><span class="log-refresh-dot"></span>Live (10s)</span>
+    <span id="log-count" style="color:#555"></span>
+  </div>
+  <div id="log-entries">
+    <div class="log-empty">No activity recorded yet</div>
+  </div>
+</div>
+
 <script>
 const MODEL_WORKERS = [
   "Claude CLI Pro", "Gemini CLI", "Anthropic Haiku",
@@ -489,6 +642,30 @@ const AVATARS = {
   "Self-Improve Agent": "🧑🏼‍🏫",
 };
 
+const EVENT_ICONS = {
+  working:      "🔵",
+  done:         "✅",
+  sick:         "🤒",
+  strike:       "🪧",
+  talking:      "💬",
+  done_talking: "🤝",
+  request:      "📨",
+  error:        "❌",
+};
+
+const EVENT_LABELS = {
+  working:      "Started working",
+  done:         "Completed task",
+  sick:         "Token error",
+  strike:       "On strike",
+  talking:      "Collaborating",
+  done_talking: "Collaboration ended",
+  request:      "Handled request",
+  error:        "Request failed",
+};
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+
 function formatTimeAgo(seconds) {
   if (!seconds && seconds !== 0) return "never";
   if (seconds < 60) return `${seconds}s ago`;
@@ -509,71 +686,66 @@ function formatDateTime(ts) {
 function getMonitorClass(state) {
   switch (state) {
     case "working": return "on-blue";
-    case "idle": return "on-green";
+    case "idle":    return "on-green";
     case "talking": return "on-purple";
-    case "strike": return "on-red";
-    case "sick": return "on-yellow";
-    case "sleeping":
-    default: return "off";
+    case "strike":  return "on-red";
+    case "sick":    return "on-yellow";
+    default:        return "off";
   }
 }
 
 function getScreenContent(worker) {
   switch (worker.state) {
-    case "working":
-      return worker.task ? esc(worker.task.substring(0, 40)) : "Processing";
-    case "idle":
-      return "Ready";
-    case "sleeping":
-      return "";
-    case "talking":
-      return `w/ ${esc(worker.talking_to || "?")}`;
-    case "strike":
-      return "NO CREDITS!";
-    case "sick":
-      return "TOKEN ERR";
-    default:
-      return "";
+    case "working":  return worker.task ? esc(worker.task.substring(0, 40)) : "Processing";
+    case "idle":     return "Ready";
+    case "sleeping": return "";
+    case "talking":  return `w/ ${esc(worker.talking_to || "?")}`;
+    case "strike":   return "NO CREDITS!";
+    case "sick":     return "TOKEN ERR";
+    default:         return "";
   }
 }
 
 function getOverlay(worker) {
   switch (worker.state) {
-    case "sleeping":
-      return '<span class="zzz">Zzz</span>';
-    case "strike":
-      return '<span class="strike-sign">🪧</span>';
-    case "sick":
-      return '<span class="sick-indicator">🤒</span>';
-    case "talking":
-      return '<span class="talk-bubble">💬</span>';
-    default:
-      return "";
+    case "sleeping": return '<span class="zzz">Zzz</span>';
+    case "strike":   return '<span class="strike-sign">🪧</span>';
+    case "sick":     return '<span class="sick-indicator">🤒</span>';
+    case "talking":  return '<span class="talk-bubble">💬</span>';
+    default:         return "";
   }
 }
 
+function esc(str) {
+  if (!str) return "";
+  const d = document.createElement("div");
+  d.textContent = String(str);
+  return d.innerHTML;
+}
+
+// ── Desk rendering ─────────────────────────────────────────────────────────
+
 function renderDesk(worker) {
-  const monitorClass = getMonitorClass(worker.state);
+  const monitorClass  = getMonitorClass(worker.state);
   const screenContent = getScreenContent(worker);
-  const overlay = getOverlay(worker);
-  const avatar = AVATARS[worker.id] || "👤";
-  const timeAgo = worker.last_worked_ago != null ? formatTimeAgo(worker.last_worked_ago) : "";
-  const dateStr = worker.last_worked ? formatDateTime(worker.last_worked) : "";
+  const overlay       = getOverlay(worker);
+  const avatar        = AVATARS[worker.id] || "👤";
+  const timeAgo       = worker.last_worked_ago != null ? formatTimeAgo(worker.last_worked_ago) : "";
+  const dateStr       = worker.last_worked ? formatDateTime(worker.last_worked) : "";
 
   let extras = "";
-  if (worker.state === "talking" && worker.talking_to) {
+  if (worker.state === "talking" && worker.talking_to)
     extras += `<div class="talking-to">talking to ${esc(worker.talking_to)}</div>`;
-  }
-  if (worker.state === "working" && worker.task) {
+  if (worker.state === "working" && worker.task)
     extras += `<div class="task-info">${esc(worker.task)}</div>`;
-  }
 
   const tooltip = worker.last_worked > 0
-    ? `Last active: ${dateStr} (${timeAgo})`
-    : `${worker.id} — never active`;
+    ? `Last active: ${dateStr} (${timeAgo}) — click for activity log`
+    : `${worker.id} — never active — click for activity log`;
 
   return `
-    <div class="desk" data-worker="${esc(worker.id)}" data-state="${worker.state}" title="${esc(tooltip)}">
+    <div class="desk" data-worker="${esc(worker.id)}" data-state="${worker.state}"
+         title="${esc(tooltip)}" onclick="openLog(this.dataset.worker)">
       <div class="name">${esc(worker.id)}</div>
       <div class="status-label ${worker.state}">${worker.state}</div>
       <div class="monitor ${monitorClass}">
@@ -594,7 +766,7 @@ function renderAll(workers) {
   const workerMap = {};
   workers.forEach(w => workerMap[w.id] = w);
 
-  const allIds = [...MODEL_WORKERS, ...AGENT_WORKERS];
+  const allIds     = [...MODEL_WORKERS, ...AGENT_WORKERS];
   const allWorkers = allIds.map(id =>
     workerMap[id] || { id, state: "sleeping", last_worked: 0, last_worked_ago: null, talking_to: null, task: "" }
   );
@@ -602,29 +774,33 @@ function renderAll(workers) {
   // Update stats bar
   const counts = { working: 0, idle: 0, sleeping: 0, issues: 0 };
   allWorkers.forEach(w => {
-    if (w.state === "working") counts.working++;
-    else if (w.state === "idle") counts.idle++;
+    if (w.state === "working")                         counts.working++;
+    else if (w.state === "idle")                       counts.idle++;
     else if (w.state === "strike" || w.state === "sick") counts.issues++;
-    else counts.sleeping++;
+    else                                               counts.sleeping++;
   });
-  document.getElementById("count-working").textContent = counts.working;
-  document.getElementById("count-idle").textContent = counts.idle;
+  document.getElementById("count-working").textContent  = counts.working;
+  document.getElementById("count-idle").textContent     = counts.idle;
   document.getElementById("count-sleeping").textContent = counts.sleeping;
-  document.getElementById("count-issues").textContent = counts.issues;
+  document.getElementById("count-issues").textContent   = counts.issues;
 
-  // Models
-  const modelsHtml = MODEL_WORKERS.map(id => {
-    const w = workerMap[id] || { id, state: "sleeping", last_worked: 0, last_worked_ago: null, talking_to: null, task: "" };
-    return renderDesk(w);
-  }).join("");
-  document.getElementById("models-desks").innerHTML = modelsHtml;
+  document.getElementById("models-desks").innerHTML =
+    MODEL_WORKERS.map(id => renderDesk(
+      workerMap[id] || { id, state: "sleeping", last_worked: 0, last_worked_ago: null, talking_to: null, task: "" }
+    )).join("");
 
-  // Agents
-  const agentsHtml = AGENT_WORKERS.map(id => {
-    const w = workerMap[id] || { id, state: "sleeping", last_worked: 0, last_worked_ago: null, talking_to: null, task: "" };
-    return renderDesk(w);
-  }).join("");
-  document.getElementById("agents-desks").innerHTML = agentsHtml;
+  document.getElementById("agents-desks").innerHTML =
+    AGENT_WORKERS.map(id => renderDesk(
+      workerMap[id] || { id, state: "sleeping", last_worked: 0, last_worked_ago: null, talking_to: null, task: "" }
+    )).join("");
+
+  // Update open log panel header state if it's showing a worker
+  if (_logPanelWorker && workerMap[_logPanelWorker]) {
+    const w = workerMap[_logPanelWorker];
+    const stateEl = document.getElementById("log-worker-state");
+    stateEl.textContent = w.state;
+    stateEl.className   = `log-panel-state status-label ${w.state}`;
+  }
 }
 
 function drawTalkingLines(workers) {
@@ -642,15 +818,11 @@ function drawTalkingLines(workers) {
       if (!a || !b) return;
       const ra = a.getBoundingClientRect();
       const rb = b.getBoundingClientRect();
-      const x1 = ra.left + ra.width / 2;
-      const y1 = ra.top + ra.height / 2;
-      const x2 = rb.left + rb.width / 2;
-      const y2 = rb.top + rb.height / 2;
       const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-      line.setAttribute('x1', x1);
-      line.setAttribute('y1', y1);
-      line.setAttribute('x2', x2);
-      line.setAttribute('y2', y2);
+      line.setAttribute('x1', ra.left + ra.width / 2);
+      line.setAttribute('y1', ra.top  + ra.height / 2);
+      line.setAttribute('x2', rb.left + rb.width / 2);
+      line.setAttribute('y2', rb.top  + rb.height / 2);
       line.setAttribute('stroke', '#8b5cf6');
       line.setAttribute('stroke-width', '2');
       line.setAttribute('stroke-dasharray', '6,4');
@@ -667,12 +839,91 @@ function drawTalkingLines(workers) {
   });
 }
 
-function esc(str) {
-  if (!str) return "";
-  const d = document.createElement("div");
-  d.textContent = String(str);
-  return d.innerHTML;
+// ── Log panel ──────────────────────────────────────────────────────────────
+
+let _logPanelWorker  = null;
+let _logRefreshTimer = null;
+
+async function openLog(workerId) {
+  _logPanelWorker = workerId;
+
+  // Header
+  document.getElementById("log-avatar").textContent      = AVATARS[workerId] || "👤";
+  document.getElementById("log-worker-name").textContent = workerId;
+  document.getElementById("log-entries").innerHTML =
+    '<div class="log-empty">Loading…</div>';
+  document.getElementById("log-count").textContent = "";
+
+  // Open drawer
+  document.getElementById("log-overlay").classList.add("open");
+  document.getElementById("log-panel").classList.add("open");
+
+  // Fetch immediately, then every 10 seconds
+  await fetchLog(workerId);
+  clearInterval(_logRefreshTimer);
+  _logRefreshTimer = setInterval(() => {
+    if (_logPanelWorker) fetchLog(_logPanelWorker);
+  }, 10000);
 }
+
+function closeLog() {
+  document.getElementById("log-overlay").classList.remove("open");
+  document.getElementById("log-panel").classList.remove("open");
+  clearInterval(_logRefreshTimer);
+  _logPanelWorker = null;
+}
+
+async function fetchLog(workerId) {
+  try {
+    const resp = await fetch(`/dashboard/agents/${encodeURIComponent(workerId)}/log?limit=60`);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    renderLog(data);
+  } catch (err) {
+    document.getElementById("log-entries").innerHTML =
+      `<div class="log-empty">Error loading log: ${esc(String(err))}</div>`;
+  }
+}
+
+function renderLog(data) {
+  const events = data.events || [];
+  const countEl = document.getElementById("log-count");
+  countEl.textContent = events.length ? `${events.length} entries` : "";
+
+  if (!events.length) {
+    document.getElementById("log-entries").innerHTML =
+      '<div class="log-empty">No activity recorded yet.<br><br>Activity will appear here once this agent handles a request or changes state.</div>';
+    return;
+  }
+
+  const html = events.map(e => {
+    const evType  = e.event || "unknown";
+    const icon    = EVENT_ICONS[evType]  || "▪️";
+    const label   = EVENT_LABELS[evType] || evType;
+    const detail  = e.detail || "";
+    const timeStr = e.date  || (e.ts ? new Date(e.ts * 1000).toLocaleString() : "");
+    const src     = e.type === "request" ? " · insight" : e.type === "state" ? " · state" : "";
+
+    return `
+      <div class="log-entry ev-${esc(evType)}">
+        <div class="log-entry-icon">${icon}</div>
+        <div class="log-entry-body">
+          <div class="log-entry-event">${esc(label)}</div>
+          ${detail ? `<div class="log-entry-detail">${esc(detail)}</div>` : ""}
+          <div class="log-entry-time">${esc(timeStr)}${src}</div>
+        </div>
+      </div>
+    `;
+  }).join("");
+
+  document.getElementById("log-entries").innerHTML = html;
+}
+
+// Close on overlay click or ESC
+document.getElementById("log-overlay").addEventListener("click", closeLog);
+document.addEventListener("keydown", e => { if (e.key === "Escape") closeLog(); });
+
+// ── Main status poll ───────────────────────────────────────────────────────
 
 async function fetchAndRender() {
   try {
@@ -687,7 +938,6 @@ async function fetchAndRender() {
   }
 }
 
-// Initial load + poll every 5 seconds
 fetchAndRender();
 setInterval(fetchAndRender, 5000);
 </script>

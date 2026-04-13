@@ -476,6 +476,81 @@ def agent_history(worker_id: str):
     return {"worker": decoded, "history": history}
 
 
+@app.get("/dashboard/agents/{worker_id}/log", tags=["meta"])
+def agent_log(worker_id: str, limit: int = 60):
+    """
+    Combined activity log for a specific worker — merged from two sources:
+      1. Per-agent state-change events (mark_working/done/sick/strike/talking),
+         written to /workspace/agent_logs/<name>.jsonl on every state change.
+      2. Insight log records — every user request this worker handled.
+    Returns newest-first, capped at `limit` entries.
+    """
+    import urllib.parse
+    from datetime import datetime, timezone
+    decoded = urllib.parse.unquote(worker_id)
+    events: list[dict] = []
+
+    # ── Source 1: per-agent state-change event log ─────────────────────────
+    try:
+        from .learning.agent_status_tracker import read_agent_log
+        state_events = read_agent_log(decoded, limit=limit)
+        for e in state_events:
+            events.append({
+                "ts":     e.get("ts", 0),
+                "type":   "state",
+                "event":  e.get("event", ""),
+                "detail": e.get("detail", ""),
+            })
+    except Exception:
+        pass
+
+    # ── Source 2: insight log (dispatched user requests) ──────────────────
+    try:
+        from .learning.agent_status_tracker import get_worker_history
+        for h in get_worker_history(decoded, limit=limit):
+            ts = h.get("ts", 0)
+            complexity = h.get("complexity", 0)
+            route = h.get("routed_by", "")
+            words = h.get("msg_words", 0)
+            resp = h.get("resp_len", 0)
+            err = h.get("error", False)
+            detail = (
+                f"route={route} complexity={'★'*complexity} "
+                f"words={words} resp={resp}chars"
+            )
+            events.append({
+                "ts":     ts,
+                "type":   "request",
+                "event":  "error" if err else "request",
+                "detail": detail,
+                "model":  h.get("model", ""),
+                "error":  err,
+            })
+    except Exception:
+        pass
+
+    # Sort newest-first, deduplicate by (ts, event)
+    events.sort(key=lambda x: x.get("ts", 0), reverse=True)
+    seen: set[tuple] = set()
+    unique: list[dict] = []
+    for e in events:
+        key = (round(e.get("ts", 0)), e.get("event", ""), e.get("detail", "")[:30])
+        if key not in seen:
+            seen.add(key)
+            # Add human-readable timestamp
+            ts = e.get("ts", 0)
+            if ts:
+                dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+                e["date"] = dt.strftime("%Y-%m-%d %H:%M:%S UTC")
+            else:
+                e["date"] = ""
+            unique.append(e)
+        if len(unique) >= limit:
+            break
+
+    return {"worker": decoded, "events": unique, "total": len(unique)}
+
+
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 @app.get("/health", tags=["meta"])
