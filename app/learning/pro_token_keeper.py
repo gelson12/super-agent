@@ -270,7 +270,7 @@ def run_token_keeper() -> dict:
     # Writes raw credentials to /workspace/ which is mounted as a persistent volume.
     # entrypoint.sh reads this on boot before falling back to CLAUDE_SESSION_TOKEN env var.
     try:
-        _vol = _Path("/workspace/.claude_credentials_backup.json")
+        _vol = Path("/workspace/.claude_credentials_backup.json")
         _vol.write_bytes(_CREDS_FILE.read_bytes())
         _vol.chmod(0o600)
         _log("Token keeper: credentials backed up to volume (/workspace/.claude_credentials_backup.json) ✓")
