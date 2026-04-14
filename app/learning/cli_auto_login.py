@@ -169,6 +169,9 @@ _verification_code_queue: queue.Queue = queue.Queue()  # carries the magic link 
 _VERIFICATION_CODE_TIMEOUT = 180  # max seconds to wait for magic URL from n8n
 # 180s = 3 minutes: email delivery (~15s) + n8n poll interval (up to 60s) + POST + buffer
 
+_manual_auth_code_queue: queue.Queue = queue.Queue()  # carries manual auth code from user
+_MANUAL_AUTH_CODE_TIMEOUT = 600   # 10 minutes for user to complete browser login manually
+
 
 def receive_verification_code(code: str) -> None:
     """
@@ -182,27 +185,22 @@ def receive_verification_code(code: str) -> None:
 
 def send_manual_auth_code(code: str) -> dict:
     """
-    Write an auth code directly to the active PTY stdin.
+    Deliver an auth code to the waiting auto_login_claude() call.
 
-    Called by the /webhook/manual-auth-code endpoint when the user has completed
-    OAuth in their own browser and has the auth code from platform.claude.com,
-    but cannot paste it into the code-server terminal due to TUI raw-mode blocking.
-
-    The code is written directly to the PTY master fd that claude login is reading from.
+    Two delivery paths (both attempted):
+    1. Queue  — auto_login_claude() is blocking on _manual_auth_code_queue after
+                browser automation failed; the queue unblocks it and it writes the
+                code to the PTY itself (process still alive).
+    2. Direct — write to PTY fd immediately as a fallback if queue is not being waited on.
     """
     global _active_pty_master_fd, _active_oauth_url
-    if _active_pty_master_fd is None:
-        return {"ok": False, "error": "No active claude login PTY session. Trigger recovery first."}
-    try:
-        payload = code.strip() + "\r"
-        os.write(_active_pty_master_fd, payload.encode())
-        _log(f"Manual auth code written to PTY (fd={_active_pty_master_fd}, "
-             f"len={len(code)}): {code[:20]}...")
-        _active_oauth_url = ""   # clear — consumed
-        return {"ok": True, "message": "Auth code sent to claude login PTY"}
-    except Exception as e:
-        _log(f"Failed to write auth code to PTY: {e}")
-        return {"ok": False, "error": str(e)}
+    code = code.strip()
+
+    # Path 1: put in queue so auto_login_claude() can handle it cleanly
+    _manual_auth_code_queue.put(code)
+    _log(f"Manual auth code queued (len={len(code)}): {code[:20]}...")
+    _active_oauth_url = ""
+    return {"ok": True, "message": "Auth code queued — auto_login_claude() will write it to PTY"}
 
 
 def get_active_oauth_url() -> str:
@@ -604,9 +602,22 @@ def _do_auto_login(email: str) -> bool:
         pass
 
     if not browser_ok:
-        _log("Step 3 FAILED: Browser automation failed.")
-        proc.kill()
-        return False
+        # Browser automation failed (typically: datacenter IP blocked from sending magic link).
+        # Don't kill the PTY yet — wait up to 10 minutes for the user to complete the OAuth
+        # flow manually in their own browser and POST the auth code to /webhook/manual-auth-code.
+        _log("Step 3 FAILED: Browser automation failed (likely datacenter IP block).")
+        _log(f">>> MANUAL LOGIN REQUIRED <<<")
+        _log(f">>> 1. Open this URL in your browser: {oauth_url}")
+        _log(f">>> 2. Enter email → click magic link → copy the auth code")
+        _log(f">>> 3. POST {{\"code\": \"...\"}} to /webhook/manual-auth-code")
+        _log(f">>> Waiting {_MANUAL_AUTH_CODE_TIMEOUT // 60} minutes for manual auth code...")
+        try:
+            auth_code = _manual_auth_code_queue.get(timeout=_MANUAL_AUTH_CODE_TIMEOUT)
+            _log(f"Manual auth code received: {auth_code[:20]}... — writing to PTY")
+        except queue.Empty:
+            _log("Manual auth code timeout — no code received within 10 minutes. Killing PTY.")
+            proc.kill()
+            return False
 
     # Step 4: Write auth code / confirmation to the PTY master fd.
     # With PTY mode proc.stdin is None — all writes go through the master fd.
