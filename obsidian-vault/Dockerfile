@@ -38,7 +38,7 @@ RUN mkdir -p /vault-seed/.obsidian/plugins/obsidian-claude-code-mcp \
          -O /vault-seed/.obsidian/plugins/obsidian-claude-code-mcp/styles.css 2>/dev/null || true)
 
 # Copy pre-configured vault settings (community-plugins.json, app.json, etc.)
-COPY vault-config/.obsidian/ /vault-seed/.obsidian/
+COPY vault-config/obsidian-config/ /vault-seed/.obsidian/
 
 # The vault is mounted as a volume so notes persist across container restarts
 EXPOSE 22360
