@@ -58,6 +58,11 @@ _recovery_lock = threading.Lock()
 _recovery_running = threading.Event()  # set while a recovery is in progress
 _recovery_started_at: float = 0.0     # mtime threshold: creds written after this = fresh
 
+# Active PTY master fd — set while claude login is running so the manual-auth-code
+# webhook can write the code directly to the PTY stdin without needing terminal paste.
+_active_pty_master_fd: int | None = None
+_active_oauth_url: str = ""  # the OAuth URL currently waiting for auth
+
 # Volume paths that survive container restarts (Railway volume mount at /workspace)
 _COOKIES_FILE = Path("/workspace/.claude_browser_cookies.json")
 _RATELIMIT_FILE = Path("/workspace/.claude_login_ratelimit")
@@ -175,6 +180,36 @@ def receive_verification_code(code: str) -> None:
     _verification_code_queue.put(code)
 
 
+def send_manual_auth_code(code: str) -> dict:
+    """
+    Write an auth code directly to the active PTY stdin.
+
+    Called by the /webhook/manual-auth-code endpoint when the user has completed
+    OAuth in their own browser and has the auth code from platform.claude.com,
+    but cannot paste it into the code-server terminal due to TUI raw-mode blocking.
+
+    The code is written directly to the PTY master fd that claude login is reading from.
+    """
+    global _active_pty_master_fd, _active_oauth_url
+    if _active_pty_master_fd is None:
+        return {"ok": False, "error": "No active claude login PTY session. Trigger recovery first."}
+    try:
+        payload = code.strip() + "\r"
+        os.write(_active_pty_master_fd, payload.encode())
+        _log(f"Manual auth code written to PTY (fd={_active_pty_master_fd}, "
+             f"len={len(code)}): {code[:20]}...")
+        _active_oauth_url = ""   # clear — consumed
+        return {"ok": True, "message": "Auth code sent to claude login PTY"}
+    except Exception as e:
+        _log(f"Failed to write auth code to PTY: {e}")
+        return {"ok": False, "error": str(e)}
+
+
+def get_active_oauth_url() -> str:
+    """Return the OAuth URL currently waiting for auth, or empty string."""
+    return _active_oauth_url
+
+
 def _wait_for_verification_code() -> str | None:
     """Block until magic link URL arrives from n8n, or timeout."""
     _log(f"Waiting for magic link URL from n8n (timeout: {_VERIFICATION_CODE_TIMEOUT}s)...")
@@ -266,6 +301,7 @@ def _start_claude_login_pty(env: dict) -> tuple:
         _log(f"PTY unavailable (not Linux?): {_ie} — cannot run claude login with TTY.")
         return None, None, None
 
+    global _active_pty_master_fd
     _log("PTY: opening pseudo-terminal pair...")
     try:
         master_fd, slave_fd = pty.openpty()
@@ -273,6 +309,7 @@ def _start_claude_login_pty(env: dict) -> tuple:
         _log(f"PTY: pty.openpty() failed: {_pe}")
         return None, None, None
 
+    _active_pty_master_fd = master_fd
     _log(f"PTY: master_fd={master_fd} slave_fd={slave_fd}")
 
     try:
@@ -469,6 +506,8 @@ def _start_claude_login_pty(env: dict) -> tuple:
         oauth_url = _find_url(accumulated) or _find_url(accumulated_raw)
         if oauth_url:
             _log(f"PTY: OAuth URL captured: {oauth_url[:120]}...")
+            global _active_oauth_url
+            _active_oauth_url = oauth_url
             break
 
     if not oauth_url:

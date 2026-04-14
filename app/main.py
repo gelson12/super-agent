@@ -2719,6 +2719,49 @@ def webhook_verification_code(payload: dict):
         raise HTTPException(status_code=500, detail=f"Failed to relay auth payload: {e}")
 
 
+@app.post("/webhook/manual-auth-code", tags=["auth"])
+def webhook_manual_auth_code(payload: dict):
+    """
+    Accept an OAuth auth code from the user and write it directly to the active
+    claude login PTY stdin — bypasses code-server terminal paste issues entirely.
+
+    Usage: POST {"code": "y4kP6IMcGrVt0wetai..."}
+    Or visit /auth/login-status to see the active OAuth URL.
+    """
+    code = str(payload.get("code", "")).strip()
+    if not code:
+        raise HTTPException(status_code=400, detail="'code' field required")
+    try:
+        from .learning.cli_auto_login import send_manual_auth_code
+        result = send_manual_auth_code(code)
+        if not result["ok"]:
+            raise HTTPException(status_code=409, detail=result["error"])
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/auth/login-status", tags=["auth"])
+def auth_login_status():
+    """Show the OAuth URL currently waiting for an auth code (if any)."""
+    try:
+        from .learning.cli_auto_login import get_active_oauth_url, _active_pty_master_fd
+        url = get_active_oauth_url()
+        return {
+            "pty_active": _active_pty_master_fd is not None,
+            "oauth_url": url or None,
+            "instructions": (
+                "1. Open oauth_url in your browser\n"
+                "2. Enter email → click magic link → copy the auth code\n"
+                "3. POST {\"code\": \"...\"} to /webhook/manual-auth-code"
+            ) if url else "No active login session"
+        }
+    except Exception as e:
+        return {"pty_active": False, "oauth_url": None, "error": str(e)}
+
+
 @app.post("/webhook/refresh-cli-token", tags=["auth"])
 def webhook_refresh_cli_token(payload: dict):
     """
