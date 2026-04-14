@@ -735,10 +735,49 @@ def _automate_browser(oauth_url: str, email: str) -> tuple[bool, str | None]:
             )
             return True, auth_code
 
-        # Do NOT call _click_approve() here. After submitting the email, Claude.ai
-        # shows a "check your email for a magic link" confirmation page — not the
-        # OAuth consent screen. The confirm page can have buttons labelled "Accept",
-        # "Continue", etc. that match the approve selectors but do nothing useful.
+        # ── Handle selectAccount page (magic link not sent yet) ────────────
+        # After submitting the email, claude.ai may redirect to:
+        #   /login?selectAccount=true&returnTo=/oauth/authorize?...
+        # This is an ACCOUNT SELECTION step — the user must click their email
+        # address on this page to trigger Anthropic sending the magic link.
+        # Until that click happens, no email is sent.
+        if "selectAccount=true" in page.url:
+            _log("Browser: on selectAccount page — waiting for email account button to render...")
+            _selected = False
+            # Try email-specific button first, then fallback to a generic "Continue" button
+            for _asel in [
+                f'button:has-text("{email}")',
+                f'[data-email="{email}"]',
+                f'div[role="button"]:has-text("{email}")',
+                f'li:has-text("{email}")',
+                'button:has-text("Continue")',
+                'button:has-text("Sign in")',
+                'button[type="submit"]',
+            ]:
+                try:
+                    page.wait_for_selector(_asel, timeout=8000)
+                    _el = page.query_selector(_asel)
+                    if _el:
+                        _el.click()
+                        _log(f"Browser: account selection clicked (selector={_asel!r})")
+                        _selected = True
+                        time.sleep(3)
+                        _log(f"Browser: after account select, URL = {page.url[:120]}")
+                        break
+                except Exception:
+                    pass
+            if not _selected:
+                _log("Browser: WARNING — could not find account selection button. "
+                     "Dumping page body for diagnosis:")
+                # Wait for body to render then dump it
+                try:
+                    page.wait_for_selector("body", timeout=5000)
+                except Exception:
+                    pass
+                _log(f"Browser: page body: {page.inner_text('body')[:800]}")
+
+        # Do NOT call _click_approve() here. After submitting the email and
+        # selecting the account, Claude.ai shows a "check your email" page.
         # The real OAuth consent appears only AFTER the user navigates the magic link.
 
         # ── Step 2: Wait for magic link URL from n8n ────────────────────
