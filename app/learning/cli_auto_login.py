@@ -170,7 +170,7 @@ _VERIFICATION_CODE_TIMEOUT = 180  # max seconds to wait for magic URL from n8n
 # 180s = 3 minutes: email delivery (~15s) + n8n poll interval (up to 60s) + POST + buffer
 
 _manual_auth_code_queue: queue.Queue = queue.Queue()  # carries manual auth code from user
-_MANUAL_AUTH_CODE_TIMEOUT = 600   # 10 minutes for user to complete browser login manually
+_MANUAL_AUTH_CODE_TIMEOUT = 1800  # 30 minutes for user to complete browser login manually
 
 
 def receive_verification_code(code: str) -> None:
@@ -659,11 +659,13 @@ def _do_auto_login(email: str) -> bool:
         proc.kill()
 
     # Close the PTY master fd now that the child has exited
+    global _active_pty_master_fd
     try:
         _os4.close(_pty_master_fd)
         _pty_master_fd = None
     except Exception:
         pass
+    _active_pty_master_fd = None  # clear global so /auth/login-status shows pty_active=false
 
     # Step 5: Verify the token was FRESHLY saved (not the old expired file)
     _log("Step 5: Verifying credentials...")
