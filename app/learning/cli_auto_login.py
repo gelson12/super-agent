@@ -1437,10 +1437,17 @@ def _try_direct_refresh() -> bool:
     The Claude CLI credentials file contains an OAuth session with a
     refresh_token. We can use it to get a new access_token via the
     standard OAuth token endpoint.
+
+    FIXED: The real Anthropic OAuth server is at claude.com/cai/oauth/ —
+    confirmed from captured OAuth URLs (authorize endpoint is
+    https://claude.com/cai/oauth/authorize). Old guesses (claude.ai/api/oauth,
+    api.anthropic.com/oauth) always returned 404 or 405, causing this layer
+    to silently fail and fall through to the full browser flow every time.
     """
     try:
         import json
         import urllib.request
+        import urllib.parse
 
         if not _CREDS_FILE.exists():
             _log("Direct refresh: no credentials file found.")
@@ -1456,31 +1463,50 @@ def _try_direct_refresh() -> bool:
         )
         if not refresh_token:
             # Try nested structures
-            oauth = creds.get("oauth", {})
-            refresh_token = oauth.get("refreshToken") or oauth.get("refresh_token")
+            for _nested_key in ("oauth", "claudeAiOAuth", "session", "credentials"):
+                _nested = creds.get(_nested_key, {})
+                if isinstance(_nested, dict):
+                    refresh_token = (
+                        _nested.get("refreshToken")
+                        or _nested.get("refresh_token")
+                        or _nested.get("oauthRefreshToken")
+                    )
+                    if refresh_token:
+                        break
 
         if not refresh_token:
-            _log("Direct refresh: no refresh_token found in credentials file.")
+            _log("Direct refresh: no refresh_token found in credentials file. "
+                 f"Top-level keys: {list(creds.keys())}")
             return False
 
-        _log("Direct refresh: found refresh_token — attempting OAuth refresh...")
+        _log(f"Direct refresh: found refresh_token (len={len(refresh_token)}) — attempting OAuth refresh...")
 
-        # Claude.ai uses standard OAuth2 refresh flow
-        # The token endpoint and client_id can be extracted from the credentials
-        client_id = creds.get("clientId") or creds.get("client_id") or "claude-cli"
+        # The confirmed Anthropic OAuth client_id (from captured OAuth URL):
+        # client_id=9d1c250a-e61b-44d9-88ed-5944d1962f5e
+        # Fall back to what's in credentials, then hardcoded known value.
+        _KNOWN_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+        client_id = (
+            creds.get("clientId")
+            or creds.get("client_id")
+            or creds.get("oauth", {}).get("clientId")
+            or _KNOWN_CLIENT_ID
+        )
 
-        # Try the Anthropic OAuth token endpoint
         data = urllib.parse.urlencode({
             "grant_type": "refresh_token",
             "refresh_token": refresh_token,
             "client_id": client_id,
         }).encode()
 
-        # Try known Anthropic OAuth endpoints
+        # Endpoints ordered by likelihood — claude.com/cai/oauth/token is the
+        # confirmed real OAuth server (we see /cai/oauth/authorize in live URLs).
+        # The previous list only contained guesses that always returned 404/405.
         endpoints = [
+            "https://claude.com/cai/oauth/token",
+            "https://claude.ai/cai/oauth/token",
+            "https://api.claude.ai/oauth/token",
             "https://claude.ai/api/oauth/token",
             "https://api.anthropic.com/oauth/token",
-            "https://auth.anthropic.com/oauth/token",
         ]
 
         for endpoint in endpoints:
@@ -1488,7 +1514,10 @@ def _try_direct_refresh() -> bool:
                 req = urllib.request.Request(
                     endpoint,
                     data=data,
-                    headers={"Content-Type": "application/x-www-form-urlencoded"},
+                    headers={
+                        "Content-Type": "application/x-www-form-urlencoded",
+                        "User-Agent": "claude-cli/1.0",
+                    },
                     method="POST",
                 )
                 with urllib.request.urlopen(req, timeout=15) as resp:
@@ -1497,27 +1526,49 @@ def _try_direct_refresh() -> bool:
                     new_refresh = result.get("refresh_token", refresh_token)
 
                     if new_access:
-                        _log(f"Direct refresh SUCCESS via {endpoint}")
-                        # Update credentials file with new tokens
-                        if "accessToken" in creds:
-                            creds["accessToken"] = new_access
-                        elif "access_token" in creds:
-                            creds["access_token"] = new_access
-                        if "refreshToken" in creds:
-                            creds["refreshToken"] = new_refresh
-                        elif "refresh_token" in creds:
-                            creds["refresh_token"] = new_refresh
-                        if "oauth" in creds:
-                            creds["oauth"]["accessToken"] = new_access
-                            creds["oauth"]["refreshToken"] = new_refresh
+                        _log(f"Direct refresh SUCCESS via {endpoint} ✓")
+                        # Update all known credential key patterns so whatever
+                        # the CLI version expects is updated.
+                        for _top_key in ("accessToken", "access_token"):
+                            if _top_key in creds:
+                                creds[_top_key] = new_access
+                        for _top_key in ("refreshToken", "refresh_token", "oauthRefreshToken"):
+                            if _top_key in creds:
+                                creds[_top_key] = new_refresh
+                        for _nested_key in ("oauth", "claudeAiOAuth", "session", "credentials"):
+                            _nested = creds.get(_nested_key, {})
+                            if isinstance(_nested, dict):
+                                for _ak in ("accessToken", "access_token"):
+                                    if _ak in _nested:
+                                        _nested[_ak] = new_access
+                                for _rk in ("refreshToken", "refresh_token"):
+                                    if _rk in _nested:
+                                        _nested[_rk] = new_refresh
+                                # Also update expiresAt if returned
+                                _new_exp = result.get("expires_in")
+                                if _new_exp:
+                                    import time as _t
+                                    _exp_ts = int((_t.time() + _new_exp) * 1000)
+                                    for _ek in ("expiresAt", "expires_at"):
+                                        if _ek in _nested:
+                                            _nested[_ek] = _exp_ts
+                                creds[_nested_key] = _nested
 
                         _CREDS_FILE.write_text(json.dumps(creds, indent=2))
                         _CREDS_FILE.chmod(0o600)
                         _push_token_to_railway()
                         return True
+                    else:
+                        _log(f"Direct refresh: {endpoint} returned 200 but no access_token — "
+                             f"response keys: {list(result.keys())}")
 
             except urllib.error.HTTPError as e:
-                _log(f"Direct refresh: {endpoint} returned HTTP {e.code}")
+                # Log the full response body — critical for diagnosing wrong endpoint
+                try:
+                    _body = e.read().decode("utf-8", errors="replace")[:300]
+                except Exception:
+                    _body = "(unreadable)"
+                _log(f"Direct refresh: {endpoint} returned HTTP {e.code} — body: {_body}")
                 continue
             except Exception as e:
                 _log(f"Direct refresh: {endpoint} error — {e}")
@@ -1528,6 +1579,71 @@ def _try_direct_refresh() -> bool:
 
     except Exception as e:
         _log(f"Direct refresh error: {e}")
+        return False
+
+
+def maybe_proactive_refresh() -> bool:
+    """
+    Proactively refresh the OAuth access_token before it expires.
+
+    Called by the watchdog scheduler even when the CLI is NOT down, so tokens
+    are silently rotated before any request fails.  Returns True if a refresh
+    was performed (or was unnecessary), False only on hard failure.
+
+    Strategy:
+      - Read expiresAt from credentials (milliseconds epoch, as stored by Claude CLI)
+      - If more than 2 hours remain → do nothing (still fresh)
+      - If < 2 hours remain → call _try_direct_refresh() to get a new token
+      - If no expiresAt → attempt refresh anyway (credentials format unknown,
+        better safe than sorry)
+    """
+    try:
+        import json
+        import time as _time
+
+        if not _CREDS_FILE.exists():
+            return False
+
+        creds = json.loads(_CREDS_FILE.read_text())
+
+        # Extract expiresAt — milliseconds epoch (Claude CLI stores ms, not seconds)
+        expires_at_ms = None
+        for _key in ("expiresAt", "expires_at"):
+            if _key in creds:
+                expires_at_ms = creds[_key]
+                break
+        if expires_at_ms is None:
+            for _nested_key in ("oauth", "claudeAiOAuth", "session"):
+                _nested = creds.get(_nested_key, {})
+                if isinstance(_nested, dict):
+                    for _key in ("expiresAt", "expires_at"):
+                        if _key in _nested:
+                            expires_at_ms = _nested[_key]
+                            break
+                if expires_at_ms is not None:
+                    break
+
+        now_ms = _time.time() * 1000
+
+        if expires_at_ms is not None:
+            remaining_s = (expires_at_ms - now_ms) / 1000
+            if remaining_s > 7200:  # more than 2 hours — nothing to do
+                _log(f"Proactive refresh: token still fresh ({int(remaining_s // 3600)}h "
+                     f"{int((remaining_s % 3600) // 60)}m remaining) — skipping.")
+                return True
+            _log(f"Proactive refresh: token expires in {int(remaining_s // 60)}m — refreshing now...")
+        else:
+            _log("Proactive refresh: expiresAt not found in credentials — attempting refresh anyway.")
+
+        # Don't run if recovery is already in progress
+        if _recovery_running.is_set():
+            _log("Proactive refresh: recovery already in progress — skipping.")
+            return True
+
+        return _try_direct_refresh()
+
+    except Exception as _e:
+        _log(f"Proactive refresh error: {_e}")
         return False
 
 

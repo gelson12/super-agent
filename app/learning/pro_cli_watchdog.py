@@ -60,6 +60,8 @@ def probe_cli() -> bool:
 def maybe_recover() -> bool:
     """
     Check if CLI_DOWN flag is active; run a full auth verification; clear flag on recovery.
+    Also proactively refreshes the OAuth token before it expires (even when CLI is healthy),
+    so the CLI never goes down in the first place.
 
     Uses verify_pro_auth() (not just --version) so recovery is only declared
     when auth is actually confirmed valid — never assumed from a version ping.
@@ -68,6 +70,15 @@ def maybe_recover() -> bool:
     Returns True if recovery was detected (flag cleared).
     Never raises.
     """
+    # ── Proactive token refresh (runs even when CLI is healthy) ──────────────
+    # Silently rotates the OAuth access_token before it expires so the CLI
+    # never hits a 401 in the first place.  No-op if token is still fresh.
+    try:
+        from .cli_auto_login import maybe_proactive_refresh
+        maybe_proactive_refresh()
+    except Exception:
+        pass
+
     try:
         from .pro_router import is_cli_down, verify_pro_auth
         from ..activity_log import bg_log
