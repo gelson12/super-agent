@@ -41,8 +41,6 @@ RUN mkdir -p /vault-seed/.obsidian/plugins/obsidian-claude-code-mcp \
 COPY vault-config/.obsidian/ /vault-seed/.obsidian/
 
 # The vault is mounted as a volume so notes persist across container restarts
-VOLUME ["/vault"]
-
 EXPOSE 22360
 
 COPY entrypoint.sh /entrypoint.sh
