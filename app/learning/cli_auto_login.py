@@ -741,8 +741,11 @@ def _automate_browser(oauth_url: str, email: str) -> tuple[bool, str | None]:
         # If we loaded saved cookies and the OAuth page shows an existing-account
         # consent button (e.g. "Continue with your Claude.ai account"), click it
         # directly without going through the email/magic-link flow at all.
+        # If the session is expired, the page will show a login form instead —
+        # we delete the stale cookie file and fall through to the magic link flow.
         if _cookies_loaded:
             _log("Browser: checking for active session (saved cookies)...")
+            _session_active = False
             try:
                 # Wait briefly for React to render account-selection content
                 time.sleep(2)
@@ -757,8 +760,9 @@ def _automate_browser(oauth_url: str, email: str) -> tuple[bool, str | None]:
                     _sb = page.query_selector(_sbsel)
                     if _sb and _sb.is_visible():
                         _session_btn = _sb
-                        _log(f"Browser: active session — found {_sbsel!r}: {_sb.inner_text()!r}")
+                        _log(f"Browser: active session detected — found {_sbsel!r}: {_sb.inner_text()!r}")
                         break
+
                 if _session_btn:
                     _session_btn.click()
                     _log("Browser: clicked session-active button — waiting for callback...")
@@ -766,12 +770,26 @@ def _automate_browser(oauth_url: str, email: str) -> tuple[bool, str | None]:
                     if ok:
                         _save_cookies(page)
                         return ok, auth_code
+                    # Button clicked but no callback — session was stale
                     _log("Browser: session-active click didn't lead to callback — "
-                         "falling through to email flow")
+                         "cookies are stale. Deleting cookie file and falling back to magic link.")
                 else:
-                    _log("Browser: no session-active button found — proceeding to email flow")
+                    _log("Browser: saved cookies loaded but session has expired (no account button). "
+                         "Deleting stale cookie file and falling back to magic link flow.")
+
             except Exception as _sess_e:
-                _log(f"Browser: session-active check error (non-fatal): {_sess_e}")
+                _log(f"Browser: session-active check error: {_sess_e} — "
+                     "falling back to magic link flow")
+
+            # Session inactive / stale — delete cookie file so the next attempt
+            # doesn't waste time trying them again before the session is refreshed.
+            try:
+                if _COOKIES_FILE.exists():
+                    _COOKIES_FILE.unlink()
+                    _log("Browser: stale cookie file deleted ✓")
+            except Exception:
+                pass
+            # Fall through to the email / magic link flow below
 
         # ── Step 1: Enter email ──────────────────────────────────────────
         # Claude.ai is a React SPA — the email input is injected by JS after
