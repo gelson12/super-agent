@@ -50,6 +50,13 @@ _CREDS_FILE = Path("/root/.claude/.credentials.json")
 _TIMEOUT_LOGIN = 120  # max seconds for the entire login flow
 _log_lock = threading.Lock()
 
+# Prevent concurrent recovery chains. When the token expires, the watchdog,
+# router, AND token_keeper all fire simultaneously — without this lock they
+# all enter the browser and submit the email at the same time, which triggers
+# Anthropic's "error sending login link" rate-limit error.
+_recovery_lock = threading.Lock()
+_recovery_running = threading.Event()  # set while a recovery is in progress
+
 
 def _log(msg: str) -> None:
     # Always print so Railway container logs capture it (bg_log only writes to local file)
@@ -681,6 +688,19 @@ def _automate_browser(oauth_url: str, email: str) -> tuple[bool, str | None]:
             )
             return True, auth_code
 
+        # ── Accept cookie consent (if present) ──────────────────────────
+        # Claude.ai shows a GDPR cookie banner that overlays the page.
+        # It must be dismissed before interacting with the login form,
+        # otherwise button clicks may hit the overlay instead of the form.
+        try:
+            _cookie_btn = page.query_selector('button:has-text("Accept All Cookies")')
+            if _cookie_btn and _cookie_btn.is_visible():
+                _cookie_btn.click()
+                _log("Browser: accepted cookie consent overlay")
+                time.sleep(1)
+        except Exception as _ck_e:
+            _log(f"Browser: cookie consent check skipped ({_ck_e})")
+
         # ── Step 1: Enter email ──────────────────────────────────────────
         # Claude.ai is a React SPA — the email input is injected by JS after
         # the initial HTML loads. Must wait for it to appear in the DOM.
@@ -712,11 +732,19 @@ def _automate_browser(oauth_url: str, email: str) -> tuple[bool, str | None]:
         email_field.fill(email)
         _log(f"Browser: email entered ({email})")
         time.sleep(0.5)
-        continue_btn = (
-            page.query_selector('button:has-text("Continue with email")')
-            or page.query_selector('button:has-text("Continue")')
-            or page.query_selector('button[type="submit"]')
-        )
+        # Use precise selectors — "Continue with email" first, then exact
+        # "Continue" text only (NOT "Continue with Google" / "Continue with SSO").
+        # Query all matching buttons and pick the one whose visible text is exact.
+        continue_btn = page.query_selector('button:has-text("Continue with email")')
+        if not continue_btn:
+            for _cb in page.query_selector_all('button[type="submit"], button:has-text("Continue")'):
+                try:
+                    _txt = _cb.inner_text().strip()
+                    if _txt in ("Continue", "Continue with email") and _cb.is_visible():
+                        continue_btn = _cb
+                        break
+                except Exception:
+                    pass
         if continue_btn:
             continue_btn.click()
             _log("Browser: clicked 'Continue with email'")
@@ -759,11 +787,42 @@ def _automate_browser(oauth_url: str, email: str) -> tuple[bool, str | None]:
                 _body_html = "(could not read html)"
             _log(f"Browser: [selectAccount] page HTML (first 2000 chars):\n{_body_html[:2000]}")
 
+            # First: check if Anthropic returned an error (rate-limit / server error).
+            # This shows up as "There was an error sending you a login link." in the body.
+            try:
+                _page_text_now = page.inner_text("body")
+            except Exception:
+                _page_text_now = ""
+            if "error sending" in _page_text_now.lower() or "error sending you a login link" in _page_text_now.lower():
+                _log("Browser: ERROR — Anthropic returned 'error sending login link'. "
+                     "This is usually a rate-limit. Aborting this attempt.")
+                return False, None
+
             _selected = False
             _email_local = email.split("@")[0]  # e.g. "gelson_m" from "gelson_m@hotmail.com"
 
-            # Try email-specific selectors first (broad matching), then "Use different email"
-            # to re-enter the address, then generic submit as last resort.
+            # Candidate selectors — email-specific ones first.
+            # IMPORTANT: skip any button whose text contains "Google" or "SSO" or "different"
+            # as those would restart the flow rather than selecting the existing account.
+            _SKIP_TEXTS = ("google", "sso", "different", "reject", "customize", "cookie")
+
+            def _safe_click_candidate(_asel: str) -> bool:
+                """Try selector; return True if clicked a valid-looking element."""
+                try:
+                    _el = page.query_selector(_asel)
+                    if not (_el and _el.is_visible()):
+                        return False
+                    _txt = (_el.inner_text() or "").strip()
+                    if any(_s in _txt.lower() for _s in _SKIP_TEXTS):
+                        _log(f"Browser: skipping selector={_asel!r} text={_txt!r} (excluded)")
+                        return False
+                    _log(f"Browser: found selector={_asel!r} text={_txt!r} — clicking")
+                    _el.click()
+                    return True
+                except Exception as _e:
+                    _log(f"Browser: selector {_asel!r} error: {_e}")
+                    return False
+
             for _asel in [
                 f'button:has-text("{email}")',
                 f'[data-email="{email}"]',
@@ -772,38 +831,27 @@ def _automate_browser(oauth_url: str, email: str) -> tuple[bool, str | None]:
                 f'button:has-text("{_email_local}")',
                 f'[class*="account"]:has-text("{email}")',
                 f'[class*="account"]:has-text("{_email_local}")',
-                # Sometimes the page shows "Use a different account" / "Use different email"
-                # — do NOT click those as they'd restart the flow
-                # Generic continue/sign-in as absolute last fallback
-                'button:has-text("Continue")',
-                'button:has-text("Sign in")',
+                # Exact "Continue" only — not "Continue with Google/SSO"
                 'button[type="submit"]',
+                'button:has-text("Sign in")',
             ]:
-                try:
-                    _el = page.query_selector(_asel)
-                    if _el and _el.is_visible():
-                        _txt = _el.inner_text()
-                        _log(f"Browser: found selector={_asel!r} text={_txt!r} — clicking")
-                        _el.click()
-                        _log(f"Browser: account selection clicked (selector={_asel!r})")
-                        _selected = True
-                        # Wait for URL change rather than sleeping blind
-                        _prev_url = page.url
-                        for _i in range(10):
-                            time.sleep(1)
-                            if page.url != _prev_url:
-                                _log(f"Browser: URL changed after account select → {page.url[:120]}")
-                                break
-                        else:
-                            _log(f"Browser: URL unchanged after 10s: {page.url[:120]}")
-                            # Dump page again to see if content changed at least
-                            try:
-                                _log(f"Browser: [selectAccount post-click] body:\n{page.inner_text('body')[:800]}")
-                            except Exception:
-                                pass
-                        break
-                except Exception as _sel_err:
-                    _log(f"Browser: selector {_asel!r} error: {_sel_err}")
+                if _safe_click_candidate(_asel):
+                    _log(f"Browser: account selection clicked (selector={_asel!r})")
+                    _selected = True
+                    # Wait for URL change rather than sleeping blind
+                    _prev_url = page.url
+                    for _i in range(10):
+                        time.sleep(1)
+                        if page.url != _prev_url:
+                            _log(f"Browser: URL changed after account select → {page.url[:120]}")
+                            break
+                    else:
+                        _log(f"Browser: URL unchanged after 10s: {page.url[:120]}")
+                        try:
+                            _log(f"Browser: [selectAccount post-click] body:\n{page.inner_text('body')[:800]}")
+                        except Exception:
+                            pass
+                    break
 
             if not _selected:
                 _log("Browser: WARNING — could not find any clickable account button.")
@@ -827,8 +875,13 @@ def _automate_browser(oauth_url: str, email: str) -> tuple[bool, str | None]:
             _log(f"Browser: [pre-magic-link-wait] URL={page.url[:120]}")
             _log(f"Browser: [pre-magic-link-wait] body:\n{_final_pre_wait_text[:800]}")
         except Exception:
-            pass
-        _log(f"Browser: page content sample after email submit: {page.content()[:400]}")
+            _final_pre_wait_text = ""
+
+        # Abort early if Anthropic returned an error at this stage too
+        if "error sending" in _final_pre_wait_text.lower():
+            _log("Browser: ERROR — Anthropic returned 'error sending login link' before "
+                 "magic link wait. Aborting.")
+            return False, None
         _log("Browser: waiting for magic link URL from n8n email monitor...")
         magic_url = _wait_for_verification_code()
         if not magic_url:
@@ -1236,20 +1289,53 @@ def full_recovery_chain() -> bool:
     the same expired token to disk again and short-circuit before Playwright runs.
 
     Returns True if ANY method succeeded.
+
+    CONCURRENCY GUARD: This function uses _recovery_lock to ensure only ONE
+    recovery chain runs at a time. The watchdog, pro_router, and token_keeper
+    all call this function simultaneously when the token expires — without the
+    guard they each spawn a browser and submit the email within seconds of each
+    other, triggering Anthropic's "error sending login link" rate-limit.
+    Callers that lose the lock race block until the winner finishes, then return
+    True if the winner already restored the token.
     """
-    _log("=== Starting full CLI recovery chain ===")
+    # Fast path: if a recovery is already running, wait for it to finish
+    # then report success/failure based on whether the creds file exists after.
+    if _recovery_running.is_set():
+        _log("=== Recovery already in progress — waiting for it to complete ===")
+        _recovery_running.wait(timeout=300)  # up to 5 minutes
+        # Check if the winner successfully restored credentials
+        if _CREDS_FILE.exists():
+            _log("=== Recovery completed by another thread — credentials present ✓ ===")
+            return True
+        _log("=== Recovery completed by another thread — credentials NOT restored ===")
+        return False
 
-    # Attempt 1: Direct OAuth refresh (no browser, uses refresh_token)
-    _log("Recovery attempt 1/2: Direct OAuth refresh...")
-    if _try_direct_refresh():
-        _log("=== Recovery SUCCESS via direct OAuth refresh ===")
-        return True
+    if not _recovery_lock.acquire(blocking=False):
+        # Lost the race between the is_set() check and acquire() — wait same way
+        _log("=== Recovery lock busy — waiting for existing recovery to finish ===")
+        _recovery_running.wait(timeout=300)
+        if _CREDS_FILE.exists():
+            return True
+        return False
 
-    # Attempt 2: Full browser auto-login (Playwright + n8n email monitor)
-    _log("Recovery attempt 2/2: Full browser auto-login via Playwright...")
-    if auto_login_claude():
-        _log("=== Recovery SUCCESS via browser auto-login (Playwright) ===")
-        return True
+    _recovery_running.set()
+    try:
+        _log("=== Starting full CLI recovery chain ===")
 
-    _log("=== ALL recovery methods FAILED — manual login required ===")
-    return False
+        # Attempt 1: Direct OAuth refresh (no browser, uses refresh_token)
+        _log("Recovery attempt 1/2: Direct OAuth refresh...")
+        if _try_direct_refresh():
+            _log("=== Recovery SUCCESS via direct OAuth refresh ===")
+            return True
+
+        # Attempt 2: Full browser auto-login (Playwright + n8n email monitor)
+        _log("Recovery attempt 2/2: Full browser auto-login via Playwright...")
+        if auto_login_claude():
+            _log("=== Recovery SUCCESS via browser auto-login (Playwright) ===")
+            return True
+
+        _log("=== ALL recovery methods FAILED — manual login required ===")
+        return False
+    finally:
+        _recovery_running.clear()
+        _recovery_lock.release()
