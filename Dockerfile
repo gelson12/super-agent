@@ -103,6 +103,8 @@ RUN playwright install --with-deps chromium
 # Chromium's JA3 TLS fingerprint and headless signals are detected by CF's
 # challenge-platform. Camoufox uses a patched Firefox binary with a different
 # TLS fingerprint + browser signals, giving much higher CF bypass rates.
+# Install GTK3 + other Firefox system deps that camoufox's binary requires.
+RUN playwright install --with-deps firefox
 RUN python -m camoufox fetch
 
 # ── Application source ────────────────────────────────────────────────────────
