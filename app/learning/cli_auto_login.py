@@ -633,7 +633,158 @@ def _automate_browser(oauth_url: str, email: str) -> tuple[bool, str | None]:
                  to http://localhost:PORT/callback — CLI captures token automatically.
       CONTAINER: redirect_uri=https://platform.claude.com/oauth/code/callback;
                  that page displays an auth code the CLI reads from stdin.
+
+    Browser priority:
+      1. camoufox (patched Firefox) — passes Cloudflare Managed Challenge because its
+         JA3 TLS fingerprint and browser internals are indistinguishable from real Firefox.
+         Headless Chromium is blocked by CF even with JS stealth patches because CF
+         detects it at the TLS fingerprint level.
+      2. Playwright Chromium — fallback if camoufox is unavailable.
     """
+
+    def _page_flow(page) -> tuple[bool, str | None]:
+        """All page-level logic. Browser-agnostic — never closes the browser."""
+
+        # ── Navigate to OAuth URL ────────────────────────────────────────
+        _log(f"Browser: navigating to OAuth URL: {oauth_url[:120]}...")
+        page.goto(oauth_url, timeout=60000)
+
+        # Wait for Cloudflare Managed Challenge to resolve.
+        # Guard: document.title starts as "" before CF JS sets it, so require
+        # non-empty title BEFORE checking that it's not a challenge title —
+        # otherwise the check fires immediately as a false positive.
+        _log("Browser: waiting for Cloudflare challenge to clear (if any)...")
+        try:
+            page.wait_for_function(
+                "() => {"
+                "  var t = document.title;"
+                "  return t !== '' && !t.includes('moment') &&"
+                "         !t.includes('Just a') && !t.includes('Checking') &&"
+                "         !t.includes('challenge');"
+                "}",
+                timeout=45000,
+                polling=1000,
+            )
+            _log("Browser: Cloudflare challenge cleared.")
+        except Exception as _cf_e:
+            _log(f"Browser: CF wait timed out ({_cf_e}) — proceeding anyway")
+        time.sleep(1)
+        _log(f"Browser: on page = {page.url[:120]}")
+        _log(f"Browser: page title = {page.title()!r}")
+
+        # ── Early callback (SSO / session already active) ────────────────
+        if _is_callback_url(page.url):
+            _log("Browser: already redirected to callback after navigation ✓")
+            auth_code = (
+                _extract_oauth_code_from_page(page)
+                if "platform.claude.com" in page.url else None
+            )
+            return True, auth_code
+
+        # ── Step 1: Enter email ──────────────────────────────────────────
+        _log(f"Browser: page content sample (for debugging): {page.content()[:600]}")
+        email_field = (
+            page.query_selector('input[type="email"]')
+            or page.query_selector('input[placeholder*="email" i]')
+            or page.query_selector('input[name="email"]')
+            or page.query_selector('input[autocomplete*="email" i]')
+        )
+        if email_field:
+            email_field.fill(email)
+            _log(f"Browser: email entered ({email})")
+            time.sleep(0.5)
+            continue_btn = (
+                page.query_selector('button:has-text("Continue with email")')
+                or page.query_selector('button:has-text("Continue")')
+                or page.query_selector('button[type="submit"]')
+            )
+            if continue_btn:
+                continue_btn.click()
+                _log("Browser: clicked 'Continue with email'")
+            else:
+                page.keyboard.press("Enter")
+                _log("Browser: pressed Enter to submit email")
+            time.sleep(3)
+            _log(f"Browser: after email submit, URL = {page.url[:120]}")
+        else:
+            _log("Browser: no email field found on page — dumping full content for diagnosis.")
+            _log(f"Browser: FULL page content: {page.content()[:2000]}")
+            return False, None
+
+        # ── Check post-submit ────────────────────────────────────────────
+        if _is_callback_url(page.url):
+            _log("Browser: callback after email submit ✓")
+            auth_code = (
+                _extract_oauth_code_from_page(page)
+                if "platform.claude.com" in page.url else None
+            )
+            return True, auth_code
+
+        if _click_approve(page):
+            _log("Browser: Approve button present immediately after email submit")
+            auth_code, ok = _wait_for_callback_and_extract(page)
+            return ok, auth_code
+
+        # ── Step 2: Wait for magic link URL from n8n ────────────────────
+        _log(f"Browser: page content sample after email submit: {page.content()[:400]}")
+        _log("Browser: waiting for magic link URL from n8n email monitor...")
+        magic_url = _wait_for_verification_code()
+        if not magic_url:
+            _log("Browser: TIMEOUT — n8n did not deliver the magic link URL within 3 minutes.")
+            return False, None
+
+        # ── Step 3: Navigate to the magic link ──────────────────────────
+        _log(f"Browser: navigating to magic link: {magic_url[:100]}...")
+        try:
+            page.goto(magic_url, timeout=30000)
+        except Exception as _nav_e:
+            _log(f"Browser: magic link navigation warning (may be normal): {_nav_e}")
+        try:
+            page.wait_for_load_state("networkidle", timeout=15000)
+        except Exception:
+            time.sleep(3)
+        _log(f"Browser: after magic link, URL = {page.url[:120]}")
+        _log(f"Browser: page title = {page.title()!r}")
+        _log(f"Browser: page content sample: {page.content()[:400]}")
+
+        # ── Step 4: Handle post-magic-link state ────────────────────────
+        if _is_callback_url(page.url):
+            _log("Browser: callback after magic link navigation ✓")
+            auth_code = (
+                _extract_oauth_code_from_page(page)
+                if "platform.claude.com" in page.url else None
+            )
+            return True, auth_code
+
+        _log("Browser: looking for Approve button on consent screen...")
+        approved = _click_approve(page)
+        if approved:
+            _log("Browser: Approve clicked — waiting for callback redirect...")
+            auth_code, ok = _wait_for_callback_and_extract(page)
+            return ok, auth_code
+
+        _log(f"Browser: WARNING — no Approve button found. "
+             f"Final URL: {page.url[:120]}. "
+             f"Page content: {page.content()[:800]}")
+        return False, None
+
+    # ── Attempt 1: camoufox (patched Firefox — CF-bypass) ───────────────
+    try:
+        from camoufox.sync_api import Camoufox
+        _log("Browser: using camoufox (patched Firefox — CF-bypass mode).")
+        try:
+            with Camoufox(headless=True, geoip=True) as browser:
+                page = browser.new_page()
+                return _page_flow(page)
+        except Exception as _e:
+            _log(f"Browser automation error (camoufox): {_e}")
+            import traceback
+            _log(f"Browser traceback: {traceback.format_exc()[:600]}")
+            return False, None
+    except ImportError:
+        _log("Browser: camoufox not available — falling back to Playwright Chromium.")
+
+    # ── Attempt 2: Playwright Chromium (fallback) ────────────────────────
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
@@ -649,9 +800,7 @@ def _automate_browser(oauth_url: str, email: str) -> tuple[bool, str | None]:
                     "--disable-setuid-sandbox",
                     "--disable-dev-shm-usage",
                     "--disable-gpu",
-                    # Hide Chromium automation signals so Cloudflare challenge passes
                     "--disable-blink-features=AutomationControlled",
-                    "--disable-web-security",
                     "--window-size=1280,800",
                 ]
             )
@@ -665,7 +814,6 @@ def _automate_browser(oauth_url: str, email: str) -> tuple[bool, str | None]:
                 locale="en-US",
                 timezone_id="America/New_York",
             )
-            # Remove the `navigator.webdriver` property that Cloudflare detects
             context.add_init_script("""
                 Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
                 window.chrome = {runtime: {}};
@@ -673,130 +821,11 @@ def _automate_browser(oauth_url: str, email: str) -> tuple[bool, str | None]:
                 Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']});
             """)
             page = context.new_page()
-
-            _log(f"Browser: navigating to OAuth URL: {oauth_url[:120]}...")
-            page.goto(oauth_url, timeout=60000)
-
-            # Wait for Cloudflare "Just a moment..." challenge to resolve.
-            # CF runs JS to verify the browser — this typically takes 3–10 s.
-            _log("Browser: waiting for Cloudflare challenge to pass (if any)...")
-            try:
-                page.wait_for_function(
-                    "() => !document.title.includes('moment') && "
-                    "!document.title.includes('Checking') && "
-                    "!document.title.includes('challenge')",
-                    timeout=30000,
-                    polling=1000,
-                )
-                _log("Browser: Cloudflare challenge passed.")
-            except Exception as _cf_e:
-                _log(f"Browser: CF wait timed out ({_cf_e}) — proceeding anyway")
-            time.sleep(2)
-            _log(f"Browser: on page = {page.url[:120]}")
-            _log(f"Browser: page title = {page.title()!r}")
-
-            # ── Check for early callback (session remembered / SSO) ──────
-            if _is_callback_url(page.url):
-                _log("Browser: already redirected to callback after navigation ✓")
-                auth_code = _extract_oauth_code_from_page(page) if "platform.claude.com" in page.url else None
-                browser.close()
-                return True, auth_code
-
-            # ── Step 1: Enter email ──────────────────────────────────────
-            _log(f"Browser: page content sample (for debugging): {page.content()[:600]}")
-            email_field = (
-                page.query_selector('input[type="email"]')
-                or page.query_selector('input[placeholder*="email" i]')
-                or page.query_selector('input[name="email"]')
-                or page.query_selector('input[autocomplete*="email" i]')
-            )
-            if email_field:
-                email_field.fill(email)
-                _log(f"Browser: email entered ({email})")
-                time.sleep(0.5)
-
-                # Click "Continue with email"
-                continue_btn = (
-                    page.query_selector('button:has-text("Continue with email")')
-                    or page.query_selector('button:has-text("Continue")')
-                    or page.query_selector('button[type="submit"]')
-                )
-                if continue_btn:
-                    continue_btn.click()
-                    _log("Browser: clicked 'Continue with email'")
-                else:
-                    page.keyboard.press("Enter")
-                    _log("Browser: pressed Enter to submit email")
-
-                time.sleep(3)
-                _log(f"Browser: after email submit, URL = {page.url[:120]}")
-            else:
-                _log("Browser: no email field found on page — dumping full content for diagnosis.")
-                _log(f"Browser: FULL page content: {page.content()[:2000]}")
-                browser.close()
-                return False, None
-
-            # ── Check post-submit for early callback ─────────────────────
-            if _is_callback_url(page.url):
-                _log("Browser: callback after email submit ✓")
-                auth_code = _extract_oauth_code_from_page(page) if "platform.claude.com" in page.url else None
-                browser.close()
-                return True, auth_code
-
-            if _click_approve(page):
-                _log("Browser: Approve button present immediately after email submit")
-                auth_code, ok = _wait_for_callback_and_extract(page)
-                browser.close()
-                return ok, auth_code
-
-            # ── Step 2: Wait for magic link URL from n8n ─────────────────
-            _log(f"Browser: page content sample after email submit: {page.content()[:400]}")
-            _log("Browser: waiting for magic link URL from n8n email monitor...")
-            magic_url = _wait_for_verification_code()
-            if not magic_url:
-                _log("Browser: TIMEOUT — n8n did not deliver the magic link URL within 3 minutes.")
-                browser.close()
-                return False, None
-
-            # ── Step 3: Navigate to the magic link ───────────────────────
-            _log(f"Browser: navigating to magic link: {magic_url[:100]}...")
-            try:
-                page.goto(magic_url, timeout=30000)
-            except Exception as _nav_e:
-                _log(f"Browser: magic link navigation warning (may be normal): {_nav_e}")
-            try:
-                page.wait_for_load_state("networkidle", timeout=15000)
-            except Exception:
-                time.sleep(3)
-            _log(f"Browser: after magic link, URL = {page.url[:120]}")
-            _log(f"Browser: page title = {page.title()!r}")
-            _log(f"Browser: page content sample: {page.content()[:400]}")
-
-            # ── Step 4: Handle post-magic-link state ──────────────────────
-            if _is_callback_url(page.url):
-                _log("Browser: callback after magic link navigation ✓")
-                auth_code = _extract_oauth_code_from_page(page) if "platform.claude.com" in page.url else None
-                browser.close()
-                return True, auth_code
-
-            # Look for Approve/Allow button on consent screen
-            _log("Browser: looking for Approve button on consent screen...")
-            approved = _click_approve(page)
-
-            if approved:
-                _log("Browser: Approve clicked — waiting for callback redirect...")
-                auth_code, ok = _wait_for_callback_and_extract(page)
-                browser.close()
-                return ok, auth_code
-            else:
-                _log(f"Browser: WARNING — no Approve button found. "
-                     f"Final URL: {page.url[:120]}. "
-                     f"Page content: {page.content()[:800]}")
-                browser.close()
-                return False, None
-
+            result = _page_flow(page)
+            browser.close()
+            return result
     except Exception as e:
-        _log(f"Browser automation error: {e}")
+        _log(f"Browser automation error (playwright): {e}")
         import traceback
         _log(f"Browser traceback: {traceback.format_exc()[:600]}")
         return False, None

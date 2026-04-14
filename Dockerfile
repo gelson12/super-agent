@@ -99,6 +99,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 # playwright is in requirements.txt; this installs the Chromium binary + its deps.
 RUN playwright install --with-deps chromium
 
+# ── Camoufox (patched Firefox that bypasses Cloudflare Managed Challenge) ──────
+# Chromium's JA3 TLS fingerprint and headless signals are detected by CF's
+# challenge-platform. Camoufox uses a patched Firefox binary with a different
+# TLS fingerprint + browser signals, giving much higher CF bypass rates.
+RUN python -m camoufox fetch
+
 # ── Application source ────────────────────────────────────────────────────────
 COPY . .
 
