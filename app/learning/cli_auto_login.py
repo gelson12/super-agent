@@ -312,8 +312,8 @@ def _start_claude_login_pty(env: dict) -> tuple:
     # regex to stop at the newline and capture only a truncated fragment.
     try:
         import fcntl, termios, struct
-        fcntl.ioctl(slave_fd, termios.TIOCSWINSZ, struct.pack('HHHH', 50, 250, 0, 0))
-        _log("PTY: window size set to 250 cols (prevents URL line-wrapping)")
+        fcntl.ioctl(slave_fd, termios.TIOCSWINSZ, struct.pack('HHHH', 50, 500, 0, 0))
+        _log("PTY: window size set to 500 cols (prevents URL line-wrapping)")
     except Exception as _we:
         _log(f"PTY: could not set window size (non-fatal): {_we}")
 
