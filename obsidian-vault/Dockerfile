@@ -5,6 +5,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y \
     xvfb \
     wget \
+    netcat-openbsd \
     libgtk-3-0 \
     libnotify4 \
     libnss3 \
@@ -37,10 +38,18 @@ RUN mkdir -p /vault-seed/.obsidian/plugins/obsidian-claude-code-mcp \
     && (wget -q "https://github.com/iansinnott/obsidian-claude-code-mcp/releases/latest/download/styles.css" \
          -O /vault-seed/.obsidian/plugins/obsidian-claude-code-mcp/styles.css 2>/dev/null || true)
 
-# Copy pre-configured vault settings (community-plugins.json, app.json, etc.)
-COPY vault-config/obsidian-config/ /vault-seed/.obsidian/
+# Write vault config files inline — avoids build context issues with subdirectories
+RUN printf '["obsidian-claude-code-mcp"]\n' \
+        > /vault-seed/.obsidian/community-plugins.json \
+    && printf '{"port":22360}\n' \
+        > /vault-seed/.obsidian/plugins/obsidian-claude-code-mcp/data.json \
+    && printf '{"promptDelete":false,"alwaysUpdateLinks":true,"newFileLocation":"root","attachmentFolderPath":"assets"}\n' \
+        > /vault-seed/.obsidian/app.json \
+    && printf '{"file-explorer":true,"global-search":true,"switcher":true,"editor-status":true,"command-palette":true,"file-recovery":true}\n' \
+        > /vault-seed/.obsidian/core-plugins.json \
+    && printf '{}\n' \
+        > /vault-seed/.obsidian/hotkeys.json
 
-# The vault is mounted as a volume so notes persist across container restarts
 EXPOSE 22360
 
 COPY entrypoint.sh /entrypoint.sh
