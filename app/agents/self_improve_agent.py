@@ -92,6 +92,15 @@ from ..tools.flutter_tools import (
     upload_build_artifact,
     flutter_git_push,
 )
+from ..tools.obsidian_tools import (
+    obsidian_list_notes,
+    obsidian_read_note,
+    obsidian_write_note,
+    obsidian_append_to_note,
+    obsidian_search_vault,
+    obsidian_discover_tools,
+    obsidian_call_tool,
+)
 
 _SYSTEM = """You are Super Agent's autonomous self-improvement and self-repair engine.
 
@@ -236,6 +245,10 @@ _SELF_IMPROVE_TOOLS = [
     # Flutter / Mobile builds
     flutter_create_project, flutter_build_apk, flutter_test,
     upload_build_artifact, flutter_git_push,
+    # Obsidian knowledge vault (read/write improvement notes, search prior context)
+    obsidian_list_notes, obsidian_read_note, obsidian_write_note,
+    obsidian_append_to_note, obsidian_search_vault,
+    obsidian_discover_tools, obsidian_call_tool,
 ]
 
 _agent = None

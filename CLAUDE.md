@@ -1,8 +1,28 @@
 # Super-Agent — Claude CLI Context
-**Last updated:** 2026-04-13
+**Last updated:** 2026-04-14
 
 This file is auto-loaded by `claude -p` on every invocation inside this repo.
 It gives Claude CLI situational awareness of the system architecture.
+
+---
+
+## OBSIDIAN KNOWLEDGE VAULT (MCP)
+
+A persistent Obsidian knowledge vault is available as an MCP server.
+
+- **Railway service:** `obsidian-vault` — runs Obsidian headlessly via Xvfb
+- **MCP tool prefix:** `mcp__obsidian__*`
+- **Local sessions:** connects via `ws://localhost:22360` (if Obsidian is open locally)
+- **Railway sessions:** connects via `ws://obsidian-vault.railway.internal:22360`
+
+**Use the vault for:**
+- Storing self-improvement ideas and improvement reports
+- Reading prior context, architecture decisions, and agent behaviour notes
+- Writing new insights during self-improvement runs (inspiration source)
+
+> **Warning:** If the `obsidian-vault` Railway service is down or restarting,
+> all `mcp__obsidian__*` calls will fail with a connection error. This is expected
+> during cold-starts (~15s for Xvfb + Obsidian to load). Retry after a brief wait.
 
 ---
 

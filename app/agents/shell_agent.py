@@ -42,6 +42,7 @@ from ..tools.database_tools import (
     db_get_error_stats,
     db_get_failure_patterns,
 )
+from ..tools.obsidian_tools import OBSIDIAN_TOOLS
 
 _SYSTEM_PROMPT = """You are Super Agent's terminal interface with LIVE access to a Linux workspace AND full Railway infrastructure visibility.
 
@@ -135,6 +136,8 @@ def run_shell_agent(message: str, authorized: bool = False, debug_mode: bool = F
     if authorized:
         tools.append(run_authorized_shell_command)
         tools.append(railway_redeploy)
+    # Obsidian knowledge vault — read/write notes, search prior context
+    tools.extend(OBSIDIAN_TOOLS)
 
     # Inject winning build recipe if one exists — agent replays what worked last time
     _recipe_hint = ""

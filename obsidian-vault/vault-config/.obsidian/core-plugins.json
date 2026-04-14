@@ -1,0 +1,22 @@
+{
+  "file-explorer": true,
+  "global-search": true,
+  "switcher": true,
+  "editor-status": true,
+  "markdown-importer": false,
+  "zk-prefixer": false,
+  "random-note": false,
+  "audio-recorder": false,
+  "word-count": false,
+  "backlink": true,
+  "outgoing-link": false,
+  "tag-pane": false,
+  "page-preview": false,
+  "daily-notes": false,
+  "templates": false,
+  "note-composer": false,
+  "command-palette": true,
+  "starred": false,
+  "open-with-default-app": false,
+  "file-recovery": true
+}

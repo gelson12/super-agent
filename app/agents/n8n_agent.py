@@ -30,6 +30,7 @@ from ..tools.railway_tools import (
     railway_redeploy,
 )
 from ..tools.shell_tools import run_shell_via_cli_worker, run_authorized_shell_command
+from ..tools.obsidian_tools import OBSIDIAN_TOOLS
 
 _SYSTEM = """You are Super Agent's n8n workflow automation manager with FULL ACCESS to n8n AND the Railway infrastructure it runs on.
 
@@ -166,6 +167,8 @@ _N8N_TOOLS = [
     # Alternative HTTP paths — use when n8n Python tools fail or return errors
     run_shell_via_cli_worker,      # Path 2: curl via inspiring-cat CLI worker container
     run_authorized_shell_command,  # Path 3: curl via super-agent container (VS Code terminal)
+    # Obsidian knowledge vault — read/write notes, search prior context
+    *OBSIDIAN_TOOLS,
 ]
 
 _agent = None

@@ -17,6 +17,7 @@ from ..tools.railway_tools import (
     railway_get_deployment_status,
 )
 from ..tools.shell_tools import run_shell_command
+from ..tools.obsidian_tools import OBSIDIAN_TOOLS
 
 _SYSTEM = """You are a GitHub assistant with LIVE access to Gelson's GitHub account (gelson12).
 
@@ -91,6 +92,8 @@ _GITHUB_TOOLS = [
     railway_get_logs,
     railway_get_deployment_status,
     run_shell_command,
+    # Obsidian knowledge vault — read/write notes, search prior context
+    *OBSIDIAN_TOOLS,
 ]
 
 _agent = None

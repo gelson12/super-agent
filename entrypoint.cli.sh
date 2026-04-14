@@ -284,6 +284,15 @@ else
     echo "[entrypoint] INFO: Skipping n8n MCP registration (claude not found or N8N_BASE_URL/N8N_API_KEY not set)."
 fi
 
+# 1b. Register Obsidian knowledge vault MCP (Railway internal network)
+# The obsidian-vault service runs Obsidian + Xvfb headlessly and exposes the
+# Claude Code MCP plugin on port 22360. Override via OBSIDIAN_MCP_URL env var.
+if command -v claude >/dev/null 2>&1; then
+    OBSIDIAN_MCP_URL="${OBSIDIAN_MCP_URL:-ws://obsidian-vault.railway.internal:22360}"
+    claude mcp add obsidian --transport websocket "$OBSIDIAN_MCP_URL" 2>/dev/null || true
+    echo "[entrypoint] Claude CLI: Obsidian vault MCP registered ($OBSIDIAN_MCP_URL)."
+fi
+
 # 2. Write Claude Code CLI settings — pre-approve all tools so MCP calls never
 #    pause to ask for user permission.
 #    NOTE: --dangerously-skip-permissions is blocked as root; settings.json is the
@@ -302,6 +311,8 @@ cat > /root/.claude/settings.json <<'CLAUDESETTINGS'
       "mcp__*",
       "mcp__n8n__*",
       "mcp__n8n(*)",
+      "mcp__obsidian__*",
+      "mcp__obsidian(*)",
       "WebFetch(*)",
       "WebSearch(*)",
       "Agent(*)",
