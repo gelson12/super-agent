@@ -246,15 +246,20 @@ def _start_claude_login_pty(env: dict) -> tuple:
     # them before it reaches the actual OAuth URL output.
     # Each entry: (unique_marker_in_output, bytes_to_send)
     # ORDER MATTERS: higher-priority / earlier prompts come first.
+    # React Ink (used by claude CLI) runs in raw terminal mode.
+    # In raw mode, Enter/Return sends \r (0x0D), NOT \n (0x0A).
+    # Sending \n is like pressing Ctrl-J — the selector ignores it entirely.
+    _ENTER = b"\r"
+
     _ONBOARDING_RESPONSES = [
-        ("WelcometoClaude",        b"\n"),   # splash screen
-        ("Choosethetextstyle",     b"\n"),   # text theme selector (❯1.Darkmode✔)
-        ("Choosethesyntaxtheme",   b"\n"),   # syntax theme selector if separate
-        ("Syntaxtheme:",           b"\n"),   # after syntax demo, press Enter
-        ("Pressanykeyto",          b"\n"),   # generic "press any key" prompts
-        ("pressEnterto",           b"\n"),
-        ("Tologincontinue",        b"\n"),
-        ("Continuewithoutsigning", b"\n"),
+        ("WelcometoClaude",        _ENTER),   # splash screen
+        ("Choosethetextstyle",     _ENTER),   # text theme selector (❯1.Darkmode✔)
+        ("Choosethesyntaxtheme",   _ENTER),   # syntax theme selector if separate
+        ("Syntaxtheme:",           _ENTER),   # after syntax demo, press Enter
+        ("Pressanykeyto",          _ENTER),   # generic "press any key" prompts
+        ("pressEnterto",           _ENTER),
+        ("Tologincontinue",        _ENTER),
+        ("Continuewithoutsigning", _ENTER),
     ]
 
     # Cooldown: at most one Enter per 2 seconds.
@@ -462,14 +467,15 @@ def _do_auto_login(email: str) -> bool:
     if auth_code:
         _log(f"Step 4: Container OAuth mode — writing auth code to PTY ({auth_code[:12]}...)...")
         try:
-            _os4.write(_pty_master_fd, (auth_code + "\n").encode())
+            # Raw mode: use \r (Enter) not \n
+            _os4.write(_pty_master_fd, (auth_code + "\r").encode())
         except Exception as _e:
             _log(f"Step 4: Failed to write auth code to PTY master fd: {_e}")
     else:
         # Localhost callback mode — CLI already got its token via the browser redirect;
-        # send a newline in case it's waiting for the user to press Enter.
+        # send \r (Enter in raw mode) in case it's waiting for the user to confirm.
         try:
-            _os4.write(_pty_master_fd, b"\n")
+            _os4.write(_pty_master_fd, b"\r")
         except Exception:
             pass
 
