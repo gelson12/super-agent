@@ -254,7 +254,12 @@ def receive_verification_code(request: dict):
     """
     Receive magic link URL (or 6-digit code) from n8n for automated Claude CLI re-login.
     Claude.ai sends a MAGIC LINK email — n8n extracts the URL and POSTs it here.
-    The waiting Playwright thread navigates the browser to the magic link URL.
+
+    IMPORTANT: The Playwright browser automation runs inside the super-agent container,
+    not this inspiring-cat container. We must forward the URL to super-agent via HTTP
+    so it reaches the _verification_code_queue that the browser is blocked on.
+    Simply importing cli_auto_login here would put the URL in THIS process's queue,
+    which no browser is watching — so it would silently be lost.
     """
     # Accept magic link URL (new) or legacy 6-digit code
     auth_payload = (
@@ -263,17 +268,42 @@ def receive_verification_code(request: dict):
     )
     if not auth_payload:
         return {"ok": False, "error": "No 'url' or 'code' field in payload"}
+
+    preview = auth_payload[:60] + "..." if len(auth_payload) > 60 else auth_payload
+    _bg_log(f"Verification webhook: forwarding magic link to super-agent: {preview}", "webhook")
+
+    # Forward to super-agent — that is where the browser and queue live.
+    import urllib.request
+    import json as _json
+
+    sa_url = os.environ.get("SUPER_AGENT_URL", "").rstrip("/")
+    if not sa_url:
+        # Fallback: hardcoded Railway internal URL for super-agent
+        sa_url = "https://radiant-appreciation.up.railway.app"
+
+    target = f"{sa_url}/webhook/verification-code"
     try:
-        import sys
-        sys.path.insert(0, "/app")
-        from app.learning.cli_auto_login import receive_verification_code as _recv
-        _recv(auth_payload)
-        preview = auth_payload[:40] + "..." if len(auth_payload) > 40 else auth_payload
-        _bg_log(f"Auth payload received from n8n: {preview}", "webhook")
-        return {"ok": True, "message": "Magic link received — auto-login proceeding"}
+        body = _json.dumps({"url": auth_payload}).encode()
+        req = urllib.request.Request(
+            target,
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            _bg_log(f"Forwarded to super-agent {target}: HTTP {resp.status}", "webhook")
+        return {"ok": True, "message": f"Magic link forwarded to super-agent ({target})"}
     except Exception as e:
-        _bg_log(f"Verification webhook error: {e}", "webhook")
-        return {"ok": False, "error": str(e)}
+        _bg_log(f"Forward to super-agent FAILED ({target}): {e} — trying local queue as fallback", "webhook")
+        # Last-resort fallback: put in local queue in case browser somehow runs here
+        try:
+            import sys
+            sys.path.insert(0, "/app")
+            from app.learning.cli_auto_login import receive_verification_code as _recv
+            _recv(auth_payload)
+        except Exception as _le:
+            _bg_log(f"Local queue fallback also failed: {_le}", "webhook")
+        return {"ok": False, "error": f"Forward failed: {e}"}
 
 
 @app.post("/tasks", status_code=201)
