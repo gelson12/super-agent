@@ -307,6 +307,16 @@ def _start_claude_login_pty(env: dict) -> tuple:
         _log(f"PTY: pty.openpty() failed: {_pe}")
         return None, None, None
 
+    # Set terminal window to 250 columns so long OAuth URLs are never line-wrapped.
+    # Without this the default 80-col width wraps the URL mid-string, causing the
+    # regex to stop at the newline and capture only a truncated fragment.
+    try:
+        import fcntl, termios, struct
+        fcntl.ioctl(slave_fd, termios.TIOCSWINSZ, struct.pack('HHHH', 50, 250, 0, 0))
+        _log("PTY: window size set to 250 cols (prevents URL line-wrapping)")
+    except Exception as _we:
+        _log(f"PTY: could not set window size (non-fatal): {_we}")
+
     _active_pty_master_fd = master_fd
     _log(f"PTY: master_fd={master_fd} slave_fd={slave_fd}")
 
@@ -364,6 +374,10 @@ def _start_claude_login_pty(env: dict) -> tuple:
     oauth_url = None
 
     _URL_PATTERNS = [
+        # claude.com (current CLI domain)
+        re.compile(r'https://claude\.com/cai/oauth/authorize\?[^\s\r\n\x1b"\'<> ]+', re.I),
+        re.compile(r'https://claude\.com/[^\s\r\n\x1b"\'<> ]*oauth[^\s\r\n\x1b"\'<> ]+', re.I),
+        # claude.ai (legacy / fallback)
         re.compile(r'https://claude\.ai/oauth/authorize\?[^\s\r\n\x1b"\'<> ]+', re.I),
         re.compile(r'https://claude\.ai/[^\s\r\n\x1b"\'<> ]*oauth[^\s\r\n\x1b"\'<> ]+', re.I),
         re.compile(r'https://[^\s\r\n\x1b"\'<> ]{30,}', re.I),   # wide net fallback
