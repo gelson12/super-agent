@@ -56,6 +56,12 @@ _log_lock = threading.Lock()
 # Anthropic's "error sending login link" rate-limit error.
 _recovery_lock = threading.Lock()
 _recovery_running = threading.Event()  # set while a recovery is in progress
+_recovery_started_at: float = 0.0     # mtime threshold: creds written after this = fresh
+
+# Volume paths that survive container restarts (Railway volume mount at /workspace)
+_COOKIES_FILE = Path("/workspace/.claude_browser_cookies.json")
+_RATELIMIT_FILE = Path("/workspace/.claude_login_ratelimit")
+_RATELIMIT_COOLDOWN = 3600  # 1 hour between login attempts after rate-limit
 
 
 def _log(msg: str) -> None:
@@ -649,8 +655,37 @@ def _automate_browser(oauth_url: str, email: str) -> tuple[bool, str | None]:
       2. Playwright Chromium — fallback if camoufox is unavailable.
     """
 
+    def _save_cookies(page) -> None:
+        """Save browser session cookies for reuse on next auth attempt."""
+        try:
+            import json as _json
+            _cookies = page.context.cookies()
+            # Only save if we have claude.ai session cookies
+            _claude_cookies = [c for c in _cookies if "claude" in c.get("domain", "")]
+            if _claude_cookies:
+                _COOKIES_FILE.write_text(_json.dumps(_cookies))
+                _log(f"Browser: saved {len(_cookies)} cookies to {_COOKIES_FILE} "
+                     f"({len(_claude_cookies)} claude.ai session cookies) ✓")
+        except Exception as _ck_save_err:
+            _log(f"Browser: cookie save failed (non-fatal): {_ck_save_err}")
+
     def _page_flow(page) -> tuple[bool, str | None]:
         """All page-level logic. Browser-agnostic — never closes the browser."""
+
+        # ── Load saved session cookies ────────────────────────────────────
+        # After a successful login, cookies are saved so that future sessions
+        # can skip the email+magic-link flow entirely (session still active).
+        _cookies_loaded = False
+        try:
+            import json as _json
+            if _COOKIES_FILE.exists():
+                _saved = _json.loads(_COOKIES_FILE.read_text())
+                page.context.add_cookies(_saved)
+                _cookies_loaded = True
+                _log(f"Browser: loaded {len(_saved)} saved session cookies — "
+                     "will skip email flow if session is still active")
+        except Exception as _ck_load_err:
+            _log(f"Browser: could not load saved cookies (non-fatal): {_ck_load_err}")
 
         # ── Navigate to OAuth URL ────────────────────────────────────────
         _log(f"Browser: navigating to OAuth URL: {oauth_url[:120]}...")
@@ -686,6 +721,7 @@ def _automate_browser(oauth_url: str, email: str) -> tuple[bool, str | None]:
                 _extract_oauth_code_from_page(page)
                 if "platform.claude.com" in page.url else None
             )
+            _save_cookies(page)
             return True, auth_code
 
         # ── Accept cookie consent (if present) ──────────────────────────
@@ -700,6 +736,42 @@ def _automate_browser(oauth_url: str, email: str) -> tuple[bool, str | None]:
                 time.sleep(1)
         except Exception as _ck_e:
             _log(f"Browser: cookie consent check skipped ({_ck_e})")
+
+        # ── Session-active shortcut (cookies gave us an existing session) ─
+        # If we loaded saved cookies and the OAuth page shows an existing-account
+        # consent button (e.g. "Continue with your Claude.ai account"), click it
+        # directly without going through the email/magic-link flow at all.
+        if _cookies_loaded:
+            _log("Browser: checking for active session (saved cookies)...")
+            try:
+                # Wait briefly for React to render account-selection content
+                time.sleep(2)
+                _session_btn = None
+                for _sbsel in [
+                    'button:has-text("Continue with your")',
+                    'button:has-text("Continue as")',
+                    'button:has-text("Approve")',
+                    'button:has-text("Allow")',
+                    'button:has-text("Authorize")',
+                ]:
+                    _sb = page.query_selector(_sbsel)
+                    if _sb and _sb.is_visible():
+                        _session_btn = _sb
+                        _log(f"Browser: active session — found {_sbsel!r}: {_sb.inner_text()!r}")
+                        break
+                if _session_btn:
+                    _session_btn.click()
+                    _log("Browser: clicked session-active button — waiting for callback...")
+                    auth_code, ok = _wait_for_callback_and_extract(page)
+                    if ok:
+                        _save_cookies(page)
+                        return ok, auth_code
+                    _log("Browser: session-active click didn't lead to callback — "
+                         "falling through to email flow")
+                else:
+                    _log("Browser: no session-active button found — proceeding to email flow")
+            except Exception as _sess_e:
+                _log(f"Browser: session-active check error (non-fatal): {_sess_e}")
 
         # ── Step 1: Enter email ──────────────────────────────────────────
         # Claude.ai is a React SPA — the email input is injected by JS after
@@ -795,7 +867,12 @@ def _automate_browser(oauth_url: str, email: str) -> tuple[bool, str | None]:
                 _page_text_now = ""
             if "error sending" in _page_text_now.lower() or "error sending you a login link" in _page_text_now.lower():
                 _log("Browser: ERROR — Anthropic returned 'error sending login link'. "
-                     "This is usually a rate-limit. Aborting this attempt.")
+                     "This is usually a rate-limit. Setting 1-hour cooldown.")
+                try:
+                    _RATELIMIT_FILE.parent.mkdir(parents=True, exist_ok=True)
+                    _RATELIMIT_FILE.write_text(str(time.time() + _RATELIMIT_COOLDOWN))
+                except Exception:
+                    pass
                 return False, None
 
             _selected = False
@@ -880,7 +957,12 @@ def _automate_browser(oauth_url: str, email: str) -> tuple[bool, str | None]:
         # Abort early if Anthropic returned an error at this stage too
         if "error sending" in _final_pre_wait_text.lower():
             _log("Browser: ERROR — Anthropic returned 'error sending login link' before "
-                 "magic link wait. Aborting.")
+                 "magic link wait. Setting 1-hour cooldown.")
+            try:
+                _RATELIMIT_FILE.parent.mkdir(parents=True, exist_ok=True)
+                _RATELIMIT_FILE.write_text(str(time.time() + _RATELIMIT_COOLDOWN))
+            except Exception:
+                pass
             return False, None
         _log("Browser: waiting for magic link URL from n8n email monitor...")
         magic_url = _wait_for_verification_code()
@@ -909,6 +991,7 @@ def _automate_browser(oauth_url: str, email: str) -> tuple[bool, str | None]:
                 _extract_oauth_code_from_page(page)
                 if "platform.claude.com" in page.url else None
             )
+            _save_cookies(page)
             return True, auth_code
 
         _log("Browser: looking for Approve button on consent screen...")
@@ -916,6 +999,8 @@ def _automate_browser(oauth_url: str, email: str) -> tuple[bool, str | None]:
         if approved:
             _log("Browser: Approve clicked — waiting for callback redirect...")
             auth_code, ok = _wait_for_callback_and_extract(page)
+            if ok:
+                _save_cookies(page)
             return ok, auth_code
 
         _log(f"Browser: WARNING — no Approve button found. "
@@ -1298,26 +1383,50 @@ def full_recovery_chain() -> bool:
     Callers that lose the lock race block until the winner finishes, then return
     True if the winner already restored the token.
     """
-    # Fast path: if a recovery is already running, wait for it to finish
-    # then report success/failure based on whether the creds file exists after.
+    global _recovery_started_at
+
+    # ── Rate-limit guard ────────────────────────────────────────────────────
+    # If a previous attempt hit Anthropic's "error sending login link", we
+    # back off for _RATELIMIT_COOLDOWN seconds before trying again.
+    try:
+        if _RATELIMIT_FILE.exists():
+            _rl_until = float(_RATELIMIT_FILE.read_text().strip())
+            _remaining = _rl_until - time.time()
+            if _remaining > 0:
+                _log(f"=== Login rate-limited — {int(_remaining // 60)}m {int(_remaining % 60)}s remaining. "
+                     f"Skipping recovery until cooldown expires. ===")
+                return False
+    except Exception:
+        pass  # corrupt file — ignore and proceed
+
+    # ── Concurrency guard ───────────────────────────────────────────────────
+    # Only ONE recovery chain runs at a time. Others block and inherit the result.
+    def _winner_succeeded(since: float) -> bool:
+        """True if credentials file was freshly written AFTER `since`."""
+        try:
+            return _CREDS_FILE.exists() and _CREDS_FILE.stat().st_mtime > since
+        except Exception:
+            return False
+
     if _recovery_running.is_set():
         _log("=== Recovery already in progress — waiting for it to complete ===")
-        _recovery_running.wait(timeout=300)  # up to 5 minutes
-        # Check if the winner successfully restored credentials
-        if _CREDS_FILE.exists():
-            _log("=== Recovery completed by another thread — credentials present ✓ ===")
+        _t = time.time()
+        _recovery_running.wait(timeout=300)
+        if _winner_succeeded(_t):
+            _log("=== Recovery completed by another thread — fresh credentials detected ✓ ===")
             return True
-        _log("=== Recovery completed by another thread — credentials NOT restored ===")
+        _log("=== Recovery completed by another thread — credentials NOT refreshed ===")
         return False
 
     if not _recovery_lock.acquire(blocking=False):
-        # Lost the race between the is_set() check and acquire() — wait same way
         _log("=== Recovery lock busy — waiting for existing recovery to finish ===")
+        _t = time.time()
         _recovery_running.wait(timeout=300)
-        if _CREDS_FILE.exists():
+        if _winner_succeeded(_t):
             return True
         return False
 
+    _recovery_started_at = time.time()
     _recovery_running.set()
     try:
         _log("=== Starting full CLI recovery chain ===")
