@@ -682,34 +682,49 @@ def _automate_browser(oauth_url: str, email: str) -> tuple[bool, str | None]:
             return True, auth_code
 
         # ── Step 1: Enter email ──────────────────────────────────────────
-        _log(f"Browser: page content sample (for debugging): {page.content()[:600]}")
-        email_field = (
-            page.query_selector('input[type="email"]')
-            or page.query_selector('input[placeholder*="email" i]')
-            or page.query_selector('input[name="email"]')
-            or page.query_selector('input[autocomplete*="email" i]')
-        )
-        if email_field:
-            email_field.fill(email)
-            _log(f"Browser: email entered ({email})")
-            time.sleep(0.5)
-            continue_btn = (
-                page.query_selector('button:has-text("Continue with email")')
-                or page.query_selector('button:has-text("Continue")')
-                or page.query_selector('button[type="submit"]')
-            )
-            if continue_btn:
-                continue_btn.click()
-                _log("Browser: clicked 'Continue with email'")
-            else:
-                page.keyboard.press("Enter")
-                _log("Browser: pressed Enter to submit email")
-            time.sleep(3)
-            _log(f"Browser: after email submit, URL = {page.url[:120]}")
-        else:
-            _log("Browser: no email field found on page — dumping full content for diagnosis.")
+        # Claude.ai is a React SPA — the email input is injected by JS after
+        # the initial HTML loads. Must wait for it to appear in the DOM.
+        _log("Browser: waiting for email input to render (React SPA)...")
+        email_field = None
+        _email_selectors = [
+            'input[type="email"]',
+            'input[placeholder*="email" i]',
+            'input[name="email"]',
+            'input[autocomplete*="email" i]',
+            'input[autocomplete="username"]',
+        ]
+        for _sel in _email_selectors:
+            try:
+                page.wait_for_selector(_sel, timeout=20000)
+                email_field = page.query_selector(_sel)
+                if email_field:
+                    _log(f"Browser: email input found (selector={_sel!r})")
+                    break
+            except Exception:
+                pass
+
+        if not email_field:
+            _log("Browser: no email field appeared after 20s — page content for diagnosis:")
+            _log(f"Browser: page content sample (for debugging): {page.content()[:600]}")
             _log(f"Browser: FULL page content: {page.content()[:2000]}")
             return False, None
+
+        email_field.fill(email)
+        _log(f"Browser: email entered ({email})")
+        time.sleep(0.5)
+        continue_btn = (
+            page.query_selector('button:has-text("Continue with email")')
+            or page.query_selector('button:has-text("Continue")')
+            or page.query_selector('button[type="submit"]')
+        )
+        if continue_btn:
+            continue_btn.click()
+            _log("Browser: clicked 'Continue with email'")
+        else:
+            page.keyboard.press("Enter")
+            _log("Browser: pressed Enter to submit email")
+        time.sleep(3)
+        _log(f"Browser: after email submit, URL = {page.url[:120]}")
 
         # ── Check post-submit ────────────────────────────────────────────
         if _is_callback_url(page.url):
