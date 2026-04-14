@@ -1359,6 +1359,15 @@ def _push_token_to_railway() -> None:
         raw = _CREDS_FILE.read_bytes()
         encoded = base64.b64encode(raw).decode("ascii")
 
+        # ── Layer 0: update in-process env var immediately ────────────────────
+        # This is the critical fix for the recovery loop: if CLAUDE_SESSION_TOKEN
+        # env var is stale in the running process, `claude -p` will get 401 even
+        # after the credentials file is refreshed.  Updating os.environ here means
+        # the very next claude_pro subprocess picks up the fresh token without
+        # needing a container restart.
+        os.environ["CLAUDE_SESSION_TOKEN"] = encoded
+        _log("In-process CLAUDE_SESSION_TOKEN updated ✓ (no restart needed)")
+
         # ── Layer 1: volume backup (always attempted, no Railway API needed) ────
         _VOLUME_BACKUP = Path("/workspace/.claude_credentials_backup.json")
         try:
