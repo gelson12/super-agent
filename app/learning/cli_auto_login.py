@@ -742,45 +742,92 @@ def _automate_browser(oauth_url: str, email: str) -> tuple[bool, str | None]:
         # address on this page to trigger Anthropic sending the magic link.
         # Until that click happens, no email is sent.
         if "selectAccount=true" in page.url:
-            _log("Browser: on selectAccount page — waiting for email account button to render...")
+            _log("Browser: on selectAccount page — waiting 3s for React to render...")
+            time.sleep(3)
+
+            # ALWAYS dump page text first so we can see exactly what's rendered
+            try:
+                _body_text = page.inner_text("body")
+            except Exception:
+                _body_text = "(could not read body)"
+            _log(f"Browser: [selectAccount] page body text:\n{_body_text[:1200]}")
+
+            # Also dump raw HTML so we can see element types + attributes
+            try:
+                _body_html = page.content()
+            except Exception:
+                _body_html = "(could not read html)"
+            _log(f"Browser: [selectAccount] page HTML (first 2000 chars):\n{_body_html[:2000]}")
+
             _selected = False
-            # Try email-specific button first, then fallback to a generic "Continue" button
+            _email_local = email.split("@")[0]  # e.g. "gelson_m" from "gelson_m@hotmail.com"
+
+            # Try email-specific selectors first (broad matching), then "Use different email"
+            # to re-enter the address, then generic submit as last resort.
             for _asel in [
                 f'button:has-text("{email}")',
                 f'[data-email="{email}"]',
                 f'div[role="button"]:has-text("{email}")',
                 f'li:has-text("{email}")',
+                f'button:has-text("{_email_local}")',
+                f'[class*="account"]:has-text("{email}")',
+                f'[class*="account"]:has-text("{_email_local}")',
+                # Sometimes the page shows "Use a different account" / "Use different email"
+                # — do NOT click those as they'd restart the flow
+                # Generic continue/sign-in as absolute last fallback
                 'button:has-text("Continue")',
                 'button:has-text("Sign in")',
                 'button[type="submit"]',
             ]:
                 try:
-                    page.wait_for_selector(_asel, timeout=8000)
                     _el = page.query_selector(_asel)
-                    if _el:
+                    if _el and _el.is_visible():
+                        _txt = _el.inner_text()
+                        _log(f"Browser: found selector={_asel!r} text={_txt!r} — clicking")
                         _el.click()
                         _log(f"Browser: account selection clicked (selector={_asel!r})")
                         _selected = True
-                        time.sleep(3)
-                        _log(f"Browser: after account select, URL = {page.url[:120]}")
+                        # Wait for URL change rather than sleeping blind
+                        _prev_url = page.url
+                        for _i in range(10):
+                            time.sleep(1)
+                            if page.url != _prev_url:
+                                _log(f"Browser: URL changed after account select → {page.url[:120]}")
+                                break
+                        else:
+                            _log(f"Browser: URL unchanged after 10s: {page.url[:120]}")
+                            # Dump page again to see if content changed at least
+                            try:
+                                _log(f"Browser: [selectAccount post-click] body:\n{page.inner_text('body')[:800]}")
+                            except Exception:
+                                pass
                         break
-                except Exception:
-                    pass
+                except Exception as _sel_err:
+                    _log(f"Browser: selector {_asel!r} error: {_sel_err}")
+
             if not _selected:
-                _log("Browser: WARNING — could not find account selection button. "
-                     "Dumping page body for diagnosis:")
-                # Wait for body to render then dump it
+                _log("Browser: WARNING — could not find any clickable account button.")
+                # Try pressing Enter on the page as a last resort
                 try:
-                    page.wait_for_selector("body", timeout=5000)
+                    page.keyboard.press("Enter")
+                    _log("Browser: pressed Enter on page as fallback")
+                    time.sleep(3)
+                    _log(f"Browser: URL after Enter: {page.url[:120]}")
                 except Exception:
                     pass
-                _log(f"Browser: page body: {page.inner_text('body')[:800]}")
 
         # Do NOT call _click_approve() here. After submitting the email and
         # selecting the account, Claude.ai shows a "check your email" page.
         # The real OAuth consent appears only AFTER the user navigates the magic link.
 
         # ── Step 2: Wait for magic link URL from n8n ────────────────────
+        # Dump final state before waiting so we know what page we're on
+        try:
+            _final_pre_wait_text = page.inner_text("body")
+            _log(f"Browser: [pre-magic-link-wait] URL={page.url[:120]}")
+            _log(f"Browser: [pre-magic-link-wait] body:\n{_final_pre_wait_text[:800]}")
+        except Exception:
+            pass
         _log(f"Browser: page content sample after email submit: {page.content()[:400]}")
         _log("Browser: waiting for magic link URL from n8n email monitor...")
         magic_url = _wait_for_verification_code()
