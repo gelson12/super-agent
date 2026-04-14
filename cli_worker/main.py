@@ -255,11 +255,9 @@ def receive_verification_code(request: dict):
     Receive magic link URL (or 6-digit code) from n8n for automated Claude CLI re-login.
     Claude.ai sends a MAGIC LINK email — n8n extracts the URL and POSTs it here.
 
-    IMPORTANT: The Playwright browser automation runs inside the super-agent container,
-    not this inspiring-cat container. We must forward the URL to super-agent via HTTP
-    so it reaches the _verification_code_queue that the browser is blocked on.
-    Simply importing cli_auto_login here would put the URL in THIS process's queue,
-    which no browser is watching — so it would silently be lost.
+    The Playwright browser automation runs inside THIS container (VS-Code-inspiring-cat).
+    The magic link URL must be placed in THIS process's _verification_code_queue so the
+    waiting browser thread can navigate to it.
     """
     # Accept magic link URL (new) or legacy 6-digit code
     auth_payload = (
@@ -270,40 +268,61 @@ def receive_verification_code(request: dict):
         return {"ok": False, "error": "No 'url' or 'code' field in payload"}
 
     preview = auth_payload[:60] + "..." if len(auth_payload) > 60 else auth_payload
-    _bg_log(f"Verification webhook: forwarding magic link to super-agent: {preview}", "webhook")
+    _bg_log(f"Verification webhook: delivering magic link to local browser queue: {preview}", "webhook")
 
-    # Forward to super-agent — that is where the browser and queue live.
-    import urllib.request
-    import json as _json
-
-    sa_url = os.environ.get("SUPER_AGENT_URL", "").rstrip("/")
-    if not sa_url:
-        # Fallback: hardcoded Railway internal URL for super-agent
-        sa_url = "https://super-agent-production.up.railway.app"
-
-    target = f"{sa_url}/webhook/verification-code"
     try:
-        body = _json.dumps({"url": auth_payload}).encode()
-        req = urllib.request.Request(
-            target,
-            data=body,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            _bg_log(f"Forwarded to super-agent {target}: HTTP {resp.status}", "webhook")
-        return {"ok": True, "message": f"Magic link forwarded to super-agent ({target})"}
+        import sys
+        sys.path.insert(0, "/app")
+        from app.learning.cli_auto_login import receive_verification_code as _recv
+        _recv(auth_payload)
+        return {"ok": True, "message": "Magic link delivered to browser queue"}
     except Exception as e:
-        _bg_log(f"Forward to super-agent FAILED ({target}): {e} — trying local queue as fallback", "webhook")
-        # Last-resort fallback: put in local queue in case browser somehow runs here
-        try:
-            import sys
-            sys.path.insert(0, "/app")
-            from app.learning.cli_auto_login import receive_verification_code as _recv
-            _recv(auth_payload)
-        except Exception as _le:
-            _bg_log(f"Local queue fallback also failed: {_le}", "webhook")
-        return {"ok": False, "error": f"Forward failed: {e}"}
+        _bg_log(f"Failed to deliver magic link to queue: {e}", "webhook")
+        return {"ok": False, "error": str(e)}
+
+
+@app.post("/webhook/manual-auth-code")
+def webhook_manual_auth_code(request: dict):
+    """
+    Accept an OAuth auth code from the user and deliver it to the waiting
+    auto_login_claude() PTY — bypasses code-server terminal paste issues.
+
+    Usage: POST {"code": "y4kP6IMcGrVt0wetai..."}
+    See GET /auth/login-status for the active OAuth URL to open in your browser.
+    """
+    code = str(request.get("code", "")).strip()
+    if not code:
+        return {"ok": False, "error": "'code' field required"}
+    try:
+        import sys
+        sys.path.insert(0, "/app")
+        from app.learning.cli_auto_login import send_manual_auth_code
+        result = send_manual_auth_code(code)
+        return result
+    except Exception as e:
+        _bg_log(f"Manual auth code error: {e}", "webhook")
+        return {"ok": False, "error": str(e)}
+
+
+@app.get("/auth/login-status")
+def auth_login_status():
+    """Show the OAuth URL currently waiting for an auth code (if any)."""
+    try:
+        import sys
+        sys.path.insert(0, "/app")
+        from app.learning.cli_auto_login import get_active_oauth_url, _active_pty_master_fd
+        url = get_active_oauth_url()
+        return {
+            "pty_active": _active_pty_master_fd is not None,
+            "oauth_url": url or None,
+            "instructions": (
+                "1. Open oauth_url in your browser\n"
+                "2. Enter email → click magic link → copy the auth code\n"
+                "3. POST {\"code\": \"...\"} to /webhook/manual-auth-code"
+            ) if url else "No active login session",
+        }
+    except Exception as e:
+        return {"pty_active": False, "oauth_url": None, "error": str(e)}
 
 
 @app.post("/tasks", status_code=201)

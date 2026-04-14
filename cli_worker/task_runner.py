@@ -16,6 +16,7 @@ Never raises — writes error string on any exception.
 import json
 import os
 import subprocess
+import threading
 import psycopg2
 from datetime import datetime, timezone
 
@@ -98,6 +99,27 @@ def _mark_failed(task_id: str, error: str) -> None:
             )
         conn.commit()
 
+
+# Phrases that indicate the Claude CLI session token has expired.
+# When a claude_pro task returns any of these, full_recovery_chain() is triggered
+# in a background thread so future tasks can succeed without manual intervention.
+_AUTH_ERROR_PHRASES = (
+    "not logged in",
+    "not authenticated",
+    "authentication required",
+    "please run claude login",
+    "please login",
+    "run claude login",
+    "invalid api key",
+    "credit balance is too low",
+    "unauthenticated",
+    "401",
+    "session expired",
+    "token expired",
+    "oauth",
+    "login required",
+    "no credentials",
+)
 
 _MCP_PERMISSION_PHRASES = (
     "need your permission to use",
@@ -191,11 +213,42 @@ def _run_shell(command: str, cwd: str, timeout: int) -> str:
         return f"[cli_worker: shell error — {e}]"
 
 
+def _trigger_recovery_bg() -> None:
+    """
+    Trigger full_recovery_chain() in a background thread.
+    Called when a claude_pro task returns an auth error — ensures the CLI session
+    is healed automatically without blocking the current task result.
+    """
+    def _run():
+        try:
+            import sys as _sys
+            _sys.path.insert(0, "/app")
+            from app.learning.cli_auto_login import full_recovery_chain
+            import logging
+            logger = logging.getLogger("task_runner.recovery")
+            logger.info("[recovery] Auth error detected — starting full_recovery_chain()")
+            ok = full_recovery_chain()
+            logger.info(f"[recovery] full_recovery_chain() result: {'success' if ok else 'failed'}")
+        except Exception as _e:
+            import logging
+            logging.getLogger("task_runner.recovery").error(f"[recovery] Exception: {_e}")
+
+    t = threading.Thread(target=_run, daemon=True, name="cli-recovery")
+    t.start()
+
+
 def _dispatch(task_type: str, payload: dict, timeout: int) -> str:
     """Central dispatch — maps task type to execution. Returns result string."""
     if task_type == "claude_pro":
         # cwd = repo root so CLAUDE.md is auto-loaded by Claude CLI on every call
-        return _run_subprocess(["claude", "-p", payload.get("prompt", "")], _repo_cwd(), timeout)
+        result = _run_subprocess(["claude", "-p", payload.get("prompt", "")], _repo_cwd(), timeout)
+        # Detect expired session — kick off recovery in background so next task succeeds
+        _lower = result.lower()
+        if any(p in _lower for p in _AUTH_ERROR_PHRASES):
+            print(f"[task_runner] Auth error detected in claude_pro output — triggering recovery. "
+                  f"Preview: {result[:120]}", flush=True)
+            _trigger_recovery_bg()
+        return result
 
     elif task_type == "gemini_cli":
         # Prepend GEMINI.md explicitly — Gemini CLI does not guarantee auto-loading
