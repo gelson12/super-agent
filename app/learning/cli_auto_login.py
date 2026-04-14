@@ -101,7 +101,9 @@ def _trigger_n8n_email_monitor() -> bool:
             _log("Cannot trigger n8n email monitor — N8N_BASE_URL not set.")
             return False
 
-        # Trigger the webhook on the n8n workflow
+        # Poke the n8n workflow webhook so it starts a fresh poll cycle immediately.
+        # Non-fatal: the Claude-Verification-Monitor workflow (jxnZZwTqJ7naPKc6) uses an
+        # Outlook trigger and polls automatically — this just shortens the wait.
         import urllib.request
         import json
         webhook_url = f"{n8n_base}/webhook/claude-verification-monitor"
@@ -647,14 +649,49 @@ def _automate_browser(oauth_url: str, email: str) -> tuple[bool, str | None]:
                     "--disable-setuid-sandbox",
                     "--disable-dev-shm-usage",
                     "--disable-gpu",
+                    # Hide Chromium automation signals so Cloudflare challenge passes
+                    "--disable-blink-features=AutomationControlled",
+                    "--disable-web-security",
+                    "--window-size=1280,800",
                 ]
             )
-            context = browser.new_context()
+            context = browser.new_context(
+                user_agent=(
+                    "Mozilla/5.0 (X11; Linux x86_64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/120.0.0.0 Safari/537.36"
+                ),
+                viewport={"width": 1280, "height": 800},
+                locale="en-US",
+                timezone_id="America/New_York",
+            )
+            # Remove the `navigator.webdriver` property that Cloudflare detects
+            context.add_init_script("""
+                Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+                window.chrome = {runtime: {}};
+                Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3]});
+                Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']});
+            """)
             page = context.new_page()
 
             _log(f"Browser: navigating to OAuth URL: {oauth_url[:120]}...")
-            page.goto(oauth_url, timeout=30000)
-            time.sleep(3)
+            page.goto(oauth_url, timeout=60000)
+
+            # Wait for Cloudflare "Just a moment..." challenge to resolve.
+            # CF runs JS to verify the browser — this typically takes 3–10 s.
+            _log("Browser: waiting for Cloudflare challenge to pass (if any)...")
+            try:
+                page.wait_for_function(
+                    "() => !document.title.includes('moment') && "
+                    "!document.title.includes('Checking') && "
+                    "!document.title.includes('challenge')",
+                    timeout=30000,
+                    polling=1000,
+                )
+                _log("Browser: Cloudflare challenge passed.")
+            except Exception as _cf_e:
+                _log(f"Browser: CF wait timed out ({_cf_e}) — proceeding anyway")
+            time.sleep(2)
             _log(f"Browser: on page = {page.url[:120]}")
             _log(f"Browser: page title = {page.title()!r}")
 
