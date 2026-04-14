@@ -279,7 +279,7 @@ def receive_verification_code(request: dict):
     sa_url = os.environ.get("SUPER_AGENT_URL", "").rstrip("/")
     if not sa_url:
         # Fallback: hardcoded Railway internal URL for super-agent
-        sa_url = "https://radiant-appreciation.up.railway.app"
+        sa_url = "https://super-agent-production.up.railway.app"
 
     target = f"{sa_url}/webhook/verification-code"
     try:
