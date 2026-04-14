@@ -154,20 +154,33 @@ def auto_login_claude() -> bool:
 def _do_auto_login(email: str) -> bool:
     """Core login flow — start CLI, capture URL, automate browser with n8n verification."""
 
-    # Step 0: Record current creds file mtime (or delete it) so Step 5 can
-    # confirm the file was FRESHLY WRITTEN during this login — not the old
-    # expired file that was already on disk giving a false-positive auth check.
+    # Step 0: DELETE the expired credentials file before running claude login.
+    #
+    # CRITICAL: When an expired .credentials.json exists on disk, `claude login`
+    # detects it, tries to re-authenticate using those stale credentials, gets a
+    # 401 "Invalid authentication credentials" from the Anthropic API, and exits
+    # with code 1 — WITHOUT ever printing an OAuth URL. The file MUST be removed
+    # so the CLI has no existing auth state and is forced to start a fresh OAuth flow.
     _creds_mtime_before = None
+    _creds_bak = _CREDS_FILE.with_name(".credentials.json.bak")
     if _CREDS_FILE.exists():
         try:
             _creds_mtime_before = _CREDS_FILE.stat().st_mtime
-            _log(f"Step 0: existing creds file mtime={_creds_mtime_before:.0f} — will verify it changes after login.")
-        except Exception:
-            pass
+            # Rename to .bak — keeps a copy in case something goes wrong
+            _CREDS_FILE.rename(_creds_bak)
+            _log(f"Step 0: Moved expired credentials to .bak — forcing fresh OAuth flow (mtime={_creds_mtime_before:.0f}).")
+        except Exception as _e0:
+            _log(f"Step 0: Could not rename credentials (trying delete): {_e0}")
+            try:
+                _CREDS_FILE.unlink()
+                _log("Step 0: Deleted expired credentials file.")
+            except Exception as _e0b:
+                _log(f"Step 0: WARNING — could not remove credentials file: {_e0b}. claude login may fail with 401.")
 
     # Step 1: Start `claude login` subprocess
     _log("Step 1: Starting `claude login` subprocess...")
-    env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
+    # Strip ANTHROPIC_API_KEY so the CLI can't fall back to API-key auth
+    env = {k: v for k, v in os.environ.items() if k not in ("ANTHROPIC_API_KEY", "CLAUDE_SESSION_TOKEN")}
     env["HOME"] = "/root"
 
     proc = subprocess.Popen(
@@ -325,6 +338,13 @@ def _do_auto_login(email: str) -> bool:
             if '"authMethod": "claude.ai"' in r.stdout or '"authMethod":"claude.ai"' in r.stdout.replace(": ", ":"):
                 _log("Step 5: LOGIN SUCCESS — Claude CLI Pro authenticated ✓")
 
+                # Remove the .bak now that we have a fresh valid credentials file
+                try:
+                    if _creds_bak.exists():
+                        _creds_bak.unlink()
+                except Exception:
+                    pass
+
                 # Step 6: Push updated token to Railway
                 _push_token_to_railway()
 
@@ -338,6 +358,13 @@ def _do_auto_login(email: str) -> bool:
             _log(f"Step 5: Auth verify error — {e}")
 
     _log("Step 5 FAILED: Credentials file not found or auth invalid after login.")
+    # Restore the .bak so the system isn't left with zero credentials on disk
+    try:
+        if _creds_bak.exists() and not _CREDS_FILE.exists():
+            _creds_bak.rename(_CREDS_FILE)
+            _log("Step 5: Restored .bak credentials (login failed — keeping old token).")
+    except Exception:
+        pass
     try:
         from .agent_status_tracker import mark_sick
         mark_sick("Claude CLI Pro")
