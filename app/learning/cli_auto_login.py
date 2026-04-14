@@ -252,14 +252,21 @@ def _start_claude_login_pty(env: dict) -> tuple:
     _ENTER = b"\r"
 
     _ONBOARDING_RESPONSES = [
-        ("WelcometoClaude",        _ENTER),   # splash screen
-        ("Choosethetextstyle",     _ENTER),   # text theme selector (❯1.Darkmode✔)
-        ("Choosethesyntaxtheme",   _ENTER),   # syntax theme selector if separate
-        ("Syntaxtheme:",           _ENTER),   # after syntax demo, press Enter
-        ("Pressanykeyto",          _ENTER),   # generic "press any key" prompts
-        ("pressEnterto",           _ENTER),
-        ("Tologincontinue",        _ENTER),
-        ("Continuewithoutsigning", _ENTER),
+        ("WelcometoClaude",         _ENTER),   # splash screen
+        ("Choosethetextstyle",      _ENTER),   # text theme selector (❯1.Darkmode✔)
+        ("Choosethesyntaxtheme",    _ENTER),   # syntax theme selector if separate
+        ("Syntaxtheme:",            _ENTER),   # after syntax demo, press Enter
+        # Login method selector — appears after theme setup:
+        #   ❯1 Claude account with subscription · Pro, Max, Team, or Enterprise
+        #    2 Anthropic Console account · API usage billing
+        #    3 3rd-party platform ...
+        # Option 1 is already highlighted (❯); pressing Enter confirms it.
+        ("Selectloginmethod:",      _ENTER),
+        ("❯1Claudeaccount",         _ENTER),   # same screen, alternative marker
+        ("Pressanykeyto",           _ENTER),   # generic "press any key" prompts
+        ("pressEnterto",            _ENTER),
+        ("Tologincontinue",         _ENTER),
+        ("Continuewithoutsigning",  _ENTER),
     ]
 
     # Cooldown: at most one Enter per 2 seconds.
