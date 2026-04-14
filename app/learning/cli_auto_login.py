@@ -692,6 +692,28 @@ def _do_auto_login(email: str) -> bool:
             if '"authMethod": "claude.ai"' in r.stdout or '"authMethod":"claude.ai"' in r.stdout.replace(": ", ":"):
                 _log("Step 5: LOGIN SUCCESS — Claude CLI Pro authenticated ✓")
 
+                # Log the credential structure so we can see what keys are present
+                # for diagnosing _try_direct_refresh() refresh_token discovery.
+                try:
+                    import json as _json_dbg
+                    _creds_dbg = _json_dbg.loads(_CREDS_FILE.read_text())
+                    _top_keys = list(_creds_dbg.keys())
+                    _nested_keys = {k: list(v.keys()) for k, v in _creds_dbg.items()
+                                    if isinstance(v, dict)}
+                    _log(f"Step 5: Credentials top-level keys: {_top_keys}")
+                    if _nested_keys:
+                        _log(f"Step 5: Credentials nested keys: {_nested_keys}")
+                    # Specifically check for refresh token presence
+                    _has_rt = any("refresh" in str(k).lower() for k in _top_keys)
+                    if not _has_rt:
+                        for _nk, _nv in _nested_keys.items():
+                            if any("refresh" in str(k).lower() for k in _nv):
+                                _has_rt = True
+                                break
+                    _log(f"Step 5: refresh_token present in credentials: {_has_rt}")
+                except Exception as _dbg_e:
+                    _log(f"Step 5: Could not inspect credentials structure: {_dbg_e}")
+
                 # Remove the .bak now that we have a fresh valid credentials file
                 try:
                     if _creds_bak.exists():

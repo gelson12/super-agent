@@ -40,10 +40,12 @@ RUN npm install -g @railway/cli
 RUN npm install -g @google/gemini-cli
 
 # ── VS Code extensions ────────────────────────────────────────────────────────
-RUN code-server --install-extension GitHub.vscode-pull-request-github \
-    && code-server --install-extension eamodio.gitlens \
-    && code-server --install-extension Anthropic.claude-code \
-    && echo "[docker] VS Code extensions installed."
+# Use || true for each extension so a corrupted marketplace zip doesn't
+# break the entire image build (eamodio.gitlens intermittently 404s).
+RUN code-server --install-extension GitHub.vscode-pull-request-github || true
+RUN code-server --install-extension eamodio.gitlens || true
+RUN code-server --install-extension Anthropic.claude-code || true
+RUN echo "[docker] VS Code extensions installed (failures are non-fatal)."
 
 # ── Java + Android tools ──────────────────────────────────────────────────────
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -94,10 +96,32 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY cli_worker/requirements.txt /tmp/cli_worker_requirements.txt
 RUN pip install --no-cache-dir -r /tmp/cli_worker_requirements.txt
 
-# ── Playwright + Chromium (for automated Claude CLI OAuth login) ──────────────
-RUN pip install --no-cache-dir playwright \
+# ── Playwright + Camoufox browser automation (for automated Claude CLI OAuth) ──
+# camoufox is patched Firefox (CF-bypass). Firefox requires GTK3/X11 libs that
+# Chromium does NOT pull in, so we install them explicitly here.
+# playwright install --with-deps firefox also installs libgtk-3-0, libdbus-glib,
+# libxt6, and other Firefox system dependencies automatically.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgtk-3-0 \
+    libdbus-glib-1-2 \
+    libxt6 \
+    libx11-xcb1 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxrandr2 \
+    libxss1 \
+    libxtst6 \
+    libasound2 \
+    libpango-1.0-0 \
+    libpangocairo-1.0-0 \
+    libcairo-gobject2 \
+    libgdk-pixbuf-2.0-0 \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+RUN pip install --no-cache-dir playwright camoufox \
     && playwright install --with-deps chromium \
-    && echo "[docker] Playwright + Chromium installed for auto-login."
+    && playwright install --with-deps firefox \
+    && python -m camoufox fetch \
+    && echo "[docker] Playwright + Chromium + Firefox + Camoufox installed for auto-login."
 
 # ── Application source ────────────────────────────────────────────────────────
 COPY . .
