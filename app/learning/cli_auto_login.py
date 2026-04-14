@@ -61,7 +61,87 @@ _recovery_started_at: float = 0.0     # mtime threshold: creds written after thi
 # Volume paths that survive container restarts (Railway volume mount at /workspace)
 _COOKIES_FILE = Path("/workspace/.claude_browser_cookies.json")
 _RATELIMIT_FILE = Path("/workspace/.claude_login_ratelimit")
-_RATELIMIT_COOLDOWN = 3600  # 1 hour between login attempts after rate-limit
+# Escalating backoff: hit_count → cooldown seconds
+# 1st hit = 1h, 2nd hit = 4h, 3rd+ hit = 24h
+# Prevents accumulating rate-limit damage during sustained failure periods.
+_RATELIMIT_BACKOFF = {1: 3600, 2: 14400, 3: 86400}
+_RATELIMIT_DEFAULT_COOLDOWN = 86400  # 24h for any hit beyond index 3
+
+
+def _record_ratelimit_hit() -> int:
+    """
+    Record a rate-limit hit and return the cooldown seconds chosen.
+    File format: "<expiry_timestamp> <hit_count>"
+    Escalating backoff: hit 1→1h, hit 2→4h, hit 3+→24h.
+    Also pushes the expiry to a Railway env var as a cross-restart backup.
+    """
+    hit_count = 1
+    try:
+        if _RATELIMIT_FILE.exists():
+            parts = _RATELIMIT_FILE.read_text().strip().split()
+            hit_count = int(parts[1]) + 1 if len(parts) >= 2 else 2
+    except Exception:
+        pass
+
+    cooldown = _RATELIMIT_BACKOFF.get(hit_count, _RATELIMIT_DEFAULT_COOLDOWN)
+    expiry = time.time() + cooldown
+    try:
+        _RATELIMIT_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _RATELIMIT_FILE.write_text(f"{expiry} {hit_count}")
+    except Exception as _fe:
+        _log(f"Rate-limit file write failed: {_fe}")
+
+    _log(f"Rate-limit hit #{hit_count} recorded — cooldown {cooldown // 3600:.0f}h "
+         f"(next attempt after {time.strftime('%H:%M UTC', time.gmtime(expiry))})")
+
+    # Best-effort: push expiry to Railway env var so it survives if /workspace is not mounted
+    try:
+        from .pro_token_keeper import _update_railway_variable
+        _update_railway_variable("CLAUDE_LOGIN_RATELIMIT_UNTIL", f"{expiry} {hit_count}")
+    except Exception:
+        pass
+
+    return cooldown
+
+
+def _check_ratelimit() -> float:
+    """
+    Return seconds remaining on cooldown (>0 = blocked), or 0 if clear.
+    Checks both the file and the Railway env var backup.
+    """
+    def _parse(text: str) -> tuple[float, int]:
+        parts = text.strip().split()
+        exp = float(parts[0]) if parts else 0.0
+        cnt = int(parts[1]) if len(parts) >= 2 else 1
+        return exp, cnt
+
+    expiry = 0.0
+    # Primary: file
+    try:
+        if _RATELIMIT_FILE.exists():
+            expiry, _ = _parse(_RATELIMIT_FILE.read_text())
+    except Exception:
+        pass
+
+    # Backup: Railway env var (in case file was lost after container restart)
+    if expiry < time.time():
+        try:
+            env_val = os.environ.get("CLAUDE_LOGIN_RATELIMIT_UNTIL", "")
+            if env_val:
+                env_exp, env_cnt = _parse(env_val)
+                if env_exp > expiry:
+                    expiry = env_exp
+                    # Restore the file so subsequent checks don't need the env var
+                    try:
+                        _RATELIMIT_FILE.parent.mkdir(parents=True, exist_ok=True)
+                        _RATELIMIT_FILE.write_text(f"{env_exp} {env_cnt}")
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+    remaining = expiry - time.time()
+    return remaining if remaining > 0 else 0.0
 
 
 def _log(msg: str) -> None:
@@ -886,11 +966,7 @@ def _automate_browser(oauth_url: str, email: str) -> tuple[bool, str | None]:
             if "error sending" in _page_text_now.lower() or "error sending you a login link" in _page_text_now.lower():
                 _log("Browser: ERROR — Anthropic returned 'error sending login link'. "
                      "This is usually a rate-limit. Setting 1-hour cooldown.")
-                try:
-                    _RATELIMIT_FILE.parent.mkdir(parents=True, exist_ok=True)
-                    _RATELIMIT_FILE.write_text(str(time.time() + _RATELIMIT_COOLDOWN))
-                except Exception:
-                    pass
+                _record_ratelimit_hit()
                 return False, None
 
             _selected = False
@@ -1405,17 +1481,12 @@ def full_recovery_chain() -> bool:
 
     # ── Rate-limit guard ────────────────────────────────────────────────────
     # If a previous attempt hit Anthropic's "error sending login link", we
-    # back off for _RATELIMIT_COOLDOWN seconds before trying again.
-    try:
-        if _RATELIMIT_FILE.exists():
-            _rl_until = float(_RATELIMIT_FILE.read_text().strip())
-            _remaining = _rl_until - time.time()
-            if _remaining > 0:
-                _log(f"=== Login rate-limited — {int(_remaining // 60)}m {int(_remaining % 60)}s remaining. "
-                     f"Skipping recovery until cooldown expires. ===")
-                return False
-    except Exception:
-        pass  # corrupt file — ignore and proceed
+    # back off with escalating cooldown (1h → 4h → 24h) before retrying.
+    _remaining = _check_ratelimit()
+    if _remaining > 0:
+        _log(f"=== Login rate-limited — {int(_remaining // 60)}m {int(_remaining % 60)}s remaining. "
+             f"Skipping recovery until cooldown expires. ===")
+        return False
 
     # ── Concurrency guard ───────────────────────────────────────────────────
     # Only ONE recovery chain runs at a time. Others block and inherit the result.
