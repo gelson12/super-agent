@@ -151,6 +151,140 @@ def auto_login_claude() -> bool:
         return False
 
 
+def _start_claude_login_pty(env: dict) -> tuple:
+    """
+    Launch `claude login` inside a pseudo-terminal so it thinks it has a real TTY.
+
+    Without a PTY, the Claude CLI detects a non-interactive environment and refuses
+    to start the OAuth URL flow ("OAuth authentication is currently not supported.").
+    With a PTY it behaves exactly as if a human ran it in a terminal and prints the
+    OAuth URL to stdout.
+
+    Returns (oauth_url, proc, master_fd) on success, (None, None, None) on failure.
+    The caller is responsible for closing master_fd when done.
+    """
+    try:
+        import pty
+        import select as _select
+        import os as _os
+    except ImportError as _ie:
+        _log(f"PTY unavailable (not Linux?): {_ie} — cannot run claude login with TTY.")
+        return None, None, None
+
+    _log("PTY: opening pseudo-terminal pair...")
+    try:
+        master_fd, slave_fd = pty.openpty()
+    except Exception as _pe:
+        _log(f"PTY: pty.openpty() failed: {_pe}")
+        return None, None, None
+
+    _log(f"PTY: master_fd={master_fd} slave_fd={slave_fd}")
+
+    try:
+        import os as _os2
+        proc = subprocess.Popen(
+            ["claude", "login"],
+            stdin=slave_fd,
+            stdout=slave_fd,
+            stderr=slave_fd,
+            env=env,
+            cwd="/workspace",
+            close_fds=True,
+        )
+        # Close the slave end in the parent — only the child needs it
+        _os2.close(slave_fd)
+        slave_fd = -1
+        _log(f"PTY: `claude login` launched (pid={proc.pid}) — reading output...")
+    except Exception as _launch_e:
+        _log(f"PTY: Popen failed: {_launch_e}")
+        try: _os.close(master_fd)
+        except Exception: pass
+        try: _os.close(slave_fd)
+        except Exception: pass
+        return None, None, None
+
+    # ── Read PTY output and look for OAuth URL ────────────────────────────────
+    _ANSI_ESCAPE = re.compile(r'\x1b\[[0-9;]*[mKHJA-Za-z]|\x1b\][^\x07]*\x07|\r')
+    accumulated = ""
+    deadline = time.time() + 60  # max 60 s to get the URL
+    oauth_url = None
+
+    _URL_PATTERNS = [
+        re.compile(r'https://claude\.ai/oauth/authorize\?[^\s\r\n\x1b]+', re.I),
+        re.compile(r'https://claude\.ai/[^\s\r\n\x1b]*oauth[^\s\r\n\x1b]+', re.I),
+        re.compile(r'https://[^\s\r\n\x1b]{30,}', re.I),   # wide net fallback
+    ]
+
+    import os as _os3
+    import select as _sel
+
+    while time.time() < deadline:
+        # Check if the process has already exited (error path)
+        if proc.poll() is not None:
+            # Drain any remaining output
+            try:
+                while True:
+                    r, _, _ = _sel.select([master_fd], [], [], 0.1)
+                    if not r:
+                        break
+                    chunk = _os3.read(master_fd, 4096).decode("utf-8", errors="replace")
+                    accumulated += _ANSI_ESCAPE.sub("", chunk)
+            except Exception:
+                pass
+            _log(f"PTY: process exited (rc={proc.poll()}) before URL found. "
+                 f"Accumulated output: {accumulated[-600:]!r}")
+            break
+
+        try:
+            r, _, _ = _sel.select([master_fd], [], [], 1.0)
+        except Exception as _se:
+            _log(f"PTY: select error: {_se}")
+            break
+
+        if not r:
+            continue  # no data yet — keep waiting
+
+        try:
+            raw = _os3.read(master_fd, 4096)
+        except OSError as _ose:
+            # EIO = slave side closed (process exited)
+            _log(f"PTY: read OSError (process likely exited): {_ose}")
+            break
+
+        chunk = raw.decode("utf-8", errors="replace")
+        clean = _ANSI_ESCAPE.sub("", chunk)
+        accumulated += clean
+
+        # Log intermediate output for diagnosis (but not too verbosely)
+        if clean.strip():
+            _log(f"PTY output: {clean.strip()[:200]!r}")
+
+        # Search for OAuth URL in accumulated output
+        for _pat in _URL_PATTERNS:
+            m = _pat.search(accumulated)
+            if m:
+                candidate = m.group(0).rstrip(".,;)")
+                # Validate it looks like an OAuth URL (must have a query string)
+                if "?" in candidate and (
+                    "oauth" in candidate.lower()
+                    or "client_id" in candidate.lower()
+                    or "redirect_uri" in candidate.lower()
+                ):
+                    oauth_url = candidate
+                    _log(f"PTY: OAuth URL captured: {oauth_url[:120]}...")
+                    break
+        if oauth_url:
+            break
+
+    if not oauth_url:
+        rc = proc.poll()
+        _log(f"PTY: FAILED to capture OAuth URL within deadline (process rc={rc}). "
+             f"Last output: {accumulated[-400:]!r}")
+        return None, proc, master_fd  # caller will kill proc and close fd
+
+    return oauth_url, proc, master_fd
+
+
 def _do_auto_login(email: str) -> bool:
     """Core login flow — start CLI, capture URL, automate browser with n8n verification."""
 
@@ -177,85 +311,34 @@ def _do_auto_login(email: str) -> bool:
             except Exception as _e0b:
                 _log(f"Step 0: WARNING — could not remove credentials file: {_e0b}. claude login may fail with 401.")
 
-    # Step 1: Start `claude login` subprocess
-    _log("Step 1: Starting `claude login` subprocess...")
-    # Strip ANTHROPIC_API_KEY so the CLI can't fall back to API-key auth
-    env = {k: v for k, v in os.environ.items() if k not in ("ANTHROPIC_API_KEY", "CLAUDE_SESSION_TOKEN")}
+    # Step 1+2: Start `claude login` via PTY and capture the OAuth URL.
+    #
+    # CRITICAL: `claude login` only outputs an OAuth URL when it has a real TTY.
+    # Without one (piped stdin/stdout), it detects the non-interactive environment
+    # and tries a different auth path: "OAuth authentication is currently not supported."
+    # We must run it with a pseudo-terminal (pty) so it thinks it has a real terminal.
+    _log("Step 1: Starting `claude login` via pseudo-terminal (PTY)...")
+    # Strip auth env vars so the CLI cannot fall back to any stored credentials
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("ANTHROPIC_API_KEY", "CLAUDE_SESSION_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN")}
     env["HOME"] = "/root"
+    env["TERM"] = "xterm-256color"  # Ensure the CLI sees a proper terminal type
 
-    proc = subprocess.Popen(
-        ["claude", "login"],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        stdin=subprocess.PIPE,
-        text=True,
-        env=env,
-        cwd="/workspace",
-    )
-
-    # Step 2: Capture the OAuth URL from stdout
-    # claude login outputs a URL in one of these formats:
-    #   https://claude.ai/oauth/authorize?...
-    #   https://console.anthropic.com/oauth/authorize?...
-    #   http://localhost:PORT/...  (when running with localhost redirect)
-    # It may also just say "Visit: https://..." or "Open this URL in your browser:"
-    _log("Step 2: Waiting for OAuth URL from CLI...")
-    oauth_url = None
-    all_output = []
-    deadline = time.time() + 45  # 45s to get the URL (some container starts are slow)
-
-    while time.time() < deadline:
-        line = proc.stdout.readline()
-        if not line:
-            if proc.poll() is not None:
-                _log(f"Step 2: CLI process exited with code {proc.returncode} before outputting URL.")
-                break
-            time.sleep(0.1)
-            continue
-
-        line_stripped = line.strip()
-        all_output.append(line_stripped)
-        _log(f"CLI stdout: {line_stripped[:300]}")
-
-        # Try all known URL patterns — ordered from most to least specific
-        for pattern in [
-            r'(https://claude\.ai/oauth[^\s"\'<>\)\]]+)',
-            r'(https://[^\s"\'<>\)\]]*authorize[^\s"\'<>\)\]]+)',
-            r'(https://console\.anthropic\.com[^\s"\'<>\)\]]+)',
-            r'(https://[^\s"\'<>\)\]]+claude[^\s"\'<>\)\]]+)',
-            r'(https://[^\s"\'<>\)\]]{30,})',  # any long https URL
-        ]:
-            m = re.search(pattern, line)
-            if m:
-                candidate = m.group(1).rstrip(".,;")
-                # Must look like an auth URL (has oauth, authorize, login, or is very long)
-                if any(k in candidate.lower() for k in ("oauth", "authorize", "login", "auth", "code")) or len(candidate) > 80:
-                    oauth_url = candidate
-                    _log(f"Step 2: Got OAuth URL: {oauth_url[:150]}")
-                    break
-        if oauth_url:
-            break
-
-        # Handle "URL on next line" patterns
-        if any(kw in line.lower() for kw in ("visit", "open", "browser", "url", "http")):
-            next_line = proc.stdout.readline()
-            if next_line:
-                next_stripped = next_line.strip()
-                all_output.append(next_stripped)
-                _log(f"CLI stdout (next): {next_stripped[:300]}")
-                m = re.search(r'(https://[^\s"\'<>\)\]]+)', next_line)
-                if m:
-                    oauth_url = m.group(1).rstrip(".,;")
-                    _log(f"Step 2: Got OAuth URL from next line: {oauth_url[:150]}")
-                    break
+    oauth_url, proc, _pty_master_fd = _start_claude_login_pty(env)
 
     if not oauth_url:
-        _log(f"Step 2 FAILED: No OAuth URL in CLI output after 45s. "
-             f"Full output ({len(all_output)} lines): {' | '.join(all_output[:20])}")
-        try:
-            proc.kill()
-        except Exception:
-            pass
+        # _start_claude_login_pty already logged the failure details
+        if proc:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+        if _pty_master_fd is not None:
+            try:
+                import os as _os
+                _os.close(_pty_master_fd)
+            except Exception:
+                pass
         return False
 
     # Step 3: Trigger n8n email monitor BEFORE opening browser
@@ -290,20 +373,21 @@ def _do_auto_login(email: str) -> bool:
         proc.kill()
         return False
 
-    # Step 4: Write auth code to CLI stdin if headless container mode returned one
+    # Step 4: Write auth code / confirmation to the PTY master fd.
+    # With PTY mode proc.stdin is None — all writes go through the master fd.
     _log("Step 4: Waiting for CLI to complete login...")
+    import os as _os4
     if auth_code:
-        _log(f"Step 4: Container OAuth mode — writing auth code to CLI stdin ({auth_code[:12]}...)...")
+        _log(f"Step 4: Container OAuth mode — writing auth code to PTY ({auth_code[:12]}...)...")
         try:
-            proc.stdin.write(auth_code + "\n")
-            proc.stdin.flush()
+            _os4.write(_pty_master_fd, (auth_code + "\n").encode())
         except Exception as _e:
-            _log(f"Step 4: Failed to write auth code to stdin: {_e}")
+            _log(f"Step 4: Failed to write auth code to PTY master fd: {_e}")
     else:
-        # Localhost callback mode — CLI already got its token via the browser redirect
+        # Localhost callback mode — CLI already got its token via the browser redirect;
+        # send a newline in case it's waiting for the user to press Enter.
         try:
-            proc.stdin.write("\n")
-            proc.stdin.flush()
+            _os4.write(_pty_master_fd, b"\n")
         except Exception:
             pass
 
@@ -312,6 +396,13 @@ def _do_auto_login(email: str) -> bool:
     except subprocess.TimeoutExpired:
         _log("Step 4: CLI didn't exit in 30s — killing (token may still be saved).")
         proc.kill()
+
+    # Close the PTY master fd now that the child has exited
+    try:
+        _os4.close(_pty_master_fd)
+        _pty_master_fd = None
+    except Exception:
+        pass
 
     # Step 5: Verify the token was FRESHLY saved (not the old expired file)
     _log("Step 5: Verifying credentials...")
