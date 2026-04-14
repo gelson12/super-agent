@@ -735,10 +735,11 @@ def _automate_browser(oauth_url: str, email: str) -> tuple[bool, str | None]:
             )
             return True, auth_code
 
-        if _click_approve(page):
-            _log("Browser: Approve button present immediately after email submit")
-            auth_code, ok = _wait_for_callback_and_extract(page)
-            return ok, auth_code
+        # Do NOT call _click_approve() here. After submitting the email, Claude.ai
+        # shows a "check your email for a magic link" confirmation page — not the
+        # OAuth consent screen. The confirm page can have buttons labelled "Accept",
+        # "Continue", etc. that match the approve selectors but do nothing useful.
+        # The real OAuth consent appears only AFTER the user navigates the magic link.
 
         # ── Step 2: Wait for magic link URL from n8n ────────────────────
         _log(f"Browser: page content sample after email submit: {page.content()[:400]}")
@@ -907,21 +908,18 @@ def _click_approve(page) -> bool:
             return True
 
         selectors = [
+            # OAuth consent-specific buttons only — deliberately narrow to avoid
+            # matching "Accept" / "Continue" / "Sign in" on confirmation pages.
             'button:has-text("Approve")',
             'button:has-text("Allow")',
             'button:has-text("Authorize")',
-            'button:has-text("Accept")',
-            'button:has-text("Grant")',
-            'button:has-text("Yes")',
             'button:has-text("Allow access")',
-            'button:has-text("Continue")',
-            'button:has-text("Sign in")',
-            'button:has-text("Log in")',
+            'button:has-text("Grant access")',
+            'button:has-text("Grant")',
             'input[type="submit"][value*="Approve" i]',
             'input[type="submit"][value*="Allow" i]',
             'a:has-text("Approve")',
             'a:has-text("Allow")',
-            # Data attribute patterns used by some OAuth UIs
             '[data-testid*="approve" i]',
             '[data-testid*="allow" i]',
             '[data-testid*="authorize" i]',
