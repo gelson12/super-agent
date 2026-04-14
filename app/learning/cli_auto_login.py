@@ -323,7 +323,14 @@ def _start_claude_login_pty(env: dict) -> tuple:
         if not r:
             # No new data for 1 s — check the tail of accumulated output for
             # a stuck prompt and nudge with Enter (respects cooldown).
-            _tail = accumulated[-400:].replace(" ", "").replace("\n", "")
+            #
+            # CRITICAL: strip whitespace BEFORE slicing.
+            # The terminal TUI pads every line to full width with spaces.
+            # accumulated[-400:] is mostly trailing spaces; after .replace(" ","")
+            # only ~50 real chars remain and the prompt marker is out of reach.
+            # Stripping first gives us 400 chars of *actual content*.
+            _stripped_acc = accumulated.replace(" ", "").replace("\n", "")
+            _tail = _stripped_acc[-400:]
             _maybe_respond(_tail)
             continue
 
