@@ -204,15 +204,39 @@ def _start_claude_login_pty(env: dict) -> tuple:
         return None, None, None
 
     # ── Read PTY output and look for OAuth URL ────────────────────────────────
-    _ANSI_ESCAPE = re.compile(r'\x1b\[[0-9;]*[mKHJA-Za-z]|\x1b\][^\x07]*\x07|\r')
-    accumulated = ""
+    #
+    # ANSI stripping: we must NOT blindly strip OSC sequences with
+    #   r'\x1b\][^\x07]*\x07'
+    # because the Claude CLI wraps the OAuth URL in an OSC 8 terminal hyperlink:
+    #   ESC ] 8 ;; URL BEL  display_text  ESC ] 8 ;; BEL
+    # That regex would eat the URL entirely.  Instead we use a two-step clean:
+    #   1. Extract the URL from OSC 8 hyperlinks and keep it as plain text.
+    #   2. Strip all other ANSI/VT control sequences.
+    def _clean_pty(raw: str) -> str:
+        # Step 1: OSC 8 hyperlinks — replace with just the URL
+        s = re.sub(
+            r'\x1b\]8;;([^\x07\x1b]*)\x07[^\x1b]*\x1b\]8;;\x07',
+            r' \1 ',
+            raw,
+            flags=re.DOTALL,
+        )
+        # Step 2: remaining CSI sequences (colors, cursor moves, etc.)
+        s = re.sub(r'\x1b\[[0-9;?]*[a-zA-Z]', '', s)
+        # Step 3: remaining OSC sequences (title sets, etc.)
+        s = re.sub(r'\x1b\][^\x07]*\x07', '', s)
+        # Step 4: carriage returns
+        s = s.replace('\r', '')
+        return s
+
+    accumulated = ""      # ANSI-cleaned text (URLs extracted from OSC 8)
+    accumulated_raw = ""  # raw bytes as string — fallback URL search target
     deadline = time.time() + 60  # max 60 s to get the URL
     oauth_url = None
 
     _URL_PATTERNS = [
-        re.compile(r'https://claude\.ai/oauth/authorize\?[^\s\r\n\x1b]+', re.I),
-        re.compile(r'https://claude\.ai/[^\s\r\n\x1b]*oauth[^\s\r\n\x1b]+', re.I),
-        re.compile(r'https://[^\s\r\n\x1b]{30,}', re.I),   # wide net fallback
+        re.compile(r'https://claude\.ai/oauth/authorize\?[^\s\r\n\x1b"\'<> ]+', re.I),
+        re.compile(r'https://claude\.ai/[^\s\r\n\x1b"\'<> ]*oauth[^\s\r\n\x1b"\'<> ]+', re.I),
+        re.compile(r'https://[^\s\r\n\x1b"\'<> ]{30,}', re.I),   # wide net fallback
     ]
 
     import os as _os3
@@ -267,12 +291,15 @@ def _start_claude_login_pty(env: dict) -> tuple:
                     r, _, _ = _sel.select([master_fd], [], [], 0.1)
                     if not r:
                         break
-                    chunk = _os3.read(master_fd, 4096).decode("utf-8", errors="replace")
-                    accumulated += _ANSI_ESCAPE.sub("", chunk)
+                    _dc = _os3.read(master_fd, 4096).decode("utf-8", errors="replace")
+                    accumulated += _clean_pty(_dc)
+                    accumulated_raw += _dc
             except Exception:
                 pass
-            _log(f"PTY: process exited (rc={proc.poll()}) before URL found. "
-                 f"Accumulated output: {accumulated[-600:]!r}")
+            rc_now = proc.poll()
+            _log(f"PTY: process exited (rc={rc_now}) before URL found.")
+            _log(f"PTY: Accumulated (cleaned, last 800): {accumulated[-800:]!r}")
+            _log(f"PTY: Accumulated (raw, last 400): {accumulated_raw[-400:]!r}")
             break
 
         try:
@@ -296,38 +323,45 @@ def _start_claude_login_pty(env: dict) -> tuple:
             break
 
         chunk = raw.decode("utf-8", errors="replace")
-        clean = _ANSI_ESCAPE.sub("", chunk)
+        clean = _clean_pty(chunk)
         accumulated += clean
+        accumulated_raw += chunk
 
-        # Log intermediate output for diagnosis (but not too verbosely)
+        # Log intermediate output for diagnosis
         if clean.strip():
-            _log(f"PTY output: {clean.strip()[:200]!r}")
+            _log(f"PTY output: {clean.strip()[:300]!r}")
 
         # Respond to prompts in the fresh chunk (one Enter per cooldown window).
         _chunk_nows = clean.replace(" ", "").replace("\n", "")
         _maybe_respond(_chunk_nows)
 
-        # Search for OAuth URL in accumulated output
-        for _pat in _URL_PATTERNS:
-            m = _pat.search(accumulated)
-            if m:
-                candidate = m.group(0).rstrip(".,;)")
-                # Validate it looks like an OAuth URL (must have a query string)
-                if "?" in candidate and (
-                    "oauth" in candidate.lower()
-                    or "client_id" in candidate.lower()
-                    or "redirect_uri" in candidate.lower()
-                ):
-                    oauth_url = candidate
-                    _log(f"PTY: OAuth URL captured: {oauth_url[:120]}...")
-                    break
+        # Search for OAuth URL in BOTH cleaned and raw accumulated text.
+        # Cleaned: handles plain-text URLs with ANSI color codes stripped.
+        # Raw: catches URLs inside OSC 8 hyperlinks that _clean_pty may have
+        #      partially handled but fallback search on raw is extra safety.
+        def _find_url(text: str) -> str | None:
+            for _pat in _URL_PATTERNS:
+                m = _pat.search(text)
+                if m:
+                    candidate = m.group(0).rstrip(".,;)")
+                    if "?" in candidate and (
+                        "oauth" in candidate.lower()
+                        or "client_id" in candidate.lower()
+                        or "redirect_uri" in candidate.lower()
+                    ):
+                        return candidate
+            return None
+
+        oauth_url = _find_url(accumulated) or _find_url(accumulated_raw)
         if oauth_url:
+            _log(f"PTY: OAuth URL captured: {oauth_url[:120]}...")
             break
 
     if not oauth_url:
         rc = proc.poll()
-        _log(f"PTY: FAILED to capture OAuth URL within deadline (process rc={rc}). "
-             f"Last output: {accumulated[-400:]!r}")
+        _log(f"PTY: FAILED to capture OAuth URL within deadline (process rc={rc}).")
+        _log(f"PTY: Accumulated (cleaned, last 800): {accumulated[-800:]!r}")
+        _log(f"PTY: Accumulated (raw, last 400): {accumulated_raw[-400:]!r}")
         return None, proc, master_fd  # caller will kill proc and close fd
 
     return oauth_url, proc, master_fd
