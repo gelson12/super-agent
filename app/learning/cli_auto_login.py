@@ -218,6 +218,25 @@ def _start_claude_login_pty(env: dict) -> tuple:
     import os as _os3
     import select as _sel
 
+    # Track which onboarding prompts we've already responded to (avoid re-sending)
+    _responded: set = set()
+
+    # Onboarding prompts the CLI shows on first run — we must advance past all of
+    # them before it reaches the actual OAuth URL output.
+    # Each entry: (unique_marker_in_output, bytes_to_send)
+    _ONBOARDING_RESPONSES = [
+        # Theme selection: "Choose the text style…  ❯1.Darkmode✔"
+        ("Choosethetextstyle",    b"\n"),   # Enter = accept default (option 1)
+        ("Choosethesyntaxtheme",  b"\n"),   # second theme step if present
+        ("Syntaxtheme:",          b"\n"),   # after syntax demo, press Enter
+        ("Pressanykeyto",         b"\n"),   # generic "press any key" prompts
+        ("pressEnterto",          b"\n"),
+        ("Tologincontinue",       b"\n"),
+        ("Continuewithoutsigning", b"\n"),
+        # Welcome / intro screen with the ASCII art logo
+        ("WelcometoClaude",       b"\n"),
+    ]
+
     while time.time() < deadline:
         # Check if the process has already exited (error path)
         if proc.poll() is not None:
@@ -242,7 +261,19 @@ def _start_claude_login_pty(env: dict) -> tuple:
             break
 
         if not r:
-            continue  # no data yet — keep waiting
+            # No data for 1 s — check if we're stuck on an onboarding prompt
+            # and haven't responded yet; if so, send Enter to nudge it.
+            _acc_nows = accumulated.replace(" ", "").replace("\n", "")
+            for marker, response in _ONBOARDING_RESPONSES:
+                if marker in _acc_nows and marker not in _responded:
+                    _log(f"PTY: onboarding prompt detected ({marker!r}) — sending Enter...")
+                    try:
+                        _os3.write(master_fd, response)
+                    except Exception as _we:
+                        _log(f"PTY: write error during onboarding: {_we}")
+                    _responded.add(marker)
+                    break  # only one response per idle cycle
+            continue
 
         try:
             raw = _os3.read(master_fd, 4096)
@@ -258,6 +289,18 @@ def _start_claude_login_pty(env: dict) -> tuple:
         # Log intermediate output for diagnosis (but not too verbosely)
         if clean.strip():
             _log(f"PTY output: {clean.strip()[:200]!r}")
+
+        # Auto-respond to onboarding prompts immediately on new data too
+        _acc_nows = accumulated.replace(" ", "").replace("\n", "")
+        for marker, response in _ONBOARDING_RESPONSES:
+            if marker in _acc_nows and marker not in _responded:
+                _log(f"PTY: onboarding prompt detected ({marker!r}) — sending Enter...")
+                try:
+                    _os3.write(master_fd, response)
+                except Exception as _we:
+                    _log(f"PTY: write error during onboarding: {_we}")
+                _responded.add(marker)
+                break
 
         # Search for OAuth URL in accumulated output
         for _pat in _URL_PATTERNS:
