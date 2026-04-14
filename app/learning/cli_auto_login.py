@@ -52,6 +52,8 @@ _log_lock = threading.Lock()
 
 
 def _log(msg: str) -> None:
+    # Always print so Railway container logs capture it (bg_log only writes to local file)
+    print(f"[cli_auto_login] {msg}", flush=True)
     try:
         from ..activity_log import bg_log
         bg_log(msg, source="cli_auto_login")
@@ -179,40 +181,68 @@ def _do_auto_login(email: str) -> bool:
     )
 
     # Step 2: Capture the OAuth URL from stdout
+    # claude login outputs a URL in one of these formats:
+    #   https://claude.ai/oauth/authorize?...
+    #   https://console.anthropic.com/oauth/authorize?...
+    #   http://localhost:PORT/...  (when running with localhost redirect)
+    # It may also just say "Visit: https://..." or "Open this URL in your browser:"
     _log("Step 2: Waiting for OAuth URL from CLI...")
     oauth_url = None
-    deadline = time.time() + 30  # 30s to get the URL
+    all_output = []
+    deadline = time.time() + 45  # 45s to get the URL (some container starts are slow)
 
     while time.time() < deadline:
         line = proc.stdout.readline()
         if not line:
+            if proc.poll() is not None:
+                _log(f"Step 2: CLI process exited with code {proc.returncode} before outputting URL.")
+                break
             time.sleep(0.1)
             continue
 
-        _log(f"CLI output: {line.strip()[:200]}")
+        line_stripped = line.strip()
+        all_output.append(line_stripped)
+        _log(f"CLI stdout: {line_stripped[:300]}")
 
-        # Look for the OAuth URL
-        url_match = re.search(r'(https://claude\.ai/oauth[^\s"\']+)', line)
-        if not url_match:
-            url_match = re.search(r'(https://[^\s"\']*authorize[^\s"\']+)', line)
-        if url_match:
-            oauth_url = url_match.group(1)
-            _log(f"Step 2: Got OAuth URL: {oauth_url[:100]}...")
+        # Try all known URL patterns — ordered from most to least specific
+        for pattern in [
+            r'(https://claude\.ai/oauth[^\s"\'<>\)\]]+)',
+            r'(https://[^\s"\'<>\)\]]*authorize[^\s"\'<>\)\]]+)',
+            r'(https://console\.anthropic\.com[^\s"\'<>\)\]]+)',
+            r'(https://[^\s"\'<>\)\]]+claude[^\s"\'<>\)\]]+)',
+            r'(https://[^\s"\'<>\)\]]{30,})',  # any long https URL
+        ]:
+            m = re.search(pattern, line)
+            if m:
+                candidate = m.group(1).rstrip(".,;")
+                # Must look like an auth URL (has oauth, authorize, login, or is very long)
+                if any(k in candidate.lower() for k in ("oauth", "authorize", "login", "auth", "code")) or len(candidate) > 80:
+                    oauth_url = candidate
+                    _log(f"Step 2: Got OAuth URL: {oauth_url[:150]}")
+                    break
+        if oauth_url:
             break
 
-        # Sometimes CLI says "Open this URL" with the URL on the next line
-        if "open" in line.lower() and "url" in line.lower():
+        # Handle "URL on next line" patterns
+        if any(kw in line.lower() for kw in ("visit", "open", "browser", "url", "http")):
             next_line = proc.stdout.readline()
             if next_line:
-                url_match = re.search(r'(https://[^\s"\']+)', next_line)
-                if url_match:
-                    oauth_url = url_match.group(1)
-                    _log(f"Step 2: Got OAuth URL from next line: {oauth_url[:100]}...")
+                next_stripped = next_line.strip()
+                all_output.append(next_stripped)
+                _log(f"CLI stdout (next): {next_stripped[:300]}")
+                m = re.search(r'(https://[^\s"\'<>\)\]]+)', next_line)
+                if m:
+                    oauth_url = m.group(1).rstrip(".,;")
+                    _log(f"Step 2: Got OAuth URL from next line: {oauth_url[:150]}")
                     break
 
     if not oauth_url:
-        _log("Step 2 FAILED: Could not extract OAuth URL from CLI output. Killing process.")
-        proc.kill()
+        _log(f"Step 2 FAILED: No OAuth URL in CLI output after 45s. "
+             f"Full output ({len(all_output)} lines): {' | '.join(all_output[:20])}")
+        try:
+            proc.kill()
+        except Exception:
+            pass
         return False
 
     # Step 3: Trigger n8n email monitor BEFORE opening browser
@@ -229,8 +259,11 @@ def _do_auto_login(email: str) -> bool:
         pass
 
     # Step 3b: Automate the browser flow
+    # Returns: (True, None)     = localhost callback, token saved by CLI automatically
+    #          (True, "code...") = headless container mode, must write auth code to stdin
+    #          (False, None)    = failure
     _log("Step 3b: Opening headless browser...")
-    browser_ok = _automate_browser(oauth_url, email)
+    browser_ok, auth_code = _automate_browser(oauth_url, email)
 
     # Clear talking line once browser flow completes (success or failure)
     try:
@@ -244,14 +277,22 @@ def _do_auto_login(email: str) -> bool:
         proc.kill()
         return False
 
-    # Step 4: Wait for CLI to finish (it should detect the callback)
+    # Step 4: Write auth code to CLI stdin if headless container mode returned one
     _log("Step 4: Waiting for CLI to complete login...")
-    try:
-        # Send Enter key in case CLI is waiting for it
-        proc.stdin.write("\n")
-        proc.stdin.flush()
-    except Exception:
-        pass
+    if auth_code:
+        _log(f"Step 4: Container OAuth mode — writing auth code to CLI stdin ({auth_code[:12]}...)...")
+        try:
+            proc.stdin.write(auth_code + "\n")
+            proc.stdin.flush()
+        except Exception as _e:
+            _log(f"Step 4: Failed to write auth code to stdin: {_e}")
+    else:
+        # Localhost callback mode — CLI already got its token via the browser redirect
+        try:
+            proc.stdin.write("\n")
+            proc.stdin.flush()
+        except Exception:
+            pass
 
     try:
         proc.wait(timeout=30)
@@ -305,20 +346,77 @@ def _do_auto_login(email: str) -> bool:
     return False
 
 
-def _automate_browser(oauth_url: str, email: str) -> bool:
+def _extract_oauth_code_from_page(page) -> str | None:
     """
-    Automate the Claude.ai passwordless OAuth login flow:
-      1. Navigate to OAuth URL
-      2. Enter email → click "Continue with email"
-      3. Wait for verification code from n8n (via webhook → queue)
-      4. Type code → click "Verify Email Address"
-      5. Click "Approve" on consent screen
+    Extract the OAuth authorization code after being redirected to
+    platform.claude.com/oauth/code/callback (container/headless mode).
+    Returns the code string or None.
+    """
+    try:
+        from urllib.parse import urlparse, parse_qs
+        parsed = urlparse(page.url)
+        params = parse_qs(parsed.query)
+        code = params.get("code", [None])[0]
+        if code:
+            _log(f"Browser: extracted OAuth code from URL query param ({code[:12]}...)")
+            return code
+    except Exception:
+        pass
+
+    # Also try fragment (#code=...) — some OAuth servers use the fragment
+    try:
+        url = page.url
+        if "#" in url:
+            fragment = url.split("#", 1)[1]
+            from urllib.parse import parse_qs
+            fparams = parse_qs(fragment)
+            code = fparams.get("code", [None])[0]
+            if code:
+                _log(f"Browser: extracted OAuth code from URL fragment ({code[:12]}...)")
+                return code
+    except Exception:
+        pass
+
+    # Try to extract from visible page text — the page shows something like:
+    # "Your authorization code is: XXXXX" or "Copy this code: XXXXX"
+    try:
+        content = page.inner_text("body") if page else ""
+        for pattern in [
+            r"authorization[_ ]code[:\s]+([A-Za-z0-9\-_]{8,})",
+            r"code[:\s]+([A-Za-z0-9\-_]{16,})",
+            r'"code"\s*:\s*"([A-Za-z0-9\-_]{8,})"',
+        ]:
+            m = re.search(pattern, content, re.IGNORECASE)
+            if m:
+                code = m.group(1)
+                _log(f"Browser: extracted OAuth code from page text ({code[:12]}...)")
+                return code
+    except Exception:
+        pass
+
+    return None
+
+
+def _automate_browser(oauth_url: str, email: str) -> tuple[bool, str | None]:
+    """
+    Automate the Claude.ai passwordless OAuth login flow.
+
+    Returns (success, auth_code) where:
+      (True, None)    = localhost callback — CLI captured token automatically
+      (True, "code")  = headless/container mode — write code to claude login stdin
+      (False, None)   = failure
+
+    Two redirect modes handled:
+      LOCAL:     CLI starts localhost server; after magic link auth, browser redirects
+                 to http://localhost:PORT/callback — CLI captures token automatically.
+      CONTAINER: redirect_uri=https://platform.claude.com/oauth/code/callback;
+                 that page displays an auth code the CLI reads from stdin.
     """
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
         _log("Playwright not installed — cannot auto-login.")
-        return False
+        return False, None
 
     try:
         with sync_playwright() as p:
@@ -334,16 +432,26 @@ def _automate_browser(oauth_url: str, email: str) -> bool:
             context = browser.new_context()
             page = context.new_page()
 
-            _log(f"Browser: navigating to OAuth URL...")
+            _log(f"Browser: navigating to OAuth URL: {oauth_url[:120]}...")
             page.goto(oauth_url, timeout=30000)
             time.sleep(3)
-            _log(f"Browser: on page = {page.url[:100]}")
+            _log(f"Browser: on page = {page.url[:120]}")
+            _log(f"Browser: page title = {page.title()!r}")
+
+            # ── Check for early callback (session remembered / SSO) ──────
+            if _is_callback_url(page.url):
+                _log("Browser: already redirected to callback after navigation ✓")
+                auth_code = _extract_oauth_code_from_page(page) if "platform.claude.com" in page.url else None
+                browser.close()
+                return True, auth_code
 
             # ── Step 1: Enter email ──────────────────────────────────────
+            _log(f"Browser: page content sample (for debugging): {page.content()[:600]}")
             email_field = (
                 page.query_selector('input[type="email"]')
                 or page.query_selector('input[placeholder*="email" i]')
                 or page.query_selector('input[name="email"]')
+                or page.query_selector('input[autocomplete*="email" i]')
             )
             if email_field:
                 email_field.fill(email)
@@ -364,101 +472,129 @@ def _automate_browser(oauth_url: str, email: str) -> bool:
                     _log("Browser: pressed Enter to submit email")
 
                 time.sleep(3)
-                _log(f"Browser: after email submit, URL = {page.url[:100]}")
+                _log(f"Browser: after email submit, URL = {page.url[:120]}")
             else:
-                _log("Browser: no email field found on page.")
-                _log(f"Browser: page content sample: {page.content()[:500]}")
+                _log("Browser: no email field found on page — dumping full content for diagnosis.")
+                _log(f"Browser: FULL page content: {page.content()[:2000]}")
                 browser.close()
-                return False
+                return False, None
+
+            # ── Check post-submit for early callback ─────────────────────
+            if _is_callback_url(page.url):
+                _log("Browser: callback after email submit ✓")
+                auth_code = _extract_oauth_code_from_page(page) if "platform.claude.com" in page.url else None
+                browser.close()
+                return True, auth_code
+
+            if _click_approve(page):
+                _log("Browser: Approve button present immediately after email submit")
+                auth_code, ok = _wait_for_callback_and_extract(page)
+                browser.close()
+                return ok, auth_code
 
             # ── Step 2: Wait for magic link URL from n8n ─────────────────
-            # Claude.ai sends a MAGIC LINK email (not a 6-digit code).
-            # The page now shows "Check your email for a sign-in link".
-            # n8n monitors Hotmail, extracts the URL from the email body,
-            # and POSTs it to /webhook/verification-code.
-            # We then navigate THIS browser session to that magic link URL
-            # so the auth cookies are set in the same session.
-            _log(f"Browser: after email submit, URL = {page.url[:100]}")
-            _log(f"Browser: page content sample: {page.content()[:400]}")
-
-            # Check if we already got a redirect (session remembered / SSO)
-            if "localhost" in page.url or "/callback" in page.url:
-                _log("Browser: already redirected to callback after email submit ✓")
-                browser.close()
-                return True
-            if _click_approve(page):
-                # Approve button present immediately — no email link needed
-                try:
-                    page.wait_for_url("*localhost*", timeout=20000)
-                except Exception:
-                    pass
-                browser.close()
-                return True
-
+            _log(f"Browser: page content sample after email submit: {page.content()[:400]}")
             _log("Browser: waiting for magic link URL from n8n email monitor...")
-            magic_url = _wait_for_verification_code()  # returns the magic link URL
+            magic_url = _wait_for_verification_code()
             if not magic_url:
-                _log("Browser: TIMEOUT — n8n did not deliver the magic link URL.")
+                _log("Browser: TIMEOUT — n8n did not deliver the magic link URL within 3 minutes.")
                 browser.close()
-                return False
+                return False, None
 
             # ── Step 3: Navigate to the magic link ───────────────────────
-            # The magic link authenticates the current browser session when visited.
-            # Must use the same browser context so auth cookies transfer correctly.
-            _log(f"Browser: navigating to magic link: {magic_url[:80]}...")
+            _log(f"Browser: navigating to magic link: {magic_url[:100]}...")
             try:
                 page.goto(magic_url, timeout=30000)
             except Exception as _nav_e:
-                _log(f"Browser: magic link navigation error (may be normal if redirect to localhost): {_nav_e}")
+                _log(f"Browser: magic link navigation warning (may be normal): {_nav_e}")
             try:
                 page.wait_for_load_state("networkidle", timeout=15000)
             except Exception:
                 time.sleep(3)
-            _log(f"Browser: after magic link, URL = {page.url[:100]}")
+            _log(f"Browser: after magic link, URL = {page.url[:120]}")
             _log(f"Browser: page title = {page.title()!r}")
+            _log(f"Browser: page content sample: {page.content()[:400]}")
 
-            # ── Step 4: Click Approve on consent screen ──────────────────
-            # If already on the callback URL, the CLI got its token — no consent needed.
-            if "localhost" in page.url or "/callback" in page.url:
-                _log("Browser: already redirected to callback after verify — no consent screen needed ✓")
+            # ── Step 4: Handle post-magic-link state ──────────────────────
+            if _is_callback_url(page.url):
+                _log("Browser: callback after magic link navigation ✓")
+                auth_code = _extract_oauth_code_from_page(page) if "platform.claude.com" in page.url else None
                 browser.close()
-                return True
+                return True, auth_code
 
-            _log("Browser: looking for Approve button...")
-            _log(f"Browser: consent page content sample: {page.content()[:600]}")
+            # Look for Approve/Allow button on consent screen
+            _log("Browser: looking for Approve button on consent screen...")
             approved = _click_approve(page)
 
             if approved:
-                _log("Browser: Approve clicked — waiting for callback redirect to CLI...")
-                # Wait for redirect to localhost. A navigation/net error here is expected —
-                # the CLI's local HTTP server returns a minimal response (sometimes no HTML).
-                try:
-                    page.wait_for_url("*localhost*", timeout=20000)
-                    _log(f"Browser: redirected to localhost callback ✓ URL={page.url[:100]}")
-                except Exception as _nav_err:
-                    try:
-                        cur_url = page.url or ""
-                    except Exception:
-                        cur_url = ""
-                    if "localhost" in cur_url or "/callback" in cur_url:
-                        _log(f"Browser: callback redirect completed (nav error expected): {_nav_err}")
-                    else:
-                        _log(f"Browser: wait_for_url timeout — {_nav_err}. "
-                             f"Current URL: {cur_url[:100]}. CLI may still get callback via network.")
-                time.sleep(2)
-            else:
-                _log(f"Browser: WARNING — no Approve button found after verification. "
-                     f"Final URL: {page.url[:100]}. "
-                     "Consent screen selectors may need updating — check the content sample above.")
+                _log("Browser: Approve clicked — waiting for callback redirect...")
+                auth_code, ok = _wait_for_callback_and_extract(page)
                 browser.close()
-                return False
-
-            browser.close()
-            return True
+                return ok, auth_code
+            else:
+                _log(f"Browser: WARNING — no Approve button found. "
+                     f"Final URL: {page.url[:120]}. "
+                     f"Page content: {page.content()[:800]}")
+                browser.close()
+                return False, None
 
     except Exception as e:
         _log(f"Browser automation error: {e}")
-        return False
+        import traceback
+        _log(f"Browser traceback: {traceback.format_exc()[:600]}")
+        return False, None
+
+
+def _is_callback_url(url: str) -> bool:
+    """Return True if the URL is an OAuth callback (localhost or platform.claude.com)."""
+    return (
+        "localhost" in url
+        or "/callback" in url
+        or "oauth/code/callback" in url
+        or "platform.claude.com/oauth" in url
+    )
+
+
+def _wait_for_callback_and_extract(page) -> tuple[str | None, bool]:
+    """
+    Wait for the browser to land on a callback URL after Approve is clicked.
+    Returns (auth_code, success).
+      auth_code is None for localhost callbacks (CLI captures automatically),
+      auth_code is the code string for platform.claude.com container-mode callbacks.
+    """
+    # Wait for either localhost OR platform.claude.com callback
+    for pattern, mode in [
+        ("*platform.claude.com/oauth*", "container"),
+        ("*localhost*", "local"),
+        ("*oauth/code/callback*", "container"),
+    ]:
+        try:
+            page.wait_for_url(pattern, timeout=15000)
+            cur_url = page.url
+            _log(f"Browser: callback redirect ✓ mode={mode} URL={cur_url[:120]}")
+            if mode == "container":
+                code = _extract_oauth_code_from_page(page)
+                return code, True
+            else:
+                return None, True
+        except Exception:
+            continue
+
+    # Last resort: check current URL
+    try:
+        cur_url = page.url or ""
+    except Exception:
+        cur_url = ""
+
+    if _is_callback_url(cur_url):
+        _log(f"Browser: callback detected in current URL: {cur_url[:120]}")
+        if "platform.claude.com" in cur_url:
+            code = _extract_oauth_code_from_page(page)
+            return code, True
+        return None, True
+
+    _log(f"Browser: no callback redirect detected. Final URL: {cur_url[:120]}")
+    return None, False
 
 
 def _click_approve(page) -> bool:
