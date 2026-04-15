@@ -26,22 +26,20 @@ from langchain.tools import tool
 
 logger = logging.getLogger(__name__)
 
-_OBSIDIAN_URL = os.environ.get("OBSIDIAN_MCP_URL", "ws://obsidian-vault.railway.internal:22360")
+_OBSIDIAN_URL = os.environ.get("OBSIDIAN_MCP_URL", "http://obsidian-vault.railway.internal:22360/sse")
 
 
 # ── Async MCP WebSocket client ────────────────────────────────────────────────
 
 async def _call_mcp(tool_name: str, arguments: dict) -> str:
     """
-    Open a fresh MCP session over WebSocket, call one tool, return the text result.
-    Uses the MCP JSON-RPC 2.0 protocol directly over websockets.
+    Open a fresh MCP session over SSE/HTTP, call one tool, return the text result.
     """
     try:
-        from mcp.client.websocket import websocket_client
+        from mcp.client.sse import sse_client
         from mcp import ClientSession
 
-        url = _OBSIDIAN_URL
-        async with websocket_client(url) as (read, write):
+        async with sse_client(_OBSIDIAN_URL) as (read, write):
             async with ClientSession(read, write) as session:
                 await session.initialize()
                 result = await session.call_tool(tool_name, arguments)
@@ -59,11 +57,10 @@ async def _call_mcp(tool_name: str, arguments: dict) -> str:
 async def _list_mcp_tools() -> list[dict]:
     """Discover what tools the Obsidian MCP server actually exposes."""
     try:
-        from mcp.client.websocket import websocket_client
+        from mcp.client.sse import sse_client
         from mcp import ClientSession
 
-        url = _OBSIDIAN_URL
-        async with websocket_client(url) as (read, write):
+        async with sse_client(_OBSIDIAN_URL) as (read, write):
             async with ClientSession(read, write) as session:
                 await session.initialize()
                 result = await session.list_tools()

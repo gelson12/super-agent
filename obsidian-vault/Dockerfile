@@ -1,6 +1,6 @@
 FROM python:3.12-slim
 
-RUN pip install --no-cache-dir "mcp[websockets]>=1.0.0"
+RUN pip install --no-cache-dir "mcp>=1.0.0" "uvicorn>=0.27.0" "starlette>=0.36.0"
 
 # Seed the vault with a welcome note
 RUN mkdir -p /vault-seed

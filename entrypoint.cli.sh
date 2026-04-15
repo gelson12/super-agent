@@ -288,8 +288,8 @@ fi
 # The obsidian-vault service runs Obsidian + Xvfb headlessly and exposes the
 # Claude Code MCP plugin on port 22360. Override via OBSIDIAN_MCP_URL env var.
 if command -v claude >/dev/null 2>&1; then
-    OBSIDIAN_MCP_URL="${OBSIDIAN_MCP_URL:-ws://obsidian-vault.railway.internal:22360}"
-    claude mcp add obsidian --transport websocket "$OBSIDIAN_MCP_URL" 2>/dev/null || true
+    OBSIDIAN_MCP_URL="${OBSIDIAN_MCP_URL:-http://obsidian-vault.railway.internal:22360/sse}"
+    claude mcp add obsidian --transport sse "$OBSIDIAN_MCP_URL" 2>/dev/null || true
     echo "[entrypoint] Claude CLI: Obsidian vault MCP registered ($OBSIDIAN_MCP_URL)."
 fi
 
