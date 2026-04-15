@@ -1256,6 +1256,31 @@ def weekly_review_list():
     return {"dates": _list()}
 
 
+@app.post("/run-nightly-review", tags=["meta"])
+def trigger_nightly_review():
+    """
+    Manually trigger the nightly review immediately (runs in background thread).
+    Returns instantly — poll GET /daily-review for the result.
+    Useful for testing the full review + vault note + CLAUDE.md refresh pipeline.
+    """
+    import threading as _t
+    from .learning.nightly_review import run_nightly_review
+    _t.Thread(target=run_nightly_review, daemon=True).start()
+    return {"status": "started", "message": "Nightly review running in background — poll GET /daily-review for result."}
+
+
+@app.post("/run-weekly-review", tags=["meta"])
+def trigger_weekly_review():
+    """
+    Manually trigger the weekly review immediately (runs in background thread).
+    Returns instantly — poll GET /weekly-review for the result.
+    """
+    import threading as _t
+    from .learning.weekly_review import run_weekly_review
+    _t.Thread(target=run_weekly_review, daemon=True).start()
+    return {"status": "started", "message": "Weekly review running in background — poll GET /weekly-review for result."}
+
+
 @app.get("/cycle-log", tags=["meta"])
 def cycle_log_endpoint():
     """Cycle log: last 100 entries with summary statistics."""

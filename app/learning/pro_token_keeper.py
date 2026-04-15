@@ -323,6 +323,65 @@ def run_token_keeper() -> dict:
     return result
 
 
+_FAIL_COUNT_FILE = Path("/workspace/.proactive_refresh_fail_count")
+_FAIL_ALERT_THRESHOLD = 3
+
+
+def _read_fail_count() -> int:
+    try:
+        return int(_FAIL_COUNT_FILE.read_text().strip())
+    except Exception:
+        return 0
+
+
+def _write_fail_count(n: int) -> None:
+    try:
+        _FAIL_COUNT_FILE.write_text(str(n))
+    except Exception:
+        pass
+
+
+def _send_vault_alert(consecutive_failures: int) -> None:
+    """Write a persistent alert note to the Obsidian vault when refresh keeps failing."""
+    try:
+        import subprocess as _sp
+        import datetime as _dt
+        now = _dt.datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+        date = _dt.datetime.utcnow().strftime("%Y-%m-%d")
+        note_content = (
+            f"# ALERT: Proactive Token Refresh Failing — {now}\n\n"
+            f"**Consecutive failures:** {consecutive_failures}\n"
+            f"**Threshold:** {_FAIL_ALERT_THRESHOLD}\n\n"
+            f"## What this means\n"
+            f"The 12-hour proactive OAuth refresh has failed {consecutive_failures} times in a row.\n"
+            f"Both direct refresh AND full_recovery_chain() returned False.\n"
+            f"Claude CLI Pro may be unable to self-heal on next token expiry.\n\n"
+            f"## Action required\n"
+            f"1. Check inspiring-cat logs for the root cause\n"
+            f"2. Verify n8n Claude-Verification-Monitor (jun8CaMnNhux1iEY) is active\n"
+            f"3. Manually trigger: POST https://inspiring-cat-production.up.railway.app/auth/login-status\n"
+        )
+        note_repr = repr(note_content)
+        path_repr = repr(f"Engineering/ALERT Proactive Refresh Failing {date}.md")
+        script = (
+            "import asyncio\n"
+            f"NOTE = {note_repr}\n"
+            f"PATH = {path_repr}\n"
+            "async def main():\n"
+            "    from mcp.client.sse import sse_client\n"
+            "    from mcp import ClientSession\n"
+            "    async with sse_client(url='http://obsidian-vault.railway.internal:22360/sse') as (r, w):\n"
+            "        async with ClientSession(r, w) as s:\n"
+            "            await s.initialize()\n"
+            "            await s.call_tool('write_file', {'path': PATH, 'content': NOTE})\n"
+            "asyncio.run(main())\n"
+        )
+        _sp.run(["python3", "-c", script], timeout=15, capture_output=True)
+        _log(f"ALERT: vault note written — proactive refresh failed {consecutive_failures}× consecutively")
+    except Exception as e:
+        _log(f"Vault alert skipped: {e}")
+
+
 def run_proactive_refresh() -> dict:
     """
     Proactive OAuth token renewal — runs every 12 hours even when CLI is healthy.
@@ -354,6 +413,7 @@ def run_proactive_refresh() -> dict:
             _log("Proactive token refresh: direct OAuth refresh SUCCESS ✓ — credentials updated.")
             result["direct_refresh_ok"] = True
             result["message"] = "Direct OAuth refresh succeeded."
+            _write_fail_count(0)  # reset consecutive failure counter on success
             return result
     except Exception as e:
         _log(f"Proactive token refresh: direct refresh error — {e}")
@@ -367,9 +427,17 @@ def run_proactive_refresh() -> dict:
             _log("Proactive token refresh: full recovery chain SUCCESS ✓")
             result["recovery_ok"] = True
             result["message"] = "Full recovery chain succeeded after direct refresh failed."
+            _write_fail_count(0)  # reset on success
         else:
             _log("Proactive token refresh: full recovery chain FAILED — manual login may be required.")
             result["message"] = "Both direct refresh and full recovery chain failed."
+            # Track consecutive failures — alert at threshold
+            _fail_count = _read_fail_count() + 1
+            _write_fail_count(_fail_count)
+            _log(f"Proactive token refresh: consecutive failure count = {_fail_count}/{_FAIL_ALERT_THRESHOLD}")
+            if _fail_count >= _FAIL_ALERT_THRESHOLD:
+                _log(f"CRITICAL: proactive refresh failed {_fail_count}× in a row — sending vault alert")
+                _send_vault_alert(_fail_count)
             try:
                 from .agent_status_tracker import mark_sick
                 mark_sick("Claude CLI Pro")

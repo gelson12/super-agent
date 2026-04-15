@@ -1936,6 +1936,48 @@ def maybe_proactive_refresh() -> bool:
         return False
 
 
+def _write_vault_auth_note(layer: str, duration_s: float) -> None:
+    """
+    Write an auth recovery event note to the Obsidian vault.
+    Called on every successful full_recovery_chain() — builds an audit trail
+    of when auth recovered, which layer succeeded, and how long it took.
+    Runs directly via subprocess (we are already on inspiring-cat which has
+    Railway internal network access to obsidian-vault). Never raises.
+    """
+    try:
+        import subprocess as _sp
+        import datetime as _dt
+        now = _dt.datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+        date = _dt.datetime.utcnow().strftime("%Y-%m-%d")
+        note_content = (
+            f"# CLI Auth Recovery — {now}\n\n"
+            f"**Layer:** {layer}\n"
+            f"**Duration:** {duration_s:.0f}s\n"
+            f"**Result:** SUCCESS ✓\n\n"
+            f"Claude CLI Pro re-authenticated automatically via {layer}.\n"
+            f"Credentials written to /root/.claude/.credentials.json and backed up to volume.\n"
+        )
+        note_repr = repr(note_content)
+        path_repr = repr(f"Engineering/Auth Recovery {date} {layer}.md")
+        script = (
+            "import asyncio\n"
+            f"NOTE = {note_repr}\n"
+            f"PATH = {path_repr}\n"
+            "async def main():\n"
+            "    from mcp.client.sse import sse_client\n"
+            "    from mcp import ClientSession\n"
+            "    async with sse_client(url='http://obsidian-vault.railway.internal:22360/sse') as (r, w):\n"
+            "        async with ClientSession(r, w) as s:\n"
+            "            await s.initialize()\n"
+            "            await s.call_tool('write_file', {'path': PATH, 'content': NOTE})\n"
+            "asyncio.run(main())\n"
+        )
+        _sp.run(["python3", "-c", script], timeout=15, capture_output=True)
+        _log(f"Vault: auth recovery note written ({layer}, {duration_s:.0f}s)")
+    except Exception as e:
+        _log(f"Vault: auth recovery note skipped: {e}")
+
+
 def full_recovery_chain() -> bool:
     """
     Complete recovery chain — try everything in order:
@@ -2004,12 +2046,14 @@ def full_recovery_chain() -> bool:
         _log("Recovery attempt 1/2: Direct OAuth refresh...")
         if _try_direct_refresh():
             _log("=== Recovery SUCCESS via direct OAuth refresh ===")
+            _write_vault_auth_note("Direct OAuth refresh", time.time() - _recovery_started_at)
             return True
 
         # Attempt 2: Full browser auto-login (Playwright + n8n email monitor)
         _log("Recovery attempt 2/2: Full browser auto-login via Playwright...")
         if auto_login_claude():
             _log("=== Recovery SUCCESS via browser auto-login (Playwright) ===")
+            _write_vault_auth_note("Playwright auto-login", time.time() - _recovery_started_at)
             return True
 
         _log("=== ALL recovery methods FAILED — manual login required ===")
