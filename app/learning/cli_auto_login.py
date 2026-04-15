@@ -732,18 +732,36 @@ def _do_auto_login(email: str) -> bool:
             pass
 
     # Keep draining PTY output while waiting for the CLI to finish.
-    # Without this, the CLI may produce more output after receiving the code
-    # (e.g., "Saving credentials...", success message) and block again.
-    _log("Step 4: Draining PTY output while CLI processes code (up to 60s)...")
-    _deadline_step4 = time.time() + 60
+    # CRITICAL: After receiving the auth code, the CLI may show additional
+    # post-login prompts that require Enter:
+    #   - "Authentication successful! Press any key to continue."
+    #   - Analytics/feedback opt-in ("Would you like to share usage data? Y/n")
+    #   - "Your conversation history will be stored locally. Press Enter..."
+    # These come AFTER the oauth URL reading loop exits, so the onboarding
+    # handler never sees them. We must send Enter periodically during the drain.
+    _log("Step 4: Draining PTY output while CLI processes code (up to 120s)...")
+    _deadline_step4 = time.time() + 120
+    _last_enter_time = 0.0
+    _ENTER_INTERVAL = 5.0  # send Enter every 5s to dismiss any post-auth prompts
+
     while time.time() < _deadline_step4:
-        _drain_pty_output(_pty_master_fd, max_reads=10, label="post-code")
+        output = _drain_pty_output(_pty_master_fd, max_reads=10, label="post-code")
         if proc.poll() is not None:
             _log(f"Step 4: CLI exited (rc={proc.poll()}) ✓")
             break
+        # Periodically send Enter to dismiss any post-auth prompts
+        _now = time.time()
+        if _now - _last_enter_time >= _ENTER_INTERVAL:
+            try:
+                _os4.write(_pty_master_fd, b"\r")
+                _last_enter_time = _now
+                if output.strip():
+                    _log("Step 4: Sent Enter to dismiss post-auth prompt")
+            except Exception:
+                pass
         time.sleep(0.5)
     else:
-        _log("Step 4: CLI didn't exit in 60s — killing (token may still be saved).")
+        _log("Step 4: CLI didn't exit in 120s — killing (token may still be saved).")
         proc.kill()
 
     # Close the PTY master fd now that the child has exited
