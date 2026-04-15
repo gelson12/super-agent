@@ -306,12 +306,25 @@ _MODEL_MAP = {
     "ENSEMBLE": "Sonnet Anthropic",  # ensemble uses Claude as primary
 }
 
-_ONE_MINUTE     = 60
-_FIVE_MINUTES   = 5  * 60   # idle → break
-_TEN_MINUTES    = 10 * 60   # break → coffee_break
-_THIRTY_MINUTES = 30 * 60   # coffee_break → sleeping
+# ── Worker-type classification ─────────────────────────────────────────────────
+# API models: HTTP-based, always available when credentials valid.
+# No idle-timeout — they don't go on break just because nobody asked them anything.
+_API_MODELS  = {"Anthropic Haiku", "Sonnet Anthropic", "Opus Anthropic", "DeepSeek"}
+# CLI workers: auth-dependent, token can expire — degrade over time.
+_CLI_WORKERS = {"Claude CLI Pro", "Gemini CLI"}
+# Agents: demand-triggered — moderate thresholds, no coffee_break.
+_AGENTS      = {"Shell Agent", "GitHub Agent", "N8N Agent", "Self-Improve Agent"}
 
-_SICK_GRACE_PERIOD = 15 * 60  # 15 minutes — show "break" before escalating to "sick"
+# CLI worker idle thresholds
+_CLI_BREAK_AFTER    = 30 * 60    # 30 min  → break
+_CLI_COFFEE_AFTER   = 2  * 3600  # 2 hours → coffee_break
+_CLI_SLEEPING_AFTER = 8  * 3600  # 8 hours → sleeping
+
+# Agent idle thresholds (no coffee_break)
+_AGENT_BREAK_AFTER    = 30 * 60   # 30 min  → break
+_AGENT_SLEEPING_AFTER = 2  * 3600 # 2 hours → sleeping
+
+_SICK_GRACE_PERIOD = 15 * 60  # 15 min — show "recovering" before escalating to "sick"
 
 
 def _ensure_worker(worker_id: str) -> dict:
@@ -441,24 +454,33 @@ def get_worker_status(worker_id: str) -> dict:
         now = time.time()
         state = w["state"]
 
-        # Sick grace period: show "break" for first 15 min, "sick" only after that.
-        # This covers the self-healing window — the system is recovering, not truly broken.
+        # Sick grace period: show "recovering" for first 15 min, "sick" only after that.
+        # This covers the self-healing window — distinct from idle-based break.
         if state == "sick":
             sick_since = w.get("sick_since")
             if sick_since and (now - sick_since) < _SICK_GRACE_PERIOD:
-                state = "break"  # still within healing window — show as on break
+                state = "recovering"  # still within healing window
 
-        # Auto-transition idle based on time since last work:
-        #   idle → break after 5 min, break → coffee_break after 10 min,
-        #   coffee_break → sleeping after 30 min
+        # Worker-type-aware idle transitions:
+        #   API models  → stay idle indefinitely (always available via HTTP)
+        #   CLI workers → break@30m, coffee_break@2h, sleeping@8h
+        #   Agents      → break@30m, sleeping@2h
         if state == "idle" and w["last_worked"] > 0:
             elapsed = now - w["last_worked"]
-            if elapsed > _THIRTY_MINUTES:
-                state = "sleeping"
-            elif elapsed > _TEN_MINUTES:
-                state = "coffee_break"
-            elif elapsed > _FIVE_MINUTES:
-                state = "break"
+            if worker_id in _API_MODELS:
+                pass  # API models never auto-degrade — always reachable
+            elif worker_id in _CLI_WORKERS:
+                if elapsed > _CLI_SLEEPING_AFTER:
+                    state = "sleeping"
+                elif elapsed > _CLI_COFFEE_AFTER:
+                    state = "coffee_break"
+                elif elapsed > _CLI_BREAK_AFTER:
+                    state = "break"
+            else:  # agents
+                if elapsed > _AGENT_SLEEPING_AFTER:
+                    state = "sleeping"
+                elif elapsed > _AGENT_BREAK_AFTER:
+                    state = "break"
 
         sick_since = w.get("sick_since")
         sick_for_seconds = round(now - sick_since) if sick_since else None
@@ -486,8 +508,8 @@ def get_all_statuses() -> list[dict]:
                 result.append(get_worker_status(wid))
 
     # Sort: error/strike/sick first (need attention), then working, then idle/sleeping
-    order = {"error": 0, "strike": 1, "sick": 2, "working": 3, "talking": 4, "idle": 5, "break": 6, "coffee_break": 7, "sleeping": 8}
-    result.sort(key=lambda x: order.get(x["state"], 8))
+    order = {"error": 0, "strike": 1, "sick": 2, "recovering": 3, "working": 4, "talking": 5, "idle": 6, "break": 7, "coffee_break": 8, "sleeping": 9}
+    result.sort(key=lambda x: order.get(x["state"], 9))
     return result
 
 

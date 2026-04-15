@@ -496,6 +496,7 @@ def _start_claude_login_pty(env: dict) -> tuple:
     # fires on the next idle cycle after the CLI redraws.
     _last_response_time = 0.0
     _RESPONSE_COOLDOWN = 2.0  # seconds
+    _fired_markers: set[str] = set()  # prevent same marker from firing Enter twice
 
     def _maybe_respond(text_no_spaces: str) -> bool:
         """Send Enter for the first matching prompt. Returns True if sent."""
@@ -504,7 +505,8 @@ def _start_claude_login_pty(env: dict) -> tuple:
         if now - _last_response_time < _RESPONSE_COOLDOWN:
             return False  # still in cooldown — try again next cycle
         for marker, response in _ONBOARDING_RESPONSES:
-            if marker in text_no_spaces:
+            if marker in text_no_spaces and marker not in _fired_markers:
+                _fired_markers.add(marker)
                 _log(f"PTY: onboarding prompt detected ({marker!r}) — sending Enter...")
                 try:
                     _os3.write(master_fd, response)
@@ -778,6 +780,7 @@ def _do_auto_login(email: str) -> bool:
     # These come AFTER the oauth URL reading loop exits, so the onboarding
     # handler never sees them. We must send Enter periodically during the drain.
     _log("Step 4: Draining PTY output while CLI processes code (up to 120s)...")
+    _code_sent_at = time.time()
     _deadline_step4 = time.time() + 120
     _last_enter_time = 0.0
     _ENTER_INTERVAL = 5.0  # send Enter every 5s to dismiss any post-auth prompts
@@ -787,7 +790,20 @@ def _do_auto_login(email: str) -> bool:
         if proc.poll() is not None:
             _log(f"Step 4: CLI exited (rc={proc.poll()}) ✓")
             break
-        # Periodically send Enter to dismiss any post-auth prompts
+        # Short-circuit: if credentials file was written AFTER we sent the auth code,
+        # auth is complete. Kill the process immediately — prevents sending Enter into
+        # the interactive Claude REPL that `claude login` transitions into post-auth.
+        try:
+            if _CREDS_FILE.exists() and _CREDS_FILE.stat().st_mtime > _code_sent_at:
+                _log("Step 4: Credentials file updated — auth complete, terminating CLI.")
+                proc.terminate()
+                time.sleep(1.5)
+                if proc.poll() is None:
+                    proc.kill()
+                break
+        except Exception:
+            pass
+        # Periodically send Enter to dismiss any remaining post-auth prompts
         _now = time.time()
         if _now - _last_enter_time >= _ENTER_INTERVAL:
             try:
@@ -1781,28 +1797,94 @@ def _try_direct_refresh() -> bool:
             or _KNOWN_CLIENT_ID
         )
 
-        data = urllib.parse.urlencode({
+        _json_body = json.dumps({
+            "grant_type": "refresh_token",
+            "refresh_token": refresh_token,
+            "client_id": client_id,
+        }).encode()
+        _form_body = urllib.parse.urlencode({
             "grant_type": "refresh_token",
             "refresh_token": refresh_token,
             "client_id": client_id,
         }).encode()
 
-        # Endpoints ordered by likelihood — claude.com/cai/oauth/token is the
-        # confirmed real OAuth server (we see /cai/oauth/authorize in live URLs).
-        # The previous list only contained guesses that always returned 404/405.
-        endpoints = [
+        # Attempt 1: JSON body with browser-like headers on the confirmed real OAuth host.
+        # Logs showed 405 (Method Not Allowed) on form-encoded — the endpoint exists but
+        # likely requires JSON + Origin header. Try this before the form-encoded fallback.
+        # Removed endpoints that always fail:
+        #   api.claude.ai      → DNS nonexistent
+        #   claude.ai/api/     → 403 Cloudflare
+        #   api.anthropic.com  → 404
+        _json_req = urllib.request.Request(
             "https://claude.com/cai/oauth/token",
+            data=_json_body,
+            headers={
+                "Content-Type": "application/json",
+                "User-Agent": "Mozilla/5.0 (compatible; claude-cli/1.0)",
+                "Origin": "https://claude.ai",
+                "Referer": "https://claude.ai/",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(_json_req, timeout=15) as _jresp:
+                _jresult = json.loads(_jresp.read().decode())
+                if _jresult.get("access_token"):
+                    _log("Direct refresh SUCCESS via claude.com/cai/oauth/token (JSON) ✓")
+                    # Reuse the success/update block below by injecting into result loop
+                    result = _jresult
+                    new_access = result.get("access_token")
+                    new_refresh = result.get("refresh_token", refresh_token)
+                    # (update creds and return — same logic as loop below)
+                    for _top_key in ("accessToken", "access_token"):
+                        if _top_key in creds:
+                            creds[_top_key] = new_access
+                    for _top_key in ("refreshToken", "refresh_token", "oauthRefreshToken"):
+                        if _top_key in creds:
+                            creds[_top_key] = new_refresh
+                    for _nested_key in ("claudeAiOauth", "claudeAiOAuth", "oauth", "session", "credentials"):
+                        _nested = creds.get(_nested_key, {})
+                        if isinstance(_nested, dict):
+                            for _ak in ("accessToken", "access_token"):
+                                if _ak in _nested:
+                                    _nested[_ak] = new_access
+                            for _rk in ("refreshToken", "refresh_token"):
+                                if _rk in _nested:
+                                    _nested[_rk] = new_refresh
+                            _new_exp = result.get("expires_in")
+                            if _new_exp:
+                                import time as _t
+                                _exp_ts = int((_t.time() + _new_exp) * 1000)
+                                for _ek in ("expiresAt", "expires_at"):
+                                    if _ek in _nested:
+                                        _nested[_ek] = _exp_ts
+                            creds[_nested_key] = _nested
+                    _CREDS_FILE.write_text(json.dumps(creds, indent=2))
+                    _CREDS_FILE.chmod(0o600)
+                    _push_token_to_railway()
+                    return True
+                else:
+                    _log(f"Direct refresh (JSON): claude.com returned 200 but no access_token — "
+                         f"keys: {list(_jresult.keys())}")
+        except urllib.error.HTTPError as _je:
+            try:
+                _jbody = _je.read().decode("utf-8", errors="replace")[:200]
+            except Exception:
+                _jbody = "(unreadable)"
+            _log(f"Direct refresh (JSON): claude.com returned HTTP {_je.code} — body: {_jbody}")
+        except Exception as _je:
+            _log(f"Direct refresh (JSON): claude.com error — {_je}")
+
+        # Attempt 2: form-encoded fallback on claude.ai (same path, different host)
+        endpoints = [
             "https://claude.ai/cai/oauth/token",
-            "https://api.claude.ai/oauth/token",
-            "https://claude.ai/api/oauth/token",
-            "https://api.anthropic.com/oauth/token",
         ]
 
         for endpoint in endpoints:
             try:
                 req = urllib.request.Request(
                     endpoint,
-                    data=data,
+                    data=_form_body,
                     headers={
                         "Content-Type": "application/x-www-form-urlencoded",
                         "User-Agent": "claude-cli/1.0",
@@ -2022,7 +2104,11 @@ def full_recovery_chain() -> bool:
     if _recovery_running.is_set():
         _log("=== Recovery already in progress — waiting for it to complete ===")
         _t = time.time()
-        _recovery_running.wait(timeout=300)
+        # Poll until the flag CLEARS (recovery done). event.wait() returns immediately
+        # when the event is already set — we need the opposite: wait for it to be cleared.
+        _deadline = time.time() + 300
+        while _recovery_running.is_set() and time.time() < _deadline:
+            time.sleep(0.5)
         if _winner_succeeded(_t):
             _log("=== Recovery completed by another thread — fresh credentials detected ✓ ===")
             return True
@@ -2032,7 +2118,10 @@ def full_recovery_chain() -> bool:
     if not _recovery_lock.acquire(blocking=False):
         _log("=== Recovery lock busy — waiting for existing recovery to finish ===")
         _t = time.time()
-        _recovery_running.wait(timeout=300)
+        # Same fix: poll until flag clears rather than using event.wait()
+        _deadline = time.time() + 300
+        while _recovery_running.is_set() and time.time() < _deadline:
+            time.sleep(0.5)
         if _winner_succeeded(_t):
             return True
         return False

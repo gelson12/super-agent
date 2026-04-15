@@ -1,0 +1,182 @@
+{
+  "name": "Gmail-Digest",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "digest-trigger",
+      "name": "Workflow Input",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [240, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Calculate the digest window - since last digest or default 8 hours\nconst defaultHours = 8;\nconst sinceTimestamp = new Date(Date.now() - defaultHours * 60 * 60 * 1000).toISOString();\nreturn [{ json: { since_timestamp: sinceTimestamp, digest_time: new Date().toISOString() } }];"
+      },
+      "id": "get-window",
+      "name": "Get Digest Window",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 400]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT m.message_id, m.sender, m.subject, m.snippet, m.date_received, p.category, p.priority_score, p.ai_summary, p.action FROM gmail_messages m LEFT JOIN gmail_processing_state p ON m.message_id = p.message_id WHERE m.created_at > $1::timestamptz AND (p.priority_score >= 5 OR p.category IN ('urgent', 'finance', 'follow_up_needed')) ORDER BY COALESCE(p.priority_score, 0) DESC LIMIT 30",
+        "options": { "queryParameters": "={{ $json.since_timestamp }}" }
+      },
+      "id": "fetch-important",
+      "name": "Fetch Important Emails",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [700, 200],
+      "credentials": { "postgres": { "id": "RECONNECT", "name": "Postgres account" } },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, message_id, description, deadline, priority, status, created_at FROM action_items WHERE status = 'open' ORDER BY deadline ASC NULLS LAST, priority DESC LIMIT 20",
+        "options": {}
+      },
+      "id": "fetch-actions",
+      "name": "Fetch Unresolved Actions",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [700, 340],
+      "credentials": { "postgres": { "id": "RECONNECT", "name": "Postgres account" } },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT COUNT(*) as unread_count FROM gmail_messages WHERE is_unread = true AND created_at > NOW() - INTERVAL '24 hours'",
+        "options": {}
+      },
+      "id": "fetch-unread",
+      "name": "Fetch Unread Count",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [700, 480],
+      "credentials": { "postgres": { "id": "RECONNECT", "name": "Postgres account" } },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT m.message_id, m.sender, m.subject, p.ai_summary FROM gmail_messages m JOIN gmail_processing_state p ON m.message_id = p.message_id WHERE p.category = 'finance' AND m.created_at > $1::timestamptz ORDER BY m.created_at DESC LIMIT 10",
+        "options": { "queryParameters": "={{ $('Get Digest Window').item.json.since_timestamp }}" }
+      },
+      "id": "fetch-finance",
+      "name": "Fetch Finance Reminders",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [700, 620],
+      "credentials": { "postgres": { "id": "RECONNECT", "name": "Postgres account" } },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT p.category, COUNT(*) as count FROM gmail_messages m JOIN gmail_processing_state p ON m.message_id = p.message_id WHERE m.created_at > $1::timestamptz GROUP BY p.category ORDER BY count DESC",
+        "options": { "queryParameters": "={{ $('Get Digest Window').item.json.since_timestamp }}" }
+      },
+      "id": "fetch-stats",
+      "name": "Fetch Category Stats",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [700, 760],
+      "credentials": { "postgres": { "id": "RECONNECT", "name": "Postgres account" } },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Gather all inputs from parallel branches\nconst important = $('Fetch Important Emails').all().map(i => i.json).filter(i => i.message_id);\nconst actions = $('Fetch Unresolved Actions').all().map(i => i.json).filter(i => i.id);\nconst unreadData = $('Fetch Unread Count').first().json;\nconst finance = $('Fetch Finance Reminders').all().map(i => i.json).filter(i => i.message_id);\nconst stats = $('Fetch Category Stats').all().map(i => i.json).filter(i => i.category);\n\nconst digestTime = $('Get Digest Window').first().json.digest_time;\nconst unreadCount = unreadData.unread_count || 0;\n\n// Build HTML\nlet html = `<div style=\"font-family: Arial, sans-serif; max-width: 700px; margin: 0 auto;\">`;\nhtml += `<h1 style=\"color: #1a73e8;\">Gmail Inbox Digest</h1>`;\nhtml += `<p style=\"color: #666;\">Generated: ${new Date(digestTime).toLocaleString()}</p>`;\nhtml += `<p><strong>Unread emails (24h):</strong> ${unreadCount}</p>`;\n\n// Category breakdown\nif (stats.length > 0) {\n  html += `<h2>Category Breakdown</h2><table style=\"border-collapse: collapse; width: 100%;\">`;\n  html += `<tr style=\"background: #f0f0f0;\"><th style=\"padding: 8px; text-align: left;\">Category</th><th style=\"padding: 8px;\">Count</th></tr>`;\n  for (const s of stats) {\n    html += `<tr><td style=\"padding: 8px; border-bottom: 1px solid #eee;\">${s.category}</td><td style=\"padding: 8px; border-bottom: 1px solid #eee; text-align: center;\">${s.count}</td></tr>`;\n  }\n  html += `</table>`;\n}\n\n// Important emails\nif (important.length > 0) {\n  html += `<h2>Important Emails (${important.length})</h2><table style=\"border-collapse: collapse; width: 100%;\">`;\n  html += `<tr style=\"background: #f0f0f0;\"><th style=\"padding: 8px; text-align: left;\">From</th><th style=\"padding: 8px; text-align: left;\">Subject</th><th style=\"padding: 8px;\">Priority</th><th style=\"padding: 8px; text-align: left;\">Summary</th></tr>`;\n  for (const e of important.slice(0, 15)) {\n    const priority = e.priority_score || '-';\n    const color = priority >= 8 ? '#d93025' : priority >= 5 ? '#f9ab00' : '#34a853';\n    html += `<tr><td style=\"padding: 8px; border-bottom: 1px solid #eee;\">${(e.sender || '').substring(0, 40)}</td><td style=\"padding: 8px; border-bottom: 1px solid #eee;\">${(e.subject || '').substring(0, 60)}</td><td style=\"padding: 8px; border-bottom: 1px solid #eee; text-align: center; color: ${color}; font-weight: bold;\">${priority}</td><td style=\"padding: 8px; border-bottom: 1px solid #eee; font-size: 12px;\">${(e.ai_summary || '').substring(0, 100)}</td></tr>`;\n  }\n  html += `</table>`;\n}\n\n// Action items\nif (actions.length > 0) {\n  html += `<h2>Open Action Items (${actions.length})</h2><ul>`;\n  for (const a of actions.slice(0, 10)) {\n    const deadline = a.deadline ? ` (due: ${a.deadline})` : '';\n    html += `<li>${a.description}${deadline}</li>`;\n  }\n  html += `</ul>`;\n}\n\n// Finance reminders\nif (finance.length > 0) {\n  html += `<h2>Finance/Admin (${finance.length})</h2><ul>`;\n  for (const f of finance.slice(0, 5)) {\n    html += `<li><strong>${(f.sender || '').substring(0, 30)}:</strong> ${(f.subject || '').substring(0, 60)}</li>`;\n  }\n  html += `</ul>`;\n}\n\nhtml += `<hr><p style=\"color: #999; font-size: 11px;\">Gmail Admin Digest - Automated by n8n</p></div>`;\n\nreturn [{ json: { digest_html: html, email_count: important.length, action_count: actions.length, unread_count: unreadCount } }];"
+      },
+      "id": "build-digest",
+      "name": "Build Digest HTML",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [960, 400]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $env.ADMIN_EMAIL }}",
+        "subject": "=Gmail Digest - {{ $now.format('yyyy-MM-dd HH:mm') }}",
+        "message": "={{ $json.digest_html }}",
+        "options": {
+          "appendAttributionToBody": false
+        }
+      },
+      "id": "send-digest",
+      "name": "Send Digest Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [1200, 400],
+      "credentials": { "gmailOAuth2": { "id": "RECONNECT", "name": "Gmail account" } }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO workflow_runs (workflow_name, trigger_type, trigger_source, status, started_at, finished_at, payload_summary) VALUES ('Gmail-Digest', 'scheduled', 'cron', 'success', $1::timestamptz, NOW(), $2)",
+        "options": {
+          "queryParameters": "={{ $('Get Digest Window').item.json.digest_time }},={{ 'Emails: ' + $json.email_count + ', Actions: ' + $json.action_count + ', Unread: ' + $json.unread_count }}"
+        }
+      },
+      "id": "log-digest",
+      "name": "Log Digest Run",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1420, 400],
+      "credentials": { "postgres": { "id": "RECONNECT", "name": "Postgres account" } },
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "Workflow Input": {
+      "main": [[{ "node": "Get Digest Window", "type": "main", "index": 0 }]]
+    },
+    "Get Digest Window": {
+      "main": [[
+        { "node": "Fetch Important Emails", "type": "main", "index": 0 },
+        { "node": "Fetch Unresolved Actions", "type": "main", "index": 0 },
+        { "node": "Fetch Unread Count", "type": "main", "index": 0 },
+        { "node": "Fetch Finance Reminders", "type": "main", "index": 0 },
+        { "node": "Fetch Category Stats", "type": "main", "index": 0 }
+      ]]
+    },
+    "Fetch Important Emails": {
+      "main": [[{ "node": "Build Digest HTML", "type": "main", "index": 0 }]]
+    },
+    "Fetch Unresolved Actions": {
+      "main": [[{ "node": "Build Digest HTML", "type": "main", "index": 0 }]]
+    },
+    "Fetch Unread Count": {
+      "main": [[{ "node": "Build Digest HTML", "type": "main", "index": 0 }]]
+    },
+    "Fetch Finance Reminders": {
+      "main": [[{ "node": "Build Digest HTML", "type": "main", "index": 0 }]]
+    },
+    "Fetch Category Stats": {
+      "main": [[{ "node": "Build Digest HTML", "type": "main", "index": 0 }]]
+    },
+    "Build Digest HTML": {
+      "main": [[{ "node": "Send Digest Email", "type": "main", "index": 0 }]]
+    },
+    "Send Digest Email": {
+      "main": [[{ "node": "Log Digest Run", "type": "main", "index": 0 }]]
+    }
+  },
+  "pinData": {},
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "description": "Gmail Digest sub-workflow: fetches important emails, action items, unread counts, finance reminders, and category stats from PostgreSQL, builds HTML digest, and sends via Gmail at 08:00, 12:00, and 21:00."
+  },
+  "tags": []
+}

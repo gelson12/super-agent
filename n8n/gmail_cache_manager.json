@@ -1,0 +1,214 @@
+{
+  "name": "Gmail-Cache-Manager",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 */6 * * *"
+            }
+          ]
+        }
+      },
+      "id": "cache-cron",
+      "name": "Every 6 Hours",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 400]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "DELETE FROM calendar_events_cache WHERE cache_expires_at < NOW()",
+        "options": {}
+      },
+      "id": "invalidate-calendar",
+      "name": "Invalidate Expired Calendar Cache",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [480, 200],
+      "credentials": { "postgres": { "id": "RECONNECT", "name": "Postgres account" } },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT a.entity_id as message_id FROM audit_logs a WHERE a.action = 'quarantine' AND a.created_at < NOW() - INTERVAL '48 hours' AND a.entity_id NOT IN (SELECT entity_id FROM audit_logs WHERE action = 'restore' AND entity_type = 'gmail_message')",
+        "options": {}
+      },
+      "id": "fetch-quarantine",
+      "name": "Fetch Quarantine Queue",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [480, 400],
+      "credentials": { "postgres": { "id": "RECONNECT", "name": "Postgres account" } },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
+          "conditions": [{ "id": "has-quarantine", "leftValue": "={{ $json.message_id }}", "rightValue": "", "operator": { "type": "string", "operation": "exists" } }],
+          "combinator": "and"
+        }
+      },
+      "id": "has-quarantined",
+      "name": "Has Quarantined?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [700, 400]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "delete",
+        "messageId": "={{ $json.message_id }}",
+        "options": {}
+      },
+      "id": "trash-message",
+      "name": "Trash Quarantined Message",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [920, 340],
+      "credentials": { "gmailOAuth2": { "id": "RECONNECT", "name": "Gmail account" } },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO audit_logs (entity_type, entity_id, action, performed_by, details, created_at) VALUES ('gmail_message', $1, 'trash_after_quarantine', 'cache_manager', '{\"reason\": \"48h quarantine expired\"}'::jsonb, NOW())",
+        "options": { "queryParameters": "={{ $json.message_id }}" }
+      },
+      "id": "log-trash",
+      "name": "Log Trash Action",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1140, 340],
+      "credentials": { "postgres": { "id": "RECONNECT", "name": "Postgres account" } },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "DELETE FROM gmail_messages WHERE created_at < NOW() - INTERVAL '90 days' AND message_id NOT IN (SELECT message_id FROM gmail_processing_state WHERE category IN ('urgent', 'finance', 'customer'));",
+        "options": {}
+      },
+      "id": "cleanup-messages",
+      "name": "Cleanup Old Messages",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [480, 600],
+      "credentials": { "postgres": { "id": "RECONNECT", "name": "Postgres account" } },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "DELETE FROM errors WHERE error_timestamp < NOW() - INTERVAL '30 days';",
+        "options": {}
+      },
+      "id": "cleanup-errors",
+      "name": "Cleanup Old Errors",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [700, 600],
+      "credentials": { "postgres": { "id": "RECONNECT", "name": "Postgres account" } },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "DELETE FROM sheet_exports WHERE exported_at < NOW() - INTERVAL '60 days';",
+        "options": {}
+      },
+      "id": "cleanup-exports",
+      "name": "Cleanup Old Exports",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [920, 600],
+      "credentials": { "postgres": { "id": "RECONNECT", "name": "Postgres account" } },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "DELETE FROM workflow_runs WHERE started_at < NOW() - INTERVAL '60 days';",
+        "options": {}
+      },
+      "id": "cleanup-runs",
+      "name": "Cleanup Old Runs",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1140, 600],
+      "credentials": { "postgres": { "id": "RECONNECT", "name": "Postgres account" } },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO workflow_runs (workflow_name, trigger_type, status, started_at, finished_at, payload_summary) VALUES ('Gmail-Cache-Manager', 'cron', 'success', NOW(), NOW(), 'Cache cleanup completed')",
+        "options": {}
+      },
+      "id": "log-cleanup",
+      "name": "Log Cleanup Run",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1360, 400],
+      "credentials": { "postgres": { "id": "RECONNECT", "name": "Postgres account" } },
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "Every 6 Hours": {
+      "main": [[
+        { "node": "Invalidate Expired Calendar Cache", "type": "main", "index": 0 },
+        { "node": "Fetch Quarantine Queue", "type": "main", "index": 0 },
+        { "node": "Cleanup Old Messages", "type": "main", "index": 0 }
+      ]]
+    },
+    "Invalidate Expired Calendar Cache": {
+      "main": [[{ "node": "Log Cleanup Run", "type": "main", "index": 0 }]]
+    },
+    "Fetch Quarantine Queue": {
+      "main": [[{ "node": "Has Quarantined?", "type": "main", "index": 0 }]]
+    },
+    "Has Quarantined?": {
+      "main": [
+        [{ "node": "Trash Quarantined Message", "type": "main", "index": 0 }],
+        [{ "node": "Log Cleanup Run", "type": "main", "index": 0 }]
+      ]
+    },
+    "Trash Quarantined Message": {
+      "main": [[{ "node": "Log Trash Action", "type": "main", "index": 0 }]]
+    },
+    "Log Trash Action": {
+      "main": [[{ "node": "Log Cleanup Run", "type": "main", "index": 0 }]]
+    },
+    "Cleanup Old Messages": {
+      "main": [[{ "node": "Cleanup Old Errors", "type": "main", "index": 0 }]]
+    },
+    "Cleanup Old Errors": {
+      "main": [[{ "node": "Cleanup Old Exports", "type": "main", "index": 0 }]]
+    },
+    "Cleanup Old Exports": {
+      "main": [[{ "node": "Cleanup Old Runs", "type": "main", "index": 0 }]]
+    },
+    "Cleanup Old Runs": {
+      "main": [[{ "node": "Log Cleanup Run", "type": "main", "index": 0 }]]
+    }
+  },
+  "pinData": {},
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "description": "Gmail Cache Manager: runs every 6 hours to invalidate expired calendar cache, process quarantine queue (trash messages after 48h), and cleanup old records (messages >90d, errors >30d, exports >60d, runs >60d)."
+  },
+  "tags": []
+}

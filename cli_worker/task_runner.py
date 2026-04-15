@@ -8,7 +8,7 @@ Task types:
   claude_probe  → claude --version              (timeout=15s)
   gemini_probe  → gemini --version              (timeout=15s)
   flutter_build → flutter build apk --release  (cwd=/workspace, timeout=600s)
-  shell         → bash -c "{command}"           (cwd=/workspace, timeout=30s)
+  shell         → bash -c "{command}"           (cwd=/workspace, timeout=60s)
 
 Each task: pending → running → done | failed
 Never raises — writes error string on any exception.
@@ -28,7 +28,7 @@ _TIMEOUTS = {
     "claude_probe":  15,
     "gemini_probe":  15,
     "flutter_build": 600,
-    "shell":         30,   # generic shell command — curl, git, any binary
+    "shell":         60,   # generic shell command — 60s for vault MCP cold-starts (~15s Xvfb+Obsidian + SSE overhead)
 }
 
 _WORKSPACE = "/workspace"

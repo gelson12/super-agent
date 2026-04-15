@@ -95,10 +95,12 @@ if [ "$_claude_valid" = "false" ] && [ -n "$CLAUDE_SESSION_TOKEN" ]; then
         echo "[entrypoint] WARNING: Claude logged in but not claude.ai auth. Re-run 'claude login'."
     else
         echo "[entrypoint] WARNING: CLAUDE_SESSION_TOKEN EXPIRED — Pro unavailable."
+        touch /tmp/.claude_boot_sick   # signal Python app to mark CLI sick before first task
         echo "[entrypoint] FIX: VS Code → 'claude login' → approve → 'cat /root/.claude/.credentials.json | base64 -w0' → update CLAUDE_SESSION_TOKEN."
     fi
 elif [ "$_claude_valid" = "false" ]; then
     echo "[entrypoint] WARNING: No CLAUDE_SESSION_TOKEN and no valid volume credentials."
+    touch /tmp/.claude_boot_sick   # signal Python app to mark CLI sick before first task
 fi
 
 # ── Google Gemini CLI session token (free-tier Pro backup) ───────────────────

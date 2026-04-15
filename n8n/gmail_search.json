@@ -1,0 +1,132 @@
+{
+  "name": "Gmail-Search",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "gmail-search",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "search-webhook-001",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "gmail-search-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "const p = $input.first().json;\nlet q = [];\nif (p.sender) q.push('from:' + p.sender);\nif (p.keyword) q.push(p.keyword);\nif (p.label) q.push('label:' + p.label);\nif (p.is_unread === true) q.push('is:unread');\nif (p.has_attachment === true) q.push('has:attachment');\nif (p.date_from) q.push('after:' + p.date_from);\nif (p.date_to) q.push('before:' + p.date_to);\nif (p.subject) q.push('subject:' + p.subject);\nconst searchQuery = q.join(' ') || 'in:inbox';\nreturn [{ json: { search_query: searchQuery, limit: p.limit || 20 } }];"
+      },
+      "id": "search-buildquery-001",
+      "name": "Build Search Query",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "getAll",
+        "returnAll": false,
+        "limit": "={{ $json.limit }}",
+        "filters": {
+          "q": "={{ $json.search_query }}"
+        },
+        "options": {}
+      },
+      "id": "search-gmail-001",
+      "name": "Gmail Search",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [680, 300],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "RECONNECT",
+          "name": "gmailOAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const results = $input.all().map(item => {\n  const j = item.json;\n  const headers = j.payload?.headers || [];\n  const getHeader = (name) => {\n    const h = headers.find(h => h.name.toLowerCase() === name.toLowerCase());\n    return h ? h.value : '';\n  };\n  return {\n    json: {\n      message_id: j.id || '',\n      thread_id: j.threadId || '',\n      sender: getHeader('From'),\n      subject: getHeader('Subject'),\n      snippet: j.snippet || '',\n      date: getHeader('Date'),\n      labels: (j.labelIds || []).join(','),\n      is_unread: (j.labelIds || []).includes('UNREAD'),\n      has_attachments: (j.payload?.parts || []).some(p => p.filename && p.filename.length > 0)\n    }\n  };\n});\nreturn results.length > 0 ? results : [{ json: { message: 'No results found' } }];"
+      },
+      "id": "search-normalize-001",
+      "name": "Normalize Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, count: $input.all().length, results: $input.all().map(i => i.json) }) }}",
+        "options": {}
+      },
+      "id": "search-respond-001",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1120, 300]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Build Search Query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Search Query": {
+      "main": [
+        [
+          {
+            "node": "Gmail Search",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gmail Search": {
+      "main": [
+        [
+          {
+            "node": "Normalize Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Output": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "description": "Gmail Search sub-workflow: webhook-triggered search with normalized output."
+  },
+  "tags": []
+}

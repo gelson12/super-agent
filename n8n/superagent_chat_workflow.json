@@ -1,0 +1,128 @@
+{
+  "name": "Super Agent Chat",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "super-agent-chat",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "webhook-in",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "super-agent-chat-main"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "set-message",
+              "name": "message",
+              "value": "={{ $json.message || $json.body?.message || $json.query || 'Hello' }}",
+              "type": "string"
+            },
+            {
+              "id": "set-session",
+              "name": "session_id",
+              "value": "={{ $json.session_id || $json.body?.session_id || ('n8n-' + $workflow.id) }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "prepare-input",
+      "name": "Prepare Input",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://super-agent-production.up.railway.app/chat",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-Token",
+              "value": "={{ $env.SUPER_AGENT_PASSWORD || $json.token }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"message\": \"{{ $json.message }}\",\n  \"session_id\": \"{{ $json.session_id }}\"\n}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 60000
+        }
+      },
+      "id": "call-superagent",
+      "name": "Call Super Agent",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"ok\": true,\n  \"response\": \"{{ $json.response }}\",\n  \"model_used\": \"{{ $json.model_used }}\",\n  \"session_id\": \"{{ $json.session_id }}\",\n  \"routed_by\": \"{{ $json.routed_by }}\"\n}",
+        "options": {}
+      },
+      "id": "respond-node",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"ok\": false,\n  \"error\": \"Super Agent call failed\",\n  \"detail\": \"{{ $json.error || $json.message }}\"\n}",
+        "options": {
+          "responseCode": 502
+        }
+      },
+      "id": "error-respond",
+      "name": "Error Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [900, 500]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [[{ "node": "Prepare Input", "type": "main", "index": 0 }]]
+    },
+    "Prepare Input": {
+      "main": [[{ "node": "Call Super Agent", "type": "main", "index": 0 }]]
+    },
+    "Call Super Agent": {
+      "main": [[{ "node": "Respond", "type": "main", "index": 0 }]],
+      "error": [[{ "node": "Error Response", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true,
+    "errorWorkflow": ""
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "description": "Simple webhook proxy to Super Agent AI. POST {message, session_id} to the webhook URL and get back the AI response. Set SUPER_AGENT_PASSWORD env var in n8n to your UI_PASSWORD from Railway. Use session_id to maintain conversation memory across calls."
+  }
+}

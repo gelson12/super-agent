@@ -1,0 +1,405 @@
+{
+  "name": "Gmail-Triage",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "triage-trigger",
+      "name": "Workflow Input",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "duplicateItem": false,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "classification_prompt",
+              "name": "classification_prompt",
+              "value": "=Classify this email. Return ONLY valid JSON, no other text.\nFrom: {{ $json.sender }}\nSubject: {{ $json.subject }}\nSnippet: {{ $json.snippet }}\nLabels: {{ $json.labels }}\n\nReturn exactly this JSON structure:\n{\"category\":\"<one of: urgent, informational, admin, finance, customer, personal, newsletter, meeting_related, follow_up_needed, low_priority, potential_spam>\",\"action\":\"<one of: ignore, label, archive, delete, draft, send, flag, log_to_sheet, link_to_calendar>\",\"entities\":[{\"type\":\"person|org|date|amount|url\",\"value\":\"...\"}],\"action_items\":[\"...\"],\"deadlines\":[\"YYYY-MM-DD: description\"],\"priority_score\":<1-10>,\"ai_summary\":\"one sentence summary\"}",
+              "type": "string"
+            },
+            {
+              "id": "message_id",
+              "name": "message_id",
+              "value": "={{ $json.message_id }}",
+              "type": "string"
+            },
+            {
+              "id": "thread_id",
+              "name": "thread_id",
+              "value": "={{ $json.thread_id }}",
+              "type": "string"
+            },
+            {
+              "id": "sender",
+              "name": "sender",
+              "value": "={{ $json.sender }}",
+              "type": "string"
+            },
+            {
+              "id": "subject",
+              "name": "subject",
+              "value": "={{ $json.subject }}",
+              "type": "string"
+            },
+            {
+              "id": "snippet",
+              "name": "snippet",
+              "value": "={{ $json.snippet }}",
+              "type": "string"
+            },
+            {
+              "id": "labels",
+              "name": "labels",
+              "value": "={{ $json.labels }}",
+              "type": "string"
+            },
+            {
+              "id": "correlation_id",
+              "name": "correlation_id",
+              "value": "={{ $json.correlation_id }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "build-prompt",
+      "name": "Build Classification Prompt",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://super-agent-production.up.railway.app/chat",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Token",
+              "value": "={{ $env.SUPER_AGENT_PASSWORD }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"message\": \"{{ $json.classification_prompt }}\", \"session_id\": \"gmail-triage\"}",
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "call-ai",
+      "name": "Call Super Agent AI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $input.first().json.response || $input.first().json.choices?.[0]?.message?.content || '';\nconst msgFields = $('Build Classification Prompt').first().json;\nlet parsed;\ntry {\n  const jsonMatch = raw.match(/\\{[\\s\\S]*\\}/);\n  parsed = JSON.parse(jsonMatch ? jsonMatch[0] : raw);\n} catch (e) {\n  parsed = {\n    category: 'informational',\n    action: 'label',\n    priority_score: 3,\n    entities: [],\n    action_items: [],\n    deadlines: [],\n    ai_summary: 'Classification failed - defaulting to informational'\n  };\n}\n// Validate category\nconst validCategories = ['urgent','informational','admin','finance','customer','personal','newsletter','meeting_related','follow_up_needed','low_priority','potential_spam'];\nif (!validCategories.includes(parsed.category)) parsed.category = 'informational';\n// Validate action\nconst validActions = ['ignore','label','archive','delete','draft','send','flag','log_to_sheet','link_to_calendar'];\nif (!validActions.includes(parsed.action)) parsed.action = 'label';\n// Validate priority\nif (!parsed.priority_score || parsed.priority_score < 1 || parsed.priority_score > 10) parsed.priority_score = 3;\n\nreturn [{\n  json: {\n    ...parsed,\n    message_id: msgFields.message_id,\n    thread_id: msgFields.thread_id,\n    sender: msgFields.sender,\n    subject: msgFields.subject,\n    correlation_id: msgFields.correlation_id,\n    classified_at: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "parse-response",
+      "name": "Parse AI Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO gmail_processing_state (message_id, category, action, priority_score, ai_summary, ai_model_used, classified_at) VALUES ($1, $2, $3, $4, $5, 'super_agent', NOW()) ON CONFLICT (message_id) DO UPDATE SET category = $2, action = $3, priority_score = $4, ai_summary = $5, classified_at = NOW()",
+        "options": {
+          "queryParameters": "={{ $json.message_id }},={{ $json.category }},={{ $json.action }},={{ $json.priority_score }},={{ $json.ai_summary }}"
+        }
+      },
+      "id": "store-classification",
+      "name": "Store Classification",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1120, 300],
+      "credentials": {
+        "postgres": {
+          "id": "RECONNECT",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const entities = $input.first().json.entities || [];\nconst messageId = $input.first().json.message_id;\nif (entities.length === 0) return [{ json: { message_id: messageId, entities_stored: 0 } }];\nreturn entities.map(e => ({\n  json: {\n    message_id: messageId,\n    entity_type: e.type || 'unknown',\n    entity_value: e.value || '',\n    confidence: e.confidence || 0.5\n  }\n}));"
+      },
+      "id": "store-entities",
+      "name": "Store Entities",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 200]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO extracted_entities (message_id, entity_type, entity_value, confidence) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING",
+        "options": {
+          "queryParameters": "={{ $json.message_id }},={{ $json.entity_type }},={{ $json.entity_value }},={{ $json.confidence }}"
+        }
+      },
+      "id": "insert-entities",
+      "name": "Insert Entities",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1560, 200],
+      "credentials": {
+        "postgres": {
+          "id": "RECONNECT",
+          "name": "Postgres account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.first().json.action_items || [];\nconst deadlines = $input.first().json.deadlines || [];\nconst messageId = $input.first().json.message_id;\nconst priority = $input.first().json.priority_score || 5;\nif (items.length === 0) return [{ json: { message_id: messageId, action_items_stored: 0 } }];\nreturn items.map((item, i) => {\n  let deadline = null;\n  if (deadlines[i]) {\n    const match = deadlines[i].match(/(\\d{4}-\\d{2}-\\d{2})/);\n    if (match) deadline = match[1];\n  }\n  return { json: { message_id: messageId, description: item, deadline, priority } };\n});"
+      },
+      "id": "store-actions",
+      "name": "Store Action Items",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 400]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO action_items (message_id, description, deadline, priority, status) VALUES ($1, $2, $3::date, $4, 'open')",
+        "options": {
+          "queryParameters": "={{ $json.message_id }},={{ $json.description }},={{ $json.deadline }},={{ $json.priority }}"
+        }
+      },
+      "id": "insert-action-items",
+      "name": "Insert Action Items",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1560, 400],
+      "credentials": {
+        "postgres": {
+          "id": "RECONNECT",
+          "name": "Postgres account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "duplicateItem": false,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "message_id",
+              "name": "message_id",
+              "value": "={{ $json.message_id }}",
+              "type": "string"
+            },
+            {
+              "id": "thread_id",
+              "name": "thread_id",
+              "value": "={{ $json.thread_id }}",
+              "type": "string"
+            },
+            {
+              "id": "sender",
+              "name": "sender",
+              "value": "={{ $json.sender }}",
+              "type": "string"
+            },
+            {
+              "id": "subject",
+              "name": "subject",
+              "value": "={{ $json.subject }}",
+              "type": "string"
+            },
+            {
+              "id": "category",
+              "name": "category",
+              "value": "={{ $json.category }}",
+              "type": "string"
+            },
+            {
+              "id": "action",
+              "name": "action",
+              "value": "={{ $json.action }}",
+              "type": "string"
+            },
+            {
+              "id": "priority_score",
+              "name": "priority_score",
+              "value": "={{ $json.priority_score }}",
+              "type": "number"
+            },
+            {
+              "id": "ai_summary",
+              "name": "ai_summary",
+              "value": "={{ $json.ai_summary }}",
+              "type": "string"
+            },
+            {
+              "id": "entities",
+              "name": "entities",
+              "value": "={{ $json.entities }}",
+              "type": "object"
+            },
+            {
+              "id": "action_items",
+              "name": "action_items",
+              "value": "={{ $json.action_items }}",
+              "type": "object"
+            },
+            {
+              "id": "deadlines",
+              "name": "deadlines",
+              "value": "={{ $json.deadlines }}",
+              "type": "object"
+            },
+            {
+              "id": "correlation_id",
+              "name": "correlation_id",
+              "value": "={{ $json.correlation_id }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "output-result",
+      "name": "Output Result",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1780, 300]
+    }
+  ],
+  "connections": {
+    "Workflow Input": {
+      "main": [
+        [
+          {
+            "node": "Build Classification Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Classification Prompt": {
+      "main": [
+        [
+          {
+            "node": "Call Super Agent AI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Super Agent AI": {
+      "main": [
+        [
+          {
+            "node": "Parse AI Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse AI Response": {
+      "main": [
+        [
+          {
+            "node": "Store Classification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store Classification": {
+      "main": [
+        [
+          {
+            "node": "Store Entities",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store Entities": {
+      "main": [
+        [
+          {
+            "node": "Insert Entities",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Entities": {
+      "main": [
+        [
+          {
+            "node": "Store Action Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store Action Items": {
+      "main": [
+        [
+          {
+            "node": "Insert Action Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Action Items": {
+      "main": [
+        [
+          {
+            "node": "Output Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "description": "Gmail Triage sub-workflow: classifies emails using Super Agent AI, extracts entities and action items, stores results in PostgreSQL."
+  },
+  "tags": []
+}

@@ -1,0 +1,365 @@
+{
+  "name": "Gmail-Intake",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "intake-trigger",
+      "name": "Workflow Input",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "f-1",
+              "name": "message_id",
+              "value": "={{ $json.payload?.id || $json.id || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "f-2",
+              "name": "thread_id",
+              "value": "={{ $json.payload?.threadId || $json.threadId || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "f-3",
+              "name": "labels",
+              "value": "={{ ($json.payload?.labelIds || $json.labelIds || []).join(',') }}",
+              "type": "string"
+            },
+            {
+              "id": "f-4",
+              "name": "sender",
+              "value": "={{ (() => { const headers = $json.payload?.payload?.headers || $json.payload?.headers || []; const from = headers.find(h => h.name === 'From' || h.name === 'from'); return from ? from.value : ($json.from?.emailAddress || $json.from || ''); })() }}",
+              "type": "string"
+            },
+            {
+              "id": "f-5",
+              "name": "recipients",
+              "value": "={{ (() => { const headers = $json.payload?.payload?.headers || $json.payload?.headers || []; const to = headers.find(h => h.name === 'To' || h.name === 'to'); return to ? to.value : ($json.to?.emailAddress || $json.to || ''); })() }}",
+              "type": "string"
+            },
+            {
+              "id": "f-6",
+              "name": "subject",
+              "value": "={{ (() => { const headers = $json.payload?.payload?.headers || $json.payload?.headers || []; const subj = headers.find(h => h.name === 'Subject' || h.name === 'subject'); return subj ? subj.value : ($json.subject || ''); })() }}",
+              "type": "string"
+            },
+            {
+              "id": "f-7",
+              "name": "snippet",
+              "value": "={{ $json.payload?.snippet || $json.snippet || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "f-8",
+              "name": "date_received",
+              "value": "={{ (() => { const headers = $json.payload?.payload?.headers || $json.payload?.headers || []; const date = headers.find(h => h.name === 'Date' || h.name === 'date'); return date ? date.value : ($json.date || $now.toISO()); })() }}",
+              "type": "string"
+            },
+            {
+              "id": "f-9",
+              "name": "is_unread",
+              "value": "={{ ($json.payload?.labelIds || $json.labelIds || []).includes('UNREAD') }}",
+              "type": "boolean"
+            },
+            {
+              "id": "f-10",
+              "name": "has_attachments",
+              "value": "={{ (() => { const parts = $json.payload?.payload?.parts || $json.payload?.parts || []; return parts.some(p => p.filename && p.filename.length > 0); })() }}",
+              "type": "boolean"
+            },
+            {
+              "id": "f-11",
+              "name": "attachment_count",
+              "value": "={{ (() => { const parts = $json.payload?.payload?.parts || $json.payload?.parts || []; return parts.filter(p => p.filename && p.filename.length > 0).length; })() }}",
+              "type": "number"
+            },
+            {
+              "id": "f-12",
+              "name": "raw_size_bytes",
+              "value": "={{ $json.payload?.sizeEstimate || $json.sizeEstimate || 0 }}",
+              "type": "number"
+            },
+            {
+              "id": "f-13",
+              "name": "correlation_id",
+              "value": "={{ $json.correlation_id || '' }}",
+              "type": "string"
+            },
+            {
+              "id": "f-14",
+              "name": "raw_payload",
+              "value": "={{ JSON.stringify($json.payload || $json) }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "extract-fields",
+      "name": "Extract Message Fields",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id FROM gmail_messages WHERE message_id = $1 LIMIT 1",
+        "options": {
+          "queryParameters": "={{ $json.message_id }}"
+        }
+      },
+      "id": "check-dedup",
+      "name": "Check Dedup Cache",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [680, 300],
+      "credentials": {
+        "postgres": {
+          "id": "RECONNECT",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "dedup-check",
+              "leftValue": "={{ $json.id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "is-duplicate",
+      "name": "Is Duplicate?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "skip-1",
+              "name": "skipped",
+              "value": true,
+              "type": "boolean"
+            },
+            {
+              "id": "skip-2",
+              "name": "reason",
+              "value": "duplicate",
+              "type": "string"
+            },
+            {
+              "id": "skip-3",
+              "name": "message_id",
+              "value": "={{ $('Extract Message Fields').item.json.message_id }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "skip-duplicate",
+      "name": "Skip Duplicate",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1120, 200]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO gmail_messages (message_id, thread_id, labels, sender, recipients, subject, snippet, date_received, is_unread, has_attachments, attachment_count, raw_size_bytes, raw_json, processing_state, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::timestamptz, $9, $10, $11, $12, $13::jsonb, 'intake_complete', NOW()) RETURNING id, message_id",
+        "options": {
+          "queryParameters": "={{ $('Extract Message Fields').item.json.message_id }},={{ $('Extract Message Fields').item.json.thread_id }},={{ $('Extract Message Fields').item.json.labels }},={{ $('Extract Message Fields').item.json.sender }},={{ $('Extract Message Fields').item.json.recipients }},={{ $('Extract Message Fields').item.json.subject }},={{ $('Extract Message Fields').item.json.snippet }},={{ $('Extract Message Fields').item.json.date_received }},={{ $('Extract Message Fields').item.json.is_unread }},={{ $('Extract Message Fields').item.json.has_attachments }},={{ $('Extract Message Fields').item.json.attachment_count }},={{ $('Extract Message Fields').item.json.raw_size_bytes }},={{ $('Extract Message Fields').item.json.raw_payload }}"
+        }
+      },
+      "id": "store-record",
+      "name": "Store Raw Record",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1120, 400],
+      "credentials": {
+        "postgres": {
+          "id": "RECONNECT",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO gmail_threads (thread_id, subject, last_message_id, message_count, first_seen, last_updated) VALUES ($1, $2, $3, 1, NOW(), NOW()) ON CONFLICT (thread_id) DO UPDATE SET last_message_id = $3, message_count = gmail_threads.message_count + 1, last_updated = NOW()",
+        "options": {
+          "queryParameters": "={{ $('Extract Message Fields').item.json.thread_id }},={{ $('Extract Message Fields').item.json.subject }},={{ $('Extract Message Fields').item.json.message_id }}"
+        }
+      },
+      "id": "update-thread",
+      "name": "Update Thread Cache",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1340, 400],
+      "credentials": {
+        "postgres": {
+          "id": "RECONNECT",
+          "name": "Postgres account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO sender_profiles (email, display_name, domain, first_seen, last_seen, message_count) VALUES ($1, $2, split_part($1, '@', 2), NOW(), NOW(), 1) ON CONFLICT (email) DO UPDATE SET last_seen = NOW(), message_count = sender_profiles.message_count + 1, display_name = COALESCE(NULLIF($2, ''), sender_profiles.display_name)",
+        "options": {
+          "queryParameters": "={{ (() => { const s = $('Extract Message Fields').item.json.sender; const match = s.match(/<([^>]+)>/); return match ? match[1] : s.split(' ').pop(); })() }},={{ (() => { const s = $('Extract Message Fields').item.json.sender; const match = s.match(/^([^<]+)</); return match ? match[1].trim().replace(/\"/g, '') : ''; })() }}"
+        }
+      },
+      "id": "update-sender",
+      "name": "Update Sender Profile",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1560, 400],
+      "credentials": {
+        "postgres": {
+          "id": "RECONNECT",
+          "name": "Postgres account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "out-1",
+              "name": "skipped",
+              "value": false,
+              "type": "boolean"
+            },
+            {
+              "id": "out-2",
+              "name": "message_id",
+              "value": "={{ $('Extract Message Fields').item.json.message_id }}",
+              "type": "string"
+            },
+            {
+              "id": "out-3",
+              "name": "thread_id",
+              "value": "={{ $('Extract Message Fields').item.json.thread_id }}",
+              "type": "string"
+            },
+            {
+              "id": "out-4",
+              "name": "sender",
+              "value": "={{ $('Extract Message Fields').item.json.sender }}",
+              "type": "string"
+            },
+            {
+              "id": "out-5",
+              "name": "subject",
+              "value": "={{ $('Extract Message Fields').item.json.subject }}",
+              "type": "string"
+            },
+            {
+              "id": "out-6",
+              "name": "snippet",
+              "value": "={{ $('Extract Message Fields').item.json.snippet }}",
+              "type": "string"
+            },
+            {
+              "id": "out-7",
+              "name": "labels",
+              "value": "={{ $('Extract Message Fields').item.json.labels }}",
+              "type": "string"
+            },
+            {
+              "id": "out-8",
+              "name": "is_unread",
+              "value": "={{ $('Extract Message Fields').item.json.is_unread }}",
+              "type": "boolean"
+            },
+            {
+              "id": "out-9",
+              "name": "has_attachments",
+              "value": "={{ $('Extract Message Fields').item.json.has_attachments }}",
+              "type": "boolean"
+            },
+            {
+              "id": "out-10",
+              "name": "correlation_id",
+              "value": "={{ $('Extract Message Fields').item.json.correlation_id }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "output-result",
+      "name": "Output Result",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1780, 400]
+    }
+  ],
+  "connections": {
+    "Workflow Input": {
+      "main": [[{ "node": "Extract Message Fields", "type": "main", "index": 0 }]]
+    },
+    "Extract Message Fields": {
+      "main": [[{ "node": "Check Dedup Cache", "type": "main", "index": 0 }]]
+    },
+    "Check Dedup Cache": {
+      "main": [[{ "node": "Is Duplicate?", "type": "main", "index": 0 }]]
+    },
+    "Is Duplicate?": {
+      "main": [
+        [{ "node": "Skip Duplicate", "type": "main", "index": 0 }],
+        [{ "node": "Store Raw Record", "type": "main", "index": 0 }]
+      ]
+    },
+    "Store Raw Record": {
+      "main": [[{ "node": "Update Thread Cache", "type": "main", "index": 0 }]]
+    },
+    "Update Thread Cache": {
+      "main": [[{ "node": "Update Sender Profile", "type": "main", "index": 0 }]]
+    },
+    "Update Sender Profile": {
+      "main": [[{ "node": "Output Result", "type": "main", "index": 0 }]]
+    }
+  },
+  "pinData": {},
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "description": "Gmail Intake sub-workflow: captures new email metadata, deduplicates against PostgreSQL cache, stores raw record, updates thread cache and sender profile."
+  },
+  "tags": []
+}

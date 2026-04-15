@@ -1,0 +1,286 @@
+{
+  "name": "Gmail-Sheets",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "sheets-trigger",
+      "name": "Workflow Input",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id FROM sheet_exports WHERE message_id = $1 AND tab_name = $2 LIMIT 1",
+        "options": {
+          "queryParameters": "={{ $json.message_id }},={{ $json.sheet_tab || 'Inbox_Log' }}"
+        }
+      },
+      "id": "check-export",
+      "name": "Check Export State",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [460, 300],
+      "credentials": { "postgres": { "id": "RECONNECT", "name": "Postgres account" } }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
+          "conditions": [{ "id": "export-check", "leftValue": "={{ $json.id }}", "rightValue": "", "operator": { "type": "string", "operation": "exists" } }],
+          "combinator": "and"
+        }
+      },
+      "id": "already-exported",
+      "name": "Already Exported?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [{ "id": "skip-1", "name": "skipped", "value": true, "type": "boolean" }, { "id": "skip-2", "name": "reason", "value": "already_exported", "type": "string" }]
+        },
+        "options": {}
+      },
+      "id": "skip-export",
+      "name": "Skip Export",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [900, 200]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            { "conditions": { "options": { "caseSensitive": false }, "combinator": "and", "conditions": [{ "id": "tab-1", "leftValue": "={{ $('Workflow Input').item.json.sheet_tab }}", "rightValue": "inbox_log", "operator": { "type": "string", "operation": "equals" } }] }, "renameOutput": true, "outputKey": "Inbox_Log" },
+            { "conditions": { "options": { "caseSensitive": false }, "combinator": "and", "conditions": [{ "id": "tab-2", "leftValue": "={{ $('Workflow Input').item.json.sheet_tab }}", "rightValue": "important_emails", "operator": { "type": "string", "operation": "equals" } }] }, "renameOutput": true, "outputKey": "Important_Emails" },
+            { "conditions": { "options": { "caseSensitive": false }, "combinator": "and", "conditions": [{ "id": "tab-3", "leftValue": "={{ $('Workflow Input').item.json.sheet_tab }}", "rightValue": "action_items", "operator": { "type": "string", "operation": "equals" } }] }, "renameOutput": true, "outputKey": "Action_Items" },
+            { "conditions": { "options": { "caseSensitive": false }, "combinator": "and", "conditions": [{ "id": "tab-4", "leftValue": "={{ $('Workflow Input').item.json.sheet_tab }}", "rightValue": "followups", "operator": { "type": "string", "operation": "equals" } }] }, "renameOutput": true, "outputKey": "Followups" },
+            { "conditions": { "options": { "caseSensitive": false }, "combinator": "and", "conditions": [{ "id": "tab-5", "leftValue": "={{ $('Workflow Input').item.json.sheet_tab }}", "rightValue": "meeting_emails", "operator": { "type": "string", "operation": "equals" } }] }, "renameOutput": true, "outputKey": "Meeting_Emails" },
+            { "conditions": { "options": { "caseSensitive": false }, "combinator": "and", "conditions": [{ "id": "tab-6", "leftValue": "={{ $('Workflow Input').item.json.sheet_tab }}", "rightValue": "finance_admin", "operator": { "type": "string", "operation": "equals" } }] }, "renameOutput": true, "outputKey": "Finance_Admin" }
+          ]
+        },
+        "options": { "fallbackOutput": "extra" }
+      },
+      "id": "tab-router",
+      "name": "Tab Router",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [900, 400]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": { "__rl": true, "value": "={{ $env.GMAIL_ADMIN_SPREADSHEET_ID }}", "mode": "url" },
+        "sheetName": { "__rl": true, "value": "Inbox_Log", "mode": "list" },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Date": "={{ $('Workflow Input').item.json.date_received || $now.toISO() }}",
+            "Sender": "={{ $('Workflow Input').item.json.sender }}",
+            "Subject": "={{ $('Workflow Input').item.json.subject }}",
+            "Category": "={{ $('Workflow Input').item.json.category || '' }}",
+            "Priority": "={{ $('Workflow Input').item.json.priority_score || '' }}",
+            "Action Taken": "={{ $('Workflow Input').item.json.action || '' }}",
+            "Unread": "={{ $('Workflow Input').item.json.is_unread }}",
+            "Thread ID": "={{ $('Workflow Input').item.json.thread_id }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "append-inbox-log",
+      "name": "Append Inbox_Log",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [1140, 140],
+      "credentials": { "googleSheetsOAuth2Api": { "id": "RECONNECT", "name": "Google Sheets account" } }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": { "__rl": true, "value": "={{ $env.GMAIL_ADMIN_SPREADSHEET_ID }}", "mode": "url" },
+        "sheetName": { "__rl": true, "value": "Important_Emails", "mode": "list" },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Date": "={{ $('Workflow Input').item.json.date_received || $now.toISO() }}",
+            "Sender": "={{ $('Workflow Input').item.json.sender }}",
+            "Subject": "={{ $('Workflow Input').item.json.subject }}",
+            "Priority Score": "={{ $('Workflow Input').item.json.priority_score }}",
+            "AI Summary": "={{ $('Workflow Input').item.json.ai_summary || '' }}",
+            "Action Items": "={{ ($('Workflow Input').item.json.action_items || []).join('; ') }}",
+            "Status": "Pending"
+          }
+        },
+        "options": {}
+      },
+      "id": "append-important",
+      "name": "Append Important_Emails",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [1140, 260],
+      "credentials": { "googleSheetsOAuth2Api": { "id": "RECONNECT", "name": "Google Sheets account" } }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": { "__rl": true, "value": "={{ $env.GMAIL_ADMIN_SPREADSHEET_ID }}", "mode": "url" },
+        "sheetName": { "__rl": true, "value": "Action_Items", "mode": "list" },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Created": "={{ $now.toISO() }}",
+            "Source Email Subject": "={{ $('Workflow Input').item.json.subject }}",
+            "Description": "={{ $('Workflow Input').item.json.description || ($('Workflow Input').item.json.action_items || [])[0] || '' }}",
+            "Deadline": "={{ ($('Workflow Input').item.json.deadlines || [])[0] || '' }}",
+            "Status": "open",
+            "Priority": "={{ $('Workflow Input').item.json.priority_score || 5 }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "append-actions",
+      "name": "Append Action_Items",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [1140, 380],
+      "credentials": { "googleSheetsOAuth2Api": { "id": "RECONNECT", "name": "Google Sheets account" } }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": { "__rl": true, "value": "={{ $env.GMAIL_ADMIN_SPREADSHEET_ID }}", "mode": "url" },
+        "sheetName": { "__rl": true, "value": "Followups", "mode": "list" },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Date": "={{ $('Workflow Input').item.json.date_received || $now.toISO() }}",
+            "Sender": "={{ $('Workflow Input').item.json.sender }}",
+            "Subject": "={{ $('Workflow Input').item.json.subject }}",
+            "Followup Reason": "={{ $('Workflow Input').item.json.ai_summary || '' }}",
+            "Days Waiting": "0",
+            "Status": "open"
+          }
+        },
+        "options": {}
+      },
+      "id": "append-followups",
+      "name": "Append Followups",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [1140, 500],
+      "credentials": { "googleSheetsOAuth2Api": { "id": "RECONNECT", "name": "Google Sheets account" } }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": { "__rl": true, "value": "={{ $env.GMAIL_ADMIN_SPREADSHEET_ID }}", "mode": "url" },
+        "sheetName": { "__rl": true, "value": "Meeting_Emails", "mode": "list" },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Date": "={{ $('Workflow Input').item.json.date_received || $now.toISO() }}",
+            "Sender": "={{ $('Workflow Input').item.json.sender }}",
+            "Subject": "={{ $('Workflow Input').item.json.subject }}",
+            "Related Calendar Event": "={{ $('Workflow Input').item.json.calendar_event || '' }}",
+            "Event Date": "={{ $('Workflow Input').item.json.event_date || '' }}",
+            "Action": "={{ $('Workflow Input').item.json.action || 'link_to_calendar' }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "append-meetings",
+      "name": "Append Meeting_Emails",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [1140, 620],
+      "credentials": { "googleSheetsOAuth2Api": { "id": "RECONNECT", "name": "Google Sheets account" } }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": { "__rl": true, "value": "={{ $env.GMAIL_ADMIN_SPREADSHEET_ID }}", "mode": "url" },
+        "sheetName": { "__rl": true, "value": "Finance_Admin", "mode": "list" },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Date": "={{ $('Workflow Input').item.json.date_received || $now.toISO() }}",
+            "Sender": "={{ $('Workflow Input').item.json.sender }}",
+            "Subject": "={{ $('Workflow Input').item.json.subject }}",
+            "Amount Detected": "={{ $('Workflow Input').item.json.amount || '' }}",
+            "Deadline": "={{ ($('Workflow Input').item.json.deadlines || [])[0] || '' }}",
+            "Status": "pending"
+          }
+        },
+        "options": {}
+      },
+      "id": "append-finance",
+      "name": "Append Finance_Admin",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [1140, 740],
+      "credentials": { "googleSheetsOAuth2Api": { "id": "RECONNECT", "name": "Google Sheets account" } }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO sheet_exports (message_id, tab_name, exported_at) VALUES ($1, $2, NOW()) ON CONFLICT (message_id, tab_name) DO NOTHING",
+        "options": {
+          "queryParameters": "={{ $('Workflow Input').item.json.message_id }},={{ $('Workflow Input').item.json.sheet_tab || 'Inbox_Log' }}"
+        }
+      },
+      "id": "log-export",
+      "name": "Log Export",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1380, 400],
+      "credentials": { "postgres": { "id": "RECONNECT", "name": "Postgres account" } },
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "Workflow Input": {
+      "main": [[{ "node": "Check Export State", "type": "main", "index": 0 }]]
+    },
+    "Check Export State": {
+      "main": [[{ "node": "Already Exported?", "type": "main", "index": 0 }]]
+    },
+    "Already Exported?": {
+      "main": [
+        [{ "node": "Skip Export", "type": "main", "index": 0 }],
+        [{ "node": "Tab Router", "type": "main", "index": 0 }]
+      ]
+    },
+    "Tab Router": {
+      "main": [
+        [{ "node": "Append Inbox_Log", "type": "main", "index": 0 }],
+        [{ "node": "Append Important_Emails", "type": "main", "index": 0 }],
+        [{ "node": "Append Action_Items", "type": "main", "index": 0 }],
+        [{ "node": "Append Followups", "type": "main", "index": 0 }],
+        [{ "node": "Append Meeting_Emails", "type": "main", "index": 0 }],
+        [{ "node": "Append Finance_Admin", "type": "main", "index": 0 }]
+      ]
+    },
+    "Append Inbox_Log": { "main": [[{ "node": "Log Export", "type": "main", "index": 0 }]] },
+    "Append Important_Emails": { "main": [[{ "node": "Log Export", "type": "main", "index": 0 }]] },
+    "Append Action_Items": { "main": [[{ "node": "Log Export", "type": "main", "index": 0 }]] },
+    "Append Followups": { "main": [[{ "node": "Log Export", "type": "main", "index": 0 }]] },
+    "Append Meeting_Emails": { "main": [[{ "node": "Log Export", "type": "main", "index": 0 }]] },
+    "Append Finance_Admin": { "main": [[{ "node": "Log Export", "type": "main", "index": 0 }]] }
+  },
+  "pinData": {},
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "description": "Gmail Sheets Export sub-workflow: appends structured email data to Google Sheets tabs (Inbox_Log, Important_Emails, Action_Items, Followups, Meeting_Emails, Finance_Admin) with deduplication via sheet_exports table."
+  },
+  "tags": []
+}

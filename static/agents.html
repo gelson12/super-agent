@@ -136,6 +136,7 @@
     .status-label.talking      { background: #4c1d95; color: #c4b5fd; }
     .status-label.strike       { background: #7f1d1d; color: #fca5a5; }
     .status-label.sick         { background: #713f12; color: #fde68a; }
+    .status-label.recovering   { background: #134e4a; color: #5eead4; }
 
     /* ── Monitor (screen) ────────────────────────────────────────── */
     .monitor {
@@ -196,6 +197,11 @@
       background: linear-gradient(135deg, #713f12 0%, #ca8a04 100%);
       border-color: #eab308;
       box-shadow: 0 0 8px rgba(234, 179, 8, 0.3);
+    }
+
+    .monitor.on-teal {
+      background: linear-gradient(135deg, #134e4a 0%, #0d9488 100%);
+      border-color: #5eead4;
     }
 
     .monitor.on-orange {
@@ -632,6 +638,7 @@
     <div class="legend-item"><div class="legend-dot" style="background:#8b5cf6"></div> Talking</div>
     <div class="legend-item"><div class="legend-dot" style="background:#ef4444"></div> Strike</div>
     <div class="legend-item"><div class="legend-dot" style="background:#eab308"></div> Sick</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#0d9488"></div> Recovering</div>
   </div>
 
   <!-- Summary stats -->
@@ -759,6 +766,7 @@ function getMonitorClass(state) {
     case "idle":         return "on-green";
     case "break":        return "on-indigo";
     case "coffee_break": return "on-orange";
+    case "recovering":   return "on-teal";
     case "talking":      return "on-purple";
     case "strike":       return "on-red";
     case "sick":         return "on-yellow";
@@ -767,8 +775,7 @@ function getMonitorClass(state) {
 }
 
 function isRecovering(worker) {
-  // Break state caused by a sick worker in grace period (sick_for_seconds set but < 900)
-  return worker.state === "break" && worker.sick_for_seconds != null && worker.sick_for_seconds < 900;
+  return worker.state === "recovering";
 }
 
 function getScreenContent(worker) {
@@ -791,7 +798,7 @@ function getScreenContent(worker) {
 }
 
 function getOverlay(worker) {
-  if (isRecovering(worker)) return '<span class="talk-bubble">☕</span>';
+  if (isRecovering(worker)) return '<span class="sick-indicator">🔧</span>';
   switch (worker.state) {
     case "sleeping":     return '<span class="zzz">Zzz</span>';
     case "coffee_break": return '<span class="coffee-cup">☕</span>';
@@ -892,7 +899,7 @@ function renderAll(workers) {
     const w = workerMap[_logPanelWorker];
     const stateEl = document.getElementById("log-worker-state");
     stateEl.textContent = w.state === "coffee_break" ? "coffee break" : w.state;
-    stateEl.className   = `log-panel-state status-label ${w.state}`;
+    stateEl.className   = `log-panel-state status-label ${w.state}`;  // recovering CSS class applied via w.state
   }
 }
 

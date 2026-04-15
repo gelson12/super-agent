@@ -1,0 +1,500 @@
+{
+  "name": "Gmail-Compose",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "comp-input-001",
+      "name": "Workflow Input",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "rules": [
+            {
+              "outputIndex": 0,
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "loose"
+                },
+                "conditions": [
+                  {
+                    "id": "cond-draft",
+                    "leftValue": "={{ $json.compose_action }}",
+                    "rightValue": "draft",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "or"
+              },
+              "renameOutput": true,
+              "outputLabel": "draft"
+            },
+            {
+              "outputIndex": 1,
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "loose"
+                },
+                "conditions": [
+                  {
+                    "id": "cond-send",
+                    "leftValue": "={{ $json.compose_action }}",
+                    "rightValue": "send",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "or"
+              },
+              "renameOutput": true,
+              "outputLabel": "send"
+            },
+            {
+              "outputIndex": 2,
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "loose"
+                },
+                "conditions": [
+                  {
+                    "id": "cond-reply",
+                    "leftValue": "={{ $json.compose_action }}",
+                    "rightValue": "reply",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "or"
+              },
+              "renameOutput": true,
+              "outputLabel": "reply"
+            },
+            {
+              "outputIndex": 3,
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "loose"
+                },
+                "conditions": [
+                  {
+                    "id": "cond-forward",
+                    "leftValue": "={{ $json.compose_action }}",
+                    "rightValue": "forward",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "or"
+              },
+              "renameOutput": true,
+              "outputLabel": "forward"
+            }
+          ],
+          "fallbackOutput": {
+            "outputIndex": 0
+          }
+        },
+        "options": {}
+      },
+      "id": "comp-router-001",
+      "name": "Action Router",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "resource": "draft",
+        "operation": "create",
+        "subject": "={{ $json.subject }}",
+        "message": "={{ $json.body || $json.message }}",
+        "options": {
+          "sendTo": "={{ $json.to_address || $json.sendTo }}"
+        }
+      },
+      "id": "comp-draft-001",
+      "name": "Create Draft",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [700, 140],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "RECONNECT",
+          "name": "gmailOAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id FROM gmail_sends WHERE to_address = $1 AND subject = $2 AND sent_at > NOW() - INTERVAL '5 minutes' LIMIT 1",
+        "options": {
+          "queryParams": "={{ $json.to_address || $json.sendTo }},={{ $json.subject }}"
+        }
+      },
+      "id": "comp-checkdup-001",
+      "name": "Check Send Duplicate",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [700, 300],
+      "credentials": {
+        "postgres": {
+          "id": "RECONNECT",
+          "name": "postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-is-dup",
+              "leftValue": "={{ $json.id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "comp-isdup-001",
+      "name": "Is Duplicate?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [920, 300]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "set-skipped",
+              "name": "skipped",
+              "value": true,
+              "type": "boolean"
+            },
+            {
+              "id": "set-reason",
+              "name": "reason",
+              "value": "duplicate_send_detected",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "comp-dupwarn-001",
+      "name": "Duplicate Warning",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1140, 200]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "sendTo": "={{ $json.to_address || $json.sendTo }}",
+        "subject": "={{ $json.subject }}",
+        "message": "={{ $json.body || $json.message }}",
+        "options": {}
+      },
+      "id": "comp-send-001",
+      "name": "Gmail Send",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [1140, 340],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "RECONNECT",
+          "name": "gmailOAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "reply",
+        "messageId": "={{ $json.message_id || $json.original_message_id }}",
+        "message": "={{ $json.body || $json.message }}",
+        "options": {}
+      },
+      "id": "comp-reply-001",
+      "name": "Gmail Reply",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [700, 460],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "RECONNECT",
+          "name": "gmailOAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "sendTo": "={{ $json.forward_to }}",
+        "subject": "={{ 'Fwd: ' + ($json.subject || '') }}",
+        "message": "={{ $json.body || $json.message }}",
+        "options": {
+          "appendAttribution": true,
+          "replyToSenderOnly": false
+        }
+      },
+      "id": "comp-forward-001",
+      "name": "Gmail Forward",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [700, 600],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "RECONNECT",
+          "name": "gmailOAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO gmail_sends (message_id, original_message_id, to_address, subject, compose_action, correlation_id, sent_at) VALUES ($1, $2, $3, $4, $5, $6::uuid, NOW())",
+        "options": {
+          "queryParams": "={{ $json.id || $json.message_id || '' }},={{ $json.original_message_id || '' }},={{ $json.to_address || $json.sendTo || '' }},={{ $json.subject || '' }},={{ $json.compose_action || 'send' }},={{ $json.correlation_id || '00000000-0000-0000-0000-000000000000' }}"
+        }
+      },
+      "id": "comp-logsend-001",
+      "name": "Log Send",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1360, 340],
+      "credentials": {
+        "postgres": {
+          "id": "RECONNECT",
+          "name": "postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO gmail_drafts (draft_id, message_id, to_address, subject, body_preview, status, correlation_id, created_at) VALUES ($1, $2, $3, $4, $5, 'draft', $6::uuid, NOW())",
+        "options": {
+          "queryParams": "={{ $json.id || '' }},={{ $json.message?.id || '' }},={{ $json.to_address || $json.sendTo || '' }},={{ $json.subject || '' }},={{ ($json.body || $json.message || '').substring(0, 200) }},={{ $json.correlation_id || '00000000-0000-0000-0000-000000000000' }}"
+        }
+      },
+      "id": "comp-logdraft-001",
+      "name": "Log Draft",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [920, 140],
+      "credentials": {
+        "postgres": {
+          "id": "RECONNECT",
+          "name": "postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO audit_logs (entity_type, entity_id, action, performed_by, details, created_at) VALUES ('gmail_message', $1, $2, 'auto_compose', $3::jsonb, NOW())",
+        "options": {
+          "queryParams": "={{ $json.message_id || $json.id || '' }},={{ $json.compose_action || 'compose' }},={{ JSON.stringify({ to: $json.to_address || $json.sendTo || '', subject: $json.subject || '', source: 'compose_workflow' }) }}"
+        }
+      },
+      "id": "comp-logaudit-001",
+      "name": "Log Audit",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1580, 300],
+      "credentials": {
+        "postgres": {
+          "id": "RECONNECT",
+          "name": "postgres"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Workflow Input": {
+      "main": [
+        [
+          {
+            "node": "Action Router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Action Router": {
+      "main": [
+        [
+          {
+            "node": "Create Draft",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Check Send Duplicate",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Gmail Reply",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Gmail Forward",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Draft": {
+      "main": [
+        [
+          {
+            "node": "Log Draft",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Draft": {
+      "main": [
+        [
+          {
+            "node": "Log Audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Send Duplicate": {
+      "main": [
+        [
+          {
+            "node": "Is Duplicate?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Duplicate?": {
+      "main": [
+        [
+          {
+            "node": "Duplicate Warning",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Gmail Send",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gmail Send": {
+      "main": [
+        [
+          {
+            "node": "Log Send",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gmail Reply": {
+      "main": [
+        [
+          {
+            "node": "Log Send",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gmail Forward": {
+      "main": [
+        [
+          {
+            "node": "Log Send",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Send": {
+      "main": [
+        [
+          {
+            "node": "Log Audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "description": "Gmail Compose sub-workflow: draft/send/reply/forward with duplicate detection and audit logging."
+  },
+  "tags": []
+}

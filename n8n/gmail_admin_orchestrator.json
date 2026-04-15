@@ -1,0 +1,612 @@
+{
+  "name": "Gmail-Admin-Orchestrator",
+  "nodes": [
+    {
+      "id": "gmail-trigger",
+      "name": "New Email Trigger",
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 300],
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "simple": false,
+        "filters": {},
+        "options": {}
+      },
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "RECONNECT",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "id": "cron-trigger",
+      "name": "Digest Schedule",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 520],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 8 * * *"
+            },
+            {
+              "field": "cronExpression",
+              "expression": "0 12 * * *"
+            },
+            {
+              "field": "cronExpression",
+              "expression": "0 21 * * *"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "webhook-trigger",
+      "name": "API Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 740],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "gmail-admin",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "webhookId": "gmail-admin"
+    },
+    {
+      "id": "normalize",
+      "name": "Normalize Trigger Data",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [480, 520],
+      "parameters": {
+        "mode": "manual",
+        "duplicateItem": false,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "trigger_type",
+              "name": "trigger_type",
+              "value": "={{ $input.first().json.id ? 'realtime' : ($input.first().json.body ? 'webhook' : 'scheduled') }}",
+              "type": "string"
+            },
+            {
+              "id": "trigger_source",
+              "name": "trigger_source",
+              "value": "={{ $input.first().json.id ? 'gmail_trigger' : ($input.first().json.body ? 'webhook' : 'schedule_trigger') }}",
+              "type": "string"
+            },
+            {
+              "id": "timestamp",
+              "name": "timestamp",
+              "value": "={{ $now.toISO() }}",
+              "type": "string"
+            },
+            {
+              "id": "correlation_id",
+              "name": "correlation_id",
+              "value": "={{ $json.correlation_id || $now.toMillis().toString(36) + Math.random().toString(36).substr(2, 5) }}",
+              "type": "string"
+            },
+            {
+              "id": "payload",
+              "name": "payload",
+              "value": "={{ JSON.stringify($json) }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "route-switch",
+      "name": "Route by Trigger Type",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [720, 520],
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "typeValidation": "strict" },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "realtime-condition",
+                    "leftValue": "={{ $json.trigger_type }}",
+                    "rightValue": "realtime",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "Realtime Email"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "typeValidation": "strict" },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "scheduled-condition",
+                    "leftValue": "={{ $json.trigger_type }}",
+                    "rightValue": "scheduled",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "Scheduled Digest"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "typeValidation": "strict" },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "webhook-condition",
+                    "leftValue": "={{ $json.trigger_type }}",
+                    "rightValue": "webhook",
+                    "operator": { "type": "string", "operation": "equals" }
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "Webhook Command"
+            }
+          ]
+        },
+        "fallbackOutput": "extra",
+        "options": {}
+      }
+    },
+    {
+      "id": "exec-intake",
+      "name": "Execute Intake",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [960, 300],
+      "parameters": {
+        "workflowId": { "__rl": true, "value": "", "mode": "id" },
+        "waitForSubWorkflow": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "check-skipped",
+      "name": "Check If Skipped",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1200, 160],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "skipped-condition",
+              "leftValue": "={{ $json.skipped }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "exec-triage",
+      "name": "Execute Triage",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [1440, 200],
+      "parameters": {
+        "workflowId": { "__rl": true, "value": "", "mode": "id" },
+        "waitForSubWorkflow": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "triage-router",
+      "name": "Triage Action Router",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [1680, 200],
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "typeValidation": "strict" },
+                "combinator": "or",
+                "conditions": [
+                  { "id": "archive-cond", "leftValue": "={{ $json.action }}", "rightValue": "archive", "operator": { "type": "string", "operation": "equals" } },
+                  { "id": "label-cond", "leftValue": "={{ $json.action }}", "rightValue": "label", "operator": { "type": "string", "operation": "equals" } }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "Governance"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "typeValidation": "strict" },
+                "combinator": "and",
+                "conditions": [
+                  { "id": "draft-cond", "leftValue": "={{ $json.action }}", "rightValue": "draft", "operator": { "type": "string", "operation": "equals" } }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "Compose"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "typeValidation": "strict" },
+                "combinator": "and",
+                "conditions": [
+                  { "id": "calendar-cond", "leftValue": "={{ $json.action }}", "rightValue": "link_to_calendar", "operator": { "type": "string", "operation": "equals" } }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "Calendar"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "typeValidation": "strict" },
+                "combinator": "or",
+                "conditions": [
+                  { "id": "sheet-cond", "leftValue": "={{ $json.action }}", "rightValue": "log_to_sheet", "operator": { "type": "string", "operation": "equals" } },
+                  { "id": "flag-cond", "leftValue": "={{ $json.action }}", "rightValue": "flag", "operator": { "type": "string", "operation": "equals" } }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "Sheets"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "typeValidation": "strict" },
+                "combinator": "and",
+                "conditions": [
+                  { "id": "ignore-cond", "leftValue": "={{ $json.action }}", "rightValue": "ignore", "operator": { "type": "string", "operation": "equals" } }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "Ignore"
+            }
+          ]
+        },
+        "fallbackOutput": "extra",
+        "options": {}
+      }
+    },
+    {
+      "id": "exec-governance",
+      "name": "Execute Governance",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [1920, 80],
+      "parameters": {
+        "workflowId": { "__rl": true, "value": "", "mode": "id" },
+        "waitForSubWorkflow": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "exec-compose",
+      "name": "Execute Compose",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [1920, 180],
+      "parameters": {
+        "workflowId": { "__rl": true, "value": "", "mode": "id" },
+        "waitForSubWorkflow": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "exec-calendar",
+      "name": "Execute Calendar",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [1920, 280],
+      "parameters": {
+        "workflowId": { "__rl": true, "value": "", "mode": "id" },
+        "waitForSubWorkflow": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "exec-sheets",
+      "name": "Execute Sheets",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [1920, 380],
+      "parameters": {
+        "workflowId": { "__rl": true, "value": "", "mode": "id" },
+        "waitForSubWorkflow": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "exec-digest",
+      "name": "Execute Digest",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [960, 520],
+      "parameters": {
+        "workflowId": { "__rl": true, "value": "", "mode": "id" },
+        "waitForSubWorkflow": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "webhook-router",
+      "name": "Webhook Action Router",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [960, 740],
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "typeValidation": "strict" },
+                "combinator": "and",
+                "conditions": [
+                  { "id": "search-cond", "leftValue": "={{ $json.action }}", "rightValue": "search", "operator": { "type": "string", "operation": "equals" } }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "Search"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "typeValidation": "strict" },
+                "combinator": "and",
+                "conditions": [
+                  { "id": "compose-cond", "leftValue": "={{ $json.action }}", "rightValue": "compose", "operator": { "type": "string", "operation": "equals" } }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "Compose"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "typeValidation": "strict" },
+                "combinator": "and",
+                "conditions": [
+                  { "id": "govern-cond", "leftValue": "={{ $json.action }}", "rightValue": "govern", "operator": { "type": "string", "operation": "equals" } }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "Govern"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "typeValidation": "strict" },
+                "combinator": "and",
+                "conditions": [
+                  { "id": "calendar-wh-cond", "leftValue": "={{ $json.action }}", "rightValue": "calendar", "operator": { "type": "string", "operation": "equals" } }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "Calendar"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": true, "typeValidation": "strict" },
+                "combinator": "and",
+                "conditions": [
+                  { "id": "digest-wh-cond", "leftValue": "={{ $json.action }}", "rightValue": "digest", "operator": { "type": "string", "operation": "equals" } }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "Digest"
+            }
+          ]
+        },
+        "fallbackOutput": "extra",
+        "options": {}
+      }
+    },
+    {
+      "id": "exec-search",
+      "name": "Execute Search",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [1200, 660],
+      "parameters": {
+        "workflowId": { "__rl": true, "value": "", "mode": "id" },
+        "waitForSubWorkflow": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "exec-compose-wh",
+      "name": "Execute Compose (Webhook)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [1200, 760],
+      "parameters": {
+        "workflowId": { "__rl": true, "value": "", "mode": "id" },
+        "waitForSubWorkflow": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "exec-governance-wh",
+      "name": "Execute Governance (Webhook)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [1200, 860],
+      "parameters": {
+        "workflowId": { "__rl": true, "value": "", "mode": "id" },
+        "waitForSubWorkflow": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "exec-calendar-wh",
+      "name": "Execute Calendar (Webhook)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [1200, 960],
+      "parameters": {
+        "workflowId": { "__rl": true, "value": "", "mode": "id" },
+        "waitForSubWorkflow": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "exec-digest-wh",
+      "name": "Execute Digest (Webhook)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [1200, 1060],
+      "parameters": {
+        "workflowId": { "__rl": true, "value": "", "mode": "id" },
+        "waitForSubWorkflow": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "log-execution",
+      "name": "Log Execution",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [2160, 400],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO workflow_runs (correlation_id, workflow_name, trigger_type, trigger_source, status, started_at, finished_at, execution_id) VALUES ($1::uuid, $2, $3, $4, 'success', $5::timestamptz, NOW(), $6)",
+        "options": {
+          "queryParameters": "={{ $json.correlation_id }},Gmail-Admin-Orchestrator,={{ $json.trigger_type }},={{ $json.trigger_source }},={{ $json.timestamp }},={{ $execution.id }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "RECONNECT",
+          "name": "Postgres account"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "respond-webhook",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1440, 740],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, correlation_id: $json.correlation_id, result: $json }) }}"
+      }
+    }
+  ],
+  "connections": {
+    "New Email Trigger": {
+      "main": [[{ "node": "Normalize Trigger Data", "type": "main", "index": 0 }]]
+    },
+    "Digest Schedule": {
+      "main": [[{ "node": "Normalize Trigger Data", "type": "main", "index": 0 }]]
+    },
+    "API Webhook": {
+      "main": [[{ "node": "Normalize Trigger Data", "type": "main", "index": 0 }]]
+    },
+    "Normalize Trigger Data": {
+      "main": [[{ "node": "Route by Trigger Type", "type": "main", "index": 0 }]]
+    },
+    "Route by Trigger Type": {
+      "main": [
+        [{ "node": "Execute Intake", "type": "main", "index": 0 }],
+        [{ "node": "Execute Digest", "type": "main", "index": 0 }],
+        [{ "node": "Webhook Action Router", "type": "main", "index": 0 }]
+      ]
+    },
+    "Execute Intake": {
+      "main": [[{ "node": "Check If Skipped", "type": "main", "index": 0 }]]
+    },
+    "Check If Skipped": {
+      "main": [
+        [{ "node": "Log Execution", "type": "main", "index": 0 }],
+        [{ "node": "Execute Triage", "type": "main", "index": 0 }]
+      ]
+    },
+    "Execute Triage": {
+      "main": [[{ "node": "Triage Action Router", "type": "main", "index": 0 }]]
+    },
+    "Triage Action Router": {
+      "main": [
+        [{ "node": "Execute Governance", "type": "main", "index": 0 }],
+        [{ "node": "Execute Compose", "type": "main", "index": 0 }],
+        [{ "node": "Execute Calendar", "type": "main", "index": 0 }],
+        [{ "node": "Execute Sheets", "type": "main", "index": 0 }],
+        [{ "node": "Log Execution", "type": "main", "index": 0 }]
+      ]
+    },
+    "Execute Governance": {
+      "main": [[{ "node": "Log Execution", "type": "main", "index": 0 }]]
+    },
+    "Execute Compose": {
+      "main": [[{ "node": "Log Execution", "type": "main", "index": 0 }]]
+    },
+    "Execute Calendar": {
+      "main": [[{ "node": "Log Execution", "type": "main", "index": 0 }]]
+    },
+    "Execute Sheets": {
+      "main": [[{ "node": "Log Execution", "type": "main", "index": 0 }]]
+    },
+    "Execute Digest": {
+      "main": [[{ "node": "Log Execution", "type": "main", "index": 0 }]]
+    },
+    "Webhook Action Router": {
+      "main": [
+        [{ "node": "Execute Search", "type": "main", "index": 0 }],
+        [{ "node": "Execute Compose (Webhook)", "type": "main", "index": 0 }],
+        [{ "node": "Execute Governance (Webhook)", "type": "main", "index": 0 }],
+        [{ "node": "Execute Calendar (Webhook)", "type": "main", "index": 0 }],
+        [{ "node": "Execute Digest (Webhook)", "type": "main", "index": 0 }]
+      ]
+    },
+    "Execute Search": {
+      "main": [[{ "node": "Respond to Webhook", "type": "main", "index": 0 }]]
+    },
+    "Execute Compose (Webhook)": {
+      "main": [[{ "node": "Respond to Webhook", "type": "main", "index": 0 }]]
+    },
+    "Execute Governance (Webhook)": {
+      "main": [[{ "node": "Respond to Webhook", "type": "main", "index": 0 }]]
+    },
+    "Execute Calendar (Webhook)": {
+      "main": [[{ "node": "Respond to Webhook", "type": "main", "index": 0 }]]
+    },
+    "Execute Digest (Webhook)": {
+      "main": [[{ "node": "Respond to Webhook", "type": "main", "index": 0 }]]
+    }
+  },
+  "pinData": {},
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "description": "Master Gmail Admin Orchestrator: 3 triggers (Gmail realtime + Cron 08/12/21 + Webhook) dispatching to sub-workflows (Intake, Triage, Governance, Compose, Calendar, Sheets, Digest, Search). Logs every execution to Postgres."
+  },
+  "tags": []
+}

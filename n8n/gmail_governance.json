@@ -1,0 +1,437 @@
+{
+  "name": "Gmail-Governance",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "gov-input-001",
+      "name": "Workflow Input",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "rules": [
+            {
+              "outputIndex": 0,
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "loose"
+                },
+                "conditions": [
+                  {
+                    "id": "cond-label-1",
+                    "leftValue": "={{ $json.governance_action || $json.action }}",
+                    "rightValue": "label",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "or"
+              },
+              "renameOutput": true,
+              "outputLabel": "label"
+            },
+            {
+              "outputIndex": 0,
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "loose"
+                },
+                "conditions": [
+                  {
+                    "id": "cond-label-2",
+                    "leftValue": "={{ $json.governance_action || $json.action }}",
+                    "rightValue": "auto_label",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "or"
+              },
+              "renameOutput": true,
+              "outputLabel": "auto_label"
+            },
+            {
+              "outputIndex": 1,
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "loose"
+                },
+                "conditions": [
+                  {
+                    "id": "cond-archive",
+                    "leftValue": "={{ $json.governance_action || $json.action }}",
+                    "rightValue": "archive",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "or"
+              },
+              "renameOutput": true,
+              "outputLabel": "archive"
+            },
+            {
+              "outputIndex": 2,
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "loose"
+                },
+                "conditions": [
+                  {
+                    "id": "cond-delete-1",
+                    "leftValue": "={{ $json.governance_action || $json.action }}",
+                    "rightValue": "safe_delete",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "or"
+              },
+              "renameOutput": true,
+              "outputLabel": "safe_delete"
+            },
+            {
+              "outputIndex": 2,
+              "conditions": {
+                "options": {
+                  "caseSensitive": false,
+                  "leftValue": "",
+                  "typeValidation": "loose"
+                },
+                "conditions": [
+                  {
+                    "id": "cond-delete-2",
+                    "leftValue": "={{ $json.governance_action || $json.action }}",
+                    "rightValue": "delete",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "or"
+              },
+              "renameOutput": true,
+              "outputLabel": "delete"
+            }
+          ],
+          "fallbackOutput": {
+            "outputIndex": 0
+          }
+        },
+        "options": {}
+      },
+      "id": "gov-router-001",
+      "name": "Action Router",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const category = $input.first().json.category || 'informational';\nconst labelMap = {\n  'urgent': ['IMPORTANT'],\n  'finance': ['Finance'],\n  'newsletter': ['Newsletters'],\n  'meeting_related': ['Meetings'],\n  'customer': ['Clients'],\n  'admin': ['Admin'],\n  'follow_up_needed': ['Follow-Up'],\n  'personal': ['Personal']\n};\nconst labels = labelMap[category] || ['Processed'];\nreturn [{ json: { ...($input.first().json), label_names: labels } }];"
+      },
+      "id": "gov-labelmapper-001",
+      "name": "Label Mapper",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [700, 180]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "addLabels",
+        "messageId": "={{ $json.message_id }}",
+        "labelIds": "={{ $json.label_names }}"
+      },
+      "id": "gov-applylabels-001",
+      "name": "Apply Labels",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [920, 180],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "RECONNECT",
+          "name": "gmailOAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "removeLabels",
+        "messageId": "={{ $json.message_id }}",
+        "labelIds": ["INBOX"]
+      },
+      "id": "gov-archive-001",
+      "name": "Archive Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [700, 340],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "RECONNECT",
+          "name": "gmailOAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "addLabels",
+        "messageId": "={{ $json.message_id }}",
+        "labelIds": ["Quarantine"]
+      },
+      "id": "gov-quarantine-001",
+      "name": "Quarantine Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [700, 500],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "RECONNECT",
+          "name": "gmailOAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "removeLabels",
+        "messageId": "={{ $json.message_id }}",
+        "labelIds": ["INBOX"]
+      },
+      "id": "gov-quarantine-remove-inbox-001",
+      "name": "Quarantine Remove Inbox",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [920, 500],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "RECONNECT",
+          "name": "gmailOAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO gmail_labels_applied (message_id, label_name, applied_by, applied_at) VALUES ($1, $2, 'auto_governance', NOW())",
+        "options": {
+          "queryParams": "={{ $json.message_id }},={{ $json.label_names ? $json.label_names.join(',') : '' }}"
+        }
+      },
+      "id": "gov-loglabel-001",
+      "name": "Log Label Applied",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1140, 180],
+      "credentials": {
+        "postgres": {
+          "id": "RECONNECT",
+          "name": "postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO gmail_actions (message_id, action_type, details, performed_by, correlation_id, created_at) VALUES ($1, $2, $3::jsonb, 'auto_governance', $4::uuid, NOW())",
+        "options": {
+          "queryParams": "={{ $json.message_id }},={{ $json.governance_action || $json.action }},={{ JSON.stringify({ category: $json.category || 'unknown', source: 'governance_workflow' }) }},={{ $json.correlation_id || '00000000-0000-0000-0000-000000000000' }}"
+        }
+      },
+      "id": "gov-logaction-001",
+      "name": "Log Action",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1140, 400],
+      "credentials": {
+        "postgres": {
+          "id": "RECONNECT",
+          "name": "postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO audit_logs (entity_type, entity_id, action, performed_by, details, created_at) VALUES ('gmail_message', $1, $2, 'auto_governance', $3::jsonb, NOW())",
+        "options": {
+          "queryParams": "={{ $json.message_id }},={{ $json.governance_action || $json.action }},={{ JSON.stringify({ category: $json.category || 'unknown', labels: $json.label_names || [], source: 'governance_workflow' }) }}"
+        }
+      },
+      "id": "gov-auditlog-001",
+      "name": "Audit Log",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1360, 300],
+      "credentials": {
+        "postgres": {
+          "id": "RECONNECT",
+          "name": "postgres"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Workflow Input": {
+      "main": [
+        [
+          {
+            "node": "Action Router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Action Router": {
+      "main": [
+        [
+          {
+            "node": "Label Mapper",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Label Mapper",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Archive Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Quarantine Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Quarantine Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Label Mapper": {
+      "main": [
+        [
+          {
+            "node": "Apply Labels",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apply Labels": {
+      "main": [
+        [
+          {
+            "node": "Log Label Applied",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Label Applied": {
+      "main": [
+        [
+          {
+            "node": "Audit Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Archive Email": {
+      "main": [
+        [
+          {
+            "node": "Log Action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Quarantine Email": {
+      "main": [
+        [
+          {
+            "node": "Quarantine Remove Inbox",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Quarantine Remove Inbox": {
+      "main": [
+        [
+          {
+            "node": "Log Action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Action": {
+      "main": [
+        [
+          {
+            "node": "Audit Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false,
+    "description": "Gmail Governance sub-workflow: auto-label, archive, quarantine with audit logging."
+  },
+  "tags": []
+}
