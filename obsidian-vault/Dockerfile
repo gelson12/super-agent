@@ -52,7 +52,7 @@ RUN printf '["obsidian-claude-code-mcp"]\n' \
 
 EXPOSE 22360
 
-COPY entrypoint.sh /entrypoint.sh
+COPY obsidian-vault/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 CMD ["/entrypoint.sh"]
