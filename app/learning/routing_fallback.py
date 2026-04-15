@@ -44,7 +44,7 @@ def route_text(prompt: str, system: str = "", source: str = "") -> str:
 def route_logged(prompt: str, system: str = "", source: str = "") -> tuple[str, str]:
     """
     Return (response, tier_name) using the first available tier.
-    tier_name is one of: "CLI", "GEMINI", "ANTHROPIC", "DEEPSEEK", "ERROR"
+    tier_name is one of: "CLI", "GEMINI", "GEMINI_API", "HAIKU", "DEEPSEEK", "ERROR"
     """
     full_prompt = f"{system}\n\n{prompt}".strip() if system else prompt
 
@@ -95,30 +95,24 @@ def route_logged(prompt: str, system: str = "", source: str = "") -> tuple[str, 
     except Exception as e:
         _log(f"Gemini API direct exception: {e}", source)
 
-    # ── Tier 3: Anthropic API (direct — CLI and Gemini both failed) ──────────
+    # ── Tier 3: Haiku API (CLI + Gemini all failed — cheapest API fallback) ─────
+    # Sonnet was here before but Haiku is correct: CLI and Gemini are already
+    # exhausted above, so ask_internal() would retry them wastefully. Haiku is
+    # what ask_internal() reaches anyway, at a fraction of Sonnet's cost.
     try:
-        from ..config import settings as _s
-        if _s.anthropic_api_key:
-            import anthropic as _anthropic
-            client = _anthropic.Anthropic(api_key=_s.anthropic_api_key)
-            resp = client.messages.create(
-                model="claude-sonnet-4-6",
-                max_tokens=8192,
-                system=system or "You are Super Agent, a powerful AI assistant.",
-                messages=[{"role": "user", "content": prompt}],
-            )
-            result = resp.content[0].text.strip()
-            if result:
-                _log(f"✓ Anthropic API responded ({len(result)} chars)", source)
-                return result, "ANTHROPIC"
-        else:
-            _log("Anthropic API skipped (no API key)", source)
+        from ..models.claude import ask_claude_haiku
+        result = ask_claude_haiku(prompt, system=system) if system else ask_claude_haiku(prompt)
+        if result and not result.startswith("["):
+            _log(f"✓ Haiku API responded ({len(result)} chars)", source)
+            return result, "HAIKU"
+        if result:
+            _log(f"Haiku API returned error token: {result[:120]}", source)
     except Exception as e:
         err = str(e).lower()
         if any(p in err for p in _NO_CREDIT_PHRASES):
-            _log("Anthropic API has no credits — trying DeepSeek", source)
+            _log("Haiku API has no credits — trying DeepSeek", source)
         else:
-            _log(f"Anthropic API exception: {e}", source)
+            _log(f"Haiku API exception: {e}", source)
 
     # ── Tier 4: DeepSeek (last resort) ───────────────────────────────────────
     try:
