@@ -930,17 +930,22 @@ def _extract_oauth_code_from_page(page) -> str | None:
     if _page_text:
         try:
             for pattern in [
-                r"copy this code[:\s]+([A-Za-z0-9\-_+/=]{8,})",
-                r"paste this code[:\s]+([A-Za-z0-9\-_+/=]{8,})",
-                r"authorization[_ ]code[:\s]+([A-Za-z0-9\-_+/=]{8,})",
-                r"your code[:\s]+([A-Za-z0-9\-_+/=]{8,})",
-                r"code[:\s]+([A-Za-z0-9\-_+/=]{40,})",  # Long OAuth-style codes
-                r'"code"\s*:\s*"([A-Za-z0-9\-_+/=]{8,})"',
+                # "Paste this into Claude Code:\nCODE#STATE" — exact platform.claude.com format
+                # The full code is CODE#STATE where # is a literal separator.
+                r"Paste this into Claude Code[:\s]*[\r\n]+\s*([A-Za-z0-9\-_+/=#]{20,})",
+                r"paste this into claude code[:\s]*[\r\n]+\s*([A-Za-z0-9\-_+/=#]{20,})",
+                # Generic "copy/paste this code:" patterns — include # in char class
+                r"copy this code[:\s]+([A-Za-z0-9\-_+/=#]{8,})",
+                r"paste this code[:\s]+([A-Za-z0-9\-_+/=#]{8,})",
+                r"authorization[_ ]code[:\s]+([A-Za-z0-9\-_+/=#]{8,})",
+                r"your code[:\s]+([A-Za-z0-9\-_+/=#]{8,})",
+                r"code[:\s]+([A-Za-z0-9\-_+/=#]{40,})",  # Long OAuth-style codes (incl. #state)
+                r'"code"\s*:\s*"([A-Za-z0-9\-_+/=#]{8,})"',
             ]:
                 m = re.search(pattern, _page_text, re.IGNORECASE)
                 if m:
-                    code = m.group(1)
-                    _log(f"Browser: extracted display code from page text ({code[:12]}...)")
+                    code = m.group(1).strip()
+                    _log(f"Browser: extracted display code from page text ({code[:20]}...)")
                     return code
         except Exception:
             pass
@@ -949,8 +954,9 @@ def _extract_oauth_code_from_page(page) -> str | None:
     try:
         _html = page.content()
         for html_pattern in [
+            r'<(?:pre|code)[^>]*>([A-Za-z0-9\-_+/=#]{20,}[#][A-Za-z0-9\-_+/=]+)</(?:pre|code)>',  # code#state
             r'<(?:pre|code)[^>]*>([A-Za-z0-9\-_+/=]{20,})</(?:pre|code)>',
-            r'<input[^>]+value="([A-Za-z0-9\-_+/=]{20,})"',
+            r'<input[^>]+value="([A-Za-z0-9\-_+/=#]{20,})"',
         ]:
             m = re.search(html_pattern, _html)
             if m:
