@@ -6,9 +6,14 @@ note to Conversations/YYYY-MM-DD.md in the Obsidian vault.
 
 Runs in a daemon thread — never blocks the response path. Never raises.
 Called from dispatcher just before return _build_extended_result(...).
+
+Deduplication: per session_id, at most one vault write per 15 minutes.
+This prevents rapid-fire conversations from flooding the vault with
+near-identical notes.
 """
 import datetime
 import threading
+import time
 
 _KEYWORDS = {
     "decision":     {"decided", "going to", "will use", "chose", "switched to",
@@ -22,8 +27,11 @@ _KEYWORDS = {
     "preference":   {"prefer", "always", "never", "don't", "instead of",
                      "rather than"},
 }
-_MIN_RESPONSE_LEN = 200
-_MIN_MSG_LEN      = 15
+_MIN_RESPONSE_LEN  = 200
+_MIN_MSG_LEN       = 15
+_SESSION_COOLDOWN  = 900          # 15 minutes between vault writes per session
+_session_last_write: dict = {}    # {session_id: epoch_float}
+_session_lock = threading.Lock()
 
 
 def _detect_significance(message: str, response: str) -> list:
@@ -59,6 +67,22 @@ def _append_to_vault(path: str, content: str) -> None:
         pass
 
 
+def _is_session_throttled(session_id: str) -> bool:
+    """Return True if this session wrote to the vault within the last 15 minutes."""
+    key = session_id or "__global__"
+    with _session_lock:
+        last = _session_last_write.get(key, 0.0)
+        if time.time() - last < _SESSION_COOLDOWN:
+            return True
+        _session_last_write[key] = time.time()
+        # Keep dict bounded — evict entries older than 2x cooldown
+        cutoff = time.time() - _SESSION_COOLDOWN * 2
+        stale = [k for k, v in _session_last_write.items() if v < cutoff]
+        for k in stale:
+            del _session_last_write[k]
+        return False
+
+
 def maybe_save_insight(
     message: str,
     response: str,
@@ -68,9 +92,15 @@ def maybe_save_insight(
     """
     Check if this exchange is significant; if so, append a vault note in a
     daemon thread. Returns immediately — never blocks.
+
+    Per-session 15-minute cooldown prevents rapid-fire conversations from
+    writing many near-identical notes.
     """
     tags = _detect_significance(message, response)
     if not tags:
+        return
+
+    if _is_session_throttled(session_id):
         return
 
     def _write():

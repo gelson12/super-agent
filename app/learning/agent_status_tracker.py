@@ -336,10 +336,11 @@ def _ensure_worker(worker_id: str) -> dict:
             "task": "",
             "sick_since": None,        # timestamp when sick state was entered
             "error_detail": None,      # last error message, cleared on mark_done()
-            "last_recovery_at": None,  # UTC float: when last recovery completed
-            "last_recovery_layer": "", # which layer succeeded (e.g. "Playwright auto-login")
-            "recovery_count_today": 0, # resets at UTC midnight
-            "_recovery_day": 0,        # internal: UTC day number for daily reset
+            "last_recovery_at": None,       # UTC float: when last recovery completed
+            "last_recovery_layer": "",      # which layer succeeded (e.g. "Playwright auto-login")
+            "recovery_count_today": 0,      # resets at UTC midnight
+            "_recovery_day": 0,             # internal: UTC day number for daily reset
+            "recovery_race_history": [],    # list of last 10 race results (newest first)
         }
     return _workers[worker_id]
 
@@ -418,9 +419,11 @@ def mark_sick(worker_id: str) -> None:
     _log_agent_event(worker_id, "sick", "Token invalid or expired — self-healing active")
 
 
-def record_recovery(worker_id: str, layer: str, duration_s: float) -> None:
-    """Record a completed recovery event — updates last_recovery_at and daily count.
-    Called from full_recovery_chain() and gemini_full_recovery() on success."""
+def record_recovery(worker_id: str, layer: str, duration_s: float,
+                    contestants: list | None = None) -> None:
+    """Record a completed recovery event — updates last_recovery_at, daily count,
+    and appends to recovery_race_history (last 10 races, newest first).
+    contestants: list of {name, result, duration_s} dicts — one per competing method."""
     with _lock:
         w = _ensure_worker(worker_id)
         w["last_recovery_at"] = time.time()
@@ -430,6 +433,16 @@ def record_recovery(worker_id: str, layer: str, duration_s: float) -> None:
             w["recovery_count_today"] = 0
             w["_recovery_day"] = today
         w["recovery_count_today"] = w.get("recovery_count_today", 0) + 1
+        # Append race entry to history — newest first, capped at 10
+        race_entry = {
+            "at": time.time(),
+            "duration_s": round(duration_s, 1),
+            "winner": layer,
+            "contestants": contestants or [],
+        }
+        history = w.get("recovery_race_history", [])
+        history.insert(0, race_entry)
+        w["recovery_race_history"] = history[:10]
     _log_agent_event(worker_id, "recovered",
                      f"Recovery via {layer} in {duration_s:.0f}s "
                      f"(#{w['recovery_count_today']} today)")
@@ -517,6 +530,7 @@ def get_worker_status(worker_id: str) -> dict:
             "last_recovery_at": w.get("last_recovery_at"), # UTC timestamp of last recovery
             "last_recovery_layer": w.get("last_recovery_layer", ""),
             "recovery_count_today": w.get("recovery_count_today", 0),
+            "recovery_race_history": w.get("recovery_race_history", []),
         }
 
 

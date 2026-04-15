@@ -90,6 +90,14 @@ def _collect_todays_data() -> dict:
     top_complex = sorted(today, key=lambda x: x.get("complexity", 0), reverse=True)
     top_complex = top_complex[:_MAX_INTERACTIONS]
 
+    # Feedback loop: features awaiting post-deploy error-rate measurement
+    pending_after = []
+    try:
+        from .improvement_cycle import check_pending_after_snapshots
+        pending_after = check_pending_after_snapshots()
+    except Exception:
+        pass
+
     return {
         "date": datetime.datetime.utcnow().strftime("%Y-%m-%d"),
         "total_interactions_today": len(today),
@@ -100,6 +108,7 @@ def _collect_todays_data() -> dict:
         "alltime_win_rates": win_rates,
         "top_errors_today": top_errors,
         "top_complex_interactions": top_complex,
+        "pending_outcome_snapshots": pending_after,
     }
 
 
@@ -272,7 +281,17 @@ Set safe_to_auto_apply to true only for low-priority suggestions on non-core uti
 (app/tools/, app/cache/, app/memory/, app/learning/).
 Always false for dispatcher.py, main.py, agents/, models/, config.py, Dockerfile, requirements.txt.
 For prompt_improvements: only propose a change if a prompt's error_rate from GET /prompt-library
-is above 5% AND you have a specific, targeted improvement. Never rewrite entire prompts."""
+is above 5% AND you have a specific, targeted improvement. Never rewrite entire prompts.
+
+FEEDBACK LOOP — OUTCOME MEASUREMENTS:
+If today's activity data contains a non-empty "pending_outcome_snapshots" list, these features
+were deployed ≥7 days ago and need their post-deploy error-rate measured now.
+For each feature name in that list:
+  1. Check today's error_rate_pct and total_interactions_today from this summary.
+  2. Call record_outcome_snapshot(feature_name, "after", current_error_rate, total_requests)
+     via the shell tool: python3 -c "from app.learning.improvement_cycle import record_outcome_snapshot; record_outcome_snapshot('<name>', 'after', <rate>, <total>)"
+  3. Call get_outcome_delta(feature_name) and include the delta in health_summary.
+  Report whether each deployed improvement actually reduced the error rate."""
 
 
 def _is_core_file(file_path: str) -> bool:
@@ -413,6 +432,23 @@ def auto_apply_safe_suggestions(review: dict) -> list[dict]:
         try:
             baseline = _get_baseline_error_rate()
             result = run_self_improve_agent(msg, authorized=authorized)
+
+            # ── Feedback loop: record "before" error-rate snapshot ────────────
+            try:
+                from .improvement_cycle import record_outcome_snapshot
+                from .insight_log import insight_log as _il
+                _summary7d = _il.summary()
+                _total7d = int(_summary7d.get("total", 0))
+                _err7d = float(_summary7d.get("error_rate_pct", 0.0)) / 100.0
+                record_outcome_snapshot(
+                    feature_name=feature_name,
+                    snapshot_type="before",
+                    error_rate_7d=_err7d,
+                    dispatch_total_7d=_total7d,
+                    notes=f"Applied by nightly review on {datetime.datetime.utcnow().strftime('%Y-%m-%d')}",
+                )
+            except Exception:
+                pass
 
             # Start 6-hour health monitoring
             start_monitoring(

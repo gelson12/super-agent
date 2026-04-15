@@ -15,7 +15,13 @@
       color: #e8e8e8;
       min-height: 100vh;
       overflow-x: hidden;
+      scrollbar-width: thin;
+      scrollbar-color: #6b5337 #2d1f0e;
     }
+    body::-webkit-scrollbar        { width: 6px; }
+    body::-webkit-scrollbar-track  { background: #2d1f0e; }
+    body::-webkit-scrollbar-thumb  { background: #6b5337; border-radius: 3px; }
+    body::-webkit-scrollbar-thumb:hover { background: #c9a96e; }
 
     /* ── Header ──────────────────────────────────────────────────── */
     .header {
@@ -131,7 +137,7 @@
     .status-label.working      { background: #1e3a5f; color: #60a5fa; }
     .status-label.idle         { background: #14532d; color: #4ade80; }
     .status-label.break        { background: #1c1c3a; color: #818cf8; }
-    .status-label.coffee_break { background: #3b1f00; color: #fb923c; }
+    .status-label.coffee_break { background: #1a0c05; color: #c8956c; }
     .status-label.sleeping     { background: #333;    color: #888;    }
     .status-label.talking      { background: #4c1d95; color: #c4b5fd; }
     .status-label.strike       { background: #7f1d1d; color: #fca5a5; }
@@ -173,6 +179,11 @@
       background: linear-gradient(135deg, #1e3a5f 0%, #2563eb 100%);
       border-color: #3b82f6;
       box-shadow: 0 0 12px rgba(59, 130, 246, 0.3);
+      animation: working-glow 2s ease-in-out infinite;
+    }
+    @keyframes working-glow {
+      0%, 100% { box-shadow: 0 0 8px rgba(59,130,246,0.3); }
+      50%       { box-shadow: 0 0 18px rgba(59,130,246,0.7), 0 0 4px rgba(96,165,250,0.4); }
     }
 
     .monitor.on-green {
@@ -204,10 +215,10 @@
       border-color: #5eead4;
     }
 
-    .monitor.on-orange {
-      background: linear-gradient(135deg, #3b1f00 0%, #c2410c 100%);
-      border-color: #fb923c;
-      box-shadow: 0 0 8px rgba(251, 146, 60, 0.3);
+    .monitor.on-coffee {
+      background: linear-gradient(135deg, #1a0c05 0%, #6f3a1a 100%);
+      border-color: #8b5a2b;
+      box-shadow: 0 0 8px rgba(139, 90, 43, 0.4);
     }
 
     .monitor.on-indigo {
@@ -303,9 +314,12 @@
     }
 
     @keyframes coffee-steam {
-      0%   { transform: translateY(0) rotate(-5deg); opacity: 0.8; }
-      100% { transform: translateY(-4px) rotate(5deg); opacity: 1; }
+      0%   { transform: translateY(0) rotate(-5deg) scale(1); opacity: 0.8; }
+      50%  { transform: translateY(-6px) rotate(3deg) scale(1.15); opacity: 1; }
+      100% { transform: translateY(-3px) rotate(5deg) scale(1.05); opacity: 0.9; }
     }
+    /* Coffee break screen text tinted latte */
+    .monitor.on-coffee .screen-content { color: #c8956c; }
 
     /* Talk bubble */
     .talk-bubble {
@@ -526,10 +540,13 @@
       flex: 1;
       overflow-y: auto;
       padding: 6px 0;
+      scrollbar-width: thin;
+      scrollbar-color: #6b5337 #111;
     }
-    #log-entries::-webkit-scrollbar { width: 4px; }
-    #log-entries::-webkit-scrollbar-track { background: #111; }
-    #log-entries::-webkit-scrollbar-thumb { background: #4a3520; }
+    #log-entries::-webkit-scrollbar        { width: 5px; }
+    #log-entries::-webkit-scrollbar-track  { background: #111; }
+    #log-entries::-webkit-scrollbar-thumb  { background: #6b5337; border-radius: 3px; }
+    #log-entries::-webkit-scrollbar-thumb:hover { background: #c9a96e; }
 
     .log-empty {
       padding: 24px 16px;
@@ -633,7 +650,7 @@
     <div class="legend-item"><div class="legend-dot" style="background:#3b82f6"></div> Working</div>
     <div class="legend-item"><div class="legend-dot" style="background:#22c55e"></div> Idle</div>
     <div class="legend-item"><div class="legend-dot" style="background:#818cf8"></div> Break</div>
-    <div class="legend-item"><div class="legend-dot" style="background:#fb923c"></div> Coffee Break</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#8b5a2b"></div> Coffee Break</div>
     <div class="legend-item"><div class="legend-dot" style="background:#555"></div> Sleeping</div>
     <div class="legend-item"><div class="legend-dot" style="background:#8b5cf6"></div> Talking</div>
     <div class="legend-item"><div class="legend-dot" style="background:#ef4444"></div> Strike</div>
@@ -765,7 +782,7 @@ function getMonitorClass(state) {
     case "working":      return "on-blue";
     case "idle":         return "on-green";
     case "break":        return "on-indigo";
-    case "coffee_break": return "on-orange";
+    case "coffee_break": return "on-coffee";
     case "recovering":   return "on-teal";
     case "talking":      return "on-purple";
     case "strike":       return "on-red";
@@ -846,7 +863,7 @@ function renderDesk(worker) {
   return `
     <div class="desk" data-worker="${esc(worker.id)}" data-state="${worker.state}"
          title="${esc(tooltip)}" onclick="openLog(this.dataset.worker)">
-      <div class="name">${esc(worker.id)}</div>
+      <div class="name">${esc(worker.id)}${worker.id === 'Claude CLI Pro' && (worker.recovery_count_today||0) >= 3 ? ` <span title="${worker.recovery_count_today} recoveries today — hot streak!" style="font-size:9px">🔥</span>` : ''}</div>
       <div class="status-label ${worker.state}">${worker.state === "coffee_break" ? "coffee break" : worker.state}</div>
       <div class="monitor ${monitorClass}">
         <div class="screen-content">${screenContent}</div>

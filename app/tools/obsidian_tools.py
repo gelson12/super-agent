@@ -181,6 +181,59 @@ def obsidian_call_tool(tool_name: str, arguments_json: str = "{}") -> str:
     return _run_async(_call_mcp(tool_name, args))
 
 
+@tool
+def obsidian_list_folders() -> str:
+    """
+    List all folder names in the Obsidian vault (no files, folders only).
+    Use this to navigate the vault structure before reading or writing notes.
+    Returns a newline-separated list of folder paths, plus '(root)' if notes
+    exist at the top level.
+    """
+    return _run_async(_call_mcp("list_folders", {}))
+
+
+@tool
+def obsidian_get_recent_notes(n: int = 10) -> str:
+    """
+    Return the N most recently modified notes in the vault with timestamps.
+    Default is 10. Use this to catch up on recent activity or find the latest
+    improvement logs, conversation notes, or engineering decisions.
+    """
+    return _run_async(_call_mcp("get_recent_notes", {"n": n}))
+
+
+@tool
+def obsidian_get_vault_summary() -> str:
+    """
+    Return a full digest of all vault notes grouped by folder, showing note
+    names and approximate word counts. Use this to get a bird's-eye view of
+    everything stored in the vault before deciding which notes to read.
+    """
+    return _run_async(_call_mcp("get_vault_summary", {}))
+
+
+@tool
+def obsidian_move_note(from_path: str, to_path: str) -> str:
+    """
+    Move or rename a note in the Obsidian vault.
+    - from_path: current relative path (e.g. "Inbox/draft.md")
+    - to_path:   new relative path   (e.g. "Engineering/architecture.md")
+    Creates intermediate folders automatically. The original file is removed.
+    """
+    return _run_async(_call_mcp("move_file", {"from_path": from_path, "to_path": to_path}))
+
+
+@tool
+def obsidian_search_by_tag(tag: str) -> str:
+    """
+    Find all notes in the vault that contain a given tag.
+    Matches both YAML frontmatter tags (tags: [foo]) and inline #hashtags.
+    Pass the tag without the # prefix (e.g. "architecture" not "#architecture").
+    Returns a newline-separated list of matching file paths.
+    """
+    return _run_async(_call_mcp("search_by_tag", {"tag": tag}))
+
+
 # ── Convenience list for agent tool registration ──────────────────────────────
 
 OBSIDIAN_TOOLS = [
@@ -191,4 +244,9 @@ OBSIDIAN_TOOLS = [
     obsidian_search_vault,
     obsidian_discover_tools,
     obsidian_call_tool,
+    obsidian_list_folders,
+    obsidian_get_recent_notes,
+    obsidian_get_vault_summary,
+    obsidian_move_note,
+    obsidian_search_by_tag,
 ]

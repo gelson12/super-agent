@@ -6,13 +6,15 @@ Serves on http://0.0.0.0:22360
 MCP endpoint: http://obsidian-vault.railway.internal:22360/sse
 
 Tools: list_directory, read_file, write_file, append_to_file,
-       search_files, delete_file, get_vault_info
+       search_files, delete_file, get_vault_info,
+       list_folders, get_recent_notes, get_vault_summary, move_file, search_by_tag
 """
 
 import json
 import logging
 import os
 import re
+import time
 from pathlib import Path
 
 import uvicorn
@@ -50,6 +52,11 @@ async def list_tools() -> list[Tool]:
         Tool(name="search_files",     description="Full-text search across all notes. Case-insensitive.",                        inputSchema={"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}),
         Tool(name="delete_file",      description="Delete a note from the vault.",                                               inputSchema={"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}),
         Tool(name="get_vault_info",   description="Vault stats: note count, size, folders. Use to verify vault is accessible.",  inputSchema={"type":"object","properties":{},"required":[]}),
+        Tool(name="list_folders",     description="List all folder names in the vault (no files). Use to navigate the vault structure.", inputSchema={"type":"object","properties":{},"required":[]}),
+        Tool(name="get_recent_notes", description="Return the N most recently modified notes with timestamps. Default N=10.",           inputSchema={"type":"object","properties":{"n":{"type":"integer","default":10}},"required":[]}),
+        Tool(name="get_vault_summary",description="Return a digest of all notes grouped by folder with note names and word counts.",    inputSchema={"type":"object","properties":{},"required":[]}),
+        Tool(name="move_file",        description="Move or rename a note. from_path and to_path are relative .md paths.",              inputSchema={"type":"object","properties":{"from_path":{"type":"string"},"to_path":{"type":"string"}},"required":["from_path","to_path"]}),
+        Tool(name="search_by_tag",    description="Find notes that contain a YAML frontmatter tag or inline #tag. Case-insensitive.", inputSchema={"type":"object","properties":{"tag":{"type":"string"}},"required":["tag"]}),
     ]
 
 
@@ -121,6 +128,76 @@ def _dispatch(name: str, args: dict) -> str:
         size = sum(n.stat().st_size for n in notes)
         folders = sorted({str(n.relative_to(VAULT_PATH).parent) for n in notes if n.parent != VAULT_PATH})
         return json.dumps({"vault_path": str(VAULT_PATH), "note_count": len(notes), "total_size_kb": round(size/1024,1), "folders": folders or ["(root only)"]}, indent=2)
+
+    elif name == "list_folders":
+        folders = sorted({
+            str(p.relative_to(VAULT_PATH).parent)
+            for p in VAULT_PATH.rglob("*.md")
+            if not any(part.startswith(".") for part in p.parts)
+            and p.parent != VAULT_PATH
+        })
+        root_files = list(VAULT_PATH.glob("*.md"))
+        result = (["(root)"] if root_files else []) + folders
+        return "\n".join(result) if result else "(no folders found)"
+
+    elif name == "get_recent_notes":
+        n = int(args.get("n", 10))
+        notes = [
+            p for p in VAULT_PATH.rglob("*.md")
+            if not any(part.startswith(".") for part in p.parts)
+        ]
+        notes.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+        lines = []
+        for p in notes[:n]:
+            mtime = time.strftime("%Y-%m-%d %H:%M", time.localtime(p.stat().st_mtime))
+            lines.append(f"{mtime}  {p.relative_to(VAULT_PATH)}")
+        return "\n".join(lines) if lines else "(vault is empty)"
+
+    elif name == "get_vault_summary":
+        by_folder: dict = {}
+        for p in sorted(VAULT_PATH.rglob("*.md")):
+            if any(part.startswith(".") for part in p.parts):
+                continue
+            folder = str(p.relative_to(VAULT_PATH).parent)
+            try:
+                wc = len(p.read_text(encoding="utf-8").split())
+            except Exception:
+                wc = 0
+            by_folder.setdefault(folder, []).append(f"  - {p.stem} ({wc}w)")
+        if not by_folder:
+            return "(vault is empty)"
+        lines = []
+        for folder in sorted(by_folder):
+            label = folder if folder != "." else "(root)"
+            lines.append(f"**{label}/** ({len(by_folder[folder])} notes)")
+            lines.extend(by_folder[folder])
+        return "\n".join(lines)
+
+    elif name == "move_file":
+        src = _rel(args["from_path"])
+        dst = _rel(args["to_path"])
+        if not src.exists():
+            return f"Source not found: {args['from_path']}"
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        src.rename(dst)
+        return f"Moved: {args['from_path']} → {args['to_path']}"
+
+    elif name == "search_by_tag":
+        tag = args["tag"].lstrip("#").lower()
+        # Match YAML frontmatter tags (tags: [foo, bar] or - foo) and inline #tag
+        pat_inline   = re.compile(rf"#\b{re.escape(tag)}\b", re.IGNORECASE)
+        pat_yaml_val = re.compile(rf"(?:^|\s|-\s+){re.escape(tag)}(?:\s|,|$)", re.IGNORECASE)
+        results = []
+        for md in sorted(VAULT_PATH.rglob("*.md")):
+            if any(p.startswith(".") for p in md.parts):
+                continue
+            try:
+                text = md.read_text(encoding="utf-8")
+            except Exception:
+                continue
+            if pat_inline.search(text) or pat_yaml_val.search(text):
+                results.append(str(md.relative_to(VAULT_PATH)))
+        return "\n".join(results) if results else f"No notes found with tag: #{tag}"
 
     return f"Unknown tool: {name}"
 

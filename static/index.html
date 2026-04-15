@@ -551,7 +551,7 @@
     .o-status.working      { background: #1e3a5f; color: #60a5fa; }
     .o-status.idle         { background: #14532d; color: #4ade80; }
     .o-status.break        { background: #0c4a6e; color: #38bdf8; }
-    .o-status.coffee_break { background: #3b1f00; color: #fb923c; }
+    .o-status.coffee_break { background: #1a0c05; color: #c8956c; }
     .o-status.sleeping     { background: #333;    color: #888; }
     .o-status.talking      { background: #4c1d95; color: #c4b5fd; }
     .o-status.strike       { background: #7f1d1d; color: #fca5a5; }
@@ -577,9 +577,13 @@
 
     .o-monitor.off        { background: #111; border-color: #333; }
     .o-monitor.on-cyan    { background: linear-gradient(135deg,#0c4a6e,#0ea5e9); border-color: #38bdf8; box-shadow: 0 0 8px rgba(56,189,248,0.2); }
-    .o-monitor.on-blue    { background: linear-gradient(135deg,#1e3a5f,#2563eb); border-color: #3b82f6; box-shadow: 0 0 8px rgba(59,130,246,0.3); }
+    .o-monitor.on-blue    { background: linear-gradient(135deg,#1e3a5f,#2563eb); border-color: #3b82f6; animation: o-working-glow 2s ease-in-out infinite; }
+    @keyframes o-working-glow {
+      0%, 100% { box-shadow: 0 0 6px rgba(59,130,246,0.3); }
+      50%       { box-shadow: 0 0 16px rgba(59,130,246,0.7), 0 0 4px rgba(96,165,250,0.4); }
+    }
     .o-monitor.on-green   { background: linear-gradient(135deg,#14532d,#16a34a); border-color: #22c55e; }
-    .o-monitor.on-orange  { background: linear-gradient(135deg,#3b1f00,#c2410c); border-color: #fb923c; }
+    .o-monitor.on-coffee  { background: linear-gradient(135deg,#1a0c05,#6f3a1a); border-color: #8b5a2b; box-shadow: 0 0 8px rgba(139,90,43,0.4); }
     .o-monitor.on-teal    { background: linear-gradient(135deg,#134e4a,#0d9488); border-color: #5eead4; }
     .o-monitor.on-purple  { background: linear-gradient(135deg,#4c1d95,#7c3aed); border-color: #8b5cf6; box-shadow: 0 0 8px rgba(139,92,246,0.3); }
     .o-monitor.on-red     { background: linear-gradient(135deg,#7f1d1d,#dc2626); border-color: #ef4444; }
@@ -1166,7 +1170,7 @@
       <span><span class="ol-dot" style="background:#3b82f6"></span>Working</span>
       <span><span class="ol-dot" style="background:#22c55e"></span>Idle</span>
       <span><span class="ol-dot" style="background:#38bdf8"></span>Break</span>
-      <span><span class="ol-dot" style="background:#fb923c"></span>Coffee Break</span>
+      <span><span class="ol-dot" style="background:#8b5a2b"></span>Coffee Break</span>
       <span><span class="ol-dot" style="background:#555"></span>Sleeping</span>
       <span><span class="ol-dot" style="background:#8b5cf6"></span>Talking</span>
       <span><span class="ol-dot" style="background:#ef4444"></span>Strike</span>
@@ -2033,7 +2037,7 @@
   }
 
   function _oMonClass(state) {
-    return ({working:'on-blue',idle:'on-green',break:'on-cyan',coffee_break:'on-orange',recovering:'on-teal',talking:'on-purple',strike:'on-red',sick:'on-yellow'})[state] || 'off';
+    return ({working:'on-blue',idle:'on-green',break:'on-cyan',coffee_break:'on-coffee',recovering:'on-teal',talking:'on-purple',strike:'on-red',sick:'on-yellow'})[state] || 'off';
   }
 
   function _oScreen(w) {
@@ -2098,7 +2102,7 @@
       popupRows += `<div class="o-popup-row">Never been active yet</div>`;
     }
     if (w.state === 'break')        popupRows += `<div class="o-popup-row" style="color:#38bdf8">Taking a short break ☕</div>`;
-    if (w.state === 'coffee_break') popupRows += `<div class="o-popup-row" style="color:#fb923c">Coffee break — back soon ☕</div>`;
+    if (w.state === 'coffee_break') popupRows += `<div class="o-popup-row" style="color:#c8956c">Coffee break — back soon ☕</div>`;
     if (w.state === 'recovering')   popupRows += `<div class="o-popup-row" style="color:#5eead4">Self-healing in progress 🔧</div>`;
     if (w.state === 'strike')       popupRows += `<div class="o-popup-row" style="color:#fca5a5">API credits exhausted</div>`;
     if (w.state === 'sick')         popupRows += `<div class="o-popup-row" style="color:#fde68a">Auth token invalid/expired</div>`;
@@ -2118,7 +2122,7 @@
         <div class="o-popup-title">${_oEsc(info.title)}</div>
         ${popupRows}
       </div>
-      <div class="o-name">${_oEsc(info.title)}</div>
+      <div class="o-name">${_oEsc(info.title)}${w.id === 'Claude CLI Pro' && (w.recovery_count_today||0) >= 3 ? ` <span title="${w.recovery_count_today} recoveries today — hot streak!" style="font-size:9px">🔥</span>` : ''}</div>
       <div class="o-status ${w.state}">${statusLabel}</div>
       <div class="o-monitor ${_oMonClass(w.state)}">${_oScreen(w)}</div>
       <div class="o-monitor-stand"></div>

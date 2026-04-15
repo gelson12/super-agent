@@ -296,3 +296,153 @@ def get_cycle_log() -> list:
 def get_cycle_summary() -> dict:
     """Return aggregated cycle statistics for the /cycle-log/summary endpoint."""
     return cycle_log.summary()
+
+
+# ── Feedback loop closure ────────────────────────────────────────────────────
+
+
+_OUTCOME_LOG_FILE = "improvement_outcome_log.json"
+_MAX_OUTCOME_ENTRIES = 200
+
+
+def _resolve_outcome_path() -> Path:
+    base = Path("/workspace") if os.access("/workspace", os.W_OK) else Path(".")
+    return base / _OUTCOME_LOG_FILE
+
+
+def record_outcome_snapshot(
+    feature_name: str,
+    snapshot_type: str,
+    error_rate_7d: float,
+    dispatch_total_7d: int,
+    notes: str = "",
+) -> None:
+    """
+    Record a before/after error-rate snapshot for a cycle entry.
+
+    Call with snapshot_type="before" immediately when a proposal is ACCEPT-ed,
+    and with snapshot_type="after" 7 days later (the nightly review job checks
+    for pending after-snapshots and calls this automatically).
+
+    Never raises — all writes are best-effort.
+
+    Args:
+        feature_name:     Matches CycleLog entry feature_name.
+        snapshot_type:    "before" | "after"
+        error_rate_7d:    Trailing 7-day error rate (0.0–1.0) at snapshot time.
+        dispatch_total_7d: Total requests in the same 7-day window.
+        notes:            Optional free-text context.
+    """
+    try:
+        path = _resolve_outcome_path()
+        try:
+            entries: list = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            entries = []
+
+        entry = {
+            "feature_name": feature_name,
+            "snapshot_type": snapshot_type,
+            "recorded_at": datetime.datetime.utcnow().isoformat(),
+            "error_rate_7d": round(error_rate_7d, 6),
+            "dispatch_total_7d": dispatch_total_7d,
+            "notes": notes,
+        }
+        entries.append(entry)
+        path.write_text(
+            json.dumps(entries[-_MAX_OUTCOME_ENTRIES:], indent=2),
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
+
+
+def get_outcome_delta(feature_name: str) -> dict | None:
+    """
+    Return the before/after error-rate delta for a feature, or None if
+    either snapshot is missing.
+
+    Returns::
+
+        {
+            "feature_name": str,
+            "before_rate":  float,
+            "after_rate":   float,
+            "delta":        float,   # negative = improvement
+            "improvement":  bool,    # True if after < before
+            "before_recorded_at": str,
+            "after_recorded_at":  str,
+        }
+    """
+    try:
+        path = _resolve_outcome_path()
+        entries: list = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+    feature_entries = [e for e in entries if e.get("feature_name") == feature_name]
+    before = next((e for e in reversed(feature_entries) if e.get("snapshot_type") == "before"), None)
+    after  = next((e for e in reversed(feature_entries) if e.get("snapshot_type") == "after"),  None)
+
+    if not before or not after:
+        return None
+
+    b = before["error_rate_7d"]
+    a = after["error_rate_7d"]
+    return {
+        "feature_name":       feature_name,
+        "before_rate":        b,
+        "after_rate":         a,
+        "delta":              round(a - b, 6),
+        "improvement":        a < b,
+        "before_recorded_at": before["recorded_at"],
+        "after_recorded_at":  after["recorded_at"],
+    }
+
+
+def check_pending_after_snapshots() -> list[str]:
+    """
+    Scan the outcome log for accepted proposals that have a 'before' snapshot
+    but no 'after' snapshot older than 7 days.  Returns the feature names
+    that are ready for an after-snapshot.
+
+    Called by the nightly review to prompt the LLM to measure post-deploy
+    error rates and call record_outcome_snapshot(..., "after", ...).
+    """
+    try:
+        path = _resolve_outcome_path()
+        entries: list = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+
+    now = datetime.datetime.utcnow()
+    seven_days = datetime.timedelta(days=7)
+
+    by_feature: dict = {}
+    for e in entries:
+        fname = e.get("feature_name", "")
+        stype = e.get("snapshot_type", "")
+        by_feature.setdefault(fname, set()).add(stype)
+
+    pending = []
+    for e in entries:
+        if e.get("snapshot_type") != "before":
+            continue
+        fname = e["feature_name"]
+        if "after" in by_feature.get(fname, set()):
+            continue  # already have an after-snapshot
+        try:
+            recorded = datetime.datetime.fromisoformat(e["recorded_at"])
+        except Exception:
+            continue
+        if now - recorded >= seven_days:
+            pending.append(fname)
+
+    # Deduplicate while preserving order
+    seen: set = set()
+    result = []
+    for f in pending:
+        if f not in seen:
+            seen.add(f)
+            result.append(f)
+    return result
