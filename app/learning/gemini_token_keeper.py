@@ -433,16 +433,27 @@ def gemini_full_recovery() -> bool:
       2. Restore from env var
     Returns True if any method succeeded.
     """
+    import time as _time
+    _start = _time.time()
     _log("=== Gemini recovery chain starting ===")
+
+    def _record(layer: str) -> None:
+        try:
+            from .agent_status_tracker import record_recovery
+            record_recovery("Gemini CLI", layer, _time.time() - _start)
+        except Exception:
+            pass
 
     # Attempt 1: Direct OAuth refresh
     if _try_direct_gemini_refresh():
         _log("=== Gemini recovery SUCCESS via direct refresh ===")
+        _record("Direct OAuth refresh")
         return True
 
     # Attempt 2: Restore from env var
     if _try_restore_gemini_auth():
         _log("=== Gemini recovery SUCCESS via env var restore ===")
+        _record("Env var restore")
         return True
 
     _log("=== Gemini recovery FAILED — manual 'gemini auth login' required ===")

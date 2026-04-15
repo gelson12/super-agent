@@ -2265,12 +2265,25 @@ def full_recovery_chain() -> bool:
         # for the loser thread. We want the winner to return immediately.
         _pool = _cf.ThreadPoolExecutor(max_workers=2, thread_name_prefix="recovery")
         futures: list[_cf.Future] = []
+        _stall_alerted = False
         try:
             f_direct  = _pool.submit(_direct_attempt)
             f_browser = _pool.submit(_browser_attempt)
             futures   = [f_direct, f_browser]
 
-            for future in _cf.as_completed(futures, timeout=300):
+            for future in _cf.as_completed(futures, timeout=720):
+                elapsed = time.time() - _recovery_started_at
+                # Stall alert: fires once if neither thread has succeeded after 8 min.
+                # Usually means the magic link email never arrived — n8n may be broken.
+                if not _stall_alerted and elapsed > 480:
+                    _stall_alerted = True
+                    _log(f"[STALL] Recovery taking {elapsed:.0f}s — magic link may not have "
+                         f"arrived. Check n8n workflow jun8CaMnNhux1iEY and Outlook inbox.")
+                    try:
+                        from .pro_token_keeper import _send_vault_alert
+                        _send_vault_alert(0)
+                    except Exception:
+                        pass
                 try:
                     ok, layer = future.result()
                     if ok:
@@ -2278,17 +2291,32 @@ def full_recovery_chain() -> bool:
                         _write_vault_auth_note(layer, time.time() - _recovery_started_at)
                         # Signal dashboard: worker is healthy again.
                         try:
-                            from .agent_status_tracker import mark_done
+                            from .agent_status_tracker import mark_done, record_recovery
                             mark_done("Claude CLI Pro")
+                            record_recovery("Claude CLI Pro", layer,
+                                            time.time() - _recovery_started_at)
                             _log("Recovery: dashboard status reset to idle ✓")
                         except Exception as _sd_err:
                             _log(f"Recovery: mark_done failed (non-fatal): {_sd_err}")
+                        # Delete boot sentinel so the 30-min health check no longer
+                        # re-marks sick on every cycle after recovery.
+                        try:
+                            import pathlib as _sp
+                            _boot_sick = _sp.Path("/tmp/.claude_boot_sick")
+                            if _boot_sick.exists():
+                                _boot_sick.unlink(missing_ok=True)
+                                _log("Recovery: boot sentinel removed ✓")
+                        except Exception as _se:
+                            _log(f"Recovery: sentinel cleanup failed (non-fatal): {_se}")
                         # Shut down without blocking — loser thread runs to
                         # completion in the background, doesn't delay our return.
                         _pool.shutdown(wait=False, cancel_futures=True)
                         return True
                 except Exception as _attempt_err:
                     _log(f"Recovery attempt raised: {_attempt_err}")
+
+        except _cf.TimeoutError:
+            _log("=== Recovery timed out after 12 minutes — manual login required ===")
         finally:
             # Release pool resources on timeout / exception / normal exit
             _pool.shutdown(wait=False, cancel_futures=True)

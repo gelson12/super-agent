@@ -334,8 +334,12 @@ def _ensure_worker(worker_id: str) -> dict:
             "last_worked": 0,
             "talking_to": None,
             "task": "",
-            "sick_since": None,   # timestamp when sick state was entered
-            "error_detail": None, # last error message, cleared on mark_done()
+            "sick_since": None,        # timestamp when sick state was entered
+            "error_detail": None,      # last error message, cleared on mark_done()
+            "last_recovery_at": None,  # UTC float: when last recovery completed
+            "last_recovery_layer": "", # which layer succeeded (e.g. "Playwright auto-login")
+            "recovery_count_today": 0, # resets at UTC midnight
+            "_recovery_day": 0,        # internal: UTC day number for daily reset
         }
     return _workers[worker_id]
 
@@ -412,6 +416,23 @@ def mark_sick(worker_id: str) -> None:
         w["state"] = "sick"
         w["task"] = "Recovering…"
     _log_agent_event(worker_id, "sick", "Token invalid or expired — self-healing active")
+
+
+def record_recovery(worker_id: str, layer: str, duration_s: float) -> None:
+    """Record a completed recovery event — updates last_recovery_at and daily count.
+    Called from full_recovery_chain() and gemini_full_recovery() on success."""
+    with _lock:
+        w = _ensure_worker(worker_id)
+        w["last_recovery_at"] = time.time()
+        w["last_recovery_layer"] = layer
+        today = int(time.time() // 86400)  # UTC day number
+        if w.get("_recovery_day") != today:
+            w["recovery_count_today"] = 0
+            w["_recovery_day"] = today
+        w["recovery_count_today"] = w.get("recovery_count_today", 0) + 1
+    _log_agent_event(worker_id, "recovered",
+                     f"Recovery via {layer} in {duration_s:.0f}s "
+                     f"(#{w['recovery_count_today']} today)")
 
 
 def mark_talking(worker_a: str, worker_b: str) -> None:
@@ -491,8 +512,11 @@ def get_worker_status(worker_id: str) -> dict:
             "last_worked_ago": round(now - w["last_worked"]) if w["last_worked"] > 0 else None,
             "talking_to": w["talking_to"],
             "task": w["task"],
-            "sick_for_seconds": sick_for_seconds,       # how long truly sick (None if healthy)
-            "error_detail": w.get("error_detail"),      # last error message (None if healthy)
+            "sick_for_seconds": sick_for_seconds,          # how long truly sick (None if healthy)
+            "error_detail": w.get("error_detail"),         # last error message (None if healthy)
+            "last_recovery_at": w.get("last_recovery_at"), # UTC timestamp of last recovery
+            "last_recovery_layer": w.get("last_recovery_layer", ""),
+            "recovery_count_today": w.get("recovery_count_today", 0),
         }
 
 
@@ -667,10 +691,31 @@ def seed_live_status() -> None:
         # This ensures claude_pro tasks are routed to fallback from the very first
         # request instead of failing with 401 and triggering recovery reactively.
         import pathlib as _pl
-        if _pl.Path("/tmp/.claude_boot_sick").exists():
-            mark_sick("Claude CLI Pro")
-            _log_agent_event("Claude CLI Pro", "sick",
-                             "Boot sentinel: token expired or missing at startup")
+        _sentinel = _pl.Path("/tmp/.claude_boot_sick")
+        if _sentinel.exists():
+            # Only apply if the worker has NOT already recovered since boot.
+            # Once mark_done() runs (recovery success), sick_since is cleared to None
+            # and state transitions away from sick — the sentinel is then stale.
+            # Without this guard, the 30-min health check would re-mark sick every
+            # cycle forever, producing false "recovering" badges even with a valid token.
+            with _lock:
+                _w = _workers.get("Claude CLI Pro", {})
+                _already_recovered = (
+                    _w.get("sick_since") is None
+                    and _w.get("state") not in ("sick", "working")
+                )
+            if _already_recovered:
+                # Worker healed since boot — sentinel is stale, remove it now
+                try:
+                    _sentinel.unlink(missing_ok=True)
+                    _log_agent_event("Claude CLI Pro", "done",
+                                     "Boot sentinel cleaned up — worker already recovered")
+                except Exception:
+                    pass
+            else:
+                mark_sick("Claude CLI Pro")
+                _log_agent_event("Claude CLI Pro", "sick",
+                                 "Boot sentinel: token expired or missing at startup")
         # ⚠️  Do NOT call mark_done("Claude CLI Pro") here.
         # is_cli_down() only checks whether a flag file has expired (10-min TTL) —
         # it does NOT verify that auth is actually valid.  Calling mark_done when the

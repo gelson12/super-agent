@@ -2849,6 +2849,17 @@ def credits_pro_status():
         except Exception:
             status["api_available"] = False
 
+        # Add per-CLI recovery metrics for dashboard display
+        try:
+            _wmap = {w["id"]: w for w in workers}
+            for _cli, _key in [("Claude CLI Pro", "claude"), ("Gemini CLI", "gemini")]:
+                _w = _wmap.get(_cli, {})
+                status[f"{_key}_last_recovery_at"]     = _w.get("last_recovery_at")
+                status[f"{_key}_last_recovery_layer"]  = _w.get("last_recovery_layer", "")
+                status[f"{_key}_recovery_count_today"] = _w.get("recovery_count_today", 0)
+        except Exception:
+            pass
+
         return status
     except Exception as e:
         return {"error": str(e)}

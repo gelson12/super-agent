@@ -417,7 +417,14 @@
       flex: 1;
       overflow-y: auto;
       min-height: 0;
+      /* Firefox */
+      scrollbar-width: thin;
+      scrollbar-color: #6b5337 #1a1208;
     }
+    #office-desk-scroll::-webkit-scrollbar        { width: 5px; }
+    #office-desk-scroll::-webkit-scrollbar-track  { background: #1a1208; }
+    #office-desk-scroll::-webkit-scrollbar-thumb  { background: #6b5337; border-radius: 3px; }
+    #office-desk-scroll::-webkit-scrollbar-thumb:hover { background: #c9a96e; }
 
     .office-header {
       display: flex;
@@ -690,9 +697,16 @@
       border-radius: 8px;
       z-index: 20;
       box-shadow: 0 6px 20px rgba(0,0,0,0.7);
-      max-height: 60vh;
+      max-height: calc(100vh - 80px);
       overflow-y: auto;
+      /* Firefox */
+      scrollbar-width: thin;
+      scrollbar-color: #6b5337 #111;
     }
+    .o-history-modal::-webkit-scrollbar        { width: 5px; }
+    .o-history-modal::-webkit-scrollbar-track  { background: #111; }
+    .o-history-modal::-webkit-scrollbar-thumb  { background: #6b5337; border-radius: 3px; }
+    .o-history-modal::-webkit-scrollbar-thumb:hover { background: #c9a96e; }
 
     .o-hist-header {
       display: flex;
@@ -878,8 +892,15 @@
       overflow-y: auto;
       flex: 1;
       padding: 8px 12px 16px;
+      /* Firefox */
+      scrollbar-width: thin;
+      scrollbar-color: #6b5337 #1a1208;
     }
     #office-stats-panel.visible { display: block; }
+    #office-stats-panel::-webkit-scrollbar        { width: 5px; }
+    #office-stats-panel::-webkit-scrollbar-track  { background: #1a1208; }
+    #office-stats-panel::-webkit-scrollbar-thumb  { background: #6b5337; border-radius: 3px; }
+    #office-stats-panel::-webkit-scrollbar-thumb:hover { background: #c9a96e; }
 
     .os-section {
       margin-bottom: 14px;
@@ -1887,8 +1908,10 @@
       const apiOk = data.api_available;
 
       let html = '<table style="width:100%;font-size:11px;border-collapse:collapse;">';
-      html += _cliRow('Claude CLI Pro', proOk, data.pro_message || data.cli_message || '');
-      html += _cliRow('Gemini CLI', gemOk, data.gemini_message || '');
+      html += _cliRow('Claude CLI Pro', proOk, data.pro_message || data.cli_message || '',
+                      data.claude_last_recovery_at, data.claude_last_recovery_layer, data.claude_recovery_count_today);
+      html += _cliRow('Gemini CLI', gemOk, data.gemini_message || '',
+                      data.gemini_last_recovery_at, data.gemini_last_recovery_layer, data.gemini_recovery_count_today);
       html += _cliRow('Anthropic API', apiOk, data.api_message || (apiOk ? 'Credits available' : 'No credits'));
       html += '</table>';
 
@@ -1910,12 +1933,20 @@
     }
   }
 
-  function _cliRow(name, ok, msg) {
+  function _cliRow(name, ok, msg, recAt, recLayer, recCount) {
     const dot = ok ? '🟢' : '🔴';
     const status = ok ? '<span style="color:#4ade80;">OK</span>' : '<span style="color:#f87171;">DOWN</span>';
+    let recHtml = '';
+    if (recAt) {
+      const ago = Math.round((Date.now() / 1000 - recAt) / 60);
+      const agoStr = ago < 60 ? `${ago}m ago` : `${Math.round(ago/60)}h ago`;
+      const layer = (recLayer || '?').replace('auto-login', '').replace('OAuth', 'OAuth').trim();
+      recHtml = `<span style="color:#555;font-size:9px;"> · recovered ${agoStr} via ${layer}` +
+                `${recCount > 1 ? ` (×${recCount} today)` : ''}</span>`;
+    }
     return `<tr style="border-bottom:1px solid #222;">
       <td style="padding:4px 0;">${dot} ${name}</td>
-      <td style="padding:4px 6px;text-align:right;">${status}</td>
+      <td style="padding:4px 6px;text-align:right;">${status}${recHtml}</td>
     </tr>${msg ? `<tr><td colspan="2" style="padding:0 0 6px;font-size:9px;color:#888;">${_oEsc(msg)}</td></tr>` : ''}`;
   }
 
@@ -1976,7 +2007,7 @@
     "DeepSeek":            { title: "DeepSeek — Security Specialist", full: "DeepSeek" },
     "Shell Agent":         { title: "System Administrator",         full: "Shell Agent" },
     "GitHub Agent":        { title: "Software Engineer",            full: "GitHub Agent" },
-    "N8N Agent":           { title: "Automation Engineer",          full: "N8N Agent" },
+    "N8N Agent":           { title: "HR & Procurement",             full: "N8N Agent" },
     "Self-Improve Agent":  { title: "Performance Coach",            full: "Self-Improve Agent" },
   };
   let _officeOpen = false;
