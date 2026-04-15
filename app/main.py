@@ -685,7 +685,27 @@ def debug_n8n_cleanup():
 
 @app.get("/health", tags=["meta"])
 def health():
-    return {"ok": True, "version": "1.0.0"}
+    try:
+        from .learning.pro_router import is_pro_available, is_cli_down
+        _pro = is_pro_available()
+        _cli_down = is_cli_down()
+    except Exception:
+        _pro, _cli_down = False, True
+    _api = bool(settings.anthropic_api_key)
+    _gemini = bool(
+        getattr(settings, "gemini_api_key", None)
+        or os.environ.get("GEMINI_SESSION_TOKEN")
+    )
+    _status = "healthy" if _pro else ("degraded" if (_api or _gemini) else "critical")
+    return {
+        "ok": True,
+        "version": "1.0.0",
+        "status": _status,
+        "pro_cli_available": _pro,
+        "cli_down_flag": _cli_down,
+        "gemini_available": _gemini,
+        "api_key_available": _api,
+    }
 
 
 class AuthRequest(BaseModel):
@@ -1664,7 +1684,8 @@ def list_algorithms():
 
 
 @app.post("/algorithms/build", tags=["algorithms"])
-def build_algorithms():
+@limiter.limit("2/hour")
+def build_algorithms(request: Request):
     """
     Manually trigger a build of self-generated algorithms from the current
     wisdom store and insight log data.
@@ -2187,6 +2208,7 @@ async def n8n_execute_existing_workflow(workflow_id: str, request: Request):
 
 
 @app.post("/webhook/railway", tags=["webhook"])
+@limiter.limit("20/minute")
 async def railway_webhook(request: Request):
     """
     Receives Railway deployment event webhooks.
@@ -2479,7 +2501,8 @@ class NewsletterRequest(BaseModel):
 
 
 @app.post("/leads", tags=["website"])
-def submit_lead(req: LeadRequest):
+@limiter.limit("10/hour")
+def submit_lead(req: LeadRequest, request: Request):
     """Store a contact form submission and email bridge.digital.solution@gmail.com."""
     import json as _json
     from pathlib import Path as _Path
@@ -2562,7 +2585,8 @@ class ContactRequest(BaseModel):
 
 
 @app.post("/contact", tags=["website"])
-def submit_contact(req: ContactRequest):
+@limiter.limit("10/hour")
+def submit_contact(req: ContactRequest, request: Request):
     """Store a contact submission from the lovable website and email bridge.digital.solution@gmail.com."""
     import json as _json
     from pathlib import Path as _Path
@@ -2637,7 +2661,8 @@ def submit_contact(req: ContactRequest):
 
 
 @app.post("/newsletter", tags=["website"])
-def submit_newsletter(req: NewsletterRequest):
+@limiter.limit("10/hour")
+def submit_newsletter(req: NewsletterRequest, request: Request):
     """Store a newsletter signup and email bridge.digital.solution@gmail.com."""
     import json as _json
     from pathlib import Path as _Path
@@ -2893,7 +2918,8 @@ def credits_pro_reset_get():
 
 
 @app.post("/webhook/verification-code", tags=["auth"])
-def webhook_verification_code(payload: dict):
+@limiter.limit("10/minute")
+def webhook_verification_code(payload: dict, request: Request):
     """
     Receive magic link URL (or 6-digit code) from n8n for automated Claude CLI re-login.
 
@@ -2921,7 +2947,8 @@ def webhook_verification_code(payload: dict):
 
 
 @app.post("/webhook/refresh-cli-token", tags=["auth"])
-def webhook_refresh_cli_token(payload: dict):
+@limiter.limit("10/minute")
+def webhook_refresh_cli_token(payload: dict, request: Request):
     """
     Receive a fresh Claude CLI token from inspiring-cat after Playwright auto-login.
 

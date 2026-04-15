@@ -135,11 +135,12 @@ if [ "$_gemini_valid" = "false" ] && [ -n "$GEMINI_SESSION_TOKEN" ]; then
     chmod 600 /root/.gemini/credentials.json
     echo "[entrypoint] Gemini CLI credentials restored from GEMINI_SESSION_TOKEN env var."
 
-    if gemini --version >/dev/null 2>&1; then
-        echo "[entrypoint] Gemini CLI AVAILABLE — free-tier backup active ($(gemini --version 2>/dev/null | head -1))."
+    if timeout 8 gemini -p "ping" >/dev/null 2>&1; then
+        echo "[entrypoint] Gemini CLI AVAILABLE and authenticated from env var credentials."
         _gemini_valid=true
     else
-        echo "[entrypoint] WARNING: Gemini CLI not responding — check credentials or reinstall: npm install -g @google/gemini-cli"
+        echo "[entrypoint] WARNING: Gemini credentials restored from env var but auth probe failed — token may be expired."
+        touch /tmp/.gemini_boot_sick
     fi
 elif [ "$_gemini_valid" = "false" ]; then
     echo "[entrypoint] INFO: GEMINI_SESSION_TOKEN not set and no volume backup — Gemini CLI backup inactive."

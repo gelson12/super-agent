@@ -237,7 +237,9 @@ async def lifespan(app: FastAPI):
     _loop = asyncio.get_event_loop()
     _loop.run_in_executor(None, _pro_cli_watchdog_job)
     _loop.run_in_executor(None, _cookie_keepalive_job)
-    _bg_log("Boot: watchdog + cookie keepalive fired immediately (no waiting for first interval)", "boot")
+    _loop.run_in_executor(None, _pro_token_keeper_job)
+    _loop.run_in_executor(None, _gemini_token_keeper_job)
+    _bg_log("Boot: watchdog + cookie keepalive + pro/gemini token keepers fired immediately", "boot")
 
     yield
     _scheduler.shutdown(wait=False)

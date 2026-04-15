@@ -921,10 +921,20 @@ def _classify_and_set_flag(stdout: str, stderr: str) -> None:
         # This handles the common case where the container restarted and wiped
         # /root/.claude/ from the ephemeral filesystem.
         if _try_restore_claude_auth():
-            # Credentials restored successfully — increment counter so we know
-            # if the NEXT call also fails (meaning the token itself is expired)
+            # Credentials restored successfully — atomically increment restore counter
+            # so concurrent auth failures can't both write the same value (race fix).
             try:
-                _RESTORE_COUNT_FLAG.write_text(str(_restore_count + 1))
+                import fcntl as _fcntl
+                _RESTORE_COUNT_FLAG.touch(exist_ok=True)
+                with open(_RESTORE_COUNT_FLAG, "r+") as _f:
+                    _fcntl.flock(_f, _fcntl.LOCK_EX)
+                    try:
+                        _cur = int(_f.read().strip() or "0")
+                    except ValueError:
+                        _cur = 0
+                    _f.seek(0)
+                    _f.truncate()
+                    _f.write(str(_cur + 1))
             except Exception:
                 pass
             _log(

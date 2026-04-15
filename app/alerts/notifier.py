@@ -20,7 +20,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
 
-_THROTTLE_DIR = Path("/tmp/sa_alerts")
+_THROTTLE_DIR = Path(os.environ.get("ALERT_THROTTLE_DIR", "/workspace/.sa_alerts"))
 _DEFAULT_TTL  = 3600   # 1 hour between same non-forced alert
 _WARN_TTL     = 1800   # 30 min for escalation alerts
 
@@ -265,4 +265,57 @@ def alert_token_refresh_failed(token_type: str, error: str) -> bool:
         ),
         alert_key=f"{token_type.lower()}_refresh_failed",
         level="WARNING",
+    )
+
+
+def alert_high_cost_spike(spend_usd: float, normal_usd: float) -> bool:
+    """Alert when API spend is 5x+ above the normal hourly rate."""
+    return send_alert(
+        subject=f"High API cost spike — ${spend_usd:.2f} (normal ${normal_usd:.2f}/hr)",
+        body=(
+            f"API spend in the last hour: ${spend_usd:.2f}\n"
+            f"Normal hourly rate:         ${normal_usd:.2f}\n\n"
+            f"Likely cause: Claude CLI and Gemini CLI both unavailable, "
+            f"all requests falling through to Anthropic API credits.\n\n"
+            f"Check CLI status immediately:\n"
+            f"  {_vscode_url()}/health"
+        ),
+        alert_key="high_cost_spike",
+        level="CRITICAL",
+        ttl=1800,  # re-alert every 30 min while active
+    )
+
+
+def alert_high_dispatch_error_rate(error_rate: float, window: int) -> bool:
+    """Alert when dispatch error rate exceeds 50% over the last N requests."""
+    return send_alert(
+        subject=f"High dispatch error rate — {error_rate:.0%} of last {window} requests",
+        body=(
+            f"Error rate: {error_rate:.1%} across the last {window} requests.\n\n"
+            f"Possible causes:\n"
+            f"  • All models failing (check CLI + API key status)\n"
+            f"  • Database unreachable (sessions/memory unavailable)\n"
+            f"  • Route misconfiguration in dispatcher\n\n"
+            f"Check /health and Railway logs: {_vscode_url()}/health"
+        ),
+        alert_key="high_dispatch_error_rate",
+        level="CRITICAL",
+        ttl=900,  # re-alert every 15 min while active
+    )
+
+
+def alert_n8n_unreachable(error: str) -> bool:
+    """Alert when n8n is unreachable after auto-repair was attempted."""
+    return send_alert(
+        subject="n8n unreachable — auto-repair failed",
+        body=(
+            f"n8n health check failed and auto-repair did not resolve it.\n"
+            f"Error: {error[:300]}\n\n"
+            f"Active workflows are NOT running. "
+            f"Check Railway n8n service logs and redeploy if needed.\n\n"
+            f"VS Code: {_vscode_url()}"
+        ),
+        alert_key="n8n_unreachable",
+        level="WARNING",
+        ttl=1800,
     )
