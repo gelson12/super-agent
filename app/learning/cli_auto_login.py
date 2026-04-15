@@ -220,32 +220,20 @@ def _wait_for_verification_code() -> str | None:
 
 
 def _trigger_n8n_email_monitor() -> bool:
-    """Trigger the n8n workflow that monitors Hotmail for Anthropic verification emails."""
-    try:
-        n8n_base = os.environ.get("N8N_BASE_URL", "")
-        if not n8n_base:
-            _log("Cannot trigger n8n email monitor — N8N_BASE_URL not set.")
-            return False
+    """
+    The Claude-Verification-Monitor n8n workflow (ID: jxnZZwTqJ7naPKc6) polls
+    the Hotmail inbox on a schedule and POSTs magic link URLs to
+    /webhook/verification-code on inspiring-cat automatically.
 
-        # Poke the n8n workflow webhook so it starts a fresh poll cycle immediately.
-        # Non-fatal: the Claude-Verification-Monitor workflow (jxnZZwTqJ7naPKc6) uses an
-        # Outlook trigger and polls automatically — this just shortens the wait.
-        import urllib.request
-        import json
-        webhook_url = f"{n8n_base}/webhook/claude-verification-monitor"
-        data = json.dumps({"action": "start_monitoring", "email": os.environ.get("ANTHROPIC_EMAIL", "")}).encode()
-        req = urllib.request.Request(
-            webhook_url,
-            data=data,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            _log(f"n8n email monitor triggered: {resp.status}")
-            return resp.status == 200
-    except Exception as e:
-        _log(f"Failed to trigger n8n email monitor: {e}")
-        return False
+    It has an Outlook trigger node — there is NO inbound HTTP trigger webhook.
+    Attempting to POST to n8n just gets a 404. This function now simply logs
+    that we are waiting for n8n to deliver the magic link and returns True
+    so the browser flow proceeds normally.
+    """
+    _log("n8n Claude-Verification-Monitor will poll Hotmail automatically "
+         f"and POST the magic link to /webhook/verification-code. "
+         f"Waiting up to {_VERIFICATION_CODE_TIMEOUT}s...")
+    return True
 
 
 def auto_login_claude() -> bool:
@@ -1484,8 +1472,9 @@ def _try_direct_refresh() -> bool:
             or creds.get("oauthRefreshToken")
         )
         if not refresh_token:
-            # Try nested structures
-            for _nested_key in ("oauth", "claudeAiOAuth", "session", "credentials"):
+            # Try nested structures — note: Claude CLI uses 'claudeAiOauth' (lowercase 'o')
+            # not 'claudeAiOAuth'. ALL known variants are listed here.
+            for _nested_key in ("claudeAiOauth", "claudeAiOAuth", "oauth", "session", "credentials"):
                 _nested = creds.get(_nested_key, {})
                 if isinstance(_nested, dict):
                     refresh_token = (
@@ -1494,6 +1483,7 @@ def _try_direct_refresh() -> bool:
                         or _nested.get("oauthRefreshToken")
                     )
                     if refresh_token:
+                        _log(f"Direct refresh: found refresh_token in nested key '{_nested_key}'")
                         break
 
         if not refresh_token:
@@ -1557,7 +1547,7 @@ def _try_direct_refresh() -> bool:
                         for _top_key in ("refreshToken", "refresh_token", "oauthRefreshToken"):
                             if _top_key in creds:
                                 creds[_top_key] = new_refresh
-                        for _nested_key in ("oauth", "claudeAiOAuth", "session", "credentials"):
+                        for _nested_key in ("claudeAiOauth", "claudeAiOAuth", "oauth", "session", "credentials"):
                             _nested = creds.get(_nested_key, {})
                             if isinstance(_nested, dict):
                                 for _ak in ("accessToken", "access_token"):
@@ -1635,7 +1625,7 @@ def maybe_proactive_refresh() -> bool:
                 expires_at_ms = creds[_key]
                 break
         if expires_at_ms is None:
-            for _nested_key in ("oauth", "claudeAiOAuth", "session"):
+            for _nested_key in ("claudeAiOauth", "claudeAiOAuth", "oauth", "session"):
                 _nested = creds.get(_nested_key, {})
                 if isinstance(_nested, dict):
                     for _key in ("expiresAt", "expires_at"):
