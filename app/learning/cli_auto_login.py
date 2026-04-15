@@ -678,13 +678,49 @@ def _do_auto_login(email: str) -> bool:
 
     # Step 4: Write auth code / confirmation to the PTY master fd.
     # With PTY mode proc.stdin is None — all writes go through the master fd.
+    #
+    # PTY BUFFER DEADLOCK FIX:
+    # The browser automation takes ~2 minutes. During this time nobody is reading
+    # from _pty_master_fd. The Claude CLI keeps printing output (spinner, prompts,
+    # "Paste authorization code:" etc.) into the PTY kernel buffer. The default
+    # PTY buffer is 4096 bytes. Once full, the CLI's write() call blocks and the
+    # CLI freezes. When we then write the auth code, the CLI can't read it because
+    # it's stuck trying to write — a classic PTY deadlock.
+    #
+    # Solution: drain the PTY output buffer BEFORE writing the code (unblocking any
+    # pending CLI write), write the code, then keep draining while waiting for the
+    # CLI to process it (to prevent re-deadlock).
     _log("Step 4: Waiting for CLI to complete login...")
     import os as _os4
+    import select as _sel4
+
+    def _drain_pty_output(fd: int, max_reads: int = 200, label: str = "") -> str:
+        """Read and return all pending output from PTY master fd (non-blocking)."""
+        _buf = []
+        for _ in range(max_reads):
+            try:
+                r, _, _ = _sel4.select([fd], [], [], 0.05)
+                if not r:
+                    break
+                _chunk = _os4.read(fd, 4096)
+                if _chunk:
+                    _buf.append(_chunk.decode("utf-8", errors="replace"))
+            except Exception:
+                break
+        result = "".join(_buf)
+        if result.strip() and label:
+            _log(f"PTY {label} ({len(result)} bytes): {result.strip()[-300:]!r}")
+        return result
+
+    # Drain accumulated output to unblock the CLI before writing the code
+    _drained = _drain_pty_output(_pty_master_fd, label="pre-code drain")
+
     if auth_code:
         _log(f"Step 4: Container OAuth mode — writing auth code to PTY ({auth_code[:12]}...)...")
         try:
             # Raw mode: use \r (Enter) not \n
             _os4.write(_pty_master_fd, (auth_code + "\r").encode())
+            _log("Step 4: Auth code written to PTY ✓")
         except Exception as _e:
             _log(f"Step 4: Failed to write auth code to PTY master fd: {_e}")
     else:
@@ -695,10 +731,19 @@ def _do_auto_login(email: str) -> bool:
         except Exception:
             pass
 
-    try:
-        proc.wait(timeout=30)
-    except subprocess.TimeoutExpired:
-        _log("Step 4: CLI didn't exit in 30s — killing (token may still be saved).")
+    # Keep draining PTY output while waiting for the CLI to finish.
+    # Without this, the CLI may produce more output after receiving the code
+    # (e.g., "Saving credentials...", success message) and block again.
+    _log("Step 4: Draining PTY output while CLI processes code (up to 60s)...")
+    _deadline_step4 = time.time() + 60
+    while time.time() < _deadline_step4:
+        _drain_pty_output(_pty_master_fd, max_reads=10, label="post-code")
+        if proc.poll() is not None:
+            _log(f"Step 4: CLI exited (rc={proc.poll()}) ✓")
+            break
+        time.sleep(0.5)
+    else:
+        _log("Step 4: CLI didn't exit in 60s — killing (token may still be saved).")
         proc.kill()
 
     # Close the PTY master fd now that the child has exited
