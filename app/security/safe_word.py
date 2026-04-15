@@ -1,12 +1,9 @@
 """
 Safe word authorization guard.
 
-Critical operations (GitHub writes, shell write commands) are blocked unless
-the owner's safe word is present in the request message.
-
-n8n workflow operations are EXEMPT — the n8n instance is already protected
-by its own API key, and the n8n agent is behind the dispatcher's routing
-so external users cannot directly call n8n tools.
+Critical operations (GitHub writes, shell write commands, n8n workflow
+create/update/delete) are blocked unless the owner's safe word is present
+in the request message.
 
 The safe word is stored in the OWNER_SAFE_WORD environment variable.
 Default: alpha0  (change via Railway env var — do NOT commit the real word).
@@ -32,6 +29,17 @@ _GITHUB_WRITE_PATTERNS = [
     r"\brename\b.*\brepo\b",
     r"\barchive\b.*\brepo\b",
     r"\badd\b.*\bcollaborator\b",
+    # ── n8n workflow write operations ─────────────────────────────────────────
+    r"\bcreate\b.*\bworkflow\b",
+    r"\bbuild\b.*\bworkflow\b",
+    r"\bmake\b.*\bworkflow\b",
+    r"\badd\b.*\bworkflow\b",
+    r"\bdelete\b.*\bworkflow\b",
+    r"\bremove\b.*\bworkflow\b",
+    r"\bdestroy\b.*\bworkflow\b",
+    r"\bupdate\b.*\bworkflow\b",
+    r"\bmodify\b.*\bworkflow\b",
+    r"\bedit\b.*\bworkflow\b",
 ]
 
 # ── Exact substring matches (shell commands, git operations) ─────────────────
