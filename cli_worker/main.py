@@ -21,8 +21,9 @@ import asyncio
 import json
 import os
 import subprocess
+import time as _time
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 import psycopg2
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -33,6 +34,11 @@ from . import migrations, task_runner
 
 # ── Scheduler (CLI maintenance jobs live here, not in API service) ────────────
 _scheduler = AsyncIOScheduler(timezone="UTC")
+
+# ── Health check cache — avoids stacking parallel 20s claude -p probes ────────
+_health_cache: dict = {}
+_health_cache_ts: float = 0.0
+_HEALTH_CACHE_TTL = 60  # seconds
 
 
 def _bg_log(msg: str, source: str = "cli_worker") -> None:
@@ -128,6 +134,29 @@ def _proactive_token_refresh_job() -> None:
         _bg_log(f"Proactive token refresh error: {e}", "proactive_refresh")
 
 
+def _gemini_watchdog_job() -> None:
+    """
+    Runs every 90 seconds. Mirrors _pro_cli_watchdog_job() for Gemini CLI.
+    If Gemini auth fails, immediately runs gemini_full_recovery() (direct
+    OAuth refresh → env var restore) without waiting for the 4-hour keeper.
+    """
+    try:
+        import sys
+        sys.path.insert(0, "/app")
+        # Fast check — reuse the already-present _gemini_auth_ok() in this module
+        if _gemini_auth_ok():
+            return  # all good, nothing to do
+        _bg_log("Gemini watchdog: auth check failed — running recovery chain…", "gemini_watchdog")
+        from app.learning.gemini_token_keeper import gemini_full_recovery
+        ok = gemini_full_recovery()
+        _bg_log(
+            f"Gemini watchdog: recovery {'SUCCESS ✓' if ok else 'FAILED — manual gemini auth login required'}",
+            "gemini_watchdog",
+        )
+    except Exception as e:
+        _bg_log(f"Gemini watchdog error: {e}", "gemini_watchdog")
+
+
 def _cookie_keepalive_job() -> None:
     """
     Runs every 12 hours. Headless browser touches claude.ai to refresh the
@@ -166,6 +195,19 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         _bg_log(f"Boot DB error: {e} — task queue unavailable", "boot")
 
+    # Boot: clear stale restore counter from the previous container run.
+    # _RESTORE_COUNT_FLAG tracks consecutive failed credential restores; if it
+    # survived a restart it would force an immediate Playwright escalation on
+    # the very first auth error, skipping the cheaper layers.
+    try:
+        import sys as _sys_boot
+        _sys_boot.path.insert(0, "/app")
+        from app.learning.pro_router import _RESTORE_COUNT_FLAG
+        _RESTORE_COUNT_FLAG.unlink(missing_ok=True)
+        _bg_log("Boot: stale restore counter cleared", "boot")
+    except Exception as _e:
+        _bg_log(f"Boot: restore counter clear skipped — {_e}", "boot")
+
     # Start background worker loop
     asyncio.create_task(_worker_loop())
 
@@ -178,10 +220,24 @@ async def lifespan(app: FastAPI):
                        id="pro_cli_watchdog", replace_existing=True)
     _scheduler.add_job(_proactive_token_refresh_job, "interval", hours=12,
                        id="proactive_token_refresh", replace_existing=True)
+    _scheduler.add_job(_gemini_watchdog_job, "interval", seconds=90,
+                       id="gemini_watchdog", replace_existing=True)
+    # cookie_keepalive is staggered 6h from proactive_token_refresh so they never
+    # fire simultaneously and launch competing headless browser instances.
     _scheduler.add_job(_cookie_keepalive_job, "interval", hours=12,
-                       id="cookie_keepalive", replace_existing=True)
+                       id="cookie_keepalive", replace_existing=True,
+                       start_date=datetime.now(timezone.utc) + timedelta(hours=6))
     _scheduler.start()
-    _bg_log("CLI maintenance scheduler started (pro_keeper 15min, gemini_keeper 4h, watchdog 90sec, proactive_refresh 12h, cookie_keepalive 12h)", "boot")
+    _bg_log("CLI maintenance scheduler started (pro_keeper 15min, gemini_keeper 4h, claude_watchdog 90s, gemini_watchdog 90s, proactive_refresh 12h, cookie_keepalive 12h+6h offset)", "boot")
+
+    # Boot-time: run watchdog immediately so CLI health is confirmed before the
+    # first real request (normally would wait 90s). Run cookie keepalive too so
+    # Layer 4 (cookie shortcut) is primed from the start, not after 6h.
+    # Both run in the thread pool — non-blocking, fire-and-forget.
+    _loop = asyncio.get_event_loop()
+    _loop.run_in_executor(None, _pro_cli_watchdog_job)
+    _loop.run_in_executor(None, _cookie_keepalive_job)
+    _bg_log("Boot: watchdog + cookie keepalive fired immediately (no waiting for first interval)", "boot")
 
     yield
     _scheduler.shutdown(wait=False)
@@ -286,7 +342,14 @@ def health():
     Uses an actual prompt probe for Claude (not just --version) so a hung
     or unresponsive prompt is correctly detected as unhealthy.
     Called by pro_cli_watchdog and pro_router.verify_pro_auth().
+
+    Result is cached for 60s so parallel callers (watchdog, router, monitors)
+    don't stack simultaneous 20s claude -p probes.
     """
+    global _health_cache, _health_cache_ts
+    if _health_cache and (_time.time() - _health_cache_ts) < _HEALTH_CACHE_TTL:
+        return _health_cache
+
     claude_ok  = _probe_claude_prompt()
     gemini_ok  = _gemini_auth_ok()
     db_ok = False
@@ -297,12 +360,15 @@ def health():
         db_ok = True
     except Exception:
         pass
-    return {
+    result = {
         "status": "ok" if (claude_ok and db_ok) else "degraded",
         "claude_available": claude_ok,
         "gemini_available": gemini_ok,
         "db_connected": db_ok,
     }
+    _health_cache = result
+    _health_cache_ts = _time.time()
+    return result
 
 
 @app.post("/webhook/verification-code")

@@ -235,6 +235,26 @@ def _trigger_recovery_bg() -> None:
 def _dispatch(task_type: str, payload: dict, timeout: int) -> str:
     """Central dispatch — maps task type to execution. Returns result string."""
     if task_type == "claude_pro":
+        # Circuit breaker: fail-fast when recovery is already running so queued
+        # tasks don't each burn 120s waiting to hit the same auth error.
+        # Primary check: in-memory _recovery_running Event (immediate, no file I/O).
+        try:
+            import sys as _sys_cb
+            _sys_cb.path.insert(0, "/app")
+            from app.learning.cli_auto_login import _recovery_running
+            if _recovery_running.is_set():
+                print("[task_runner] CLI circuit breaker: _recovery_running set — skipping claude_pro", flush=True)
+                return "[cli_worker: CLI auth recovery in progress — skipping claude_pro task]"
+        except Exception:
+            pass
+        # Secondary check: file-based CLI_DOWN flag (works across restarts).
+        from pathlib import Path as _Path
+        _cli_down_flag = _Path(os.environ.get("FLAG_DIR", "/workspace")) / ".pro_cli_down"
+        if _cli_down_flag.exists():
+            import time as _t
+            if (_t.time() - _cli_down_flag.stat().st_mtime) < 600:  # respect 10-min TTL
+                return "[cli_worker: CLI_DOWN — skipped subprocess, recovery in progress]"
+
         # cwd = repo root so CLAUDE.md is auto-loaded by Claude CLI on every call
         result = _run_subprocess(["claude", "-p", payload.get("prompt", "")], _repo_cwd(), timeout)
         # Detect expired session — kick off recovery in background so next task succeeds
