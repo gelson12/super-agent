@@ -839,6 +839,155 @@
       border-color: #b09060 !important;
     }
 
+    /* ── Stats panel toggle button ──────────────────────────────────── */
+    #stats-toggle {
+      background: none;
+      border: 1px solid #4a3520;
+      border-radius: 4px;
+      color: #c9a96e;
+      font-size: 9px;
+      cursor: pointer;
+      padding: 2px 6px;
+      font-family: inherit;
+      transition: background 0.15s;
+    }
+    #stats-toggle.active {
+      background: #2d1f0e !important;
+      color: #f0e0c0 !important;
+      border-color: #f59e0b !important;
+    }
+
+    /* ── Stats panel ────────────────────────────────────────────────── */
+    #office-stats-panel {
+      display: none;
+      overflow-y: auto;
+      flex: 1;
+      padding: 8px 12px 16px;
+    }
+    #office-stats-panel.visible { display: block; }
+
+    .os-section {
+      margin-bottom: 14px;
+    }
+    .os-section-title {
+      font-size: 8px;
+      color: #f59e0b;
+      font-weight: 700;
+      letter-spacing: 0.8px;
+      text-transform: uppercase;
+      padding: 5px 0 6px;
+      border-bottom: 1px solid #3d2b16;
+      margin-bottom: 8px;
+    }
+    .os-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 5px;
+      font-size: 8px;
+    }
+    .os-label {
+      min-width: 100px;
+      color: #c9a96e;
+      font-size: 8px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .os-bar-wrap {
+      flex: 1;
+      height: 8px;
+      background: #1a1208;
+      border-radius: 3px;
+      overflow: hidden;
+      border: 1px solid #3d2b16;
+    }
+    .os-bar {
+      height: 100%;
+      border-radius: 3px;
+      transition: width 0.4s ease;
+    }
+    .os-val {
+      font-size: 8px;
+      color: #8b7355;
+      min-width: 36px;
+      text-align: right;
+    }
+    .os-rank-num {
+      font-size: 9px;
+      color: #4a3520;
+      width: 14px;
+      text-align: center;
+      flex-shrink: 0;
+    }
+    .os-rank-1 { color: #f59e0b; }
+    .os-rank-2 { color: #9ca3af; }
+    .os-rank-3 { color: #b45309; }
+
+    .os-kv-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+    }
+    .os-kv {
+      background: #1a1208;
+      border: 1px solid #3d2b16;
+      border-radius: 4px;
+      padding: 6px 8px;
+    }
+    .os-kv-key {
+      font-size: 7px;
+      color: #8b7355;
+      margin-bottom: 3px;
+    }
+    .os-kv-val {
+      font-size: 11px;
+      color: #c9a96e;
+      font-weight: 700;
+    }
+    .os-kv-val.green  { color: #4ade80; }
+    .os-kv-val.yellow { color: #fde68a; }
+    .os-kv-val.red    { color: #f87171; }
+    .os-kv-sub {
+      font-size: 6px;
+      color: #555;
+      margin-top: 2px;
+    }
+
+    .os-loading {
+      font-size: 9px;
+      color: #555;
+      text-align: center;
+      padding: 20px 0;
+    }
+    .os-refresh-row {
+      display: flex;
+      justify-content: flex-end;
+      margin-bottom: 6px;
+    }
+    .os-refresh-btn {
+      background: none;
+      border: none;
+      color: #c9a96e;
+      font-size: 8px;
+      cursor: pointer;
+      font-family: inherit;
+      text-decoration: underline;
+    }
+
+    /* route badge colours */
+    .os-badge {
+      display: inline-block;
+      padding: 1px 5px;
+      border-radius: 2px;
+      font-size: 7px;
+      margin-left: 4px;
+    }
+    .os-badge.cli    { background: #1e3a5f; color: #60a5fa; }
+    .os-badge.api    { background: #14532d; color: #4ade80; }
+    .os-badge.agent  { background: #4c1d95; color: #c4b5fd; }
+    .os-badge.cached { background: #3b1f00; color: #fb923c; }
+
     @media (max-width: 600px) {
       #office-panel { width: 100vw; }
     }
@@ -881,6 +1030,7 @@
     <span>AGENT OFFICE</span>
     <div style="display:flex;gap:8px;align-items:center;">
       <button id="bg-toggle" onclick="_oToggleBg()" title="Toggle office background" style="background:none;border:1px solid #4a3520;border-radius:4px;color:#c9a96e;font-size:9px;cursor:pointer;padding:2px 6px;font-family:inherit;">BG</button>
+      <button id="stats-toggle" onclick="_oToggleStats()" title="Toggle stats panel">📊 STATS</button>
       <button onclick="toggleOfficePanel()" style="background:none;border:none;color:#888;font-size:18px;cursor:pointer;">&times;</button>
     </div>
   </div>
@@ -907,6 +1057,43 @@
   <div class="office-desks" id="office-agents"></div>
   <div class="office-decor-bottom">
     <span>🗄️</span><span>📁</span><span>🖨️</span><span>🗑️</span><span>🪴</span>
+  </div>
+
+  <!-- ── Stats panel (hidden until 📊 STATS toggled) ── -->
+  <div id="office-stats-panel">
+    <div class="os-refresh-row">
+      <button class="os-refresh-btn" onclick="_oRefreshStats()">↻ refresh</button>
+    </div>
+
+    <!-- Model Rankings -->
+    <div class="os-section">
+      <div class="os-section-title">🏆 Model Rankings</div>
+      <div id="os-rankings"><div class="os-loading">Loading…</div></div>
+    </div>
+
+    <!-- Routing Decisions -->
+    <div class="os-section">
+      <div class="os-section-title">🗺️ Routing Decisions</div>
+      <div id="os-routes"><div class="os-loading">Loading…</div></div>
+    </div>
+
+    <!-- System Health -->
+    <div class="os-section">
+      <div class="os-section-title">🩺 System Health</div>
+      <div id="os-health" class="os-kv-grid"><div class="os-loading" style="grid-column:1/-1">Loading…</div></div>
+    </div>
+
+    <!-- Cost & Quota -->
+    <div class="os-section">
+      <div class="os-section-title">💰 Cost & Quota</div>
+      <div id="os-cost" class="os-kv-grid"><div class="os-loading" style="grid-column:1/-1">Loading…</div></div>
+    </div>
+
+    <!-- Pro CLI Usage -->
+    <div class="os-section">
+      <div class="os-section-title">⚡ Pro CLI Usage</div>
+      <div id="os-pro" class="os-kv-grid"><div class="os-loading" style="grid-column:1/-1">Loading…</div></div>
+    </div>
   </div>
 </div>
 
@@ -1955,6 +2142,250 @@
   }
 
   // Office background toggle (persists in localStorage)
+  // ── Stats panel ─────────────────────────────────────────────────────────
+  let _statsOpen  = false;
+  let _statsFetched = false;
+
+  function _oToggleStats() {
+    _statsOpen = !_statsOpen;
+    const panel  = document.getElementById('office-stats-panel');
+    const btn    = document.getElementById('stats-toggle');
+    // Office desk sections
+    const desks  = document.querySelectorAll(
+      '#office-panel .office-legend, #office-panel .office-decor-row, ' +
+      '#office-panel .office-section-label, #office-panel .office-desks, ' +
+      '#office-panel .office-decor-shelf, #office-panel .office-decor-bottom'
+    );
+    if (_statsOpen) {
+      desks.forEach(el => el.style.display = 'none');
+      panel.classList.add('visible');
+      btn.classList.add('active');
+      if (!_statsFetched) { _oFetchStats(); _statsFetched = true; }
+    } else {
+      desks.forEach(el => el.style.display = '');
+      panel.classList.remove('visible');
+      btn.classList.remove('active');
+    }
+  }
+
+  function _oRefreshStats() {
+    _statsFetched = false;
+    _oFetchStats();
+    _statsFetched = true;
+  }
+
+  // Colour palette for bar fills
+  const _OS_MODEL_COLORS = {
+    'Claude CLI Pro':   '#60a5fa',
+    'Gemini CLI':       '#34d399',
+    'Anthropic Haiku':  '#a78bfa',
+    'Sonnet Anthropic': '#f59e0b',
+    'Opus Anthropic':   '#fb923c',
+    'DeepSeek':         '#38bdf8',
+    'Shell Agent':      '#e879f9',
+    'GitHub Agent':     '#f472b6',
+    'N8N Agent':        '#8b5cf6',
+    'Self-Improve Agent':'#fbbf24',
+  };
+  const _OS_ROUTE_COLORS = {
+    conversational: '#60a5fa', trivial: '#34d399', trivial_cache: '#4ade80',
+    shell_keywords: '#e879f9', github_keywords: '#f472b6',
+    n8n_early: '#8b5cf6', n8n_keywords: '#a78bfa',
+    self_improve: '#fbbf24', web_search: '#38bdf8',
+    ensemble: '#fb923c', forced: '#f59e0b', forced_cache: '#fde68a',
+    continuation: '#60a5fa', cot_handoff: '#c084fc',
+  };
+
+  function _osBar(pct, color) {
+    return `<div class="os-bar-wrap"><div class="os-bar" style="width:${pct}%;background:${color}"></div></div>`;
+  }
+  function _osKV(key, val, sub, color) {
+    const cls = color ? ` ${color}` : '';
+    return `<div class="os-kv">
+      <div class="os-kv-key">${key}</div>
+      <div class="os-kv-val${cls}">${val}</div>
+      ${sub ? `<div class="os-kv-sub">${sub}</div>` : ''}
+    </div>`;
+  }
+
+  async function _oFetchStats() {
+    // Fire all 4 fetches in parallel
+    const hdrs = authHeaders ? authHeaders() : {};
+    const [wisdom, report, spend, pro] = await Promise.allSettled([
+      fetch('/collective-wisdom',  { headers: hdrs }).then(r => r.json()),
+      fetch('/stats/report',       { headers: hdrs }).then(r => r.json()),
+      fetch('/credits/spend',      { headers: hdrs }).then(r => r.json()),
+      fetch('/pro-usage',          { headers: hdrs }).then(r => r.json()),
+    ]);
+
+    const wisdomData  = wisdom.status  === 'fulfilled' ? wisdom.value  : null;
+    const reportData  = report.status  === 'fulfilled' ? report.value  : null;
+    const spendData   = spend.status   === 'fulfilled' ? spend.value   : null;
+    const proData     = pro.status     === 'fulfilled' ? pro.value     : null;
+
+    _osRenderRankings(wisdomData, reportData);
+    _osRenderRoutes(reportData);
+    _osRenderHealth(reportData, wisdomData);
+    _osRenderCost(spendData);
+    _osRenderPro(proData);
+  }
+
+  // ── 1. Model Rankings ───────────────────────────────────────────────────
+  function _osRenderRankings(wisdom, report) {
+    const el = document.getElementById('os-rankings');
+    if (!el) return;
+
+    // Merge win_rate from collective-wisdom with request counts from report
+    const winRates  = wisdom && wisdom.win_rates  ? wisdom.win_rates  : {};
+    const modelDist = report && report.interactions && report.interactions.model_distribution
+                      ? report.interactions.model_distribution : {};
+
+    // Build combined list
+    const allModels = new Set([...Object.keys(winRates), ...Object.keys(modelDist)]);
+    const rows = [];
+    const totalReqs = Object.values(modelDist).reduce((a, b) => a + b, 0) || 1;
+
+    allModels.forEach(m => {
+      const wr   = winRates[m]  != null ? winRates[m]  : null;
+      const cnt  = modelDist[m] != null ? modelDist[m] : 0;
+      const pct  = Math.round(cnt / totalReqs * 100);
+      rows.push({ model: m, winRate: wr, count: cnt, pct });
+    });
+
+    // Sort: win rate first (if available), then by count
+    rows.sort((a, b) => {
+      if (a.winRate != null && b.winRate != null) return b.winRate - a.winRate;
+      if (a.winRate != null) return -1;
+      if (b.winRate != null) return 1;
+      return b.count - a.count;
+    });
+
+    if (!rows.length) { el.innerHTML = '<div class="os-loading">No model data yet</div>'; return; }
+
+    const maxWR = Math.max(...rows.map(r => r.winRate ?? 0), 0.01);
+
+    el.innerHTML = rows.slice(0, 8).map((r, i) => {
+      const rankCls = i === 0 ? 'os-rank-1' : i === 1 ? 'os-rank-2' : i === 2 ? 'os-rank-3' : '';
+      const rankIcon = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i+1}.`;
+      const color  = _OS_MODEL_COLORS[r.model] || '#8b7355';
+      const barPct = r.winRate != null ? Math.round(r.winRate / maxWR * 100) : Math.round(r.pct);
+      const wrStr  = r.winRate != null ? `${Math.round(r.winRate * 100)}% win` : '—';
+      const cntStr = r.count ? `${r.count} req` : '';
+      return `<div class="os-row">
+        <span class="os-rank-num ${rankCls}">${rankIcon}</span>
+        <span class="os-label" title="${_oEsc(r.model)}">${_oEsc(r.model)}</span>
+        ${_osBar(barPct, color)}
+        <span class="os-val">${wrStr}</span>
+        <span class="os-val" style="min-width:28px;font-size:7px;color:#555">${cntStr}</span>
+      </div>`;
+    }).join('');
+  }
+
+  // ── 2. Routing Decisions ────────────────────────────────────────────────
+  function _osRenderRoutes(report) {
+    const el = document.getElementById('os-routes');
+    if (!el) return;
+
+    const dist = report && report.interactions && report.interactions.route_distribution
+                 ? report.interactions.route_distribution : null;
+    if (!dist || !Object.keys(dist).length) {
+      el.innerHTML = '<div class="os-loading">No routing data yet</div>'; return;
+    }
+
+    const total = Object.values(dist).reduce((a, b) => a + b, 0) || 1;
+    const rows  = Object.entries(dist)
+                    .sort((a, b) => b[1] - a[1])
+                    .slice(0, 10);
+    const max   = rows[0][1];
+
+    el.innerHTML = rows.map(([route, count]) => {
+      const pct   = Math.round(count / total * 100);
+      const barPct = Math.round(count / max * 100);
+      const color  = _OS_ROUTE_COLORS[route] || '#8b7355';
+      const label  = route.replace(/_/g, ' ');
+      return `<div class="os-row">
+        <span class="os-label" title="${_oEsc(route)}">${_oEsc(label)}</span>
+        ${_osBar(barPct, color)}
+        <span class="os-val">${pct}%</span>
+        <span class="os-val" style="min-width:24px;font-size:7px;color:#555">${count}</span>
+      </div>`;
+    }).join('');
+  }
+
+  // ── 3. System Health ────────────────────────────────────────────────────
+  function _osRenderHealth(report, wisdom) {
+    const el = document.getElementById('os-health');
+    if (!el) return;
+
+    const ia      = report && report.interactions ? report.interactions : {};
+    const total   = ia.total   || 0;
+    const errRate = ia.error_rate_pct != null ? ia.error_rate_pct.toFixed(1) + '%' : '—';
+    const errColor = (ia.error_rate_pct || 0) > 5 ? 'red' : (ia.error_rate_pct || 0) > 2 ? 'yellow' : 'green';
+    const avgCx   = ia.avg_complexity ? ia.avg_complexity.toFixed(1) + ' / 5' : '—';
+    const models  = wisdom && wisdom.win_rates ? Object.keys(wisdom.win_rates).length : '—';
+    const driftAlerts = wisdom && wisdom.drift_alerts ? wisdom.drift_alerts.length : 0;
+    const driftColor  = driftAlerts > 0 ? 'red' : 'green';
+
+    el.innerHTML = [
+      _osKV('Total Requests',  total || '—', 'all time'),
+      _osKV('Error Rate',      errRate, '', errColor),
+      _osKV('Avg Complexity',  avgCx,  '1=trivial 5=hard'),
+      _osKV('Drift Alerts',    driftAlerts, driftAlerts ? 'models degrading' : 'all stable', driftColor),
+    ].join('');
+  }
+
+  // ── 4. Cost & Quota ─────────────────────────────────────────────────────
+  function _osRenderCost(spend) {
+    const el = document.getElementById('os-cost');
+    if (!el) return;
+    if (!spend || spend.error) {
+      el.innerHTML = `<div class="os-loading" style="grid-column:1/-1">${spend && spend.error ? _oEsc(spend.error) : 'No cost data'}</div>`;
+      return;
+    }
+    const todayUsd = spend.today_usd  != null ? '$' + spend.today_usd.toFixed(4)  : '—';
+    const weekUsd  = spend.week_usd   != null ? '$' + spend.week_usd.toFixed(3)   : '—';
+    const budgetPct = spend.budget_pct != null ? Math.round(spend.budget_pct) + '%' : '—';
+    const budgetColor = (spend.budget_pct || 0) > 80 ? 'red' : (spend.budget_pct || 0) > 50 ? 'yellow' : 'green';
+    const overBudget  = spend.over_budget ? '⚠️ OVER BUDGET' : '';
+
+    el.innerHTML = [
+      _osKV('Today',   todayUsd, overBudget, overBudget ? 'red' : ''),
+      _osKV('This Week', weekUsd, '7-day total'),
+      _osKV('Budget Used', budgetPct, 'daily limit', budgetColor),
+      _osKV('Top Model', spend.top_model || '—', 'by cost today'),
+    ].join('');
+  }
+
+  // ── 5. Pro CLI Usage ────────────────────────────────────────────────────
+  function _osRenderPro(pro) {
+    const el = document.getElementById('os-pro');
+    if (!el) return;
+    if (!pro || pro.error) {
+      el.innerHTML = `<div class="os-loading" style="grid-column:1/-1">No pro data</div>`;
+      return;
+    }
+    const daily  = pro.daily  || {};
+    const weekly = pro.weekly || {};
+    const calls  = daily.calls   != null ? daily.calls  : '—';
+    const cached = daily.cached_calls != null ? daily.cached_calls : '—';
+    const hitPct = daily.calls ? Math.round((daily.cached_calls || 0) / daily.calls * 100) + '%' : '—';
+    const tokens = daily.est_tokens != null ? (daily.est_tokens / 1000).toFixed(1) + 'k' : '—';
+    const eta    = pro.limit_eta || 'No limit hit';
+    const wCalls = weekly.week_calls != null ? weekly.week_calls : '—';
+
+    el.innerHTML = [
+      _osKV('Calls Today',  calls,  '', ''),
+      _osKV('Cache Hits',   hitPct, `${cached} cached`),
+      _osKV('Est. Tokens',  tokens, 'today'),
+      _osKV('Week Calls',   wCalls, '7-day total'),
+    ].join('') +
+    `<div class="os-kv" style="grid-column:1/-1">
+      <div class="os-kv-key">⚡ Quota ETA</div>
+      <div class="os-kv-val" style="font-size:9px;color:#fde68a">${_oEsc(eta)}</div>
+    </div>`;
+  }
+
+  // ────────────────────────────────────────────────────────────────────────
   let _officeBgOn = localStorage.getItem('sa_office_bg') === '1';
 
   function _oToggleBg() {
