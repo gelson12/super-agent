@@ -2010,16 +2010,6 @@ def maybe_proactive_refresh() -> bool:
                      f"{int((remaining_s % 3600) // 60)}m remaining) — skipping.")
                 return True
 
-            if remaining_s < 1800:  # < 30 min — CRITICAL: direct refresh is Cloudflare-blocked,
-                # launch full recovery (Playwright) now so it completes before expiry.
-                _log(f"[CRITICAL] Proactive refresh: token expires in {int(remaining_s // 60)}m "
-                     "— direct refresh blocked by Cloudflare, escalating to full_recovery_chain()")
-                if _recovery_running.is_set():
-                    _log("Proactive refresh: full recovery already in progress — skipping.")
-                    return True
-                return full_recovery_chain()
-
-            # 30 min – 2h window: lightweight direct refresh attempt
             _log(f"Proactive refresh: token expires in {int(remaining_s // 60)}m — trying direct refresh...")
         else:
             _log("Proactive refresh: expiresAt not found in credentials — attempting refresh anyway.")
@@ -2185,7 +2175,12 @@ def run_cookie_keepalive() -> bool:
         _log("Cookie keepalive: cookies refreshed successfully ✓ (Layer 4 is ready)")
         return True
 
-    # Cookies expired — do a full login to re-establish them
+    # Cookies expired — do a full login to re-establish them.
+    # Guard: if recovery chain is already running (which spawns its own browser login),
+    # skip to avoid two competing PTY sessions at boot.
+    if _recovery_running.is_set():
+        _log("Cookie keepalive: recovery chain already running a browser login — skipping to avoid duplicate PTY")
+        return False
     _log("Cookie keepalive: cookies expired — running full auto_login_claude() to refresh...")
     try:
         ok = auto_login_claude()
