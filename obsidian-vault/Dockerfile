@@ -1,60 +1,16 @@
-FROM ubuntu:22.04
-ENV DEBIAN_FRONTEND=noninteractive
+FROM python:3.12-slim
 
-# Xvfb + Electron runtime dependencies
-RUN apt-get update && apt-get install -y \
-    xvfb \
-    wget \
-    netcat-openbsd \
-    libgtk-3-0 \
-    libnotify4 \
-    libnss3 \
-    libxss1 \
-    libxtst6 \
-    xdg-utils \
-    libatspi2.0-0 \
-    libdrm2 \
-    libgbm1 \
-    libasound2 \
-    libx11-xcb1 \
-    libxcb-dri3-0 \
-    && rm -rf /var/lib/apt/lists/*
+RUN pip install --no-cache-dir "mcp[websockets]>=1.0.0"
 
-# Download and extract Obsidian AppImage
-# Extracting avoids the FUSE requirement in Docker containers
-RUN wget -q "https://github.com/obsidianmd/obsidian-releases/releases/download/v1.12.7/Obsidian-1.12.7.AppImage" \
-        -O /obsidian.AppImage \
-    && chmod +x /obsidian.AppImage \
-    && /obsidian.AppImage --appimage-extract \
-    && mv squashfs-root /obsidian \
-    && rm /obsidian.AppImage
+# Seed the vault with a welcome note
+RUN mkdir -p /vault-seed
+RUN printf '# Super Agent Knowledge Vault\n\nThis vault is the persistent knowledge base for Super Agent.\n\n## Purpose\n- Store self-improvement insights and improvement reports\n- Save architecture decisions and agent behaviour notes\n- Provide inspiration for the self-improvement pipeline\n\n## Usage\nAll Super Agent models (Haiku, Sonnet, Opus) and Claude Code CLI can read and write notes here via MCP tools.\n' \
+    > /vault-seed/Welcome.md
 
-# Pre-install Claude Code MCP plugin (Ian Sinnott) from GitHub releases
-RUN mkdir -p /vault-seed/.obsidian/plugins/obsidian-claude-code-mcp \
-    && wget -q "https://github.com/iansinnott/obsidian-claude-code-mcp/releases/latest/download/main.js" \
-         -O /vault-seed/.obsidian/plugins/obsidian-claude-code-mcp/main.js \
-    && wget -q "https://github.com/iansinnott/obsidian-claude-code-mcp/releases/latest/download/manifest.json" \
-         -O /vault-seed/.obsidian/plugins/obsidian-claude-code-mcp/manifest.json \
-    && (wget -q "https://github.com/iansinnott/obsidian-claude-code-mcp/releases/latest/download/styles.css" \
-         -O /vault-seed/.obsidian/plugins/obsidian-claude-code-mcp/styles.css 2>/dev/null || true)
-
-# Write vault config files inline — avoids build context issues with subdirectories
-# safeMode:false  → allows community plugins to run (default is true = blocked)
-# updateMode:auto in obsidian.json is handled in entrypoint via --disable-updates flag
-RUN printf '["obsidian-claude-code-mcp"]\n' \
-        > /vault-seed/.obsidian/community-plugins.json \
-    && printf '{"port":22360}\n' \
-        > /vault-seed/.obsidian/plugins/obsidian-claude-code-mcp/data.json \
-    && printf '{"promptDelete":false,"alwaysUpdateLinks":true,"newFileLocation":"root","attachmentFolderPath":"assets","safeMode":false}\n' \
-        > /vault-seed/.obsidian/app.json \
-    && printf '{"file-explorer":true,"global-search":true,"switcher":true,"editor-status":true,"command-palette":true,"file-recovery":true}\n' \
-        > /vault-seed/.obsidian/core-plugins.json \
-    && printf '{}\n' \
-        > /vault-seed/.obsidian/hotkeys.json
-
-EXPOSE 22360
-
+COPY obsidian-vault/vault_mcp_server.py /vault_mcp_server.py
 COPY obsidian-vault/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
+
+EXPOSE 22360
 
 CMD ["/entrypoint.sh"]
