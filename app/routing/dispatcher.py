@@ -576,6 +576,18 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
     _system_claude = _raw_claude.replace("{capabilities}", _caps).replace("{learned_context}", _learned)
     _system_haiku  = _raw_haiku.replace("{capabilities}", _caps).replace("{learned_context}", _learned)
 
+    # ── 0d. Vault context injection ───────────────────────────────────────────
+    # Share Obsidian vault knowledge with ALL API models (Haiku, Sonnet).
+    # Cached 30 min — zero latency on cache hit. Falls back silently on error.
+    try:
+        from ..prompts import get_vault_context_block as _get_vault
+        _vault_ctx = _get_vault()
+        _system_claude = _system_claude.replace("{vault_context}", _vault_ctx)
+        _system_haiku  = _system_haiku.replace("{vault_context}",  _vault_ctx)
+    except Exception:
+        _system_claude = _system_claude.replace("{vault_context}", "")
+        _system_haiku  = _system_haiku.replace("{vault_context}",  "")
+
     # ── 1. Safe word guard ────────────────────────────────────────────────────
     authorized, block_reason = check_authorization(message)
     if not authorized:

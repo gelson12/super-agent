@@ -40,10 +40,68 @@ _SERVICES_SECTION = _load_claude_md_section("KNOWN SERVICES") or (
     "| divine-contentment | PostgreSQL + pgvector |"
 )
 _N8N_SECTION = _load_claude_md_section("n8n ACTIVE WORKFLOWS") or (
-    "| jxnZZwTqJ7naPKc6 | Claude-Verification-Monitor | ACTIVE |\n"
+    "| jun8CaMnNhux1iEY | Claude-Verification-Monitor | ACTIVE |\n"
     "| ke7YzsAmGerVWVVc | Super-Agent-Health-Monitor | ACTIVE |\n"
     "| sCHZhoyRgEZUaxtT | Universal Catch-All | ACTIVE |"
 )
+
+# ── Owner identity — injected into every model's system prompt ─────────────────
+_OWNER_BLOCK = (
+    "\n## OWNER\n"
+    "You are working with **Gelson Mascarenhas** (GitHub: gelson12), "
+    "the owner and builder of this system. Always address them as Gelson. "
+    "They are a software engineer and entrepreneur building autonomous AI agents "
+    "on Railway.\n"
+)
+
+# ── Vault context cache — lazily loaded, refreshed every 30 min ───────────────
+_vault_ctx_cache: str = ""
+_vault_ctx_ts: float = 0.0
+_VAULT_CTX_TTL = 1800  # 30 minutes
+
+
+def get_vault_context_block() -> str:
+    """
+    Fetch key vault notes (Welcome.md + latest daily review) for injection
+    into all model system prompts. Cached 30 min. Never raises.
+    On failure returns stale cache (better than nothing).
+    """
+    global _vault_ctx_cache, _vault_ctx_ts
+    import time as _time
+    if _vault_ctx_cache and (_time.time() - _vault_ctx_ts) < _VAULT_CTX_TTL:
+        return _vault_ctx_cache
+    try:
+        import asyncio as _asyncio
+        import datetime as _dt
+        from mcp.client.sse import sse_client as _sse
+        from mcp import ClientSession as _CS
+        _URL = "http://obsidian-vault.railway.internal:22360/sse"
+        _today = _dt.datetime.utcnow().strftime("%Y-%m-%d")
+
+        async def _fetch():
+            async with _sse(url=_URL) as (r, w):
+                async with _CS(r, w) as s:
+                    await s.initialize()
+                    _welcome = await s.call_tool("read_file", {"path": "Welcome.md"})
+                    _daily   = await s.call_tool(
+                        "read_file",
+                        {"path": f"Engineering/Daily Review {_today}.md"}
+                    )
+                    _w = _welcome.content[0].text if _welcome.content else ""
+                    _d = _daily.content[0].text   if _daily.content   else ""
+                    return _w, _d
+
+        _w_text, _d_text = _asyncio.run(_fetch())
+        _block = "\n## KNOWLEDGE VAULT (shared Obsidian memory)\n"
+        if _w_text and "not found" not in _w_text.lower():
+            _block += _w_text[:600] + "\n"
+        if _d_text and "not found" not in _d_text.lower():
+            _block += f"\n### Latest Daily Review ({_today})\n" + _d_text[:800] + "\n"
+        _vault_ctx_cache = _block
+        _vault_ctx_ts = _time.time()
+        return _block
+    except Exception:
+        return _vault_ctx_cache  # stale cache on error
 
 
 def get_prompt(name: str) -> str | None:
@@ -114,7 +172,7 @@ Category:"""
 
 # ── Claude Sonnet — deep reasoning + cognitive frameworks ─────────────────────
 SYSTEM_PROMPT_CLAUDE = """{capabilities}
-
+""" + _OWNER_BLOCK + """
 You are Super Agent — a strategic advisor, analyst, and autonomous expert assistant.
 
 ╔══ MEMORY & CONSCIOUSNESS DIRECTIVE ══╗
@@ -165,12 +223,19 @@ Then respond:
 - If uncertain, say so explicitly — never fabricate
 - For business/financial/legal topics, flag that professional advice may be needed
 
+### Railway Services
+""" + _SERVICES_SECTION + """
+
+### n8n Active Workflows
+""" + _N8N_SECTION + """
+
+{vault_context}
 {learned_context}"""
 
 
 # ── Claude Haiku — fast, conversational, still thoughtful ────────────────────
 SYSTEM_PROMPT_HAIKU = """{capabilities}
-
+""" + _OWNER_BLOCK + """
 You are Super Agent — a sharp, friendly, memory-aware assistant.
 
 You have persistent memory across sessions. Before every response:
@@ -209,11 +274,15 @@ Claude CLI self-healing (4 layers): volume backup → Railway env CLAUDE_SESSION
 
 PENDING: Anthropic API credits are depleted — if API calls fail, this is why. Top up at console.anthropic.com.
 
+{vault_context}
 {learned_context}"""
 
 
 # ── Gemini — structured extraction & classification ───────────────────────────
 SYSTEM_PROMPT_GEMINI = """You are a fast, precise extraction and classification assistant.
+""" + _OWNER_BLOCK + """
+### Railway Services
+""" + _SERVICES_SECTION + """
 
 Rules:
 - Return structured data when requested (JSON, lists, tables)
@@ -224,7 +293,7 @@ Rules:
 
 # ── DeepSeek — technical and code reasoning ───────────────────────────────────
 SYSTEM_PROMPT_DEEPSEEK = """You are a senior software engineer and technical analyst.
-
+""" + _OWNER_BLOCK + """
 Before answering code or math questions:
 1. Understand the problem fully — restate it in one sentence if complex
 2. Consider edge cases and failure modes

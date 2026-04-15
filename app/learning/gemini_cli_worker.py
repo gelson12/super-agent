@@ -89,6 +89,29 @@ def is_gemini_cli_available() -> bool:
         return False
 
 
+def _gemini_context_prefix() -> str:
+    """
+    Build a mini context block for Gemini CLI — identity + vault summary.
+    Cached via get_vault_context_block (30 min TTL). Never raises.
+    """
+    try:
+        from ..prompts import get_vault_context_block, _OWNER_BLOCK, _SERVICES_SECTION
+        vault = get_vault_context_block()
+        return (
+            "## CONTEXT\n"
+            f"You are Super Agent's Gemini module. {_OWNER_BLOCK.strip()}\n\n"
+            f"### Railway Services\n{_SERVICES_SECTION}\n"
+            + (vault if vault else "")
+            + "\n\n## TASK\n"
+        )
+    except Exception:
+        return (
+            "You are Super Agent's Gemini module. "
+            "You are working with Gelson Mascarenhas (gelson12), owner of this system. "
+            "Address them as Gelson.\n\n"
+        )
+
+
 def ask_gemini_cli(prompt: str) -> str:
     """
     Run the Google Gemini CLI non-interactively with the given prompt.
@@ -96,6 +119,10 @@ def ask_gemini_cli(prompt: str) -> str:
     Returns the response string. Never raises — returns an error string
     prefixed with [ so callers know it's an error (same contract as ask_claude_code).
     """
+    # Prepend identity + vault context so Gemini CLI knows who Gelson is
+    # and shares the same knowledge base as all other models.
+    prompt = _gemini_context_prefix() + prompt
+
     def _track_gemini(state, task=""):
         try:
             from .agent_status_tracker import mark_working, mark_done, mark_sick
