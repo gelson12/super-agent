@@ -8,6 +8,20 @@ if [ ! -f /vault/.obsidian/community-plugins.json ]; then
     echo "[obsidian] First boot — seeding vault config..."
     mkdir -p /vault/.obsidian
     cp -r /vault-seed/.obsidian/. /vault/.obsidian/
+    # Create a seed note so vault is never empty (empty vault can prevent Obsidian opening)
+    cat > /vault/Welcome.md << 'SEEDNOTE'
+# Super Agent Knowledge Vault
+
+This vault is the persistent knowledge base for Super Agent.
+
+## Purpose
+- Store self-improvement insights and improvement reports
+- Save architecture decisions and agent behaviour notes
+- Provide inspiration for the self-improvement pipeline
+
+## Usage
+Claude Code and all Super Agent models (Haiku, Sonnet, Opus) can read and write notes here via the Obsidian MCP plugin.
+SEEDNODE
     echo "[obsidian] Vault config seeded."
 else
     echo "[obsidian] Existing vault found — syncing critical config files..."
@@ -67,8 +81,8 @@ echo "[obsidian] Launching Obsidian..."
 DISPLAY=:99 /obsidian/obsidian \
     --no-sandbox \
     --disable-gpu \
-    --disable-software-rasterizer \
-    --disable-dev-shm-usage &
+    --disable-dev-shm-usage \
+    --window-size=1280x800 &
 OBSIDIAN_PID=$!
 
 # ── Wait for MCP WebSocket (up to 90s — Obsidian takes ~30s to load plugins) ──
@@ -91,8 +105,8 @@ while true; do
         DISPLAY=:99 /obsidian/obsidian \
             --no-sandbox \
             --disable-gpu \
-            --disable-software-rasterizer \
-            --disable-dev-shm-usage &
+            --disable-dev-shm-usage \
+            --window-size=1280x800 &
         OBSIDIAN_PID=$!
         sleep 5
     fi
