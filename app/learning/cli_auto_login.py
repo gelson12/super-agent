@@ -897,15 +897,79 @@ def _extract_oauth_code_from_page(page) -> str | None:
     """
     Extract the OAuth authorization code after being redirected to
     platform.claude.com/oauth/code/callback (container/headless mode).
+
+    IMPORTANT: platform.claude.com exchanges the OAuth code server-side when the
+    browser navigates to the callback URL, then DISPLAYS a code on the page.
+    We must read the RENDERED PAGE TEXT — the URL query param code may already
+    be consumed by the server and rejected by the CLI if we try to paste it.
+    Page text extraction is always attempted first.
+
     Returns the code string or None.
     """
+    import time as _t_ec
+
+    # ── Step 1: Wait for React SPA to render the code ──────────────────────
+    try:
+        page.wait_for_load_state("networkidle", timeout=8000)
+    except Exception:
+        pass
+    _t_ec.sleep(2)
+
+    # ── Step 2: Log the full page text (critical for debugging) ────────────
+    _page_text = ""
+    try:
+        _page_text = page.inner_text("body") or ""
+        _log(f"Browser: callback page rendered text:\n{_page_text[:1200]}")
+    except Exception as _e:
+        _log(f"Browser: could not read callback page text: {_e}")
+
+    # ── Step 3: Extract from visible page text FIRST ───────────────────────
+    # The platform.claude.com callback page shows something like:
+    # "Copy this code: XXXXX" / "Paste this code into your terminal: XXXXX"
+    # This is the code the CLI is waiting for at "Paste code here if prompted >"
+    if _page_text:
+        try:
+            for pattern in [
+                r"copy this code[:\s]+([A-Za-z0-9\-_+/=]{8,})",
+                r"paste this code[:\s]+([A-Za-z0-9\-_+/=]{8,})",
+                r"authorization[_ ]code[:\s]+([A-Za-z0-9\-_+/=]{8,})",
+                r"your code[:\s]+([A-Za-z0-9\-_+/=]{8,})",
+                r"code[:\s]+([A-Za-z0-9\-_+/=]{40,})",  # Long OAuth-style codes
+                r'"code"\s*:\s*"([A-Za-z0-9\-_+/=]{8,})"',
+            ]:
+                m = re.search(pattern, _page_text, re.IGNORECASE)
+                if m:
+                    code = m.group(1)
+                    _log(f"Browser: extracted display code from page text ({code[:12]}...)")
+                    return code
+        except Exception:
+            pass
+
+    # ── Step 4: Try HTML elements (pre, code, input[value]) ────────────────
+    try:
+        _html = page.content()
+        for html_pattern in [
+            r'<(?:pre|code)[^>]*>([A-Za-z0-9\-_+/=]{20,})</(?:pre|code)>',
+            r'<input[^>]+value="([A-Za-z0-9\-_+/=]{20,})"',
+        ]:
+            m = re.search(html_pattern, _html)
+            if m:
+                code = m.group(1)
+                _log(f"Browser: extracted code from HTML element ({code[:12]}...)")
+                return code
+    except Exception:
+        pass
+
+    # ── Step 5: Fall back to URL query param ───────────────────────────────
+    # WARNING: this code may already be consumed by the server when the browser
+    # navigated to the callback URL. Only used if page text extraction fails.
     try:
         from urllib.parse import urlparse, parse_qs
         parsed = urlparse(page.url)
         params = parse_qs(parsed.query)
         code = params.get("code", [None])[0]
         if code:
-            _log(f"Browser: extracted OAuth code from URL query param ({code[:12]}...)")
+            _log(f"Browser: falling back to URL query param code ({code[:12]}...) — WARNING: may be consumed by server")
             return code
     except Exception:
         pass
@@ -924,23 +988,7 @@ def _extract_oauth_code_from_page(page) -> str | None:
     except Exception:
         pass
 
-    # Try to extract from visible page text — the page shows something like:
-    # "Your authorization code is: XXXXX" or "Copy this code: XXXXX"
-    try:
-        content = page.inner_text("body") if page else ""
-        for pattern in [
-            r"authorization[_ ]code[:\s]+([A-Za-z0-9\-_]{8,})",
-            r"code[:\s]+([A-Za-z0-9\-_]{16,})",
-            r'"code"\s*:\s*"([A-Za-z0-9\-_]{8,})"',
-        ]:
-            m = re.search(pattern, content, re.IGNORECASE)
-            if m:
-                code = m.group(1)
-                _log(f"Browser: extracted OAuth code from page text ({code[:12]}...)")
-                return code
-    except Exception:
-        pass
-
+    _log("Browser: WARNING — could not extract any code from callback page. Returning None.")
     return None
 
 
