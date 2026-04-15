@@ -72,6 +72,13 @@ _RATELIMIT_FILE = Path("/workspace/.claude_login_ratelimit")
 _RATELIMIT_BACKOFF = {1: 3600, 2: 14400, 3: 86400}
 _RATELIMIT_DEFAULT_COOLDOWN = 86400  # 24h for any hit beyond index 3
 
+# Playwright timeout backoff — prevents rapid retry loops that exhaust Anthropic's
+# magic link email quota (Anthropic silently stops sending emails after 2-3 rapid
+# requests; no "error sending login link" is returned so _check_ratelimit() doesn't
+# trigger). Set whenever the browser attempt times out; cleared after 20 minutes.
+_last_playwright_timeout: float = 0.0
+_PLAYWRIGHT_BACKOFF_S: float = 20 * 60  # 20 minutes between Playwright attempts
+
 
 def _record_ratelimit_hit() -> int:
     """
@@ -2181,7 +2188,7 @@ def run_cookie_keepalive() -> bool:
     # Cookies expired — do a full login to re-establish them
     _log("Cookie keepalive: cookies expired — running full auto_login_claude() to refresh...")
     try:
-        ok, _ = auto_login_claude()
+        ok = auto_login_claude()
         if ok:
             _log("Cookie keepalive: full login succeeded — fresh cookies saved ✓ (Layer 4 restored)")
             return True
@@ -2225,6 +2232,20 @@ def full_recovery_chain() -> bool:
     if _remaining > 0:
         _log(f"=== Login rate-limited — {int(_remaining // 60)}m {int(_remaining % 60)}s remaining. "
              f"Skipping recovery until cooldown expires. ===")
+        return False
+
+    # ── Playwright backoff guard ─────────────────────────────────────────────
+    # After a browser timeout (magic link email never arrived), back off 20 min
+    # before retrying the full Playwright flow. Anthropic silently stops sending
+    # magic link emails after 2-3 rapid requests — this prevents burning the quota.
+    # Fast paths (direct refresh, cookie check) are unaffected; only the Playwright
+    # escalation is blocked during the backoff window.
+    global _last_playwright_timeout
+    _elapsed_since_timeout = time.time() - _last_playwright_timeout
+    if 0 < _elapsed_since_timeout < _PLAYWRIGHT_BACKOFF_S:
+        _remaining_backoff = int((_PLAYWRIGHT_BACKOFF_S - _elapsed_since_timeout) // 60)
+        _log(f"=== Playwright backoff: {_remaining_backoff}m remaining before next attempt "
+             f"(prevents Anthropic email quota exhaustion) ===")
         return False
 
     # ── Concurrency guard ───────────────────────────────────────────────────
@@ -2377,6 +2398,10 @@ def full_recovery_chain() -> bool:
             _pool.shutdown(wait=False, cancel_futures=True)
 
         _log("=== ALL recovery methods FAILED — manual login required ===")
+        # Record the timeout timestamp so the backoff guard blocks rapid retries.
+        # Anthropic silently stops sending magic link emails after 2-3 requests —
+        # the 20-min backoff gives their email system time to reset.
+        _last_playwright_timeout = time.time()
         return False
     finally:
         _recovery_running.clear()
