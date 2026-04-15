@@ -461,6 +461,65 @@ def _apply_suggestions(review: dict) -> list[dict]:
     return applied
 
 
+def _write_vault_weekly_note(review: dict) -> None:
+    """
+    Write a weekly summary note to the Obsidian vault after every Sunday review.
+    Mirrors _write_vault_daily_note in nightly_review.py — runs via
+    run_shell_via_cli_worker so the MCP call executes on inspiring-cat,
+    which has Railway internal network access to obsidian-vault.
+    Never raises — failures are logged and silently skipped.
+    """
+    try:
+        from ..tools.shell_tools import run_shell_via_cli_worker
+
+        week_ending = review.get("week_ending", datetime.datetime.utcnow().strftime("%Y-%m-%d"))
+        week_start = review.get("week_start", "unknown")
+        summary = review.get("executive_summary", "No summary available.")
+        priorities = review.get("next_week_priorities", [])
+        priorities_md = "\n".join(f"- {p}" for p in priorities) or "- None"
+        cycle = review.get("cycle_summary", {})
+        patterns = review.get("weekly_patterns", [])
+        patterns_md = "\n".join(
+            f"- {p.get('pattern', '?')} (impact: {p.get('impact', '?')})"
+            for p in patterns[:5]
+        ) or "- None identified"
+
+        note_content = (
+            f"# Weekly Review {week_start} → {week_ending}\n\n"
+            f"## Executive Summary\n{summary}\n\n"
+            f"## Weekly Patterns\n{patterns_md}\n\n"
+            f"## Improvement Cycle\n"
+            f"- Suggestions evaluated: {cycle.get('total_suggestions', 0)}\n"
+            f"- Accepted: {cycle.get('accepted', 0)}\n"
+            f"- Rejected: {cycle.get('rejected', 0)}\n"
+            f"- Dominant bottleneck: {cycle.get('dominant_bottleneck_category', 'unknown')}\n\n"
+            f"## Next Week Priorities\n{priorities_md}\n\n"
+            f"## Comparison to Last Week\n{review.get('comparison_to_last_week', 'No data.')}\n"
+        )
+
+        note_repr = repr(note_content)
+        path_repr = repr(f"Engineering/Weekly Review {week_ending}.md")
+        script = (
+            "import asyncio\n"
+            f"NOTE = {note_repr}\n"
+            f"PATH = {path_repr}\n"
+            "async def main():\n"
+            "    from mcp.client.sse import sse_client\n"
+            "    from mcp import ClientSession\n"
+            "    async with sse_client(url='http://obsidian-vault.railway.internal:22360/sse') as (r, w):\n"
+            "        async with ClientSession(r, w) as s:\n"
+            "            await s.initialize()\n"
+            "            await s.call_tool('write_file', {'path': PATH, 'content': NOTE})\n"
+            "            print('Vault weekly note written:', PATH, flush=True)\n"
+            "asyncio.run(main())\n"
+        )
+        cmd = "python3 << 'PYEOF'\n" + script + "PYEOF"
+        result = run_shell_via_cli_worker(cmd)
+        _log(f"Vault weekly note for {week_ending}: {result[:120]}")
+    except Exception as e:
+        _log(f"Vault weekly note skipped: {e}")
+
+
 def run_weekly_review() -> dict:
     """
     Entry point called by APScheduler every Sunday at 23:00 UTC.
@@ -520,6 +579,9 @@ def run_weekly_review() -> dict:
         if applied or env_applied:
             out_path.write_text(json.dumps(review, indent=2))
             _log(f"Applied {len(applied)} suggestion(s), {len(env_applied)} env var(s)")
+
+        # Write weekly summary note to Obsidian vault (non-blocking)
+        _write_vault_weekly_note(review)
 
         return review
 

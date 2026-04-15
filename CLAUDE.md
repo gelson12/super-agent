@@ -147,7 +147,7 @@ The Claude CLI login flow in container/headless mode:
 
 | ID | Name | Status |
 |----|------|--------|
-| `jxnZZwTqJ7naPKc6` | Claude-Verification-Monitor | ACTIVE (Outlook OAuth) |
+| `jun8CaMnNhux1iEY` | Claude-Verification-Monitor | ACTIVE (Outlook OAuth) |
 | `ke7YzsAmGerVWVVc` | Super-Agent-Health-Monitor | ACTIVE |
 | `sCHZhoyRgEZUaxtT` | Universal Catch-All | ACTIVE |
 | `yZckxfWsvugSBFZh` | Robust Health Check | ACTIVE |

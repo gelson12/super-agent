@@ -155,17 +155,12 @@ _MCP_TOOL_FAILURE_PHRASES = (
     "enotfound",
 )
 
-# Auto-accept input: answer "1" (Allow once) to any interactive MCP permission prompts.
-# Provides up to 30 answers so any sequence of permission requests is handled.
-_AUTO_ACCEPT_INPUT = "1\n" * 30
-
-
 def _run_subprocess(cmd: list[str], cwd: str | None, timeout: int) -> str:
     """Run a subprocess and return its output string. Never raises."""
     try:
         result = subprocess.run(
             cmd,
-            input=_AUTO_ACCEPT_INPUT,  # auto-accept MCP permission prompts (option 1 = Allow once)
+            input="",  # close stdin — prevents blocking on interactive prompts without feeding spurious messages
             capture_output=True,
             text=True,
             timeout=timeout,
