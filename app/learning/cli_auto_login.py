@@ -1238,6 +1238,10 @@ def _automate_browser(oauth_url: str, email: str) -> tuple[bool, str | None]:
             return True, auth_code
 
         _log("Browser: looking for Approve button on consent screen...")
+        # Wait for React to render the consent UI — the page may still be loading
+        # after networkidle (React re-renders on auth state changes).
+        time.sleep(2)
+        _log(f"Browser: consent screen body (first 600): {page.inner_text('body')[:600] if page else '(no page)'}")
         approved = _click_approve(page)
         if approved:
             _log("Browser: Approve clicked — waiting for callback redirect...")
@@ -1315,13 +1319,38 @@ def _automate_browser(oauth_url: str, email: str) -> tuple[bool, str | None]:
 
 
 def _is_callback_url(url: str) -> bool:
-    """Return True if the URL is an OAuth callback (localhost or platform.claude.com)."""
-    return (
-        "localhost" in url
-        or "/callback" in url
-        or "oauth/code/callback" in url
-        or "platform.claude.com/oauth" in url
-    )
+    """
+    Return True if the URL is a real OAuth callback landing page.
+
+    IMPORTANT: claude.ai/oauth/authorize contains redirect_uri=https://platform.claude.com/
+    oauth/code/callback URL-encoded as a query parameter.  A simple substring check like
+    "callback" in url or "/callback" in url matches the redirect_uri param and causes
+    false positives — the browser stays on the consent screen and never clicks Approve.
+
+    We must check the URL *path* specifically, not the full URL string.
+    Real callbacks are:
+      - http://localhost:<port>/callback  (local dev mode, unlikely in container)
+      - https://platform.claude.com/oauth/code/callback?code=...  (container/headless mode)
+    """
+    try:
+        from urllib.parse import urlparse
+        parsed = urlparse(url)
+        # localhost callback (any port, any path)
+        if parsed.hostname and "localhost" in parsed.hostname:
+            return True
+        # platform.claude.com — must actually BE on that domain (not just in a param)
+        if parsed.hostname == "platform.claude.com" and "/oauth" in parsed.path:
+            return True
+        # Direct path check — only the path component, not the full URL string
+        if parsed.path.endswith("/callback") or "/oauth/code/callback" in parsed.path:
+            return True
+    except Exception:
+        # Fallback for malformed URLs — be conservative (don't false-positive)
+        if url.startswith("http://localhost"):
+            return True
+        if url.startswith("https://platform.claude.com/oauth"):
+            return True
+    return False
 
 
 def _wait_for_callback_and_extract(page) -> tuple[str | None, bool]:
@@ -1369,8 +1398,11 @@ def _wait_for_callback_and_extract(page) -> tuple[str | None, bool]:
 def _click_approve(page) -> bool:
     """Find and click the OAuth Approve/Allow button."""
     try:
-        # Check if we're already on a success/callback page before looking for buttons
-        if "localhost" in page.url or "callback" in page.url:
+        # Check if we're already on a success/callback page before looking for buttons.
+        # IMPORTANT: use _is_callback_url() — do NOT use "callback" in page.url because
+        # the oauth/authorize URL contains redirect_uri=...%2Fcallback as a query param,
+        # causing a false positive match that skips the Approve button entirely.
+        if _is_callback_url(page.url):
             _log("Browser: already redirected to callback — auto-approved.")
             return True
 
