@@ -332,7 +332,7 @@ def submit_task(req: TaskSubmit):
     The background worker picks it up within 2 seconds.
     """
     valid_types = {"claude_pro", "gemini_cli", "claude_auth",
-                   "claude_probe", "gemini_probe", "flutter_build"}
+                   "claude_probe", "gemini_probe", "flutter_build", "shell"}
     if req.type not in valid_types:
         raise HTTPException(400, f"Unknown task type '{req.type}'. Valid: {valid_types}")
     try:
