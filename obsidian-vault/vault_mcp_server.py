@@ -32,7 +32,8 @@ logger = logging.getLogger(__name__)
 VAULT_PATH = Path(os.environ.get("VAULT_PATH", "/vault"))
 VAULT_PATH.mkdir(parents=True, exist_ok=True)
 
-mcp = FastMCP("obsidian-vault")
+port = int(os.environ.get("MCP_PORT", 22360))
+mcp = FastMCP("obsidian-vault", host="0.0.0.0", port=port)
 
 
 def _rel(path: str) -> Path:
@@ -170,9 +171,8 @@ def get_vault_info() -> str:
 
 
 if __name__ == "__main__":
-    port = int(os.environ.get("MCP_PORT", 22360))
     logger.info("Vault MCP server starting on ws://0.0.0.0:%d", port)
     logger.info("Vault path: %s (%d notes found)",
                 VAULT_PATH,
                 len(list(VAULT_PATH.rglob("*.md"))))
-    mcp.run(transport="websocket", host="0.0.0.0", port=port)
+    mcp.run(transport="websocket")
