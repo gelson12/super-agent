@@ -614,6 +614,62 @@ def _refresh_claude_md(review: dict) -> None:
         _log(f"CLAUDE.md refresh skipped: {e}")
 
 
+def _write_vault_daily_note(review: dict) -> None:
+    """
+    Write a daily summary note to the Obsidian vault after every nightly review.
+
+    Runs the MCP client on inspiring-cat (which has Railway internal network
+    access to obsidian-vault.railway.internal) via run_shell_via_cli_worker.
+    Uses a bash heredoc so note content with quotes/newlines needs no escaping.
+    Never raises — failures are logged and silently skipped.
+    """
+    try:
+        from ..tools.shell_tools import run_shell_via_cli_worker
+
+        date = review.get("date", datetime.datetime.utcnow().strftime("%Y-%m-%d"))
+        health = review.get("health_summary", "No summary available.")
+        priorities = review.get("tomorrow_priorities", [])
+        priorities_md = "\n".join(f"- {p}" for p in priorities) or "- None"
+        cycle = review.get("cycle_summary", {})
+        routing_obs = review.get("routing_observations", "No observations.")
+
+        note_content = (
+            f"# Daily Review {date}\n\n"
+            f"## Health Summary\n{health}\n\n"
+            f"## Improvement Cycle\n"
+            f"- Suggestions evaluated: {cycle.get('total_suggestions', 0)}\n"
+            f"- Accepted: {cycle.get('accepted', 0)}\n"
+            f"- Rejected: {cycle.get('rejected', 0)}\n"
+            f"- Dominant bottleneck: {cycle.get('dominant_bottleneck_category', 'unknown')}\n\n"
+            f"## Tomorrow Priorities\n{priorities_md}\n\n"
+            f"## Routing\n{routing_obs}\n"
+        )
+
+        # repr() produces a safe Python string literal (handles newlines, quotes, backslashes).
+        # Single-quoted heredoc 'PYEOF' prevents bash from expanding $vars inside it.
+        note_repr = repr(note_content)
+        date_repr = repr(f"Engineering/Daily Review {date}.md")
+        script = (
+            "import asyncio\n"
+            f"NOTE = {note_repr}\n"
+            f"PATH = {date_repr}\n"
+            "async def main():\n"
+            "    from mcp.client.sse import sse_client\n"
+            "    from mcp import ClientSession\n"
+            "    async with sse_client(url='http://obsidian-vault.railway.internal:22360/sse') as (r, w):\n"
+            "        async with ClientSession(r, w) as s:\n"
+            "            await s.initialize()\n"
+            "            result = await s.call_tool('write_file', {'path': PATH, 'content': NOTE})\n"
+            "            print('Vault note written:', PATH, flush=True)\n"
+            "asyncio.run(main())\n"
+        )
+        cmd = "python3 << 'PYEOF'\n" + script + "PYEOF"
+        result = run_shell_via_cli_worker(cmd)
+        _log(f"Vault daily note for {date}: {result[:120]}")
+    except Exception as e:
+        _log(f"Vault daily note skipped: {e}")
+
+
 def run_nightly_review() -> dict:
     """
     Entry point called by APScheduler at 23:00 UTC.
@@ -677,8 +733,11 @@ def run_nightly_review() -> dict:
             out_path.write_text(json.dumps(review, indent=2))
             _log(f"Applied {len(applied)} suggestion(s), {len(env_applied)} env var(s)")
 
-        # Refresh CLAUDE.md + GEMINI.md with today's findings (last step — non-blocking)
+        # Refresh CLAUDE.md + GEMINI.md with today's findings (non-blocking)
         _refresh_claude_md(review)
+
+        # Write daily summary note to Obsidian vault (non-blocking)
+        _write_vault_daily_note(review)
 
         return review
 
