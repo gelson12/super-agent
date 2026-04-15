@@ -40,7 +40,7 @@ if [ -n "$GITHUB_SSH_KEY" ]; then
     echo "$GITHUB_SSH_KEY" | base64 -d > /root/.ssh/id_ed25519
     chmod 600 /root/.ssh/id_ed25519
     # Trust github.com host fingerprint — avoids interactive prompt
-    ssh-keyscan -t ed25519 github.com >> /root/.ssh/known_hosts 2>/dev/null
+    ssh-keyscan -t rsa,ecdsa,ed25519 github.com >> /root/.ssh/known_hosts 2>/dev/null
     # Generate public key so tools can inspect it
     ssh-keygen -y -f /root/.ssh/id_ed25519 > /root/.ssh/id_ed25519.pub 2>/dev/null || true
     echo "[entrypoint] SSH key installed ($(cat /root/.ssh/id_ed25519.pub | awk '{print $2}' | cut -c1-20)...)."
@@ -49,8 +49,7 @@ fi
 # ── Railway CLI authentication ────────────────────────────────────────────────
 # Newer Railway CLI reads RAILWAY_TOKEN env var automatically — no login command needed
 if [ -n "$RAILWAY_TOKEN" ]; then
-    export RAILWAY_TOKEN="${RAILWAY_TOKEN}"
-    # Verify the token works silently
+    # RAILWAY_TOKEN already in env — no re-export needed; verify it works silently
     if railway whoami >/dev/null 2>&1; then
         echo "[entrypoint] Railway CLI authenticated ($(railway whoami 2>/dev/null))."
     else
@@ -118,13 +117,13 @@ if [ -f "$_GEMINI_VOLUME_CREDS" ] && [ ! -f /root/.gemini/credentials.json ]; th
     echo "[entrypoint] Gemini credentials restored from volume backup ($_GEMINI_VOLUME_CREDS)."
 fi
 
-# Check if volume credentials are already good
+# Check if volume credentials are already good — probe actual auth, not just binary presence
 if [ -f /root/.gemini/credentials.json ]; then
-    if gemini --version >/dev/null 2>&1; then
-        echo "[entrypoint] Gemini CLI AVAILABLE from volume credentials — skipping env var restore."
+    if timeout 8 gemini -p "ping" >/dev/null 2>&1; then
+        echo "[entrypoint] Gemini CLI AVAILABLE and authenticated from volume credentials — skipping env var restore."
         _gemini_valid=true
     else
-        echo "[entrypoint] Volume Gemini credentials present but CLI not responding — will restore from env var."
+        echo "[entrypoint] Volume Gemini credentials present but auth probe failed — will restore from env var."
     fi
 fi
 
@@ -150,13 +149,13 @@ mkdir -p /workspace /workspace/.vscode /workspace/.vscode-ext /var/log/superviso
 
 # ── Auto-clone the super-agent repo into /workspace ──────────────────────────
 # Uses HTTPS + token so it's always push-ready without any manual setup
-if [ -n "$_GH_TOKEN" ] && [ -n "$GITHUB_REPO" ] && [ ! -d "/workspace/$(basename $GITHUB_REPO .git)" ]; then
+if [ -n "$_GH_TOKEN" ] && [ -n "$GITHUB_REPO" ] && [ ! -d "/workspace/$(basename "$GITHUB_REPO" .git)" ]; then
     REPO_NAME=$(basename "$GITHUB_REPO" .git)
     echo "[entrypoint] Cloning ${GITHUB_REPO} → /workspace/${REPO_NAME} ..."
     git clone "https://x-access-token:${_GH_TOKEN}@github.com/${GITHUB_REPO}.git" \
         "/workspace/${REPO_NAME}" 2>&1 | tail -3 | sed 's/^/[entrypoint] /'
     echo "[entrypoint] Repo ready at /workspace/${REPO_NAME}"
-elif [ -d "/workspace/super-agent/.git" ]; then
+elif [ -d "/workspace/super-agent/.git" ] && [ -n "$_GH_TOKEN" ]; then
     echo "[entrypoint] /workspace/super-agent already cloned — pulling latest..."
     git -C /workspace/super-agent pull --ff-only 2>&1 | tail -2 | sed 's/^/[entrypoint] /' || true
 fi
@@ -183,8 +182,7 @@ cat > /workspace/.vscode/settings.json <<VSCODE
     "N8N_BASE_URL":       "${N8N_BASE_URL:-}",
     "N8N_API_KEY":        "${N8N_API_KEY:-}",
     "GIT_EMAIL":          "${GIT_EMAIL:-gelson_m@hotmail.com}",
-    "GIT_NAME":           "${GIT_NAME:-Gelson Mascarenhas}",
-    "CLAUDE_SESSION_TOKEN": "${CLAUDE_SESSION_TOKEN:-}"
+    "GIT_NAME":           "${GIT_NAME:-Gelson Mascarenhas}"
   }
 }
 VSCODE
@@ -237,6 +235,9 @@ TRUSTDB
 echo "[entrypoint] Workspace trust pre-granted for /workspace and /app."
 
 # ── code-server config (password via file — avoids supervisord env quoting issues) ──
+if [ -z "$UI_PASSWORD" ]; then
+    echo "[entrypoint] WARNING: UI_PASSWORD not set — VS Code will use the default 'changeme' password. Set UI_PASSWORD in Railway Variables."
+fi
 mkdir -p /root/.config/code-server
 cat > /root/.config/code-server/config.yaml <<EOF
 bind-addr: 0.0.0.0:3001
@@ -253,12 +254,15 @@ if ! command -v code-server >/dev/null 2>&1; then
 fi
 echo "[entrypoint] code-server location: $(which code-server 2>/dev/null || echo 'NOT FOUND')"
 
-# ── Flutter & Android SDK health check ───────────────────────────────────────
-if command -v flutter >/dev/null 2>&1; then
+# ── Flutter & Android SDK health check (opt-in — slow, skip on normal boots) ──
+# Set RUN_FLUTTER_DOCTOR=1 in Railway Variables to enable on next deploy.
+if [ -n "$RUN_FLUTTER_DOCTOR" ] && command -v flutter >/dev/null 2>&1; then
     yes | sdkmanager --licenses >/dev/null 2>&1 || true
     flutter doctor --android-licenses -y >/dev/null 2>&1 || true
     flutter doctor 2>&1 | head -20 | sed 's/^/[flutter] /'
     echo "[entrypoint] Flutter ready: $(flutter --version 2>&1 | head -1)"
+elif command -v flutter >/dev/null 2>&1; then
+    echo "[entrypoint] Flutter found (set RUN_FLUTTER_DOCTOR=1 to run health check): $(flutter --version 2>&1 | head -1)"
 else
     echo "[entrypoint] WARNING: Flutter not found in PATH — mobile builds unavailable"
 fi
@@ -284,22 +288,32 @@ else
     echo "[entrypoint] INFO: Skipping n8n MCP registration (claude not found or N8N_BASE_URL/N8N_API_KEY not set)."
 fi
 
-# 1b. Obsidian MCP is now registered via settings.json below (more reliable than claude mcp add)
+# 1b. Register Obsidian MCP into ~/.claude.json (where Claude Code reads mcpServers from).
+#     Use Python to safely merge — avoids overwriting existing auth credentials.
+OBSIDIAN_MCP_URL="${OBSIDIAN_MCP_URL:-http://obsidian-vault.railway.internal:22360/sse}"
+python3 - << PYEOF
+import json, pathlib, os
+p = pathlib.Path('/root/.claude.json')
+cfg = {}
+if p.exists():
+    try:
+        cfg = json.loads(p.read_text())
+    except Exception:
+        cfg = {}
+cfg.setdefault('mcpServers', {})['obsidian'] = {
+    'type': 'sse',
+    'url': os.environ.get('OBSIDIAN_MCP_URL', 'http://obsidian-vault.railway.internal:22360/sse')
+}
+p.write_text(json.dumps(cfg, indent=2))
+p.chmod(0o600)
+print('[entrypoint] Obsidian MCP written to ~/.claude.json')
+PYEOF
 
 # 2. Write Claude Code CLI settings — pre-approve all tools so MCP calls never
 #    pause to ask for user permission.
-#    NOTE: --dangerously-skip-permissions is blocked as root; settings.json is the
-#    supported alternative for pre-approving tools in non-interactive (-p) mode.
 mkdir -p /root/.claude
-OBSIDIAN_MCP_URL="${OBSIDIAN_MCP_URL:-http://obsidian-vault.railway.internal:22360/sse}"
 cat > /root/.claude/settings.json << CLAUDESETTINGS
 {
-  "mcpServers": {
-    "obsidian": {
-      "type": "sse",
-      "url": "$OBSIDIAN_MCP_URL"
-    }
-  },
   "permissions": {
     "allow": [
       "Bash(*)",
@@ -328,7 +342,12 @@ echo "[entrypoint] Claude Code CLI settings written — obsidian MCP ($OBSIDIAN_
 
 # 3. Write CLAUDE.md to /workspace so every `claude -p` invocation inherits
 #    the n8n API reference and workflow conventions automatically.
+#    Guard: skip if a manually-edited copy exists (no auto-generated marker),
+#    unless FORCE_CLAUDE_MD=1 is set.
 mkdir -p /workspace
+if [ -f /workspace/CLAUDE.md ] && ! grep -q "auto-generated on every boot" /workspace/CLAUDE.md && [ -z "$FORCE_CLAUDE_MD" ]; then
+    echo "[entrypoint] CLAUDE.md already exists with manual edits — skipping overwrite (set FORCE_CLAUDE_MD=1 to force)."
+else
 cat > /workspace/CLAUDE.md <<CLAUDEMD
 # Super Agent — Claude Code CLI Context
 
@@ -448,7 +467,7 @@ Explain your design to the user in plain English before building.
 
 ## For AI steps inside workflows
 Use an HTTP Request node pointing at Super Agent:
-- URL: https://super-agent-production.up.railway.app/chat
+- URL: ${SUPER_AGENT_URL:-https://super-agent-production.up.railway.app}/chat
 - Method: POST
 - Body (JSON): \`{"message": "{{ \$json.input }}", "session_id": "n8n-auto"}\`
 
@@ -472,10 +491,19 @@ Use an HTTP Request node pointing at Super Agent:
 - Flutter: /opt/flutter | Android SDK: /opt/android-sdk
 CLAUDEMD
 echo "[entrypoint] CLAUDE.md written to /workspace."
+fi  # end CLAUDE.md guard
 
 # ── nginx config: routes /health /tasks → uvicorn:8003, / → code-server:3001 ──
 envsubst '${PORT}' < /app/nginx.cli.conf.template > /etc/nginx/nginx.conf
 echo "[entrypoint] nginx config written (PORT=${PORT} → VS Code:3001 + task API:8003)."
+
+# ── Boot summary ─────────────────────────────────────────────────────────────
+echo "=========================================================="
+echo "[entrypoint] Boot complete at $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+echo "  Claude CLI:  ${_claude_valid}  | Gemini CLI: ${_gemini_valid}"
+echo "  GitHub token:  ${_GH_TOKEN:+set}${_GH_TOKEN:-NOT SET}  | Railway token: ${RAILWAY_TOKEN:+set}${RAILWAY_TOKEN:-NOT SET}"
+echo "  UI_PASSWORD:   ${UI_PASSWORD:+set}${UI_PASSWORD:-NOT SET (using changeme!)}"
+echo "=========================================================="
 
 # ── Start CLI worker services via supervisor ──────────────────────────────────
 echo "[entrypoint] Starting CLI worker (nginx:${PORT} → VS Code:3001 + task API:8003)"
