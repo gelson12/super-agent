@@ -128,6 +128,29 @@ def _proactive_token_refresh_job() -> None:
         _bg_log(f"Proactive token refresh error: {e}", "proactive_refresh")
 
 
+def _cookie_keepalive_job() -> None:
+    """
+    Runs every 12 hours. Headless browser touches claude.ai to refresh the
+    session so Layer 4 of the recovery chain (cookie reuse) always has a
+    valid session.
+
+    Without this, cookies expire independently of the OAuth token — the next
+    recovery falls through to the 10-minute Playwright magic link flow.
+    With this, the next recovery takes ~3 minutes (cookie shortcut path).
+    """
+    try:
+        import sys
+        sys.path.insert(0, "/app")
+        from app.learning.cli_auto_login import run_cookie_keepalive
+        ok = run_cookie_keepalive()
+        _bg_log(
+            f"Cookie keepalive: {'cookies fresh — Layer 4 ready ✓' if ok else 'FAILED — Layer 4 may not be available'}",
+            "cookie_keepalive",
+        )
+    except Exception as e:
+        _bg_log(f"Cookie keepalive error: {e}", "cookie_keepalive")
+
+
 # ── Lifespan ──────────────────────────────────────────────────────────────────
 
 @asynccontextmanager
@@ -151,12 +174,14 @@ async def lifespan(app: FastAPI):
                        id="pro_token_keeper", replace_existing=True)
     _scheduler.add_job(_gemini_token_keeper_job, "interval", hours=4,
                        id="gemini_token_keeper", replace_existing=True)
-    _scheduler.add_job(_pro_cli_watchdog_job, "interval", minutes=3,
+    _scheduler.add_job(_pro_cli_watchdog_job, "interval", seconds=90,
                        id="pro_cli_watchdog", replace_existing=True)
     _scheduler.add_job(_proactive_token_refresh_job, "interval", hours=12,
                        id="proactive_token_refresh", replace_existing=True)
+    _scheduler.add_job(_cookie_keepalive_job, "interval", hours=12,
+                       id="cookie_keepalive", replace_existing=True)
     _scheduler.start()
-    _bg_log("CLI maintenance scheduler started (pro_keeper 15min, gemini_keeper 4h, watchdog 3min, proactive_refresh 12h)", "boot")
+    _bg_log("CLI maintenance scheduler started (pro_keeper 15min, gemini_keeper 4h, watchdog 90sec, proactive_refresh 12h, cookie_keepalive 12h)", "boot")
 
     yield
     _scheduler.shutdown(wait=False)

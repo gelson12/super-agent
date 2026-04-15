@@ -283,7 +283,7 @@ def _collect_magic_links() -> list:
 
 def _trigger_n8n_email_monitor() -> bool:
     """
-    The Claude-Verification-Monitor n8n workflow (ID: jxnZZwTqJ7naPKc6) polls
+    The Claude-Verification-Monitor n8n workflow (ID: jun8CaMnNhux1iEY) polls
     the Hotmail inbox on a schedule and POSTs magic link URLs to
     /webhook/verification-code on inspiring-cat automatically.
 
@@ -298,7 +298,7 @@ def _trigger_n8n_email_monitor() -> bool:
 
     # Quick n8n API check — verify the workflow is active and not erroring.
     # Non-fatal: we proceed even if this check fails.
-    _N8N_WORKFLOW_ID = "jxnZZwTqJ7naPKc6"
+    _N8N_WORKFLOW_ID = "jun8CaMnNhux1iEY"
     try:
         import urllib.request, json as _json
         n8n_url = os.environ.get("N8N_BASE_URL", "").rstrip("/")
@@ -2060,26 +2060,139 @@ def _write_vault_auth_note(layer: str, duration_s: float) -> None:
         _log(f"Vault: auth recovery note skipped: {e}")
 
 
+def _try_refresh_session_cookies() -> bool:
+    """
+    Lightweight browser ping to keep claude.ai session cookies fresh.
+
+    Opens a headless browser with the saved cookies, navigates to claude.ai,
+    and checks if the session is still active. If yes, the server issues
+    refreshed Set-Cookie headers — we save the new cookies (extending their TTL).
+    If the session has expired, returns False so the caller can do a full login.
+
+    Does NOT go through the OAuth flow — just a plain claude.ai page load.
+    Typical runtime: 5-10 seconds. Never raises.
+    """
+    import json as _json
+
+    if not _COOKIES_FILE.exists():
+        _log("Cookie keepalive: no cookie file found — skipping refresh")
+        return False
+
+    try:
+        _saved = _json.loads(_COOKIES_FILE.read_text())
+    except Exception as _e:
+        _log(f"Cookie keepalive: cannot read cookie file — {_e}")
+        return False
+
+    def _check_session(page) -> bool:
+        """Returns True if session is active and fresh cookies were saved."""
+        try:
+            page.context.add_cookies(_saved)
+            page.goto("https://claude.ai", timeout=30000, wait_until="domcontentloaded")
+            time.sleep(3)
+            current_url = page.url
+            # Active session: stays on claude.ai app, no redirect to /login or /auth
+            if "/login" not in current_url and "/auth" not in current_url:
+                fresh = page.context.cookies()
+                claude_cookies = [c for c in fresh if "claude" in c.get("domain", "")]
+                if claude_cookies:
+                    _COOKIES_FILE.write_text(_json.dumps(fresh))
+                    _log(f"Cookie keepalive: session active — saved {len(fresh)} fresh cookies ✓ "
+                         f"({len(claude_cookies)} claude.ai cookies refreshed)")
+                    return True
+                _log("Cookie keepalive: session active but no claude cookies in response — skipping save")
+                return True  # session ok, just no new cookies
+            _log(f"Cookie keepalive: session expired — redirected to {current_url[:80]}")
+            return False
+        except Exception as _e:
+            _log(f"Cookie keepalive: navigation error — {_e}")
+            return False
+
+    # Try camoufox first (CF-bypass), fall back to Playwright Chromium
+    try:
+        from camoufox.sync_api import Camoufox
+        with Camoufox(headless=True, geoip=True) as browser:
+            page = browser.new_page()
+            return _check_session(page)
+    except ImportError:
+        pass
+    except Exception as _e:
+        _log(f"Cookie keepalive: camoufox error — {_e}")
+
+    try:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as pw:
+            browser = pw.chromium.launch(headless=True)
+            ctx = browser.new_context()
+            page = ctx.new_page()
+            result = _check_session(page)
+            browser.close()
+            return result
+    except Exception as _e:
+        _log(f"Cookie keepalive: Playwright error — {_e}")
+        return False
+
+
+def run_cookie_keepalive() -> bool:
+    """
+    Proactive session cookie refresh — run every 8 hours.
+
+    Goal: ensure Layer 4 of the recovery chain (cookie reuse) always has
+    valid cookies so that the next OAuth token expiry recovers in ~3 min
+    (cookie shortcut) instead of ~10 min (full magic link flow).
+
+    Strategy:
+      1. Try lightweight _try_refresh_session_cookies() — navigates claude.ai
+         and picks up freshened Set-Cookie headers. Takes ~5-10 seconds.
+      2. If cookies have expired, run full auto_login_claude() to re-establish
+         a fresh session. Takes ~3-10 minutes but resets the cookie clock.
+
+    Never raises. Returns True if cookies are fresh after the call.
+    """
+    _log("Cookie keepalive: starting 8-hour proactive session refresh...")
+
+    # Fast path — cookies still valid
+    if _try_refresh_session_cookies():
+        _log("Cookie keepalive: cookies refreshed successfully ✓ (Layer 4 is ready)")
+        return True
+
+    # Cookies expired — do a full login to re-establish them
+    _log("Cookie keepalive: cookies expired — running full auto_login_claude() to refresh...")
+    try:
+        ok, _ = auto_login_claude()
+        if ok:
+            _log("Cookie keepalive: full login succeeded — fresh cookies saved ✓ (Layer 4 restored)")
+            return True
+        _log("Cookie keepalive: full login failed — cookies could NOT be refreshed")
+        return False
+    except Exception as _e:
+        _log(f"Cookie keepalive: auto_login_claude() raised — {_e}")
+        return False
+
+
 def full_recovery_chain() -> bool:
     """
-    Complete recovery chain — try everything in order:
-      1. Direct OAuth refresh (lightweight, no browser)
-      2. Full browser auto-login (Playwright — nuclear option)
+    Parallel recovery chain — all methods fire simultaneously at t=0.
 
-    NOTE: Env-var restore (previously step 2) is intentionally OMITTED here.
-    This function is only called after _try_restore_claude_auth() has already
-    been exhausted N times by pro_router — repeating it here would just write
-    the same expired token to disk again and short-circuit before Playwright runs.
+    Methods run in parallel inside a ThreadPoolExecutor:
+      • Direct OAuth refresh  — lightweight HTTP, ~2s (usually blocked by Cloudflare)
+      • Browser auto-login    — camoufox/Playwright; tries saved session cookies
+                                first (~3 min fast path) then magic link email
+                                (~10 min slow path)
 
-    Returns True if ANY method succeeded.
+    Whichever method succeeds FIRST wins and the other is cancelled.
 
-    CONCURRENCY GUARD: This function uses _recovery_lock to ensure only ONE
-    recovery chain runs at a time. The watchdog, pro_router, and token_keeper
-    all call this function simultaneously when the token expires — without the
-    guard they each spawn a browser and submit the email within seconds of each
-    other, triggering Anthropic's "error sending login link" rate-limit.
-    Callers that lose the lock race block until the winner finishes, then return
-    True if the winner already restored the token.
+    Why parallel matters for the slow path:
+      Serial:   try-cookies(3 min fail) → start-email → magic-link arrives → done  = ~13 min
+      Parallel: start-email at t=0 simultaneously with cookie-check → magic-link
+                arrives while (or just after) cookie-check runs                   = ~10 min
+
+    NOTE: Env-var restore is intentionally OMITTED — this is only called after
+    _try_restore_claude_auth() has already been exhausted by pro_router.
+
+    CONCURRENCY GUARD: _recovery_lock ensures only ONE recovery chain runs at a
+    time across ALL external callers (watchdog, pro_router, token_keeper). The
+    parallelism here is within a single recovery run, not across callers.
     """
     global _recovery_started_at
 
@@ -2129,21 +2242,56 @@ def full_recovery_chain() -> bool:
     _recovery_started_at = time.time()
     _recovery_running.set()
     try:
-        _log("=== Starting full CLI recovery chain ===")
+        import concurrent.futures as _cf
+        _log("=== Starting parallel CLI recovery chain (all methods fire simultaneously) ===")
 
-        # Attempt 1: Direct OAuth refresh (no browser, uses refresh_token)
-        _log("Recovery attempt 1/2: Direct OAuth refresh...")
-        if _try_direct_refresh():
-            _log("=== Recovery SUCCESS via direct OAuth refresh ===")
-            _write_vault_auth_note("Direct OAuth refresh", time.time() - _recovery_started_at)
-            return True
+        # Both methods start at t=0. Whichever succeeds first wins.
+        # Direct refresh is instant (~2s, usually Cloudflare-blocked but costs nothing to try).
+        # Browser login tries saved session cookies first (~3 min fast path) then
+        # submits the magic link email immediately (~10 min slow path) — critically,
+        # the email is sent at t=0 rather than after the cookie check fails, so the
+        # magic link is already waiting in the inbox when cookies are determined stale.
+        def _direct_attempt() -> tuple[bool, str]:
+            ok = _try_direct_refresh()
+            return ok, "Direct OAuth refresh"
 
-        # Attempt 2: Full browser auto-login (Playwright + n8n email monitor)
-        _log("Recovery attempt 2/2: Full browser auto-login via Playwright...")
-        if auto_login_claude():
-            _log("=== Recovery SUCCESS via browser auto-login (Playwright) ===")
-            _write_vault_auth_note("Playwright auto-login", time.time() - _recovery_started_at)
-            return True
+        def _browser_attempt() -> tuple[bool, str]:
+            result = auto_login_claude()
+            ok = result[0] if isinstance(result, tuple) else bool(result)
+            return ok, "Playwright auto-login"
+
+        # Use explicit pool management (NOT 'with') — ThreadPoolExecutor.__exit__
+        # calls shutdown(wait=True) which would block for up to 10 min waiting
+        # for the loser thread. We want the winner to return immediately.
+        _pool = _cf.ThreadPoolExecutor(max_workers=2, thread_name_prefix="recovery")
+        futures: list[_cf.Future] = []
+        try:
+            f_direct  = _pool.submit(_direct_attempt)
+            f_browser = _pool.submit(_browser_attempt)
+            futures   = [f_direct, f_browser]
+
+            for future in _cf.as_completed(futures, timeout=300):
+                try:
+                    ok, layer = future.result()
+                    if ok:
+                        _log(f"=== Recovery SUCCESS via {layer} ===")
+                        _write_vault_auth_note(layer, time.time() - _recovery_started_at)
+                        # Signal dashboard: worker is healthy again.
+                        try:
+                            from .agent_status_tracker import mark_done
+                            mark_done("Claude CLI Pro")
+                            _log("Recovery: dashboard status reset to idle ✓")
+                        except Exception as _sd_err:
+                            _log(f"Recovery: mark_done failed (non-fatal): {_sd_err}")
+                        # Shut down without blocking — loser thread runs to
+                        # completion in the background, doesn't delay our return.
+                        _pool.shutdown(wait=False, cancel_futures=True)
+                        return True
+                except Exception as _attempt_err:
+                    _log(f"Recovery attempt raised: {_attempt_err}")
+        finally:
+            # Release pool resources on timeout / exception / normal exit
+            _pool.shutdown(wait=False, cancel_futures=True)
 
         _log("=== ALL recovery methods FAILED — manual login required ===")
         return False
