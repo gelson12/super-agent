@@ -1913,6 +1913,14 @@
       html += _cliRow('Gemini CLI', gemOk, data.gemini_message || '',
                       data.gemini_last_recovery_at, data.gemini_last_recovery_layer, data.gemini_recovery_count_today);
       html += _cliRow('Anthropic API', apiOk, data.api_message || (apiOk ? 'Credits available' : 'No credits'));
+      if (data.login_ratelimited) {
+        const mins = Math.ceil((data.login_ratelimit_remaining_s || 0) / 60);
+        const hrs  = mins >= 60 ? ` (${Math.round(mins / 60)}h)` : '';
+        html += `<tr style="border-bottom:1px solid #222;">
+          <td colspan="3" style="padding:3px 6px;color:#f59e0b;font-size:10px;">
+            ⏳ Login cooldown active — retry in ${mins}m${hrs}
+          </td></tr>`;
+      }
       html += '</table>';
 
       if (!proOk) {
@@ -2098,6 +2106,11 @@
     popupRows += `<div class="o-popup-row" style="margin-top:4px"><a href="#" onclick="_oShowHistory('${_oEsc(w.id)}',event)" style="color:#c9a96e;font-size:8px;text-decoration:underline;">View Activity Report</a></div>`;
     if (w.id === 'N8N Agent') {
       popupRows += `<div class="o-popup-row" style="margin-top:2px"><a href="#" onclick="_oShowWorkflows(event)" style="color:#8b5cf6;font-size:8px;text-decoration:underline;">View Workflows</a></div>`;
+    }
+    if (w.id === 'Claude CLI Pro') {
+      const _rc = w.recovery_count_today || 0;
+      const _rcLabel = _rc > 0 ? ` (${_rc} today)` : '';
+      popupRows += `<div class="o-popup-row" style="margin-top:2px"><a href="#" onclick="_oShowRecoveryBoard(event)" style="color:#5eead4;font-size:8px;text-decoration:underline;">🏁 Recovery Race Board${_rcLabel}</a></div>`;
     }
 
     return `<div class="o-desk" data-worker="${_oEsc(w.id)}" onclick="_oTogglePopup(this)">
@@ -2304,6 +2317,104 @@
     }
 
     body.innerHTML = html;
+  }
+
+  // ── Recovery Race Board modal (Claude CLI Pro) ────────────────────────────
+  function _oShowRecoveryBoard(evt) {
+    evt.stopPropagation();
+    evt.preventDefault();
+    document.querySelectorAll('.o-desk.popup-open').forEach(d => d.classList.remove('popup-open'));
+
+    const old = document.getElementById('o-recovery-modal');
+    if (old) { old.remove(); return; }  // toggle off if already open
+
+    const worker = workerMap['Claude CLI Pro'] || {};
+    const history = worker.recovery_race_history || [];
+    const rcToday = worker.recovery_count_today || 0;
+    const panel   = document.getElementById('office-panel');
+
+    const modal = document.createElement('div');
+    modal.id        = 'o-recovery-modal';
+    modal.className = 'o-history-modal';
+
+    // Build wins leaderboard from history
+    const wins = {};
+    history.forEach(race => {
+      if (race.winner) wins[race.winner] = (wins[race.winner] || 0) + 1;
+    });
+    const _methodColor = n =>
+      n === 'Direct OAuth' ? '#5eead4' : n === 'Playwright Login' ? '#60a5fa' : '#888';
+    const _resultIcon  = r =>
+      r === 'WON' ? '🥇' : r === 'FAILED' ? '❌' : '🚫';
+    const _resultColor = r =>
+      r === 'WON' ? '#4ade80' : r === 'FAILED' ? '#f87171' : '#555';
+
+    // Wins leaderboard rows
+    let lbHtml = '';
+    if (Object.keys(wins).length) {
+      lbHtml = Object.entries(wins)
+        .sort((a, b) => b[1] - a[1])
+        .map(([name, count]) => `
+          <div style="display:flex;justify-content:space-between;align-items:center;
+                      padding:4px 10px;border-bottom:1px solid #1a1a1a;">
+            <span style="font-size:8px;color:${_methodColor(name === 'Direct OAuth refresh' ? 'Direct OAuth' : 'Playwright Login')}">${_oEsc(name)}</span>
+            <span style="font-size:8px;font-weight:700;color:#4ade80">${count} win${count !== 1 ? 's' : ''}</span>
+          </div>`).join('');
+    } else {
+      lbHtml = '<div style="font-size:8px;color:#555;padding:6px 10px;">No wins recorded yet</div>';
+    }
+
+    // Race history cards
+    let racesHtml = '';
+    if (history.length) {
+      const nowTs = Date.now() / 1000;
+      racesHtml = history.map((race, i) => {
+        const agoSec  = Math.round(nowTs - (race.at || nowTs));
+        const agoStr  = _oTimeAgo(agoSec);
+        const dateStr = race.at ? _oDateTime(race.at) : '';
+        const contRows = (race.contestants || []).map(c => `
+          <div style="display:flex;justify-content:space-between;align-items:center;
+                      padding:2px 0;gap:6px;">
+            <span style="font-size:7px;color:${_methodColor(c.name)};flex:1">${_oEsc(c.name)}</span>
+            <span style="font-size:8px">${_resultIcon(c.result)}</span>
+            <span style="font-size:7px;color:${_resultColor(c.result)};width:38px;text-align:right">${c.result}</span>
+            <span style="font-size:7px;color:#666;width:36px;text-align:right">${c.duration_s}s</span>
+          </div>`).join('');
+        return `
+          <div style="padding:7px 10px;border-bottom:1px solid #1f1508;">
+            <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
+              <span style="font-size:7px;color:#8b7355">#${i + 1} · ${agoStr}</span>
+              <span style="font-size:7px;color:#555">${dateStr} · ${race.duration_s}s total</span>
+            </div>
+            ${contRows}
+          </div>`;
+      }).join('');
+    } else {
+      racesHtml = '<div style="color:#666;font-size:9px;padding:14px;text-align:center">No recovery races recorded yet.<br><br>Races appear here after the next token expiry + self-healing cycle.</div>';
+    }
+
+    modal.innerHTML = `
+      <div class="o-hist-header">
+        <div>
+          <div style="font-size:11px;font-weight:700;color:#5eead4">🏁 Recovery Race Board</div>
+          <div style="font-size:8px;color:#8b7355">${rcToday} recover${rcToday !== 1 ? 'ies' : 'y'} today · last 10 races shown</div>
+        </div>
+        <button onclick="document.getElementById('o-recovery-modal').remove()"
+                style="background:none;border:none;color:#888;font-size:16px;cursor:pointer;">&times;</button>
+      </div>
+      <div style="background:#0a1e14;padding:4px 0;border-bottom:1px solid #1f1508;">
+        <div style="font-size:7px;color:#5eead4;padding:3px 10px;font-weight:700;letter-spacing:0.5px;">🏆 WINS LEADERBOARD</div>
+        ${lbHtml}
+      </div>
+      <div style="font-size:7px;color:#5eead4;padding:5px 10px 3px;font-weight:700;letter-spacing:0.5px;border-bottom:1px solid #1f1508;background:#0a1414;">RACE HISTORY (newest first)</div>
+      <div class="o-hist-body">${racesHtml}</div>
+    `;
+
+    panel.appendChild(modal);
+    modal.style.position = 'absolute';
+    modal.style.top      = '8px';
+    modal.style.left     = '8px';
+    modal.style.right    = '8px';
   }
 
   async function _oFetchLog(workerId) {
@@ -2870,6 +2981,10 @@
     document.getElementById('office-agents').innerHTML = _OFFICE_AGENTS.map(id => _oDesk(defW(id))).join('');
   }
 
+  // Module-level worker map — kept fresh by every _fetchOffice() poll.
+  // Used by _oShowRecoveryBoard() and any other modal needing current worker data.
+  let workerMap = {};
+
   async function _fetchOffice() {
     try {
       const controller = new AbortController();
@@ -2879,9 +2994,8 @@
       if (!res.ok) return;
       const data = await res.json();
       const workers = data.workers || [];
-      const map = {};
-      workers.forEach(w => map[w.id]=w);
-      const defW = id => map[id] || {id, state:'sleeping', last_worked:0, last_worked_ago:null, talking_to:null, task:''};
+      workers.forEach(w => { workerMap[w.id] = w; });
+      const defW = id => workerMap[id] || {id, state:'sleeping', last_worked:0, last_worked_ago:null, talking_to:null, task:''};
       document.getElementById('office-models').innerHTML = _OFFICE_MODELS.map(id => _oDesk(defW(id))).join('');
       document.getElementById('office-agents').innerHTML = _OFFICE_AGENTS.map(id => _oDesk(defW(id))).join('');
       // Draw violet talking lines between collaborating avatars

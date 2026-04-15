@@ -40,6 +40,19 @@ def probe_cli() -> bool:
             with urllib.request.urlopen(f"{cli_url}/health", timeout=_PROBE_TIMEOUT) as resp:
                 body = json.loads(resp.read().decode("utf-8"))
                 return bool(body.get("claude_available", False))
+        except urllib.error.URLError as _net_err:
+            # Network-level failure — inspiring-cat container unreachable, not a CLI auth issue.
+            # Return None so the caller can distinguish "container down" from "auth broken".
+            try:
+                from ..activity_log import bg_log
+                bg_log(
+                    f"Pro CLI watchdog: inspiring-cat unreachable ({_net_err.reason}) — "
+                    "treating as transient network error, not CLI auth failure",
+                    source="pro_cli_watchdog",
+                )
+            except Exception:
+                pass
+            return None
         except Exception:
             return False
 
@@ -70,6 +83,22 @@ def maybe_recover() -> bool:
     Returns True if recovery was detected (flag cleared).
     Never raises.
     """
+    # ── Guard: skip if recovery is already running ────────────────────────────
+    # full_recovery_chain() waits up to 300s internally if _recovery_running is
+    # set. With the watchdog at 90s intervals, multiple cycles would pile up
+    # behind that lock during a recovery window. Skip instead.
+    try:
+        from .cli_auto_login import _recovery_running
+        if _recovery_running.is_set():
+            from ..activity_log import bg_log
+            bg_log(
+                "Pro CLI watchdog: recovery already in progress — skipping cycle.",
+                source="pro_cli_watchdog",
+            )
+            return False
+    except Exception:
+        pass
+
     # ── Proactive token refresh (runs even when CLI is healthy) ──────────────
     # Silently rotates the OAuth access_token before it expires so the CLI
     # never hits a 401 in the first place.  No-op if token is still fresh.
@@ -86,8 +115,18 @@ def maybe_recover() -> bool:
         if not is_cli_down():
             return False  # nothing to recover
 
-        # Quick binary check first (cheap) — skip full auth if CLI not even present
-        if not probe_cli():
+        # Quick binary check first (cheap) — skip full auth if CLI not even present.
+        # probe_cli() returns None when inspiring-cat container is unreachable (network
+        # error), False when container responds but CLI auth is broken, True when OK.
+        _probe_result = probe_cli()
+        if _probe_result is None:
+            bg_log(
+                "Pro CLI watchdog: inspiring-cat container unreachable — skipping recovery "
+                "cycle (not a CLI auth issue). Will retry in 90s.",
+                source="pro_cli_watchdog",
+            )
+            return False
+        if not _probe_result:
             bg_log(
                 "Pro CLI watchdog: CLI binary still unavailable — continuing API fallback. "
                 "Will probe again in 5 min.",

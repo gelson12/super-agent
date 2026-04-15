@@ -2885,6 +2885,16 @@ def credits_pro_status():
         except Exception:
             pass
 
+        # Expose login rate-limit state so dashboard can show cooldown countdown
+        try:
+            from .learning.cli_auto_login import _check_ratelimit
+            _rl_remaining = _check_ratelimit()
+            status["login_ratelimit_remaining_s"] = max(0, int(_rl_remaining))
+            status["login_ratelimited"] = _rl_remaining > 0
+        except Exception:
+            status["login_ratelimit_remaining_s"] = 0
+            status["login_ratelimited"] = False
+
         return status
     except Exception as e:
         return {"error": str(e)}

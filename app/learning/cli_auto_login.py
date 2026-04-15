@@ -2002,7 +2002,18 @@ def maybe_proactive_refresh() -> bool:
                 _log(f"Proactive refresh: token still fresh ({int(remaining_s // 3600)}h "
                      f"{int((remaining_s % 3600) // 60)}m remaining) — skipping.")
                 return True
-            _log(f"Proactive refresh: token expires in {int(remaining_s // 60)}m — refreshing now...")
+
+            if remaining_s < 1800:  # < 30 min — CRITICAL: direct refresh is Cloudflare-blocked,
+                # launch full recovery (Playwright) now so it completes before expiry.
+                _log(f"[CRITICAL] Proactive refresh: token expires in {int(remaining_s // 60)}m "
+                     "— direct refresh blocked by Cloudflare, escalating to full_recovery_chain()")
+                if _recovery_running.is_set():
+                    _log("Proactive refresh: full recovery already in progress — skipping.")
+                    return True
+                return full_recovery_chain()
+
+            # 30 min – 2h window: lightweight direct refresh attempt
+            _log(f"Proactive refresh: token expires in {int(remaining_s // 60)}m — trying direct refresh...")
         else:
             _log("Proactive refresh: expiresAt not found in credentials — attempting refresh anyway.")
 
@@ -2077,6 +2088,17 @@ def _try_refresh_session_cookies() -> bool:
     if not _COOKIES_FILE.exists():
         _log("Cookie keepalive: no cookie file found — skipping refresh")
         return False
+
+    # Age guard: cookies older than 30 days are expired server-side — delete and skip
+    try:
+        _age_days = (time.time() - _COOKIES_FILE.stat().st_mtime) / 86400
+        if _age_days > 30:
+            _log(f"Cookie keepalive: cookie file is {_age_days:.0f} days old (>30) — "
+                 "deleting stale file and skipping refresh")
+            _COOKIES_FILE.unlink(missing_ok=True)
+            return False
+    except Exception:
+        pass
 
     try:
         _saved = _json.loads(_COOKIES_FILE.read_text())
@@ -2251,13 +2273,30 @@ def full_recovery_chain() -> bool:
         # submits the magic link email immediately (~10 min slow path) — critically,
         # the email is sent at t=0 rather than after the cookie check fails, so the
         # magic link is already waiting in the inbox when cookies are determined stale.
+        # Shared race log — each attempt appends its result; the winner's
+        # entry is written by the thread itself before returning ok=True.
+        # After the race, any method that didn't complete is marked CANCELLED.
+        _race_contestants: list[dict] = []
+
         def _direct_attempt() -> tuple[bool, str]:
+            _t = time.time()
             ok = _try_direct_refresh()
+            _race_contestants.append({
+                "name": "Direct OAuth",
+                "result": "WON" if ok else "FAILED",
+                "duration_s": round(time.time() - _t, 1),
+            })
             return ok, "Direct OAuth refresh"
 
         def _browser_attempt() -> tuple[bool, str]:
+            _t = time.time()
             result = auto_login_claude()
             ok = result[0] if isinstance(result, tuple) else bool(result)
+            _race_contestants.append({
+                "name": "Playwright Login",
+                "result": "WON" if ok else "FAILED",
+                "duration_s": round(time.time() - _t, 1),
+            })
             return ok, "Playwright auto-login"
 
         # Use explicit pool management (NOT 'with') — ThreadPoolExecutor.__exit__
@@ -2293,8 +2332,18 @@ def full_recovery_chain() -> bool:
                         try:
                             from .agent_status_tracker import mark_done, record_recovery
                             mark_done("Claude CLI Pro")
+                            # Mark any method that was cancelled (didn't complete before winner)
+                            _competing = {"Direct OAuth", "Playwright Login"}
+                            _completed = {c["name"] for c in _race_contestants}
+                            for _cn in _competing - _completed:
+                                _race_contestants.append({
+                                    "name": _cn,
+                                    "result": "CANCELLED",
+                                    "duration_s": round(time.time() - _recovery_started_at, 1),
+                                })
                             record_recovery("Claude CLI Pro", layer,
-                                            time.time() - _recovery_started_at)
+                                            time.time() - _recovery_started_at,
+                                            contestants=list(_race_contestants))
                             _log("Recovery: dashboard status reset to idle ✓")
                         except Exception as _sd_err:
                             _log(f"Recovery: mark_done failed (non-fatal): {_sd_err}")
@@ -2308,6 +2357,12 @@ def full_recovery_chain() -> bool:
                                 _log("Recovery: boot sentinel removed ✓")
                         except Exception as _se:
                             _log(f"Recovery: sentinel cleanup failed (non-fatal): {_se}")
+                        # Alert: notify that Claude CLI was refreshed / recovered
+                        try:
+                            from ..alerts.notifier import alert_claude_recovered
+                            alert_claude_recovered(subscription="Pro")
+                        except Exception:
+                            pass
                         # Shut down without blocking — loser thread runs to
                         # completion in the background, doesn't delay our return.
                         _pool.shutdown(wait=False, cancel_futures=True)
