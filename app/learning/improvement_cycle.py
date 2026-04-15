@@ -153,11 +153,57 @@ def load_cycle_context(n_rejected: int = 5, n_no_safe: int = 3) -> str:
     return "\n".join(lines)
 
 
+def _append_vault_cycle_log(entries: list, date_str: str, review_type: str) -> None:
+    """
+    Append cycle decisions to Engineering/Improvement Cycle Log.md in the vault.
+    Runs in a fire-and-forget thread — never blocks the review pipeline.
+    """
+    if not entries:
+        return
+    try:
+        lines = [f"\n## {review_type.title()} Cycle — {date_str}\n"]
+        for e in entries:
+            icon = {"ACCEPT": "✅", "REJECT": "❌", "NO_SAFE_IMPROVEMENT": "⏭️"}.get(e["decision"], "•")
+            lines.append(
+                f"{icon} **{e['feature_name']}** — `{e['decision']}`  \n"
+                f"  Category: {e['bottleneck_category']}  \n"
+                f"  Rationale: {e['decision_rationale'][:200]}\n"
+            )
+        content = "".join(lines)
+        content_repr = repr(content)
+
+        script = (
+            "import asyncio\n"
+            f"CONTENT = {content_repr}\n"
+            "PATH = 'Engineering/Improvement Cycle Log.md'\n"
+            "async def main():\n"
+            "    from mcp.client.sse import sse_client\n"
+            "    from mcp import ClientSession\n"
+            "    async with sse_client(url='http://obsidian-vault.railway.internal:22360/sse') as (r, w):\n"
+            "        async with ClientSession(r, w) as s:\n"
+            "            await s.initialize()\n"
+            "            await s.call_tool('append_to_file', {'path': PATH, 'content': CONTENT})\n"
+            "            print('Cycle log appended to vault', flush=True)\n"
+            "asyncio.run(main())\n"
+        )
+        import subprocess, threading
+
+        def _run():
+            try:
+                subprocess.run(["python3", "-c", script], timeout=30, capture_output=True)
+            except Exception:
+                pass
+
+        threading.Thread(target=_run, daemon=True).start()
+    except Exception:
+        pass  # never raise from here
+
+
 def parse_and_record_review_cycles(review: dict, review_type: str) -> None:
     """
     Called immediately after JSON parse in run_nightly_review / run_weekly_review.
     Iterates feature_improvements; for any entry that has cycle_decision set,
-    builds and appends a CycleLog record.
+    builds and appends a CycleLog record. Also appends to vault cycle log.
 
     Wrapped in a broad try/except — failure here must never crash the review.
     """
@@ -167,6 +213,7 @@ def parse_and_record_review_cycles(review: dict, review_type: str) -> None:
         ts_str = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H-%M")
         prefix = review_type.upper()
 
+        vault_entries = []
         for s in review.get("feature_improvements", []):
             if "cycle_decision" not in s:
                 continue  # old-format suggestion — skip silently
@@ -194,6 +241,11 @@ def parse_and_record_review_cycles(review: dict, review_type: str) -> None:
                 "constraint_detail": s.get("cycle_constraint_detail", None),
             }
             cycle_log.append(entry)
+            vault_entries.append(entry)
+
+        # Fire-and-forget vault append — never blocks the review
+        _append_vault_cycle_log(vault_entries, date_str, review_type)
+
     except Exception:
         pass  # never raise from here
 
