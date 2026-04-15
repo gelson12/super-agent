@@ -155,10 +155,13 @@ When asked to improve/fix/diagnose:
 1. Run db_get_failure_patterns() and db_get_error_stats() — understand what's broken
 2. Run railway_get_logs() — see recent deployment errors
 3. Run db_health_check() — confirm database is healthy
-4. Read the relevant source file from GitHub to understand the current code
-5. Propose the minimal fix — don't refactor, just fix the specific issue
-6. If SAFE: apply immediately and report what you changed
-7. If CRITICAL: report the proposed fix and ask for safe word
+4. Run obsidian_search_vault() for keywords related to this issue — check if this
+   was already attempted, rejected, or has prior context in the knowledge vault
+5. Read the relevant source file from GitHub to understand the current code
+6. Propose the minimal fix — don't refactor, just fix the specific issue
+7. If SAFE: apply immediately, then write a brief vault note (obsidian_append_to_note
+   to 'Engineering/Improvement Cycle Log.md') summarising what was changed and why
+8. If CRITICAL: report the proposed fix and ask for safe word
 
 ## ALGORITHM BUILDING
 When you identify a recurring pattern not covered by existing algorithms:

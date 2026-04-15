@@ -136,7 +136,11 @@ INTERNALLY before writing the JSON. All cycle outputs appear as new fields withi
 each feature_improvements object.
 
 STEP 1 OBSERVE   — The activity summary above is your observation input. Also
-                   consult IMPROVEMENT CYCLE HISTORY above if present.
+                   consult IMPROVEMENT CYCLE HISTORY above if present. Search
+                   the Obsidian vault (obsidian_search_vault) for prior
+                   improvement notes, rejected hypotheses, and architecture
+                   decisions before forming new suggestions — avoid repeating
+                   past REJECT decisions.
 STEP 2 DIAGNOSE  — Identify the single bottleneck category for this suggestion:
                    prompt_instruction_failure | planning_failure |
                    retrieval_context_failure | memory_failure |

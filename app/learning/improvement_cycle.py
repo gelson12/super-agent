@@ -186,11 +186,13 @@ def _append_vault_cycle_log(entries: list, date_str: str, review_type: str) -> N
             "            print('Cycle log appended to vault', flush=True)\n"
             "asyncio.run(main())\n"
         )
-        import subprocess, threading
+        import threading
 
         def _run():
             try:
-                subprocess.run(["python3", "-c", script], timeout=30, capture_output=True)
+                from ..tools.shell_tools import run_shell_via_cli_worker
+                cmd = "python3 << 'PYEOF'\n" + script + "PYEOF"
+                run_shell_via_cli_worker(cmd)
             except Exception:
                 pass
 
