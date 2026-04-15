@@ -975,6 +975,96 @@
       text-decoration: underline;
     }
 
+    /* ── Sparkline (7-day bar chart) ───────────────────────────────── */
+    .os-spark {
+      display: flex;
+      align-items: flex-end;
+      gap: 4px;
+      height: 40px;
+      padding: 0 2px 4px;
+    }
+    .os-spark-col {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 2px;
+    }
+    .os-spark-bar {
+      width: 100%;
+      border-radius: 2px 2px 0 0;
+      background: #c9a96e;
+      min-height: 2px;
+      transition: height 0.3s;
+    }
+    .os-spark-label {
+      font-size: 6px;
+      color: #555;
+      text-align: center;
+    }
+    .os-spark-val {
+      font-size: 6px;
+      color: #8b7355;
+      text-align: center;
+    }
+
+    /* ── Trend rows ─────────────────────────────────────────────────── */
+    .os-trend-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 5px;
+      font-size: 8px;
+    }
+    .os-trend-arrow {
+      font-size: 10px;
+      flex-shrink: 0;
+      width: 14px;
+      text-align: center;
+    }
+    .os-trend-val {
+      font-size: 8px;
+      color: #8b7355;
+      min-width: 40px;
+      text-align: right;
+    }
+    .os-trend-alert { color: #f87171; }
+    .os-trend-ok    { color: #4ade80; }
+    .os-trend-warn  { color: #fde68a; }
+
+    /* ── Deploy monitor rows ─────────────────────────────────────────── */
+    .os-deploy-row {
+      background: #1a1208;
+      border: 1px solid #3d2b16;
+      border-radius: 4px;
+      padding: 5px 8px;
+      margin-bottom: 5px;
+      font-size: 8px;
+    }
+    .os-deploy-name { color: #c9a96e; margin-bottom: 2px; word-break: break-word; }
+    .os-deploy-meta { font-size: 7px; color: #555; display: flex; gap: 8px; flex-wrap: wrap; margin-top: 3px; }
+    .os-deploy-stable    { border-left: 3px solid #4ade80; }
+    .os-deploy-monitoring{ border-left: 3px solid #f59e0b; }
+    .os-deploy-rolledback{ border-left: 3px solid #f87171; }
+
+    /* ── Anomaly rows ───────────────────────────────────────────────── */
+    .os-anomaly-row {
+      display: flex;
+      gap: 6px;
+      align-items: flex-start;
+      padding: 5px 0;
+      border-bottom: 1px solid #1f1508;
+      font-size: 8px;
+    }
+    .os-anomaly-row:last-child { border-bottom: none; }
+    .os-anomaly-icon { flex-shrink: 0; font-size: 11px; }
+    .os-anomaly-body { flex: 1; min-width: 0; }
+    .os-anomaly-name { color: #fde68a; font-weight: 700; margin-bottom: 1px; }
+    .os-anomaly-detail { font-size: 7px; color: #8b7355; }
+    .os-anomaly-time { font-size: 6px; color: #555; margin-top: 2px; }
+    .os-severity-high   { color: #f87171; }
+    .os-severity-medium { color: #fde68a; }
+
     /* route badge colours */
     .os-badge {
       display: inline-block;
@@ -1093,6 +1183,42 @@
     <div class="os-section">
       <div class="os-section-title">⚡ Pro CLI Usage</div>
       <div id="os-pro" class="os-kv-grid"><div class="os-loading" style="grid-column:1/-1">Loading…</div></div>
+    </div>
+
+    <!-- 7-day usage sparkline -->
+    <div class="os-section">
+      <div class="os-section-title">📅 7-Day Call Trend</div>
+      <div id="os-sparkline"><div class="os-loading">Loading…</div></div>
+    </div>
+
+    <!-- 24h Metric Trends -->
+    <div class="os-section">
+      <div class="os-section-title">📈 24h Metric Trends</div>
+      <div id="os-trends"><div class="os-loading">Loading…</div></div>
+    </div>
+
+    <!-- Self-Improve Cycle -->
+    <div class="os-section">
+      <div class="os-section-title">🔄 Self-Improvement Cycle</div>
+      <div id="os-cycle" class="os-kv-grid"><div class="os-loading" style="grid-column:1/-1">Loading…</div></div>
+    </div>
+
+    <!-- Deployment Monitoring -->
+    <div class="os-section">
+      <div class="os-section-title">🚀 Deployed Improvements</div>
+      <div id="os-deploys"><div class="os-loading">Loading…</div></div>
+    </div>
+
+    <!-- Peer Review ROI -->
+    <div class="os-section">
+      <div class="os-section-title">🔍 Peer Review Impact</div>
+      <div id="os-peer" class="os-kv-grid"><div class="os-loading" style="grid-column:1/-1">Loading…</div></div>
+    </div>
+
+    <!-- Anomaly Alerts -->
+    <div class="os-section">
+      <div class="os-section-title">🚨 Recent Anomalies</div>
+      <div id="os-anomalies"><div class="os-loading">Loading…</div></div>
     </div>
   </div>
 </div>
@@ -2384,6 +2510,202 @@
       <div class="os-kv-val" style="font-size:9px;color:#fde68a">${_oEsc(eta)}</div>
     </div>`;
   }
+
+  // ── 6. 7-Day Sparkline ──────────────────────────────────────────────────
+  function _osRenderSparkline(pro) {
+    const el = document.getElementById('os-sparkline');
+    if (!el) return;
+    const breakdown = pro && pro.weekly && pro.weekly.daily_breakdown
+                      ? pro.weekly.daily_breakdown : null;
+    if (!breakdown || !Object.keys(breakdown).length) {
+      el.innerHTML = '<div class="os-loading">No weekly data yet</div>'; return;
+    }
+    const days = Object.keys(breakdown).sort().slice(-7);
+    const vals = days.map(d => breakdown[d] || 0);
+    const max  = Math.max(...vals, 1);
+    const cols = days.map((d, i) => {
+      const v   = vals[i];
+      const h   = Math.max(4, Math.round(v / max * 36));
+      const lbl = d.slice(5); // MM-DD
+      return `<div class="os-spark-col">
+        <div class="os-spark-val">${v}</div>
+        <div class="os-spark-bar" style="height:${h}px"></div>
+        <div class="os-spark-label">${lbl}</div>
+      </div>`;
+    }).join('');
+    el.innerHTML = `<div class="os-spark">${cols}</div>`;
+  }
+
+  // ── 7. 24h Metric Trends ────────────────────────────────────────────────
+  function _osRenderTrends(trends) {
+    const el = document.getElementById('os-trends');
+    if (!el) return;
+    if (!trends || !trends.metrics) {
+      el.innerHTML = '<div class="os-loading">No trend data yet</div>'; return;
+    }
+    const wanted = [
+      { key: 'error_rate_pct',    label: 'Error rate',         unit: '%',   bad: 'up'   },
+      { key: 'avg_resp_len',      label: 'Avg response len',   unit: ' ch', bad: 'down' },
+      { key: 'disk_used_pct',     label: 'Disk used',          unit: '%',   bad: 'up'   },
+      { key: 'n8n_recent_failures',label: 'N8N failures',      unit: '',    bad: 'up'   },
+      { key: 'n8n_active',        label: 'Active workflows',   unit: '',    bad: 'down' },
+    ];
+    const rows = wanted.map(({ key, label, unit, bad }) => {
+      const m = trends.metrics[key];
+      if (!m) return '';
+      const cur    = m.current != null ? m.current.toFixed(1) : '—';
+      const slope  = m.slope   || 0;
+      const alert  = m.alert   || false;
+      const isRising = slope > 0.01;
+      const isFalling = slope < -0.01;
+      let arrow, cls;
+      if      (isRising  && bad === 'up')   { arrow = '↑'; cls = 'os-trend-alert'; }
+      else if (isFalling && bad === 'down') { arrow = '↓'; cls = 'os-trend-alert'; }
+      else if (isRising)                    { arrow = '↑'; cls = 'os-trend-ok'; }
+      else if (isFalling)                   { arrow = '↓'; cls = alert ? 'os-trend-warn' : 'os-trend-ok'; }
+      else                                  { arrow = '→'; cls = 'os-trend-ok'; }
+      return `<div class="os-trend-row">
+        <span class="os-trend-arrow ${cls}">${arrow}</span>
+        <span class="os-label">${_oEsc(label)}</span>
+        ${_osBar(60, cls === 'os-trend-alert' ? '#f87171' : cls === 'os-trend-warn' ? '#fde68a' : '#4ade80')}
+        <span class="os-trend-val ${cls}">${cur}${unit}</span>
+      </div>`;
+    }).filter(Boolean).join('');
+    el.innerHTML = rows || '<div class="os-loading">No metrics recorded yet</div>';
+  }
+
+  // ── 8. Self-Improvement Cycle ───────────────────────────────────────────
+  function _osRenderCycle(cycle) {
+    const el = document.getElementById('os-cycle');
+    if (!el) return;
+    if (!cycle || cycle.error) {
+      el.innerHTML = `<div class="os-loading" style="grid-column:1/-1">No cycle data</div>`; return;
+    }
+    const total  = cycle.total_cycles || 0;
+    const accept = cycle.accepted     || 0;
+    const reject = cycle.rejected     || 0;
+    const nsi    = cycle.no_safe_improvement || 0;
+    const accPct = total ? Math.round(accept / total * 100) : 0;
+    const rejPct = total ? Math.round(reject / total * 100) : 0;
+    const nsiPct = total ? Math.round(nsi    / total * 100) : 0;
+    const lastRun = cycle.most_recent_cycle
+                    ? cycle.most_recent_cycle.slice(0, 16).replace('T', ' ')
+                    : 'never';
+    el.innerHTML = [
+      _osKV('Total Cycles',  total, ''),
+      _osKV('Accepted',      `${accept} (${accPct}%)`, 'applied to code', 'green'),
+      _osKV('Rejected',      `${reject} (${rejPct}%)`, 'not good enough'),
+      _osKV('No Safe Fix',   `${nsi} (${nsiPct}%)`,   'safe word blocked'),
+    ].join('') +
+    `<div class="os-kv" style="grid-column:1/-1">
+      <div class="os-kv-key">Last Run</div>
+      <div class="os-kv-val" style="font-size:9px;color:#c9a96e">${_oEsc(lastRun)} UTC</div>
+    </div>`;
+  }
+
+  // ── 9. Deployment Monitoring ────────────────────────────────────────────
+  function _osRenderDeploys(status) {
+    const el = document.getElementById('os-deploys');
+    if (!el) return;
+    if (!status || status.error) {
+      el.innerHTML = '<div class="os-loading">No deployment data</div>'; return;
+    }
+    const mon     = status.monitoring   || 0;
+    const stable  = status.stable       || 0;
+    const rolled  = status.rolled_back  || 0;
+    const monitors = (status.monitors   || []).slice(0, 5);
+
+    let html = `<div class="os-kv-grid" style="margin-bottom:8px">
+      ${_osKV('Monitoring', mon,    'watching for regressions', mon   > 0 ? 'yellow' : '')}
+      ${_osKV('Stable',     stable, 'proven safe', stable > 0 ? 'green' : '')}
+      ${_osKV('Rolled Back', rolled, 'regression detected', rolled > 0 ? 'red' : '')}
+      ${_osKV('Total',      status.total || 0, 'all time improvements')}
+    </div>`;
+
+    if (monitors.length) {
+      html += monitors.map(m => {
+        const statusCls = m.status === 'stable' ? 'os-deploy-stable'
+                        : m.status === 'rolled_back' ? 'os-deploy-rolledback'
+                        : 'os-deploy-monitoring';
+        const icon = m.status === 'stable' ? '✅' : m.status === 'rolled_back' ? '⏪' : '👁️';
+        const age  = m.start_ts ? Math.round((Date.now()/1000 - m.start_ts) / 3600) + 'h ago' : '';
+        return `<div class="os-deploy-row ${statusCls}">
+          <div class="os-deploy-name">${icon} ${_oEsc((m.description || '').slice(0, 60))}</div>
+          <div class="os-deploy-meta">
+            <span>${_oEsc(m.status)}</span>
+            <span>${m.check_count || 0} checks</span>
+            ${m.baseline_error_rate != null ? `<span>baseline ${m.baseline_error_rate.toFixed(1)}% err</span>` : ''}
+            ${age ? `<span>${age}</span>` : ''}
+          </div>
+        </div>`;
+      }).join('');
+    }
+    el.innerHTML = html;
+  }
+
+  // ── 10. Peer Review ROI ─────────────────────────────────────────────────
+  function _osRenderPeer(peer) {
+    const el = document.getElementById('os-peer');
+    if (!el) return;
+    if (!peer || peer.error || (!peer.reviewed_count && !peer.non_reviewed_count)) {
+      el.innerHTML = '<div class="os-loading" style="grid-column:1/-1">No peer review data yet</div>'; return;
+    }
+    const revErr    = peer.reviewed_error_rate_pct    != null ? peer.reviewed_error_rate_pct.toFixed(1)     + '%' : '—';
+    const nonRevErr = peer.non_reviewed_error_rate_pct != null ? peer.non_reviewed_error_rate_pct.toFixed(1) + '%' : '—';
+    const imp       = peer.improvement_pct             != null ? peer.improvement_pct.toFixed(1)             + '%' : '—';
+    const impColor  = (peer.improvement_pct || 0) > 0 ? 'green' : 'red';
+    el.innerHTML = [
+      _osKV('Reviewed',      `${peer.reviewed_count || 0} req`,     revErr    + ' error rate', 'green'),
+      _osKV('Not Reviewed',  `${peer.non_reviewed_count || 0} req`, nonRevErr + ' error rate'),
+      _osKV('Error Reduction', imp, 'from peer review', impColor),
+    ].join('');
+  }
+
+  // ── 11. Anomaly Alerts ──────────────────────────────────────────────────
+  function _osRenderAnomalies(alerts) {
+    const el = document.getElementById('os-anomalies');
+    if (!el) return;
+    const rows = Array.isArray(alerts) ? alerts : (alerts && alerts.alerts ? alerts.alerts : []);
+    if (!rows.length) {
+      el.innerHTML = '<div class="os-loading" style="color:#4ade80">✅ No anomalies recorded</div>'; return;
+    }
+    el.innerHTML = rows.slice(0, 5).map(a => {
+      const icon = a.severity === 'high' ? '🔴' : '🟡';
+      const cls  = a.severity === 'high' ? 'os-severity-high' : 'os-severity-medium';
+      const ago  = a.fired_at
+                   ? Math.round((Date.now()/1000 - a.fired_at) / 60) + 'm ago'
+                   : '';
+      return `<div class="os-anomaly-row">
+        <span class="os-anomaly-icon">${icon}</span>
+        <div class="os-anomaly-body">
+          <div class="os-anomaly-name ${cls}">${_oEsc(a.name || a.alert_type || 'alert')}</div>
+          <div class="os-anomaly-detail">${_oEsc(a.threshold_desc || a.detail || '')}</div>
+          ${ago ? `<div class="os-anomaly-time">${ago}</div>` : ''}
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  // ── Patch _oFetchStats to also load the 6 new endpoints ─────────────────
+  const _oFetchStatsOrig = _oFetchStats;
+  _oFetchStats = async function() {
+    await _oFetchStatsOrig();
+    const hdrs = authHeaders ? authHeaders() : {};
+    const [trends, cycle, deploys, peer, anomalies, proExtra] = await Promise.allSettled([
+      fetch('/metrics/trends?hours=24',    { headers: hdrs }).then(r => r.json()),
+      fetch('/cycle-log/summary',          { headers: hdrs }).then(r => r.json()),
+      fetch('/improvement-status',         { headers: hdrs }).then(r => r.json()),
+      fetch('/peer-review-stats',          { headers: hdrs }).then(r => r.json()),
+      fetch('/anomaly-alerts/recent',      { headers: hdrs }).then(r => r.json()),
+      fetch('/pro-usage',                  { headers: hdrs }).then(r => r.json()),
+    ]);
+    _osRenderTrends(   trends.status    === 'fulfilled' ? trends.value    : null);
+    _osRenderCycle(    cycle.status     === 'fulfilled' ? cycle.value     : null);
+    _osRenderDeploys(  deploys.status   === 'fulfilled' ? deploys.value   : null);
+    _osRenderPeer(     peer.status      === 'fulfilled' ? peer.value      : null);
+    _osRenderAnomalies(anomalies.status === 'fulfilled' ? anomalies.value : null);
+    _osRenderSparkline(proExtra.status  === 'fulfilled' ? proExtra.value  : null);
+  };
 
   // ────────────────────────────────────────────────────────────────────────
   let _officeBgOn = localStorage.getItem('sa_office_bg') === '1';
