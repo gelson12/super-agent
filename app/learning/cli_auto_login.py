@@ -233,7 +233,7 @@ def _drain_verification_queue() -> None:
 
 
 def _wait_for_verification_code() -> str | None:
-    """Block until magic link URL arrives from n8n, or timeout."""
+    """Block until magic link URL arrives from n8n, or timeout. Returns oldest URL."""
     _log(f"Waiting for magic link URL from n8n (timeout: {_VERIFICATION_CODE_TIMEOUT}s)...")
     try:
         code = _verification_code_queue.get(timeout=_VERIFICATION_CODE_TIMEOUT)
@@ -241,6 +241,44 @@ def _wait_for_verification_code() -> str | None:
     except queue.Empty:
         _log("Magic link TIMEOUT — n8n did not send the URL in time.")
         return None
+
+
+def _collect_magic_links() -> list:
+    """
+    Wait for the first magic link URL, then collect any extras that arrive
+    within 3 seconds (n8n sends all unread emails in rapid succession).
+
+    Returns a list of URLs ordered oldest-first (so we try newest last).
+    The NEWEST magic link is the valid one — old ones were already consumed
+    by previous browser sessions and return "unable to verify".
+
+    Why reverse order matters: the Hotmail inbox accumulates many unread
+    Anthropic emails from repeated failed attempts. n8n finds ALL unread
+    emails and sends them all. The oldest emails have stale one-time magic
+    links. The most recently received email has the fresh one.
+    """
+    urls = []
+    # Wait for first URL (up to full timeout)
+    try:
+        first = _verification_code_queue.get(timeout=_VERIFICATION_CODE_TIMEOUT)
+        urls.append(first.strip())
+        _log(f"Collected magic link 1: {first[:60]}...")
+    except queue.Empty:
+        _log("Magic link TIMEOUT — n8n did not send the URL in time.")
+        return []
+
+    # Drain any additional URLs that arrive quickly
+    _extra_deadline = time.time() + 3.0
+    while time.time() < _extra_deadline:
+        try:
+            extra = _verification_code_queue.get_nowait()
+            urls.append(extra.strip())
+            _log(f"Collected magic link {len(urls)}: {extra[:60]}...")
+        except queue.Empty:
+            time.sleep(0.2)
+
+    _log(f"Total magic link URL(s) collected: {len(urls)} — will try newest first")
+    return urls
 
 
 def _trigger_n8n_email_monitor() -> bool:
@@ -1270,52 +1308,69 @@ def _automate_browser(oauth_url: str, email: str) -> tuple[bool, str | None]:
             except Exception:
                 pass
             return False, None
-        _log("Browser: waiting for magic link URL from n8n email monitor...")
-        magic_url = _wait_for_verification_code()
-        if not magic_url:
-            _log("Browser: TIMEOUT — n8n did not deliver the magic link URL within 3 minutes.")
+        _log("Browser: waiting for magic link URL(s) from n8n email monitor...")
+        magic_urls = _collect_magic_links()
+        if not magic_urls:
+            _log("Browser: TIMEOUT — n8n did not deliver any magic link URL.")
             return False, None
 
-        # ── Step 3: Navigate to the magic link ──────────────────────────
-        _log(f"Browser: navigating to magic link: {magic_url[:100]}...")
-        try:
-            page.goto(magic_url, timeout=30000)
-        except Exception as _nav_e:
-            _log(f"Browser: magic link navigation warning (may be normal): {_nav_e}")
-        try:
-            page.wait_for_load_state("networkidle", timeout=15000)
-        except Exception:
-            time.sleep(3)
-        _log(f"Browser: after magic link, URL = {page.url[:120]}")
-        _log(f"Browser: page title = {page.title()!r}")
-        _log(f"Browser: page content sample: {page.content()[:400]}")
+        # ── Step 3: Try magic links newest-first until one works ─────────
+        # n8n sends ALL unread Anthropic emails — the inbox has many old ones.
+        # Old magic links are single-use and already consumed → "unable to verify".
+        # The NEWEST email has the fresh link for this session.
+        # We collected URLs in arrival order (oldest first), so iterate REVERSED.
+        for _ml_idx, magic_url in enumerate(reversed(magic_urls)):
+            _log(f"Browser: trying magic link {_ml_idx + 1}/{len(magic_urls)}: {magic_url[:100]}...")
+            try:
+                page.goto(magic_url, timeout=30000)
+            except Exception as _nav_e:
+                _log(f"Browser: magic link navigation warning (may be normal): {_nav_e}")
+            try:
+                page.wait_for_load_state("networkidle", timeout=15000)
+            except Exception:
+                time.sleep(3)
+            _log(f"Browser: after magic link, URL = {page.url[:120]}")
 
-        # ── Step 4: Handle post-magic-link state ────────────────────────
-        if _is_callback_url(page.url):
-            _log("Browser: callback after magic link navigation ✓")
-            auth_code = (
-                _extract_oauth_code_from_page(page)
-                if "platform.claude.com" in page.url else None
-            )
-            _save_cookies(page)
-            return True, auth_code
+            # Check if this magic link was already consumed (stale)
+            try:
+                _ml_body = page.inner_text("body")
+            except Exception:
+                _ml_body = ""
+            if "unable to verify" in _ml_body.lower() or "problem persists" in _ml_body.lower():
+                _log(f"Browser: magic link {_ml_idx + 1} is stale ('unable to verify') — trying next")
+                continue
 
-        _log("Browser: looking for Approve button on consent screen...")
-        # Wait for React to render the consent UI — the page may still be loading
-        # after networkidle (React re-renders on auth state changes).
-        time.sleep(2)
-        _log(f"Browser: consent screen body (first 600): {page.inner_text('body')[:600] if page else '(no page)'}")
-        approved = _click_approve(page)
-        if approved:
-            _log("Browser: Approve clicked — waiting for callback redirect...")
-            auth_code, ok = _wait_for_callback_and_extract(page)
-            if ok:
+            _log(f"Browser: page title = {page.title()!r}")
+            _log(f"Browser: page content sample: {page.content()[:400]}")
+
+            # ── Step 4: Handle post-magic-link state ──────────────────────
+            if _is_callback_url(page.url):
+                _log("Browser: callback after magic link navigation ✓")
+                auth_code = (
+                    _extract_oauth_code_from_page(page)
+                    if "platform.claude.com" in page.url else None
+                )
                 _save_cookies(page)
-            return ok, auth_code
+                return True, auth_code
 
-        _log(f"Browser: WARNING — no Approve button found. "
-             f"Final URL: {page.url[:120]}. "
-             f"Page content: {page.content()[:800]}")
+            _log("Browser: looking for Approve button on consent screen...")
+            # Wait for React to render the consent UI
+            time.sleep(2)
+            _log(f"Browser: consent screen body (first 600): {_ml_body[:600]}")
+            approved = _click_approve(page)
+            if approved:
+                _log("Browser: Approve clicked — waiting for callback redirect...")
+                auth_code, ok = _wait_for_callback_and_extract(page)
+                if ok:
+                    _save_cookies(page)
+                return ok, auth_code
+
+            _log(f"Browser: no Approve button on magic link {_ml_idx + 1}. "
+                 f"URL: {page.url[:120]}")
+            # Don't give up — try next magic link if available
+            continue
+
+        _log("Browser: all magic link(s) exhausted without success.")
         return False, None
 
     # ── Attempt 1: camoufox (patched Firefox — CF-bypass) ───────────────
