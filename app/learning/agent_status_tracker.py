@@ -40,10 +40,175 @@ _AGENT_LOG_BASE = (
 _AGENT_LOG_MAX_LINES = 500
 _AGENT_LOG_TRIM_TO   = 400
 
+# ── PostgreSQL activity + interaction logging ──────────────────────────────────
+_db_tables_ensured = False
+_db_tables_lock    = threading.Lock()
+
+
+def _get_db_conn():
+    """Return a psycopg2 connection using DATABASE_URL, or None if unavailable."""
+    try:
+        import psycopg2
+        url = os.environ.get("DATABASE_URL", "").replace("postgres://", "postgresql://", 1)
+        if not url:
+            return None
+        return psycopg2.connect(url)
+    except Exception:
+        return None
+
+
+def _ensure_db_tables() -> None:
+    """Create agent_activity and agent_interactions tables if they don't exist."""
+    global _db_tables_ensured
+    if _db_tables_ensured:
+        return
+    with _db_tables_lock:
+        if _db_tables_ensured:
+            return
+        conn = _get_db_conn()
+        if not conn:
+            return
+        try:
+            with conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        CREATE TABLE IF NOT EXISTS agent_activity (
+                            id          SERIAL PRIMARY KEY,
+                            worker_id   TEXT        NOT NULL,
+                            event       TEXT        NOT NULL,
+                            detail      TEXT        DEFAULT '',
+                            ts          DOUBLE PRECISION NOT NULL,
+                            created_at  TIMESTAMPTZ DEFAULT NOW()
+                        )
+                    """)
+                    cur.execute("""
+                        CREATE INDEX IF NOT EXISTS idx_agent_activity_worker
+                            ON agent_activity(worker_id, ts DESC)
+                    """)
+                    cur.execute("""
+                        CREATE TABLE IF NOT EXISTS agent_interactions (
+                            id          SERIAL PRIMARY KEY,
+                            worker_a    TEXT        NOT NULL,
+                            worker_b    TEXT        NOT NULL,
+                            event       TEXT        NOT NULL,
+                            detail      TEXT        DEFAULT '',
+                            ts          DOUBLE PRECISION NOT NULL,
+                            created_at  TIMESTAMPTZ DEFAULT NOW()
+                        )
+                    """)
+                    cur.execute("""
+                        CREATE INDEX IF NOT EXISTS idx_agent_interactions_ts
+                            ON agent_interactions(ts DESC)
+                    """)
+            _db_tables_ensured = True
+        except Exception:
+            pass
+        finally:
+            conn.close()
+
+
+def _db_log_activity(worker_id: str, event: str, detail: str = "") -> None:
+    """Write a single activity row to PostgreSQL (fire-and-forget in a daemon thread)."""
+    def _write():
+        _ensure_db_tables()
+        conn = _get_db_conn()
+        if not conn:
+            return
+        try:
+            with conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "INSERT INTO agent_activity (worker_id, event, detail, ts) "
+                        "VALUES (%s, %s, %s, %s)",
+                        (worker_id, event, (detail or "")[:400], round(time.time(), 2)),
+                    )
+        except Exception:
+            pass
+        finally:
+            conn.close()
+    threading.Thread(target=_write, daemon=True).start()
+
+
+def _db_log_interaction(worker_a: str, worker_b: str, event: str, detail: str = "") -> None:
+    """Write a single interaction row to PostgreSQL (fire-and-forget in a daemon thread)."""
+    def _write():
+        _ensure_db_tables()
+        conn = _get_db_conn()
+        if not conn:
+            return
+        try:
+            with conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "INSERT INTO agent_interactions "
+                        "(worker_a, worker_b, event, detail, ts) "
+                        "VALUES (%s, %s, %s, %s, %s)",
+                        (worker_a, worker_b, event, (detail or "")[:400],
+                         round(time.time(), 2)),
+                    )
+        except Exception:
+            pass
+        finally:
+            conn.close()
+    threading.Thread(target=_write, daemon=True).start()
+
+
+def get_db_activity(worker_id: str, limit: int = 60) -> list[dict]:
+    """Return the last `limit` activity rows for a worker from PostgreSQL."""
+    _ensure_db_tables()
+    conn = _get_db_conn()
+    if not conn:
+        return []
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT ts, event, detail, created_at FROM agent_activity "
+                "WHERE worker_id = %s ORDER BY ts DESC LIMIT %s",
+                (worker_id, limit),
+            )
+            rows = cur.fetchall()
+        return [
+            {"ts": r[0], "event": r[1], "detail": r[2],
+             "date": str(r[3])[:16] if r[3] else ""}
+            for r in rows
+        ]
+    except Exception:
+        return []
+    finally:
+        conn.close()
+
+
+def get_db_interactions(limit: int = 100) -> list[dict]:
+    """Return the last `limit` agent interaction rows from PostgreSQL."""
+    _ensure_db_tables()
+    conn = _get_db_conn()
+    if not conn:
+        return []
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT ts, worker_a, worker_b, event, detail, created_at "
+                "FROM agent_interactions ORDER BY ts DESC LIMIT %s",
+                (limit,),
+            )
+            rows = cur.fetchall()
+        return [
+            {"ts": r[0], "worker_a": r[1], "worker_b": r[2],
+             "event": r[3], "detail": r[4],
+             "date": str(r[5])[:16] if r[5] else ""}
+            for r in rows
+        ]
+    except Exception:
+        return []
+    finally:
+        conn.close()
+
 
 def _log_agent_event(worker_id: str, event: str, detail: str = "") -> None:
     """
-    Append a timestamped event to the per-agent JSONL log file.
+    Append a timestamped event to:
+      1. The per-agent JSONL log file (local, fast)
+      2. The agent_activity PostgreSQL table (persistent, queryable)
     Called OUTSIDE _lock to avoid blocking state updates.
     """
     try:
@@ -71,6 +236,9 @@ def _log_agent_event(worker_id: str, event: str, detail: str = "") -> None:
             pass
     except Exception:
         pass
+
+    # Also persist to PostgreSQL (non-blocking daemon thread)
+    _db_log_activity(worker_id, event, detail)
 
 
 def read_agent_log(worker_id: str, limit: int = 100) -> list[dict]:
@@ -138,10 +306,10 @@ _MODEL_MAP = {
     "ENSEMBLE": "Sonnet Anthropic",  # ensemble uses Claude as primary
 }
 
-_ONE_HOUR = 60 * 60
-_THREE_HOURS = 3 * 3600
-_SIX_HOURS = 6 * 3600
-
+_ONE_MINUTE     = 60
+_FIVE_MINUTES   = 5  * 60   # idle → break
+_TEN_MINUTES    = 10 * 60   # break → coffee_break
+_THIRTY_MINUTES = 30 * 60   # coffee_break → sleeping
 
 _SICK_GRACE_PERIOD = 15 * 60  # 15 minutes — show "break" before escalating to "sick"
 
@@ -243,6 +411,9 @@ def mark_talking(worker_a: str, worker_b: str) -> None:
         b["talking_to"] = worker_a
     _log_agent_event(worker_a, "talking", f"Collaborating with {worker_b}")
     _log_agent_event(worker_b, "talking", f"Collaborating with {worker_a}")
+    # Persist interaction to DB so history survives restarts
+    _db_log_interaction(worker_a, worker_b, "started",
+                        f"{worker_a} ↔ {worker_b} collaboration started")
 
 
 def clear_talking(worker_a: str, worker_b: str) -> None:
@@ -259,6 +430,9 @@ def clear_talking(worker_a: str, worker_b: str) -> None:
             b["last_worked"] = time.time()
     _log_agent_event(worker_a, "done_talking", f"Collaboration with {worker_b} ended")
     _log_agent_event(worker_b, "done_talking", f"Collaboration with {worker_a} ended")
+    # Persist end-of-interaction to DB
+    _db_log_interaction(worker_a, worker_b, "ended",
+                        f"{worker_a} ↔ {worker_b} collaboration ended")
 
 
 def get_worker_status(worker_id: str) -> dict:
@@ -274,13 +448,16 @@ def get_worker_status(worker_id: str) -> dict:
             if sick_since and (now - sick_since) < _SICK_GRACE_PERIOD:
                 state = "break"  # still within healing window — show as on break
 
-        # Auto-transition idle based on time since last work
-        # idle → break after 1 hour, idle → sleeping after 6 hours
+        # Auto-transition idle based on time since last work:
+        #   idle → break after 5 min, break → coffee_break after 10 min,
+        #   coffee_break → sleeping after 30 min
         if state == "idle" and w["last_worked"] > 0:
             elapsed = now - w["last_worked"]
-            if elapsed > _SIX_HOURS:
+            if elapsed > _THIRTY_MINUTES:
                 state = "sleeping"
-            elif elapsed > _ONE_HOUR:
+            elif elapsed > _TEN_MINUTES:
+                state = "coffee_break"
+            elif elapsed > _FIVE_MINUTES:
                 state = "break"
 
         sick_since = w.get("sick_since")
@@ -309,7 +486,7 @@ def get_all_statuses() -> list[dict]:
                 result.append(get_worker_status(wid))
 
     # Sort: error/strike/sick first (need attention), then working, then idle/sleeping
-    order = {"error": 0, "strike": 1, "sick": 2, "working": 3, "talking": 4, "idle": 5, "break": 6, "sleeping": 7}
+    order = {"error": 0, "strike": 1, "sick": 2, "working": 3, "talking": 4, "idle": 5, "break": 6, "coffee_break": 7, "sleeping": 8}
     result.sort(key=lambda x: order.get(x["state"], 8))
     return result
 
@@ -463,6 +640,15 @@ def seed_live_status() -> None:
         from .pro_router import is_cli_down
         if is_cli_down():
             mark_sick("Claude CLI Pro")
+        # Also check boot-time sentinel written by entrypoint.cli.sh when the
+        # CLAUDE_SESSION_TOKEN was detected as expired before supervisord started.
+        # This ensures claude_pro tasks are routed to fallback from the very first
+        # request instead of failing with 401 and triggering recovery reactively.
+        import pathlib as _pl
+        if _pl.Path("/tmp/.claude_boot_sick").exists():
+            mark_sick("Claude CLI Pro")
+            _log_agent_event("Claude CLI Pro", "sick",
+                             "Boot sentinel: token expired or missing at startup")
         # ⚠️  Do NOT call mark_done("Claude CLI Pro") here.
         # is_cli_down() only checks whether a flag file has expired (10-min TTL) —
         # it does NOT verify that auth is actually valid.  Calling mark_done when the

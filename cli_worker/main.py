@@ -225,13 +225,44 @@ def _gemini_auth_ok() -> bool:
     return False
 
 
+def _probe_claude_prompt(timeout: int = 20) -> bool:
+    """
+    Test whether the Claude prompt is actually responsive — not just whether
+    the binary exists. Sends a real `-p` prompt and checks for non-empty output.
+    Falls back to version check if the prompt probe hangs or errors.
+    """
+    try:
+        r = subprocess.run(
+            ["claude", "-p", "ok", "--max-tokens", "3", "--output-format", "text"],
+            capture_output=True,
+            timeout=timeout,
+            env={**os.environ, "HOME": "/root"},
+        )
+        # Any non-empty stdout on returncode 0 means the prompt is alive
+        if r.returncode == 0 and (r.stdout or b"").strip():
+            return True
+        # Non-zero exit with auth-related error → definitely down
+        combined = ((r.stdout or b"") + (r.stderr or b"")).decode("utf-8", errors="replace").lower()
+        if any(p in combined for p in ("authentication", "login", "unauthorized", "token")):
+            return False
+        # returncode != 0 but no clear auth error → treat as down
+        return False
+    except subprocess.TimeoutExpired:
+        return False
+    except Exception:
+        # Binary missing or other OS error — fall back to version probe
+        return _probe(["claude", "--version"])
+
+
 @app.get("/health")
 def health():
     """
     Live health check — verifies Claude and Gemini CLIs are responding.
+    Uses an actual prompt probe for Claude (not just --version) so a hung
+    or unresponsive prompt is correctly detected as unhealthy.
     Called by pro_cli_watchdog and pro_router.verify_pro_auth().
     """
-    claude_ok  = _probe(["claude", "--version"])
+    claude_ok  = _probe_claude_prompt()
     gemini_ok  = _gemini_auth_ok()
     db_ok = False
     try:

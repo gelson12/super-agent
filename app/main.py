@@ -551,6 +551,82 @@ def agent_log(worker_id: str, limit: int = 60):
     return {"worker": decoded, "events": unique, "total": len(unique)}
 
 
+@app.get("/dashboard/agents/{worker_id}/db-activity", tags=["meta"])
+def agent_db_activity(worker_id: str, limit: int = 60):
+    """
+    Persistent activity log for a worker from the PostgreSQL agent_activity table.
+    Unlike the JSONL log, this survives container restarts and spans the full history.
+    """
+    import urllib.parse
+    decoded = urllib.parse.unquote(worker_id)
+    from .learning.agent_status_tracker import get_db_activity
+    rows = get_db_activity(decoded, limit=limit)
+    return {"worker": decoded, "events": rows, "total": len(rows)}
+
+
+@app.get("/dashboard/agents/interactions", tags=["meta"])
+def agent_interactions(limit: int = 100):
+    """
+    Recent interactions between agents — shows all talking/collaboration events
+    stored in the PostgreSQL agent_interactions table. Newest first.
+    """
+    from .learning.agent_status_tracker import get_db_interactions
+    rows = get_db_interactions(limit=limit)
+    return {"interactions": rows, "total": len(rows)}
+
+
+@app.get("/dashboard/n8n/workflows", tags=["meta"])
+def dashboard_n8n_workflows():
+    """
+    Return all n8n workflows as structured JSON split into active (working) and
+    inactive (non-working) lists. Used by the office panel 'View Workflows' popup.
+    Each workflow has: id, name, active, updatedAt (if available).
+    """
+    try:
+        from .tools.n8n_tools import _check_config, _get
+        err = _check_config()
+        if err:
+            return {"error": err, "active": [], "inactive": [], "total": 0}
+
+        all_rows = []
+        cursor = None
+        while True:
+            path = "/api/v1/workflows?limit=250"
+            if cursor:
+                path += f"&cursor={cursor}"
+            result = _get(path)
+            if isinstance(result, str):
+                return {"error": result, "active": [], "inactive": [], "total": 0}
+            rows = result.get("data", [])
+            all_rows.extend(rows)
+            cursor = result.get("nextCursor")
+            if not cursor:
+                break
+
+        active   = []
+        inactive = []
+        for w in all_rows:
+            entry = {
+                "id":        w.get("id", ""),
+                "name":      w.get("name", "Unnamed"),
+                "active":    bool(w.get("active", False)),
+                "updatedAt": (w.get("updatedAt") or w.get("updated_at") or "")[:19],
+                "tags":      [t.get("name", "") for t in (w.get("tags") or [])],
+            }
+            (active if entry["active"] else inactive).append(entry)
+
+        active.sort(key=lambda x: x["name"].lower())
+        inactive.sort(key=lambda x: x["name"].lower())
+
+        return {
+            "active":   active,
+            "inactive": inactive,
+            "total":    len(all_rows),
+        }
+    except Exception as e:
+        return {"error": str(e), "active": [], "inactive": [], "total": 0}
+
+
 @app.get("/debug/talking-test", tags=["meta"])
 def debug_talking_test(seconds: int = 30):
     """

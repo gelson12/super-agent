@@ -1688,6 +1688,9 @@
     if (w.state === 'sick') popupRows += `<div class="o-popup-row" style="color:#fde68a">Auth token invalid/expired</div>`;
     if (w.state === 'talking' && w.talking_to) popupRows += `<div class="o-popup-row">Collaborating with: <span>${_oEsc(w.talking_to)}</span></div>`;
     popupRows += `<div class="o-popup-row" style="margin-top:4px"><a href="#" onclick="_oShowHistory('${_oEsc(w.id)}',event)" style="color:#c9a96e;font-size:8px;text-decoration:underline;">View Activity Report</a></div>`;
+    if (w.id === 'N8N Agent') {
+      popupRows += `<div class="o-popup-row" style="margin-top:2px"><a href="#" onclick="_oShowWorkflows(event)" style="color:#8b5cf6;font-size:8px;text-decoration:underline;">View Workflows</a></div>`;
+    }
 
     return `<div class="o-desk" data-worker="${_oEsc(w.id)}" onclick="_oTogglePopup(this)">
       <div class="o-popup">
@@ -1783,6 +1786,115 @@
     if (m) m.remove();
     clearInterval(_oLogRefreshTimer);
     _oLogWorkerId = null;
+  }
+
+  // ── N8N Workflows modal ──────────────────────────────────────────────────
+  async function _oShowWorkflows(evt) {
+    evt.stopPropagation();
+    evt.preventDefault();
+    document.querySelectorAll('.o-desk.popup-open').forEach(d => d.classList.remove('popup-open'));
+
+    const old = document.getElementById('o-workflows-modal');
+    if (old) { old.remove(); return; }  // toggle off if already open
+
+    const panel = document.getElementById('office-panel');
+    const modal = document.createElement('div');
+    modal.id        = 'o-workflows-modal';
+    modal.className = 'o-history-modal';
+    modal.innerHTML = `
+      <div class="o-hist-header">
+        <div>
+          <div style="font-size:11px;font-weight:700;color:#d4b896">⚙️ N8N Workflows</div>
+          <div style="font-size:8px;color:#8b7355">All published workflows — working &amp; non-working</div>
+        </div>
+        <button onclick="document.getElementById('o-workflows-modal').remove()"
+                style="background:none;border:none;color:#888;font-size:16px;cursor:pointer;">&times;</button>
+      </div>
+      <div style="font-size:7px;color:#555;padding:3px 10px;border-bottom:1px solid #2a1e10;display:flex;justify-content:space-between">
+        <span id="o-wf-counts">Loading…</span>
+        <button onclick="_oRefreshWorkflows()" style="background:none;border:none;color:#c9a96e;font-size:8px;cursor:pointer;text-decoration:underline;">↻ Refresh</button>
+      </div>
+      <div class="o-hist-body" id="o-wf-body">
+        <div style="color:#666;font-size:9px;padding:12px;text-align:center">Fetching workflows…</div>
+      </div>
+    `;
+    panel.appendChild(modal);
+    modal.style.position = 'absolute';
+    modal.style.top      = '8px';
+    modal.style.left     = '8px';
+    modal.style.right    = '8px';
+
+    await _oFetchWorkflows();
+  }
+
+  async function _oRefreshWorkflows() {
+    const body = document.getElementById('o-wf-body');
+    if (body) body.innerHTML = '<div style="color:#666;font-size:9px;padding:12px;text-align:center">Refreshing…</div>';
+    await _oFetchWorkflows();
+  }
+
+  async function _oFetchWorkflows() {
+    try {
+      const res = await fetch('/dashboard/n8n/workflows', { headers: authHeaders() });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const data = await res.json();
+      _oRenderWorkflows(data);
+    } catch (e) {
+      const b = document.getElementById('o-wf-body');
+      if (b) b.innerHTML = `<div style="color:#f87171;font-size:9px;padding:12px">Failed to load: ${_oEsc(e.message)}</div>`;
+    }
+  }
+
+  function _oRenderWorkflows(data) {
+    const body   = document.getElementById('o-wf-body');
+    const counts = document.getElementById('o-wf-counts');
+    if (!body) return;
+
+    if (data.error) {
+      body.innerHTML = `<div style="color:#f87171;font-size:9px;padding:12px">Error: ${_oEsc(data.error)}</div>`;
+      return;
+    }
+
+    const active   = data.active   || [];
+    const inactive = data.inactive || [];
+    if (counts) counts.textContent = `${active.length} working · ${inactive.length} inactive · ${data.total || 0} total`;
+
+    function _wfRow(wf, isActive) {
+      const dot   = isActive ? '🟢' : '🔴';
+      const color = isActive ? '#4ade80' : '#f87171';
+      const tags  = wf.tags && wf.tags.length ? wf.tags.map(t => `<span style="background:#2a1e10;border-radius:2px;padding:1px 4px;margin-left:3px;font-size:6px;color:#c9a96e">${_oEsc(t)}</span>`).join('') : '';
+      const date  = wf.updatedAt ? `<span style="color:#555;font-size:6px;margin-left:4px">${_oEsc(wf.updatedAt.replace('T',' ').slice(0,16))}</span>` : '';
+      return `
+        <div style="padding:5px 10px;border-bottom:1px solid #1f1508;display:flex;align-items:flex-start;gap:6px">
+          <span style="font-size:10px;flex-shrink:0;margin-top:1px">${dot}</span>
+          <div style="flex:1;min-width:0">
+            <div style="font-size:9px;color:${color};font-weight:700;word-break:break-word">${_oEsc(wf.name)}${tags}</div>
+            <div style="font-size:7px;color:#555;margin-top:1px">ID: ${_oEsc(String(wf.id))}${date}</div>
+          </div>
+        </div>`;
+    }
+
+    let html = '';
+
+    if (active.length) {
+      html += `<div style="padding:6px 10px;background:#0f2010;font-size:8px;color:#4ade80;font-weight:700;letter-spacing:0.5px;border-bottom:1px solid #1f1508">
+        ✅ Working (${active.length})
+      </div>`;
+      html += active.map(wf => _wfRow(wf, true)).join('');
+    }
+
+    if (inactive.length) {
+      html += `<div style="padding:6px 10px;background:#1f0808;font-size:8px;color:#f87171;font-weight:700;letter-spacing:0.5px;border-bottom:1px solid #1f1508;margin-top:${active.length ? 4 : 0}px">
+        ❌ Not Working / Inactive (${inactive.length})
+      </div>`;
+      html += inactive.map(wf => _wfRow(wf, false)).join('');
+    }
+
+    if (!active.length && !inactive.length) {
+      html = '<div style="color:#666;font-size:9px;padding:14px;text-align:center">No workflows found in n8n.</div>';
+    }
+
+    body.innerHTML = html;
   }
 
   async function _oFetchLog(workerId) {

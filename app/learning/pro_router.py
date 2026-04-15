@@ -820,11 +820,12 @@ def _fire_timeout_investigation(prompt_len: int, proc=None) -> None:
             healthy = _verify_cli_health()
             health_note = "CLI worker healthy ✓" if healthy else "CLI worker UNHEALTHY ✗"
 
-            # 4. If worker is unhealthy, set CLI_DOWN so retries skip CLI
+            # 4. If worker is unhealthy, set CLI_DOWN so retries skip CLI + mark sick
             if not healthy:
                 _write_flag(_CLI_DOWN_FLAG,
                             f"{datetime.datetime.utcnow().isoformat()}|{_CLI_DOWN_TTL}")
                 health_note += " → CLI_DOWN flag set (10 min)"
+                _track_cli("sick")
 
             # 5. Record timeout in counter file
             _timeout_count = 0
@@ -1205,15 +1206,20 @@ def try_pro(prompt: str, system: str = "") -> str | None:
                     pass
             _log(
                 f"CLI TIMEOUT (attempt 2 also timed out) — "
-                f"prompt_len={len(full_prompt)} chars. Falling back to Gemini/API."
+                f"prompt_len={len(full_prompt)} chars. Marking sick + setting CLI_DOWN flag."
             )
             _queue_progress(
                 "⚠️ Both CLI attempts timed out — self-healing routed to Gemini/API "
                 "(background investigation continues to restore CLI)"
             )
+            # Both retries timed out — prompt is genuinely unresponsive, mark sick
+            _write_flag(_CLI_DOWN_FLAG,
+                        f"{datetime.datetime.utcnow().isoformat()}|{_CLI_DOWN_TTL}")
+            _track_cli("sick")
         except Exception:
             pass
 
+        _track_cli("sick")
         return None
 
     except Exception:

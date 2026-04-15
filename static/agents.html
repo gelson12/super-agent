@@ -128,12 +128,14 @@
       text-transform: lowercase;
     }
 
-    .status-label.working { background: #1e3a5f; color: #60a5fa; }
-    .status-label.idle { background: #14532d; color: #4ade80; }
-    .status-label.sleeping { background: #333; color: #888; }
-    .status-label.talking { background: #4c1d95; color: #c4b5fd; }
-    .status-label.strike { background: #7f1d1d; color: #fca5a5; }
-    .status-label.sick { background: #713f12; color: #fde68a; }
+    .status-label.working      { background: #1e3a5f; color: #60a5fa; }
+    .status-label.idle         { background: #14532d; color: #4ade80; }
+    .status-label.break        { background: #1c1c3a; color: #818cf8; }
+    .status-label.coffee_break { background: #3b1f00; color: #fb923c; }
+    .status-label.sleeping     { background: #333;    color: #888;    }
+    .status-label.talking      { background: #4c1d95; color: #c4b5fd; }
+    .status-label.strike       { background: #7f1d1d; color: #fca5a5; }
+    .status-label.sick         { background: #713f12; color: #fde68a; }
 
     /* ── Monitor (screen) ────────────────────────────────────────── */
     .monitor {
@@ -194,6 +196,18 @@
       background: linear-gradient(135deg, #713f12 0%, #ca8a04 100%);
       border-color: #eab308;
       box-shadow: 0 0 8px rgba(234, 179, 8, 0.3);
+    }
+
+    .monitor.on-orange {
+      background: linear-gradient(135deg, #3b1f00 0%, #c2410c 100%);
+      border-color: #fb923c;
+      box-shadow: 0 0 8px rgba(251, 146, 60, 0.3);
+    }
+
+    .monitor.on-indigo {
+      background: linear-gradient(135deg, #1c1c3a 0%, #4338ca 100%);
+      border-color: #818cf8;
+      box-shadow: 0 0 8px rgba(129, 140, 248, 0.25);
     }
 
     /* Screen content */
@@ -271,6 +285,20 @@
       top: -16px;
       right: -12px;
       font-size: 12px;
+    }
+
+    /* Coffee break cup */
+    .coffee-cup {
+      position: absolute;
+      top: -18px;
+      right: -12px;
+      font-size: 12px;
+      animation: coffee-steam 1.5s ease-in-out infinite alternate;
+    }
+
+    @keyframes coffee-steam {
+      0%   { transform: translateY(0) rotate(-5deg); opacity: 0.8; }
+      100% { transform: translateY(-4px) rotate(5deg); opacity: 1; }
     }
 
     /* Talk bubble */
@@ -536,6 +564,31 @@
     .log-entry.ev-request   .log-entry-event { color: #34d399; }
     .log-entry.ev-error     .log-entry-event { color: #f87171; }
 
+    /* ── Interactions feed ───────────────────────────────────────── */
+    .interaction-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 14px;
+      border-bottom: 1px solid #1f1508;
+      font-size: 0.32rem;
+    }
+    .interaction-row:hover { background: #1f1508; }
+    .interaction-row:last-child { border-bottom: none; }
+    .interaction-icon { font-size: 14px; flex-shrink: 0; }
+    .interaction-agents { color: #c4b5fd; flex: 1; min-width: 0; }
+    .interaction-detail { color: #8b7355; font-size: 0.28rem; margin-top: 2px; }
+    .interaction-time { color: #555; font-size: 0.28rem; flex-shrink: 0; }
+    .interaction-badge {
+      display: inline-block;
+      padding: 1px 5px;
+      border-radius: 3px;
+      font-size: 0.25rem;
+      margin-left: 6px;
+    }
+    .interaction-badge.started { background: #4c1d95; color: #c4b5fd; }
+    .interaction-badge.ended   { background: #1e3a1e; color: #4ade80; }
+
     /* ── Responsive ──────────────────────────────────────────────── */
     @media (max-width: 600px) {
       .desks {
@@ -573,6 +626,8 @@
   <div class="legend">
     <div class="legend-item"><div class="legend-dot" style="background:#3b82f6"></div> Working</div>
     <div class="legend-item"><div class="legend-dot" style="background:#22c55e"></div> Idle</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#818cf8"></div> Break</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#fb923c"></div> Coffee Break</div>
     <div class="legend-item"><div class="legend-dot" style="background:#555"></div> Sleeping</div>
     <div class="legend-item"><div class="legend-dot" style="background:#8b5cf6"></div> Talking</div>
     <div class="legend-item"><div class="legend-dot" style="background:#ef4444"></div> Strike</div>
@@ -595,6 +650,21 @@
   <!-- Agents section -->
   <div class="section-label">Specialized Agents</div>
   <div class="desks" id="agents-desks"></div>
+
+  <!-- Interactions feed -->
+  <div class="section-label" style="margin-top:24px;">
+    Recent Agent Interactions
+    <span id="interactions-live" style="font-size:0.35rem;color:#8b5cf6;margin-left:10px;">
+      <span class="dot" style="background:#8b5cf6;display:inline-block;width:6px;height:6px;border-radius:50%;animation:pulse 2s ease-in-out infinite;margin-right:4px;"></span>Live
+    </span>
+  </div>
+  <div id="interactions-feed" style="
+    max-width:760px; margin:0 auto 32px;
+    background:#1a1208; border:2px solid #4a3520; border-radius:8px;
+    overflow:hidden; font-size:0.32rem;
+  ">
+    <div class="log-empty">Loading interactions…</div>
+  </div>
 </div>
 
 <div class="filing-cabinet">🗄️</div>
@@ -685,12 +755,14 @@ function formatDateTime(ts) {
 
 function getMonitorClass(state) {
   switch (state) {
-    case "working": return "on-blue";
-    case "idle":    return "on-green";
-    case "talking": return "on-purple";
-    case "strike":  return "on-red";
-    case "sick":    return "on-yellow";
-    default:        return "off";
+    case "working":      return "on-blue";
+    case "idle":         return "on-green";
+    case "break":        return "on-indigo";
+    case "coffee_break": return "on-orange";
+    case "talking":      return "on-purple";
+    case "strike":       return "on-red";
+    case "sick":         return "on-yellow";
+    default:             return "off";
   }
 }
 
@@ -706,24 +778,27 @@ function getScreenContent(worker) {
     return `healing… ~${mins}m`;
   }
   switch (worker.state) {
-    case "working":  return worker.task ? esc(worker.task.substring(0, 40)) : "Processing";
-    case "idle":     return "Ready";
-    case "sleeping": return "";
-    case "talking":  return `w/ ${esc(worker.talking_to || "?")}`;
-    case "strike":   return "NO CREDITS!";
-    case "sick":     return "TOKEN ERR";
-    default:         return "";
+    case "working":      return worker.task ? esc(worker.task.substring(0, 40)) : "Processing";
+    case "idle":         return "Ready";
+    case "break":        return "On Break";
+    case "coffee_break": return "☕ Coffee";
+    case "sleeping":     return "";
+    case "talking":      return `w/ ${esc(worker.talking_to || "?")}`;
+    case "strike":       return "NO CREDITS!";
+    case "sick":         return "TOKEN ERR";
+    default:             return "";
   }
 }
 
 function getOverlay(worker) {
   if (isRecovering(worker)) return '<span class="talk-bubble">☕</span>';
   switch (worker.state) {
-    case "sleeping": return '<span class="zzz">Zzz</span>';
-    case "strike":   return '<span class="strike-sign">🪧</span>';
-    case "sick":     return '<span class="sick-indicator">🤒</span>';
-    case "talking":  return '<span class="talk-bubble">💬</span>';
-    default:         return "";
+    case "sleeping":     return '<span class="zzz">Zzz</span>';
+    case "coffee_break": return '<span class="coffee-cup">☕</span>';
+    case "strike":       return '<span class="strike-sign">🪧</span>';
+    case "sick":         return '<span class="sick-indicator">🤒</span>';
+    case "talking":      return '<span class="talk-bubble">💬</span>';
+    default:             return "";
   }
 }
 
@@ -765,7 +840,7 @@ function renderDesk(worker) {
     <div class="desk" data-worker="${esc(worker.id)}" data-state="${worker.state}"
          title="${esc(tooltip)}" onclick="openLog(this.dataset.worker)">
       <div class="name">${esc(worker.id)}</div>
-      <div class="status-label ${worker.state}">${worker.state}</div>
+      <div class="status-label ${worker.state}">${worker.state === "coffee_break" ? "coffee break" : worker.state}</div>
       <div class="monitor ${monitorClass}">
         <div class="screen-content">${screenContent}</div>
       </div>
@@ -792,11 +867,10 @@ function renderAll(workers) {
   // Update stats bar
   const counts = { working: 0, idle: 0, sleeping: 0, issues: 0 };
   allWorkers.forEach(w => {
-    if (w.state === "working")                              counts.working++;
-    else if (w.state === "idle")                            counts.idle++;
-    else if (w.state === "strike" || w.state === "sick")    counts.issues++;
-    else if (isRecovering(w))                               counts.sleeping++; // healing = not an issue yet
-    else                                                    counts.sleeping++;
+    if (w.state === "working")                                        counts.working++;
+    else if (w.state === "idle")                                      counts.idle++;
+    else if (w.state === "strike" || w.state === "sick")              counts.issues++;
+    else                                                              counts.sleeping++; // break/coffee_break/sleeping/recovering
   });
   document.getElementById("count-working").textContent  = counts.working;
   document.getElementById("count-idle").textContent     = counts.idle;
@@ -817,7 +891,7 @@ function renderAll(workers) {
   if (_logPanelWorker && workerMap[_logPanelWorker]) {
     const w = workerMap[_logPanelWorker];
     const stateEl = document.getElementById("log-worker-state");
-    stateEl.textContent = w.state;
+    stateEl.textContent = w.state === "coffee_break" ? "coffee break" : w.state;
     stateEl.className   = `log-panel-state status-label ${w.state}`;
   }
 }
@@ -959,6 +1033,52 @@ async function fetchAndRender() {
 
 fetchAndRender();
 setInterval(fetchAndRender, 5000);
+
+// ── Interactions feed ──────────────────────────────────────────────────────
+
+async function fetchInteractions() {
+  try {
+    const resp = await fetch("/dashboard/agents/interactions?limit=30");
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    renderInteractions(data.interactions || []);
+  } catch (err) {
+    // silently fail — non-critical
+  }
+}
+
+function renderInteractions(rows) {
+  const feed = document.getElementById("interactions-feed");
+  if (!rows || !rows.length) {
+    feed.innerHTML = '<div class="log-empty">No agent interactions recorded yet.<br><br>Interactions appear here when agents collaborate (talking state).</div>';
+    return;
+  }
+  feed.innerHTML = rows.map(r => {
+    const icon = r.event === "started" ? "💬" : "🤝";
+    const badge = `<span class="interaction-badge ${esc(r.event)}">${esc(r.event)}</span>`;
+    const ago = r.ts ? formatTimeAgo(Math.round(Date.now() / 1000 - r.ts)) : "";
+    const aAvatar = AVATARS[r.worker_a] || "👤";
+    const bAvatar = AVATARS[r.worker_b] || "👤";
+    return `
+      <div class="interaction-row">
+        <div class="interaction-icon">${icon}</div>
+        <div style="flex:1;min-width:0">
+          <div class="interaction-agents">
+            ${aAvatar} <strong>${esc(r.worker_a)}</strong>
+            ↔
+            ${bAvatar} <strong>${esc(r.worker_b)}</strong>
+            ${badge}
+          </div>
+          ${r.detail ? `<div class="interaction-detail">${esc(r.detail)}</div>` : ""}
+        </div>
+        <div class="interaction-time">${esc(ago)}</div>
+      </div>
+    `;
+  }).join("");
+}
+
+fetchInteractions();
+setInterval(fetchInteractions, 15000);
 </script>
 </body>
 </html>
