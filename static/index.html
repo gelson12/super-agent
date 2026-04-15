@@ -3,6 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <meta http-equiv="Pragma" content="no-cache" />
   <title>Super Agent</title>
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <style>
@@ -403,9 +405,18 @@
       background: #1a1208;
       border-left: 2px solid #4a3520;
       z-index: 500;
-      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
       box-shadow: -4px 0 20px rgba(0,0,0,0.5);
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    /* desk content area scrolls independently of the stats panel */
+    #office-desk-scroll {
+      flex: 1;
+      overflow-y: auto;
+      min-height: 0;
     }
 
     .office-header {
@@ -530,13 +541,15 @@
       font-weight: 600;
     }
 
-    .o-status.working  { background: #1e3a5f; color: #60a5fa; }
-    .o-status.idle     { background: #14532d; color: #4ade80; }
-    .o-status.break    { background: #0c4a6e; color: #38bdf8; }
-    .o-status.sleeping { background: #333;    color: #888; }
-    .o-status.talking  { background: #4c1d95; color: #c4b5fd; }
-    .o-status.strike   { background: #7f1d1d; color: #fca5a5; }
-    .o-status.sick     { background: #713f12; color: #fde68a; }
+    .o-status.working      { background: #1e3a5f; color: #60a5fa; }
+    .o-status.idle         { background: #14532d; color: #4ade80; }
+    .o-status.break        { background: #0c4a6e; color: #38bdf8; }
+    .o-status.coffee_break { background: #3b1f00; color: #fb923c; }
+    .o-status.sleeping     { background: #333;    color: #888; }
+    .o-status.talking      { background: #4c1d95; color: #c4b5fd; }
+    .o-status.strike       { background: #7f1d1d; color: #fca5a5; }
+    .o-status.sick         { background: #713f12; color: #fde68a; }
+    .o-status.recovering   { background: #134e4a; color: #5eead4; }
 
     .o-monitor {
       width: 72px;
@@ -559,6 +572,8 @@
     .o-monitor.on-cyan    { background: linear-gradient(135deg,#0c4a6e,#0ea5e9); border-color: #38bdf8; box-shadow: 0 0 8px rgba(56,189,248,0.2); }
     .o-monitor.on-blue    { background: linear-gradient(135deg,#1e3a5f,#2563eb); border-color: #3b82f6; box-shadow: 0 0 8px rgba(59,130,246,0.3); }
     .o-monitor.on-green   { background: linear-gradient(135deg,#14532d,#16a34a); border-color: #22c55e; }
+    .o-monitor.on-orange  { background: linear-gradient(135deg,#3b1f00,#c2410c); border-color: #fb923c; }
+    .o-monitor.on-teal    { background: linear-gradient(135deg,#134e4a,#0d9488); border-color: #5eead4; }
     .o-monitor.on-purple  { background: linear-gradient(135deg,#4c1d95,#7c3aed); border-color: #8b5cf6; box-shadow: 0 0 8px rgba(139,92,246,0.3); }
     .o-monitor.on-red     { background: linear-gradient(135deg,#7f1d1d,#dc2626); border-color: #ef4444; }
     .o-monitor.on-yellow  { background: linear-gradient(135deg,#713f12,#ca8a04); border-color: #eab308; }
@@ -870,7 +885,7 @@
       margin-bottom: 14px;
     }
     .os-section-title {
-      font-size: 8px;
+      font-size: 11px;
       color: #f59e0b;
       font-weight: 700;
       letter-spacing: 0.8px;
@@ -884,12 +899,12 @@
       align-items: center;
       gap: 6px;
       margin-bottom: 5px;
-      font-size: 8px;
+      font-size: 11px;
     }
     .os-label {
       min-width: 100px;
       color: #c9a96e;
-      font-size: 8px;
+      font-size: 11px;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
@@ -908,15 +923,15 @@
       transition: width 0.4s ease;
     }
     .os-val {
-      font-size: 8px;
+      font-size: 11px;
       color: #8b7355;
       min-width: 36px;
       text-align: right;
     }
     .os-rank-num {
-      font-size: 9px;
+      font-size: 12px;
       color: #4a3520;
-      width: 14px;
+      width: 16px;
       text-align: center;
       flex-shrink: 0;
     }
@@ -936,12 +951,12 @@
       padding: 6px 8px;
     }
     .os-kv-key {
-      font-size: 7px;
+      font-size: 10px;
       color: #8b7355;
       margin-bottom: 3px;
     }
     .os-kv-val {
-      font-size: 11px;
+      font-size: 14px;
       color: #c9a96e;
       font-weight: 700;
     }
@@ -949,13 +964,13 @@
     .os-kv-val.yellow { color: #fde68a; }
     .os-kv-val.red    { color: #f87171; }
     .os-kv-sub {
-      font-size: 6px;
+      font-size: 9px;
       color: #555;
       margin-top: 2px;
     }
 
     .os-loading {
-      font-size: 9px;
+      font-size: 12px;
       color: #555;
       text-align: center;
       padding: 20px 0;
@@ -969,7 +984,7 @@
       background: none;
       border: none;
       color: #c9a96e;
-      font-size: 8px;
+      font-size: 11px;
       cursor: pointer;
       font-family: inherit;
       text-decoration: underline;
@@ -998,12 +1013,12 @@
       transition: height 0.3s;
     }
     .os-spark-label {
-      font-size: 6px;
+      font-size: 9px;
       color: #555;
       text-align: center;
     }
     .os-spark-val {
-      font-size: 6px;
+      font-size: 9px;
       color: #8b7355;
       text-align: center;
     }
@@ -1014,16 +1029,16 @@
       align-items: center;
       gap: 6px;
       margin-bottom: 5px;
-      font-size: 8px;
+      font-size: 11px;
     }
     .os-trend-arrow {
-      font-size: 10px;
+      font-size: 13px;
       flex-shrink: 0;
-      width: 14px;
+      width: 16px;
       text-align: center;
     }
     .os-trend-val {
-      font-size: 8px;
+      font-size: 11px;
       color: #8b7355;
       min-width: 40px;
       text-align: right;
@@ -1039,10 +1054,10 @@
       border-radius: 4px;
       padding: 5px 8px;
       margin-bottom: 5px;
-      font-size: 8px;
+      font-size: 11px;
     }
     .os-deploy-name { color: #c9a96e; margin-bottom: 2px; word-break: break-word; }
-    .os-deploy-meta { font-size: 7px; color: #555; display: flex; gap: 8px; flex-wrap: wrap; margin-top: 3px; }
+    .os-deploy-meta { font-size: 10px; color: #555; display: flex; gap: 8px; flex-wrap: wrap; margin-top: 3px; }
     .os-deploy-stable    { border-left: 3px solid #4ade80; }
     .os-deploy-monitoring{ border-left: 3px solid #f59e0b; }
     .os-deploy-rolledback{ border-left: 3px solid #f87171; }
@@ -1054,14 +1069,14 @@
       align-items: flex-start;
       padding: 5px 0;
       border-bottom: 1px solid #1f1508;
-      font-size: 8px;
+      font-size: 11px;
     }
     .os-anomaly-row:last-child { border-bottom: none; }
-    .os-anomaly-icon { flex-shrink: 0; font-size: 11px; }
+    .os-anomaly-icon { flex-shrink: 0; font-size: 14px; }
     .os-anomaly-body { flex: 1; min-width: 0; }
     .os-anomaly-name { color: #fde68a; font-weight: 700; margin-bottom: 1px; }
-    .os-anomaly-detail { font-size: 7px; color: #8b7355; }
-    .os-anomaly-time { font-size: 6px; color: #555; margin-top: 2px; }
+    .os-anomaly-detail { font-size: 10px; color: #8b7355; }
+    .os-anomaly-time { font-size: 9px; color: #555; margin-top: 2px; }
     .os-severity-high   { color: #f87171; }
     .os-severity-medium { color: #fde68a; }
 
@@ -1070,7 +1085,7 @@
       display: inline-block;
       padding: 1px 5px;
       border-radius: 2px;
-      font-size: 7px;
+      font-size: 10px;
       margin-left: 4px;
     }
     .os-badge.cli    { background: #1e3a5f; color: #60a5fa; }
@@ -1124,29 +1139,34 @@
       <button onclick="toggleOfficePanel()" style="background:none;border:none;color:#888;font-size:18px;cursor:pointer;">&times;</button>
     </div>
   </div>
-  <div class="office-legend">
-    <span><span class="ol-dot" style="background:#3b82f6"></span>Working</span>
-    <span><span class="ol-dot" style="background:#22c55e"></span>Idle</span>
-    <span><span class="ol-dot" style="background:#38bdf8"></span>Break</span>
-    <span><span class="ol-dot" style="background:#555"></span>Sleeping</span>
-    <span><span class="ol-dot" style="background:#8b5cf6"></span>Talking</span>
-    <span><span class="ol-dot" style="background:#ef4444"></span>Strike</span>
-    <span><span class="ol-dot" style="background:#eab308"></span>Sick</span>
-  </div>
-  <div class="office-decor-row">
-    <span title="Water cooler">🚰</span>
-    <span title="Clock" class="office-clock" id="office-clock"></span>
-    <span title="Coffee machine">☕</span>
-  </div>
-  <div class="office-section-label">LLM MODELS</div>
-  <div class="office-desks" id="office-models"></div>
-  <div class="office-decor-shelf">
-    <span>🪴</span><span>📋</span><span>📊</span><span>🪴</span>
-  </div>
-  <div class="office-section-label">AGENTS</div>
-  <div class="office-desks" id="office-agents"></div>
-  <div class="office-decor-bottom">
-    <span>🗄️</span><span>📁</span><span>🖨️</span><span>🗑️</span><span>🪴</span>
+  <!-- desk scroll area — hides when stats panel is active -->
+  <div id="office-desk-scroll">
+    <div class="office-legend">
+      <span><span class="ol-dot" style="background:#3b82f6"></span>Working</span>
+      <span><span class="ol-dot" style="background:#22c55e"></span>Idle</span>
+      <span><span class="ol-dot" style="background:#38bdf8"></span>Break</span>
+      <span><span class="ol-dot" style="background:#fb923c"></span>Coffee Break</span>
+      <span><span class="ol-dot" style="background:#555"></span>Sleeping</span>
+      <span><span class="ol-dot" style="background:#8b5cf6"></span>Talking</span>
+      <span><span class="ol-dot" style="background:#ef4444"></span>Strike</span>
+      <span><span class="ol-dot" style="background:#eab308"></span>Sick</span>
+      <span><span class="ol-dot" style="background:#0d9488"></span>Recovering</span>
+    </div>
+    <div class="office-decor-row">
+      <span title="Water cooler">🚰</span>
+      <span title="Clock" class="office-clock" id="office-clock"></span>
+      <span title="Coffee machine">☕</span>
+    </div>
+    <div class="office-section-label">LLM MODELS</div>
+    <div class="office-desks" id="office-models"></div>
+    <div class="office-decor-shelf">
+      <span>🪴</span><span>📋</span><span>📊</span><span>🪴</span>
+    </div>
+    <div class="office-section-label">AGENTS</div>
+    <div class="office-desks" id="office-agents"></div>
+    <div class="office-decor-bottom">
+      <span>🗄️</span><span>📁</span><span>🖨️</span><span>🗑️</span><span>🪴</span>
+    </div>
   </div>
 
   <!-- ── Stats panel (hidden until 📊 STATS toggled) ── -->
@@ -1908,6 +1928,44 @@
     "Shell Agent":"👷🏼","GitHub Agent":"👷🏿‍♀️","N8N Agent":"👷🏽‍♂️","Self-Improve Agent":"🧑🏼‍🏫"
   };
 
+  // ── Workflow avatar pool — diverse skin tones, hair, and gender ────────────
+  // Each entry: emoji face + ring colour for the circular badge.
+  // Order matters — the seeded hash distributes evenly across all 12.
+  const _WF_AVATAR_POOL = [
+    { emoji: '👱🏻‍♀️', ring: '#d4a800', bg: '#2a2010' },  // blond female light
+    { emoji: '👱🏻‍♂️', ring: '#c9a860', bg: '#252010' },  // blond male  light
+    { emoji: '👩🏻',   ring: '#60a5fa', bg: '#101a2a' },  // white female
+    { emoji: '👨🏻',   ring: '#4ade80', bg: '#0f2010' },  // white male
+    { emoji: '👩🏼',   ring: '#fb923c', bg: '#2a1800' },  // medium-light female
+    { emoji: '👨🏼',   ring: '#fbbf24', bg: '#261600' },  // medium-light male (brown-blond)
+    { emoji: '👩🏽',   ring: '#f87171', bg: '#2a0f0f' },  // brown female
+    { emoji: '👨🏽',   ring: '#f59e0b', bg: '#241200' },  // brown male
+    { emoji: '👩🏾',   ring: '#a78bfa', bg: '#1a102a' },  // dark-brown female
+    { emoji: '👨🏾',   ring: '#86efac', bg: '#0d1f10' },  // dark-brown male
+    { emoji: '👩🏿',   ring: '#c4b5fd', bg: '#150e28' },  // black female
+    { emoji: '👨🏿',   ring: '#34d399', bg: '#0a1a10' },  // black male
+  ];
+
+  // Seeded hash — same workflow ID always → same avatar index
+  function _wfAvatarIdx(id) {
+    const s = String(id);
+    let h = 0;
+    for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+    return h % _WF_AVATAR_POOL.length;
+  }
+
+  function _wfAvatarBadge(id) {
+    const av = _WF_AVATAR_POOL[_wfAvatarIdx(id)];
+    return `<div title="Workflow #${_oEsc(String(id))}" style="
+      width:36px;height:36px;border-radius:50%;flex-shrink:0;
+      background:${av.bg};border:2px solid ${av.ring};
+      display:flex;align-items:center;justify-content:center;
+      font-size:20px;line-height:1;
+      box-shadow:0 0 8px ${av.ring}60,inset 0 1px 0 rgba(255,255,255,0.08);
+      cursor:default;user-select:none;
+    ">${av.emoji}</div>`;
+  }
+
   // Job titles (shown as display name) and full names (shown on click/hover)
   const _OFFICE_TITLES = {
     "Claude CLI Pro":      { title: "Claude — Architect",           full: "Claude CLI Pro" },
@@ -1936,29 +1994,33 @@
   }
 
   function _oMonClass(state) {
-    return ({working:'on-blue',idle:'on-green',break:'on-cyan',talking:'on-purple',strike:'on-red',sick:'on-yellow'})[state] || 'off';
+    return ({working:'on-blue',idle:'on-green',break:'on-cyan',coffee_break:'on-orange',recovering:'on-teal',talking:'on-purple',strike:'on-red',sick:'on-yellow'})[state] || 'off';
   }
 
   function _oScreen(w) {
     switch(w.state) {
-      case 'working': return w.task ? _oEsc(w.task.substring(0,30)) : 'Processing...';
-      case 'idle': return 'Ready';
-      case 'break': return 'Short break';
-      case 'talking': return 'w/ '+ _oEsc(w.talking_to||'?');
-      case 'strike': return 'NO CREDITS!';
-      case 'sick': return 'TOKEN ERR';
-      default: return '';
+      case 'working':      return w.task ? _oEsc(w.task.substring(0,30)) : 'Processing...';
+      case 'idle':         return 'Ready';
+      case 'break':        return 'Short break';
+      case 'coffee_break': return '☕ Coffee';
+      case 'recovering':   return 'Healing...';
+      case 'talking':      return 'w/ '+ _oEsc(w.talking_to||'?');
+      case 'strike':       return 'NO CREDITS!';
+      case 'sick':         return 'TOKEN ERR';
+      default:             return '';
     }
   }
 
   function _oOverlay(w) {
     switch(w.state) {
-      case 'sleeping': return '<span class="o-zzz">Zzz</span>';
-      case 'break': return '<span class="o-break">☕</span>';
-      case 'strike': return '<span class="o-strike-sign">🪧</span>';
-      case 'sick': return '<span class="o-sick">🤒</span>';
-      case 'talking': return '<span class="o-bubble">💬</span>';
-      default: return '';
+      case 'sleeping':     return '<span class="o-zzz">Zzz</span>';
+      case 'break':        return '<span class="o-break">☕</span>';
+      case 'coffee_break': return '<span class="o-break">☕</span>';
+      case 'recovering':   return '<span class="o-sick">🔧</span>';
+      case 'strike':       return '<span class="o-strike-sign">🪧</span>';
+      case 'sick':         return '<span class="o-sick">🤒</span>';
+      case 'talking':      return '<span class="o-bubble">💬</span>';
+      default:             return '';
     }
   }
 
@@ -1979,10 +2041,10 @@
   function _oDesk(w) {
     const av = _OFFICE_AVATARS[w.id]||'👤';
     const info = _OFFICE_TITLES[w.id] || { title: w.id, full: w.id };
-    const showTime = (w.state==='idle'||w.state==='sleeping'||w.state==='break') && w.last_worked>0;
+    const showTime = (w.state==='idle'||w.state==='sleeping'||w.state==='break'||w.state==='coffee_break') && w.last_worked>0;
     const timeAgo = w.last_worked_ago!=null ? _oTimeAgo(w.last_worked_ago) : '';
     const dateStr = w.last_worked ? _oDateTime(w.last_worked) : '';
-    const statusLabel = w.state === 'break' ? 'short break' : w.state;
+    const statusLabel = w.state === 'break' ? 'short break' : w.state === 'coffee_break' ? 'coffee break' : w.state;
 
     // Popup content
     let popupRows = '';
@@ -1996,9 +2058,11 @@
     } else {
       popupRows += `<div class="o-popup-row">Never been active yet</div>`;
     }
-    if (w.state === 'break') popupRows += `<div class="o-popup-row" style="color:#38bdf8">Taking a short break ☕</div>`;
-    if (w.state === 'strike') popupRows += `<div class="o-popup-row" style="color:#fca5a5">API credits exhausted</div>`;
-    if (w.state === 'sick') popupRows += `<div class="o-popup-row" style="color:#fde68a">Auth token invalid/expired</div>`;
+    if (w.state === 'break')        popupRows += `<div class="o-popup-row" style="color:#38bdf8">Taking a short break ☕</div>`;
+    if (w.state === 'coffee_break') popupRows += `<div class="o-popup-row" style="color:#fb923c">Coffee break — back soon ☕</div>`;
+    if (w.state === 'recovering')   popupRows += `<div class="o-popup-row" style="color:#5eead4">Self-healing in progress 🔧</div>`;
+    if (w.state === 'strike')       popupRows += `<div class="o-popup-row" style="color:#fca5a5">API credits exhausted</div>`;
+    if (w.state === 'sick')         popupRows += `<div class="o-popup-row" style="color:#fde68a">Auth token invalid/expired</div>`;
     if (w.state === 'talking' && w.talking_to) popupRows += `<div class="o-popup-row">Collaborating with: <span>${_oEsc(w.talking_to)}</span></div>`;
     popupRows += `<div class="o-popup-row" style="margin-top:4px"><a href="#" onclick="_oShowHistory('${_oEsc(w.id)}',event)" style="color:#c9a96e;font-size:8px;text-decoration:underline;">View Activity Report</a></div>`;
     if (w.id === 'N8N Agent') {
@@ -2178,12 +2242,13 @@
       const tags  = wf.tags && wf.tags.length ? wf.tags.map(t => `<span style="background:#2a1e10;border-radius:2px;padding:1px 4px;margin-left:3px;font-size:6px;color:#c9a96e">${_oEsc(t)}</span>`).join('') : '';
       const date  = wf.updatedAt ? `<span style="color:#555;font-size:6px;margin-left:4px">${_oEsc(wf.updatedAt.replace('T',' ').slice(0,16))}</span>` : '';
       return `
-        <div style="padding:5px 10px;border-bottom:1px solid #1f1508;display:flex;align-items:flex-start;gap:6px">
-          <span style="font-size:10px;flex-shrink:0;margin-top:1px">${dot}</span>
+        <div style="padding:6px 10px;border-bottom:1px solid #1f1508;display:flex;align-items:center;gap:6px">
+          <span style="font-size:10px;flex-shrink:0">${dot}</span>
           <div style="flex:1;min-width:0">
             <div style="font-size:9px;color:${color};font-weight:700;word-break:break-word">${_oEsc(wf.name)}${tags}</div>
             <div style="font-size:7px;color:#555;margin-top:1px">ID: ${_oEsc(String(wf.id))}${date}</div>
           </div>
+          ${_wfAvatarBadge(wf.id)}
         </div>`;
     }
 
@@ -2274,22 +2339,17 @@
 
   function _oToggleStats() {
     _statsOpen = !_statsOpen;
-    const panel  = document.getElementById('office-stats-panel');
-    const btn    = document.getElementById('stats-toggle');
-    // Office desk sections
-    const desks  = document.querySelectorAll(
-      '#office-panel .office-legend, #office-panel .office-decor-row, ' +
-      '#office-panel .office-section-label, #office-panel .office-desks, ' +
-      '#office-panel .office-decor-shelf, #office-panel .office-decor-bottom'
-    );
+    const statsPanel = document.getElementById('office-stats-panel');
+    const deskScroll = document.getElementById('office-desk-scroll');
+    const btn        = document.getElementById('stats-toggle');
     if (_statsOpen) {
-      desks.forEach(el => el.style.display = 'none');
-      panel.classList.add('visible');
+      deskScroll.style.display = 'none';
+      statsPanel.classList.add('visible');
       btn.classList.add('active');
       if (!_statsFetched) { _oFetchStats(); _statsFetched = true; }
     } else {
-      desks.forEach(el => el.style.display = '');
-      panel.classList.remove('visible');
+      deskScroll.style.display = '';
+      statsPanel.classList.remove('visible');
       btn.classList.remove('active');
     }
   }
@@ -2335,25 +2395,36 @@
   }
 
   async function _oFetchStats() {
-    // Fire all 4 fetches in parallel
+    // Fire ALL 10 fetches in parallel — one unified function, no patching
     const hdrs = authHeaders ? authHeaders() : {};
-    const [wisdom, report, spend, pro] = await Promise.allSettled([
-      fetch('/collective-wisdom',  { headers: hdrs }).then(r => r.json()),
-      fetch('/stats/report',       { headers: hdrs }).then(r => r.json()),
-      fetch('/credits/spend',      { headers: hdrs }).then(r => r.json()),
-      fetch('/pro-usage',          { headers: hdrs }).then(r => r.json()),
-    ]);
+    const [wisdom, report, spend, pro, trends, cycle, deploys, peer, anomalies] =
+      await Promise.allSettled([
+        fetch('/collective-wisdom',       { headers: hdrs }).then(r => r.json()),
+        fetch('/stats/report',            { headers: hdrs }).then(r => r.json()),
+        fetch('/credits/spend',           { headers: hdrs }).then(r => r.json()),
+        fetch('/pro-usage',               { headers: hdrs }).then(r => r.json()),
+        fetch('/metrics/trends?hours=24', { headers: hdrs }).then(r => r.json()),
+        fetch('/cycle-log/summary',       { headers: hdrs }).then(r => r.json()),
+        fetch('/improvement-status',      { headers: hdrs }).then(r => r.json()),
+        fetch('/peer-review-stats',       { headers: hdrs }).then(r => r.json()),
+        fetch('/anomaly-alerts/recent',   { headers: hdrs }).then(r => r.json()),
+      ]);
 
-    const wisdomData  = wisdom.status  === 'fulfilled' ? wisdom.value  : null;
-    const reportData  = report.status  === 'fulfilled' ? report.value  : null;
-    const spendData   = spend.status   === 'fulfilled' ? spend.value   : null;
-    const proData     = pro.status     === 'fulfilled' ? pro.value     : null;
+    const v = r => r.status === 'fulfilled' ? r.value : null;
+    const wisdomData = v(wisdom);
+    const reportData = v(report);
 
-    _osRenderRankings(wisdomData, reportData);
-    _osRenderRoutes(reportData);
-    _osRenderHealth(reportData, wisdomData);
-    _osRenderCost(spendData);
-    _osRenderPro(proData);
+    _osRenderRankings( wisdomData, reportData);
+    _osRenderRoutes(   reportData);
+    _osRenderHealth(   reportData, wisdomData);
+    _osRenderCost(     v(spend));
+    _osRenderPro(      v(pro));
+    _osRenderSparkline(v(pro));
+    _osRenderTrends(   v(trends));
+    _osRenderCycle(    v(cycle));
+    _osRenderDeploys(  v(deploys));
+    _osRenderPeer(     v(peer));
+    _osRenderAnomalies(v(anomalies));
   }
 
   // ── 1. Model Rankings ───────────────────────────────────────────────────
@@ -2685,27 +2756,6 @@
       </div>`;
     }).join('');
   }
-
-  // ── Patch _oFetchStats to also load the 6 new endpoints ─────────────────
-  const _oFetchStatsOrig = _oFetchStats;
-  _oFetchStats = async function() {
-    await _oFetchStatsOrig();
-    const hdrs = authHeaders ? authHeaders() : {};
-    const [trends, cycle, deploys, peer, anomalies, proExtra] = await Promise.allSettled([
-      fetch('/metrics/trends?hours=24',    { headers: hdrs }).then(r => r.json()),
-      fetch('/cycle-log/summary',          { headers: hdrs }).then(r => r.json()),
-      fetch('/improvement-status',         { headers: hdrs }).then(r => r.json()),
-      fetch('/peer-review-stats',          { headers: hdrs }).then(r => r.json()),
-      fetch('/anomaly-alerts/recent',      { headers: hdrs }).then(r => r.json()),
-      fetch('/pro-usage',                  { headers: hdrs }).then(r => r.json()),
-    ]);
-    _osRenderTrends(   trends.status    === 'fulfilled' ? trends.value    : null);
-    _osRenderCycle(    cycle.status     === 'fulfilled' ? cycle.value     : null);
-    _osRenderDeploys(  deploys.status   === 'fulfilled' ? deploys.value   : null);
-    _osRenderPeer(     peer.status      === 'fulfilled' ? peer.value      : null);
-    _osRenderAnomalies(anomalies.status === 'fulfilled' ? anomalies.value : null);
-    _osRenderSparkline(proExtra.status  === 'fulfilled' ? proExtra.value  : null);
-  };
 
   // ────────────────────────────────────────────────────────────────────────
   let _officeBgOn = localStorage.getItem('sa_office_bg') === '1';

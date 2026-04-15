@@ -504,7 +504,21 @@ def agent_log(worker_id: str, limit: int = 60):
     except Exception:
         pass
 
-    # ── Source 2: insight log (dispatched user requests) ──────────────────
+    # ── Source 2: PostgreSQL agent_activity (persistent across restarts) ────
+    try:
+        from .learning.agent_status_tracker import get_db_activity
+        db_events = get_db_activity(decoded, limit=limit)
+        for e in db_events:
+            events.append({
+                "ts":     e.get("ts", 0),
+                "type":   "state",
+                "event":  e.get("event", ""),
+                "detail": e.get("detail", ""),
+            })
+    except Exception:
+        pass
+
+    # ── Source 3: insight log (dispatched user requests) ──────────────────
     try:
         from .learning.agent_status_tracker import get_worker_history
         for h in get_worker_history(decoded, limit=limit):
@@ -1548,6 +1562,80 @@ def dashboard_improvements():
         "recent_cycles": recent_cycles,
         "applied_improvements": improvements,
         "recent_alerts": alerts,
+    }
+
+
+@app.get("/dashboard/stats-snapshot", tags=["meta"])
+def stats_snapshot():
+    """
+    Single-call stats snapshot for the self-improvement agent.
+    Aggregates: model rankings, routing decisions, health, spend,
+    pro-usage, trends, cycle log, improvement monitors, peer-review,
+    and anomaly alerts — all in one JSON blob.
+    """
+    from datetime import datetime, timezone
+    import traceback as _tb
+
+    def _safe(fn):
+        try:
+            return fn()
+        except Exception:
+            return None
+
+    # ── Rankings & routing ──────────────────────────────────────────
+    wisdom_data   = _safe(lambda: wisdom_store.get_collective_wisdom())
+    report_data   = _safe(lambda: adapter.get_stats_report())
+
+    # ── Spend & pro usage ───────────────────────────────────────────
+    spend_data    = _safe(lambda: _spend_summary())
+
+    from .learning.pro_usage_tracker import get_daily_summary as _pu_daily, get_weekly_summary as _pu_weekly
+    pro_data      = _safe(lambda: {"daily": _pu_daily(), "weekly": _pu_weekly()})
+
+    # ── Trends ──────────────────────────────────────────────────────
+    trends_data   = _safe(lambda: get_trends(hours=24))
+
+    # ── Cycle log ───────────────────────────────────────────────────
+    from .learning.improvement_cycle import get_cycle_summary, get_cycle_log
+    cycle_data    = _safe(lambda: {
+        "summary": get_cycle_summary(),
+        "recent": get_cycle_log()[:10],
+    })
+
+    # ── Improvement monitors ────────────────────────────────────────
+    from .learning.improvement_monitor import list_monitors
+    monitors      = _safe(lambda: list_monitors()) or []
+    deploys_data  = {
+        "total": len(monitors),
+        "monitoring": sum(1 for m in monitors if m.get("status") == "monitoring"),
+        "stable":     sum(1 for m in monitors if m.get("status") == "stable"),
+        "rolled_back":sum(1 for m in monitors if m.get("status") == "rolled_back"),
+        "recent": monitors[-5:],
+    }
+
+    # ── Peer review ─────────────────────────────────────────────────
+    peer_data     = _safe(lambda: adapter.analyse_peer_review_impact())
+
+    # ── Anomalies ───────────────────────────────────────────────────
+    from .learning.anomaly_alerter import get_recent_alerts
+    anomalies     = _safe(lambda: get_recent_alerts(20)) or []
+
+    # ── Agent health ────────────────────────────────────────────────
+    from .learning.agent_status_tracker import get_all_statuses
+    agent_health  = _safe(lambda: get_all_statuses())
+
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "rankings":     wisdom_data,
+        "routing":      report_data,
+        "spend":        spend_data,
+        "pro_usage":    pro_data,
+        "trends_24h":   trends_data,
+        "cycle":        cycle_data,
+        "deployments":  deploys_data,
+        "peer_review":  peer_data,
+        "anomalies":    anomalies,
+        "agent_health": agent_health,
     }
 
 
