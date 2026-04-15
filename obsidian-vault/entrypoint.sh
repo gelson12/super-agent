@@ -10,15 +10,31 @@ if [ ! -f /vault/.obsidian/community-plugins.json ]; then
     cp -r /vault-seed/.obsidian/. /vault/.obsidian/
     echo "[obsidian] Vault config seeded."
 else
-    echo "[obsidian] Existing vault found — skipping seed."
+    echo "[obsidian] Existing vault found — syncing critical config files..."
+    # Always overwrite app.json and community-plugins.json from seed
+    # so safeMode:false and plugin list are always correct even on old volumes
+    cp /vault-seed/.obsidian/app.json /vault/.obsidian/app.json
+    cp /vault-seed/.obsidian/community-plugins.json /vault/.obsidian/community-plugins.json
+    # Ensure plugin data.json (port config) is present
+    mkdir -p /vault/.obsidian/plugins/obsidian-claude-code-mcp
+    cp /vault-seed/.obsidian/plugins/obsidian-claude-code-mcp/data.json \
+       /vault/.obsidian/plugins/obsidian-claude-code-mcp/data.json
+    # Copy plugin JS files if missing (e.g. volume predates plugin install)
+    for f in main.js manifest.json styles.css; do
+        src="/vault-seed/.obsidian/plugins/obsidian-claude-code-mcp/$f"
+        dst="/vault/.obsidian/plugins/obsidian-claude-code-mcp/$f"
+        [ -f "$src" ] && [ ! -f "$dst" ] && cp "$src" "$dst"
+    done
 fi
 
-# ── Register vault with Obsidian ───────────────────────────────────────────────
-# Without obsidian.json, Obsidian opens to the welcome/onboarding screen
-# instead of loading the vault. This tells it to open /vault on startup.
+# ── Disable Obsidian auto-updates ─────────────────────────────────────────────
+# Obsidian auto-downloads the latest .asar on every boot, which wastes ~30s
+# and restarts the process unpredictably. Disable by pointing update URL to
+# a dummy value via the app config directory.
 mkdir -p /root/.config/obsidian
 cat > /root/.config/obsidian/obsidian.json << 'VAULTJSON'
 {
+  "updateMode": "manual",
   "vaults": {
     "vault1": {
       "path": "/vault",
@@ -28,7 +44,7 @@ cat > /root/.config/obsidian/obsidian.json << 'VAULTJSON'
   }
 }
 VAULTJSON
-echo "[obsidian] Vault registered at /vault."
+echo "[obsidian] Vault registered at /vault. Auto-updates disabled."
 
 # ── Start virtual display ──────────────────────────────────────────────────────
 echo "[obsidian] Starting Xvfb virtual display on :99..."
@@ -45,15 +61,15 @@ DISPLAY=:99 /obsidian/obsidian \
     --disable-dev-shm-usage &
 OBSIDIAN_PID=$!
 
-# ── Wait for MCP WebSocket to be ready (up to 60s after update) ───────────────
-echo "[obsidian] Waiting for Claude Code MCP plugin to start on port 22360..."
-for i in $(seq 1 60); do
+# ── Wait for MCP WebSocket (up to 90s — Obsidian takes ~30s to load plugins) ──
+echo "[obsidian] Waiting for Claude Code MCP plugin on port 22360..."
+for i in $(seq 1 90); do
     if nc -z localhost 22360 2>/dev/null; then
-        echo "[obsidian] MCP WebSocket server is UP on port 22360."
+        echo "[obsidian] MCP WebSocket server is UP on port 22360. Ready."
         break
     fi
-    if [ "$i" -eq 60 ]; then
-        echo "[obsidian] WARNING: MCP WebSocket did not start within 60s — plugin may need manual activation."
+    if [ "$i" -eq 90 ]; then
+        echo "[obsidian] WARNING: MCP WebSocket did not start within 90s."
     fi
     sleep 1
 done

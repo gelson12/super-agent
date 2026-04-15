@@ -39,11 +39,13 @@ RUN mkdir -p /vault-seed/.obsidian/plugins/obsidian-claude-code-mcp \
          -O /vault-seed/.obsidian/plugins/obsidian-claude-code-mcp/styles.css 2>/dev/null || true)
 
 # Write vault config files inline — avoids build context issues with subdirectories
+# safeMode:false  → allows community plugins to run (default is true = blocked)
+# updateMode:auto in obsidian.json is handled in entrypoint via --disable-updates flag
 RUN printf '["obsidian-claude-code-mcp"]\n' \
         > /vault-seed/.obsidian/community-plugins.json \
     && printf '{"port":22360}\n' \
         > /vault-seed/.obsidian/plugins/obsidian-claude-code-mcp/data.json \
-    && printf '{"promptDelete":false,"alwaysUpdateLinks":true,"newFileLocation":"root","attachmentFolderPath":"assets"}\n' \
+    && printf '{"promptDelete":false,"alwaysUpdateLinks":true,"newFileLocation":"root","attachmentFolderPath":"assets","safeMode":false}\n' \
         > /vault-seed/.obsidian/app.json \
     && printf '{"file-explorer":true,"global-search":true,"switcher":true,"editor-status":true,"command-palette":true,"file-recovery":true}\n' \
         > /vault-seed/.obsidian/core-plugins.json \
