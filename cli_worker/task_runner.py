@@ -160,7 +160,7 @@ def _run_subprocess(cmd: list[str], cwd: str | None, timeout: int) -> str:
     try:
         result = subprocess.run(
             cmd,
-            input="",  # close stdin — prevents blocking on interactive prompts without feeding spurious messages
+            stdin=subprocess.DEVNULL,  # /dev/null → immediate EOF, no pipe setup, no 3-second CLI wait
             capture_output=True,
             text=True,
             timeout=timeout,
