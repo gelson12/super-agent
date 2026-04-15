@@ -1100,71 +1100,89 @@ def _automate_browser(oauth_url: str, email: str) -> tuple[bool, str | None]:
                 _record_ratelimit_hit()
                 return False, None
 
-            _selected = False
-            _email_local = email.split("@")[0]  # e.g. "gelson_m" from "gelson_m@hotmail.com"
+            # ── Early exit: already in verification-code / magic-link mode ──────
+            # When Claude.ai sends the magic link email ON the "Continue with email"
+            # click (rather than after account selection), the selectAccount page
+            # immediately shows a code/link entry form — NOT an account picker.
+            # Indicators: "Enter the verification code", "Verify Email Address" button.
+            # In this state we must NOT click any button (doing so submits an empty
+            # code form → "There was an error verifying your code" + wasted attempt).
+            # Instead, fall straight through to the magic link wait below.
+            _in_verification_mode = (
+                "enter the verification code" in _page_text_now.lower()
+                or "verification code sent to" in _page_text_now.lower()
+                or "verify email address" in _page_text_now.lower()
+                or "check your email" in _page_text_now.lower()
+            )
+            if _in_verification_mode:
+                _log("Browser: page is already in verification-code / magic-link mode "
+                     "(Anthropic sent the email on 'Continue with email' click). "
+                     "Skipping account-selection click — proceeding directly to magic link wait.")
+                # Don't click anything. Fall through to _wait_for_verification_code() below.
+            else:
+                _selected = False
+                _email_local = email.split("@")[0]  # e.g. "gelson_m" from "gelson_m@hotmail.com"
 
-            # Candidate selectors — email-specific ones first.
-            # IMPORTANT: skip any button whose text contains "Google" or "SSO" or "different"
-            # as those would restart the flow rather than selecting the existing account.
-            _SKIP_TEXTS = ("google", "sso", "different", "reject", "customize", "cookie")
+                # Candidate selectors — email-specific ones first.
+                # IMPORTANT: skip any button whose text contains "Google" or "SSO" or "different"
+                # as those would restart the flow rather than selecting the existing account.
+                # ALSO skip "Verify Email Address" — that's a code-submission button, not account-select.
+                _SKIP_TEXTS = ("google", "sso", "different", "reject", "customize", "cookie",
+                               "verify email", "verification")
 
-            def _safe_click_candidate(_asel: str) -> bool:
-                """Try selector; return True if clicked a valid-looking element."""
-                try:
-                    _el = page.query_selector(_asel)
-                    if not (_el and _el.is_visible()):
+                def _safe_click_candidate(_asel: str) -> bool:
+                    """Try selector; return True if clicked a valid-looking element."""
+                    try:
+                        _el = page.query_selector(_asel)
+                        if not (_el and _el.is_visible()):
+                            return False
+                        _txt = (_el.inner_text() or "").strip()
+                        if any(_s in _txt.lower() for _s in _SKIP_TEXTS):
+                            _log(f"Browser: skipping selector={_asel!r} text={_txt!r} (excluded)")
+                            return False
+                        _log(f"Browser: found selector={_asel!r} text={_txt!r} — clicking")
+                        _el.click()
+                        return True
+                    except Exception as _e:
+                        _log(f"Browser: selector {_asel!r} error: {_e}")
                         return False
-                    _txt = (_el.inner_text() or "").strip()
-                    if any(_s in _txt.lower() for _s in _SKIP_TEXTS):
-                        _log(f"Browser: skipping selector={_asel!r} text={_txt!r} (excluded)")
-                        return False
-                    _log(f"Browser: found selector={_asel!r} text={_txt!r} — clicking")
-                    _el.click()
-                    return True
-                except Exception as _e:
-                    _log(f"Browser: selector {_asel!r} error: {_e}")
-                    return False
 
-            for _asel in [
-                f'button:has-text("{email}")',
-                f'[data-email="{email}"]',
-                f'div[role="button"]:has-text("{email}")',
-                f'li:has-text("{email}")',
-                f'button:has-text("{_email_local}")',
-                f'[class*="account"]:has-text("{email}")',
-                f'[class*="account"]:has-text("{_email_local}")',
-                # Exact "Continue" only — not "Continue with Google/SSO"
-                'button[type="submit"]',
-                'button:has-text("Sign in")',
-            ]:
-                if _safe_click_candidate(_asel):
-                    _log(f"Browser: account selection clicked (selector={_asel!r})")
-                    _selected = True
-                    # Wait for URL change rather than sleeping blind
-                    _prev_url = page.url
-                    for _i in range(10):
-                        time.sleep(1)
-                        if page.url != _prev_url:
-                            _log(f"Browser: URL changed after account select → {page.url[:120]}")
-                            break
-                    else:
-                        _log(f"Browser: URL unchanged after 10s: {page.url[:120]}")
-                        try:
-                            _log(f"Browser: [selectAccount post-click] body:\n{page.inner_text('body')[:800]}")
-                        except Exception:
-                            pass
-                    break
+                # Note: 'button[type="submit"]' is intentionally removed — it's too broad
+                # and matches the "Verify Email Address" code-submission button when the
+                # page transitions to verification mode mid-render.
+                for _asel in [
+                    f'button:has-text("{email}")',
+                    f'[data-email="{email}"]',
+                    f'div[role="button"]:has-text("{email}")',
+                    f'li:has-text("{email}")',
+                    f'button:has-text("{_email_local}")',
+                    f'[class*="account"]:has-text("{email}")',
+                    f'[class*="account"]:has-text("{_email_local}")',
+                    'button:has-text("Sign in")',
+                    'button:has-text("Continue")',
+                ]:
+                    if _safe_click_candidate(_asel):
+                        _log(f"Browser: account selection clicked (selector={_asel!r})")
+                        _selected = True
+                        # Wait for URL change rather than sleeping blind
+                        _prev_url = page.url
+                        for _i in range(10):
+                            time.sleep(1)
+                            if page.url != _prev_url:
+                                _log(f"Browser: URL changed after account select → {page.url[:120]}")
+                                break
+                        else:
+                            _log(f"Browser: URL unchanged after 10s: {page.url[:120]}")
+                            try:
+                                _log(f"Browser: [selectAccount post-click] body:\n{page.inner_text('body')[:800]}")
+                            except Exception:
+                                pass
+                        break
 
-            if not _selected:
-                _log("Browser: WARNING — could not find any clickable account button.")
-                # Try pressing Enter on the page as a last resort
-                try:
-                    page.keyboard.press("Enter")
-                    _log("Browser: pressed Enter on page as fallback")
-                    time.sleep(3)
-                    _log(f"Browser: URL after Enter: {page.url[:120]}")
-                except Exception:
-                    pass
+                if not _selected:
+                    _log("Browser: WARNING — could not find any clickable account button. "
+                         "The page may have transitioned to verification-code mode mid-render. "
+                         "Proceeding to magic link wait without clicking.")
 
         # Do NOT call _click_approve() here. After submitting the email and
         # selecting the account, Claude.ai shows a "check your email" page.
