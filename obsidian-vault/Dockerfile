@@ -22,7 +22,7 @@ RUN apt-get update && apt-get install -y \
 
 # Download and extract Obsidian AppImage
 # Extracting avoids the FUSE requirement in Docker containers
-RUN wget -q "https://github.com/obsidianmd/obsidian-releases/releases/download/v1.8.10/Obsidian-1.8.10.AppImage" \
+RUN wget -q "https://github.com/obsidianmd/obsidian-releases/releases/download/v1.12.7/Obsidian-1.12.7.AppImage" \
         -O /obsidian.AppImage \
     && chmod +x /obsidian.AppImage \
     && /obsidian.AppImage --appimage-extract \

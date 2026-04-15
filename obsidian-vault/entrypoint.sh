@@ -44,6 +44,16 @@ cat > /root/.config/obsidian/obsidian.json << 'VAULTJSON'
   }
 }
 VAULTJSON
+
+# Obsidian also requires a per-vault JSON file named <vaultId>.json
+cat > /root/.config/obsidian/vault1.json << 'VAULT1JSON'
+{
+  "path": "/vault",
+  "ts": 1744000000000,
+  "open": true
+}
+VAULT1JSON
+
 echo "[obsidian] Vault registered at /vault. Auto-updates disabled."
 
 # ── Start virtual display ──────────────────────────────────────────────────────
