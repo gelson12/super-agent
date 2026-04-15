@@ -21,7 +21,7 @@ This vault is the persistent knowledge base for Super Agent.
 
 ## Usage
 Claude Code and all Super Agent models (Haiku, Sonnet, Opus) can read and write notes here via the Obsidian MCP plugin.
-SEEDNODE
+SEEDNOTE
     echo "[obsidian] Vault config seeded."
 else
     echo "[obsidian] Existing vault found — syncing critical config files..."
