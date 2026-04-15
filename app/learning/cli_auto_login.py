@@ -166,8 +166,11 @@ def _log(msg: str) -> None:
 # waiting browser automation thread.
 import queue
 _verification_code_queue: queue.Queue = queue.Queue()  # carries the magic link URL
-_VERIFICATION_CODE_TIMEOUT = 180  # max seconds to wait for magic URL from n8n
-# 180s = 3 minutes: email delivery (~15s) + n8n poll interval (up to 60s) + POST + buffer
+_VERIFICATION_CODE_TIMEOUT = 360  # max seconds to wait for magic URL from n8n
+# 360s = 6 minutes: email delivery (~15s) + n8n poll interval (up to 60s) + POST + buffer.
+# Increased from 180s: Hotmail delivery can be delayed by up to 3 min from Railway IPs
+# and the browser flow itself takes ~30s before we start waiting, giving n8n just 150s
+# with the old value (only 1-2 poll cycles in the worst case).
 
 _manual_auth_code_queue: queue.Queue = queue.Queue()  # carries manual auth code from user
 _MANUAL_AUTH_CODE_TIMEOUT = 1800  # 30 minutes for user to complete browser login manually
@@ -208,6 +211,27 @@ def get_active_oauth_url() -> str:
     return _active_oauth_url
 
 
+def _drain_verification_queue() -> None:
+    """
+    Discard any stale magic link URLs that arrived during a PREVIOUS timed-out
+    attempt.  Must be called at the start of each new login attempt.
+
+    Why: if attempt N times out after 360s, a URL delivered by n8n at T+361s
+    sits in the queue.  Attempt N+1 then calls _wait_for_verification_code()
+    and immediately consumes the STALE URL from attempt N — that URL is
+    single-use and already expired, so the navigation fails silently.
+    """
+    drained = 0
+    while True:
+        try:
+            _verification_code_queue.get_nowait()
+            drained += 1
+        except queue.Empty:
+            break
+    if drained:
+        _log(f"Drained {drained} stale magic link URL(s) from previous attempt(s).")
+
+
 def _wait_for_verification_code() -> str | None:
     """Block until magic link URL arrives from n8n, or timeout."""
     _log(f"Waiting for magic link URL from n8n (timeout: {_VERIFICATION_CODE_TIMEOUT}s)...")
@@ -226,13 +250,39 @@ def _trigger_n8n_email_monitor() -> bool:
     /webhook/verification-code on inspiring-cat automatically.
 
     It has an Outlook trigger node — there is NO inbound HTTP trigger webhook.
-    Attempting to POST to n8n just gets a 404. This function now simply logs
-    that we are waiting for n8n to deliver the magic link and returns True
-    so the browser flow proceeds normally.
+    This function logs that we are waiting and also checks the workflow's active
+    status via the n8n API (when N8N_BASE_URL and N8N_API_KEY are set) so we
+    can diagnose failures faster.
     """
     _log("n8n Claude-Verification-Monitor will poll Hotmail automatically "
          f"and POST the magic link to /webhook/verification-code. "
          f"Waiting up to {_VERIFICATION_CODE_TIMEOUT}s...")
+
+    # Quick n8n API check — verify the workflow is active and not erroring.
+    # Non-fatal: we proceed even if this check fails.
+    _N8N_WORKFLOW_ID = "jxnZZwTqJ7naPKc6"
+    try:
+        import urllib.request, json as _json
+        n8n_url = os.environ.get("N8N_BASE_URL", "").rstrip("/")
+        n8n_key = os.environ.get("N8N_API_KEY", "")
+        if n8n_url and n8n_key:
+            req = urllib.request.Request(
+                f"{n8n_url}/api/v1/workflows/{_N8N_WORKFLOW_ID}",
+                headers={"X-N8N-API-KEY": n8n_key, "Accept": "application/json"},
+            )
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                wf = _json.loads(resp.read().decode())
+                active = wf.get("active", False)
+                _log(f"n8n workflow '{wf.get('name', _N8N_WORKFLOW_ID)}' active={active}")
+                if not active:
+                    _log("WARNING: Claude-Verification-Monitor workflow is INACTIVE in n8n! "
+                         "Magic link emails will NOT be delivered. "
+                         "Activate it at your n8n instance → Workflows → Claude Verification Code Monitor → toggle Active.")
+        else:
+            _log("n8n status check skipped (N8N_BASE_URL or N8N_API_KEY not set).")
+    except Exception as _n8n_e:
+        _log(f"n8n workflow status check failed (non-fatal): {_n8n_e}")
+
     return True
 
 
@@ -522,6 +572,11 @@ def _start_claude_login_pty(env: dict) -> tuple:
 
 def _do_auto_login(email: str) -> bool:
     """Core login flow — start CLI, capture URL, automate browser with n8n verification."""
+
+    # Drain any stale magic link URLs from previous failed/timed-out attempts.
+    # This prevents a late-arriving URL from attempt N from being consumed by
+    # attempt N+1 as if it were a fresh URL (see _drain_verification_queue docs).
+    _drain_verification_queue()
 
     # Step 0: DELETE the expired credentials file before running claude login.
     #
