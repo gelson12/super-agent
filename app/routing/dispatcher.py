@@ -1190,6 +1190,13 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
         response.startswith("["),
     )
 
+    # ── Vault insight hook — fire-and-forget, never blocks ───────────────
+    try:
+        from ..learning.vault_insight_hook import maybe_save_insight as _vault_hook
+        _vault_hook(message, response, model, session_id)
+    except Exception:
+        pass
+
     return _build_extended_result({
         "model_used": model,
         "response": response,
