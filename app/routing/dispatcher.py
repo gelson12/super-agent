@@ -118,6 +118,28 @@ _HANDLERS = {
     "GITHUB":   run_github_agent,
 }
 
+# ── Per-session last-agent memory (in-process, best-effort) ──────────────────
+# Tracks which operational agent handled the previous turn for each session.
+# Used to re-route short follow-up replies back to the right agent when the
+# message has no keywords (e.g. user answers "2" after the n8n agent listed options).
+_session_last_agent: dict[str, str] = {}  # session_id → "N8N" | "SHELL" | "GITHUB" | "SELF_IMPROVE"
+_SESSION_LAST_AGENT_TTL = 1800  # 30 min
+_session_last_agent_ts: dict[str, float] = {}
+
+
+def _set_last_agent(session_id: str, agent: str) -> None:
+    _session_last_agent[session_id] = agent
+    _session_last_agent_ts[session_id] = _time.time()
+
+
+def _get_last_agent(session_id: str) -> str | None:
+    if session_id not in _session_last_agent:
+        return None
+    if _time.time() - _session_last_agent_ts.get(session_id, 0) > _SESSION_LAST_AGENT_TTL:
+        _session_last_agent.pop(session_id, None)
+        return None
+    return _session_last_agent[session_id]
+
 # ── Proactive memory detection ────────────────────────────────────────────────
 
 _SAVEABLE_PATTERNS: list[tuple[str, str, int]] = [
@@ -694,6 +716,65 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
             "cache_hit": False,
         }, memory_count=_memory_count)
 
+    # ── 3b-pre. Agent follow-up re-routing ───────────────────────────────────
+    # When an operational agent (N8N / SHELL / SELF_IMPROVE / GITHUB) asked the
+    # user a clarifying question and the user replies with a short answer (e.g.
+    # "2", "option 1", "delete the old one"), the dispatcher has no keywords and
+    # would otherwise mis-route to CLAUDE (conversational). Instead, route back
+    # to the same agent that asked the question so it has the full context.
+    _last_op_agent = _get_last_agent(session_id)
+    _AGENT_CHOICE_PATTERNS = (
+        r"^\s*\d+\s*[.):]",          # starts with a digit: "2.", "2:", "2)"
+        r"^\s*(option|choice)\s+\d",  # "option 2", "choice 1"
+        r"^\s*(go with|use|pick|choose|select)\s+(option\s+)?\d",  # "go with 2"
+    )
+    import re as _re
+    _looks_like_agent_reply = (
+        _last_op_agent is not None
+        and len(message.split()) <= 30
+        and _session_ctx  # must have prior conversation in session
+        and (
+            any(_re.match(p, message.strip(), _re.IGNORECASE) for p in _AGENT_CHOICE_PATTERNS)
+            or len(message.split()) <= 10  # very short message after an operational turn
+        )
+    )
+    if _looks_like_agent_reply and not (
+        _is_n8n_request(message) or _is_shell_request(message)
+        or _is_github_request(message) or _is_self_improve_request(message)
+    ):
+        if _last_op_agent == "N8N":
+            from ..agents.n8n_agent import run_n8n_agent
+            _write_active_task(session_id, message)
+            response = _safe_agent_call(run_n8n_agent, augmented_message, agent_name="n8n_agent")
+            _clear_active_task()
+            insight_log.record(message, "N8N", response, "agent_followup", 2, session_id)
+            adapter.tick()
+            store_memory(session_id, f"Q: {message[:300]} A: {response[:300]}")
+            _set_last_agent(session_id, "N8N")
+            return _build_extended_result({
+                "model_used": "N8N",
+                "response": response,
+                "routed_by": "agent_followup:N8N",
+                "complexity": 2,
+                "cache_hit": False,
+            }, memory_count=_memory_count)
+        elif _last_op_agent in ("SHELL", "SELF_IMPROVE"):
+            _agent_fn = run_shell_agent if _last_op_agent == "SHELL" else run_self_improve_agent
+            _write_active_task(session_id, message)
+            response = _safe_agent_call(_agent_fn, augmented_message, agent_name=_last_op_agent.lower())
+            _clear_active_task()
+            insight_log.record(message, _last_op_agent, response, "agent_followup", 2, session_id)
+            adapter.tick()
+            store_memory(session_id, f"Q: {message[:300]} A: {response[:300]}")
+            _set_last_agent(session_id, _last_op_agent)
+            return _build_extended_result({
+                "model_used": _last_op_agent,
+                "response": response,
+                "routed_by": f"agent_followup:{_last_op_agent}",
+                "complexity": 2,
+                "cache_hit": False,
+            }, memory_count=_memory_count)
+
     # ── 3b. Continuation bypass ───────────────────────────────────────────────
     # Short follow-up complaints/corrections with session history skip web_search.
     # If the session context mentions a build/APK task that is incomplete,
@@ -793,6 +874,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
         insight_log.record(message, "N8N", response, "n8n_early", complexity, session_id)
         adapter.tick()
         store_memory(session_id, f"Q: {message[:300]} A: {response[:300]}")
+        _set_last_agent(session_id, "N8N")
         return _build_extended_result({
             "model_used": "N8N",
             "response": response,
@@ -810,6 +892,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
         _clear_active_task()
         insight_log.record(message, "SELF_IMPROVE", response, "self_improve", complexity, session_id)
         adapter.tick()
+        _set_last_agent(session_id, "SELF_IMPROVE")
         return _build_extended_result({
             "model_used": "SELF_IMPROVE",
             "response": response,
@@ -971,6 +1054,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
                 response = response.rstrip() + "\n\n_Noted for future reference._"
         insight_log.record(message, "SHELL", response, "shell_keywords", complexity, session_id)
         adapter.tick()
+        _set_last_agent(session_id, "SHELL")
         return _build_extended_result({
             "model_used": "SHELL",
             "response": response,
@@ -998,6 +1082,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
                 response = response.rstrip() + "\n\n_Noted for future reference._"
         insight_log.record(message, "GITHUB", response, "github_keywords", complexity, session_id)
         adapter.tick()
+        _set_last_agent(session_id, "GITHUB")
         return _build_extended_result({
             "model_used": "GITHUB",
             "response": response,
@@ -1025,6 +1110,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
                 response = response.rstrip() + "\n\n_Noted for future reference._"
         insight_log.record(message, "N8N", response, "n8n_keywords", complexity, session_id)
         adapter.tick()
+        _set_last_agent(session_id, "N8N")
         return _build_extended_result({
             "model_used": "N8N",
             "response": response,
