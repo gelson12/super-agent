@@ -54,25 +54,24 @@ _OWNER_BLOCK = (
     "on Railway.\n"
 )
 
-# ── Vault context cache — lazily loaded, refreshed every 30 min ───────────────
-_vault_ctx_cache: str = ""
-_vault_ctx_ts: float = 0.0
-_VAULT_CTX_TTL = 1800  # 30 minutes
+# ── Vault context cache ────────────────────────────────────────────────────────
+# Two-level cache:
+#   _vault_global_cache  — Welcome.md + recent notes, refreshed every 2 hours.
+#                          Warmed at first call; returned immediately on all subsequent
+#                          cache hits regardless of topic_hint. This is the base block.
+#   topic supplement     — search_files(topic_hint) result appended on top of global
+#                          cache, NOT separately cached (cheap enough per-call).
+_vault_global_cache: str = ""
+_vault_global_ts: float = 0.0
+_VAULT_GLOBAL_TTL = 7200  # 2 hours — balance freshness vs vault MCP latency
 
 
-def get_vault_context_block(topic_hint: str = "") -> str:
+def _fetch_vault_global() -> str:
     """
-    Fetch key vault notes for injection into model system prompts.
-    - Always fetches Welcome.md + latest daily review
-    - If topic_hint is provided, also fetches recent notes + topic search results
-    Cached 30 min per unique topic_hint. Never raises.
-    On failure returns stale cache (better than nothing).
+    Fetch Welcome.md + latest daily review + 3 recent notes from the vault.
+    Returns the assembled block string, or empty string on failure.
+    Never raises.
     """
-    global _vault_ctx_cache, _vault_ctx_ts
-    import time as _time
-    cache_key = topic_hint.lower().strip()[:40]
-    if _vault_ctx_cache and not cache_key and (_time.time() - _vault_ctx_ts) < _VAULT_CTX_TTL:
-        return _vault_ctx_cache
     try:
         import asyncio as _asyncio
         import datetime as _dt
@@ -81,7 +80,7 @@ def get_vault_context_block(topic_hint: str = "") -> str:
         _URL = "http://obsidian-vault.railway.internal:22360/sse"
         _today = _dt.datetime.utcnow().strftime("%Y-%m-%d")
 
-        async def _fetch():
+        async def _do_fetch():
             async with _sse(url=_URL) as (r, w):
                 async with _CS(r, w) as s:
                     await s.initialize()
@@ -90,18 +89,13 @@ def get_vault_context_block(topic_hint: str = "") -> str:
                         "read_file",
                         {"path": f"Engineering/Daily Review {_today}.md"}
                     )
+                    _rec     = await s.call_tool("get_recent_notes", {"n": 3})
                     _w = _welcome.content[0].text if _welcome.content else ""
                     _d = _daily.content[0].text   if _daily.content   else ""
-                    _recent = ""
-                    _search = ""
-                    if topic_hint:
-                        _r = await s.call_tool("get_recent_notes", {"n": 3})
-                        _recent = _r.content[0].text if _r.content else ""
-                        _s = await s.call_tool("search_files", {"query": topic_hint})
-                        _search = _s.content[0].text if _s.content else ""
-                    return _w, _d, _recent, _search
+                    _r = _rec.content[0].text     if _rec.content     else ""
+                    return _w, _d, _r, _today
 
-        _w_text, _d_text, _recent_text, _search_text = _asyncio.run(_fetch())
+        _w_text, _d_text, _recent_text, _today = _asyncio.run(_do_fetch())
         _block = "\n## KNOWLEDGE VAULT (shared Obsidian memory)\n"
         if _w_text and "not found" not in _w_text.lower():
             _block += _w_text[:600] + "\n"
@@ -109,14 +103,59 @@ def get_vault_context_block(topic_hint: str = "") -> str:
             _block += f"\n### Latest Daily Review ({_today})\n" + _d_text[:800] + "\n"
         if _recent_text and "vault is empty" not in _recent_text.lower():
             _block += f"\n### Recent Notes\n{_recent_text[:400]}\n"
-        if _search_text and "no matches" not in _search_text.lower():
-            _block += f"\n### Relevant Notes (topic: {topic_hint})\n{_search_text[:600]}\n"
-        if not cache_key:
-            _vault_ctx_cache = _block
-            _vault_ctx_ts = _time.time()
         return _block
     except Exception:
-        return _vault_ctx_cache  # stale cache on error
+        return ""
+
+
+def get_vault_context_block(topic_hint: str = "") -> str:
+    """
+    Return vault context for injection into model system prompts and agent messages.
+
+    Strategy:
+    - Global base block (Welcome + daily review + 3 recent notes) is cached 2 hours.
+      Returned from cache immediately if warm — zero MCP latency on most calls.
+    - If topic_hint is provided, a search_files() call is appended on top of the
+      global block (not separately cached — keeps the cache simple).
+    - On cold start, fetches synchronously. On vault MCP failure, returns stale cache.
+    Never raises.
+    """
+    global _vault_global_cache, _vault_global_ts
+    import time as _time
+
+    # Refresh global cache if stale or cold
+    _cache_stale = (_time.time() - _vault_global_ts) > _VAULT_GLOBAL_TTL
+    if _cache_stale:
+        _fresh = _fetch_vault_global()
+        if _fresh:
+            _vault_global_cache = _fresh
+            _vault_global_ts = _time.time()
+        # If fetch failed and we have stale cache, keep using it
+
+    _block = _vault_global_cache  # may be empty on very first call if vault is unreachable
+
+    # Append topic-specific search results on top (not cached — per-request)
+    if topic_hint and _block:
+        try:
+            import asyncio as _asyncio
+            from mcp.client.sse import sse_client as _sse
+            from mcp import ClientSession as _CS
+            _URL = "http://obsidian-vault.railway.internal:22360/sse"
+
+            async def _search():
+                async with _sse(url=_URL) as (r, w):
+                    async with _CS(r, w) as s:
+                        await s.initialize()
+                        _s = await s.call_tool("search_files", {"query": topic_hint})
+                        return _s.content[0].text if _s.content else ""
+
+            _search_text = _asyncio.run(_search())
+            if _search_text and "no matches" not in _search_text.lower():
+                _block += f"\n### Relevant Notes (topic: {topic_hint})\n{_search_text[:600]}\n"
+        except Exception:
+            pass  # topic supplement is best-effort
+
+    return _block
 
 
 def get_prompt(name: str) -> str | None:

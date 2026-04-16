@@ -349,6 +349,35 @@ async def _lifespan(app: FastAPI):
         replace_existing=True,
     )
 
+    # Weekly vault maintenance — archive notes older than 90 days, evict stale memories
+    def _vault_maintenance_job():
+        if not _should_run("vault_maintenance"):
+            return
+        try:
+            from .tools.obsidian_tools import obsidian_archive_old_notes
+            result = obsidian_archive_old_notes.invoke({"days": 90, "dry_run": False})
+            bg_log(f"Vault maintenance: archive result — {str(result)[:200]}", source="vault_maintenance")
+        except Exception as _e:
+            bg_log(f"Vault maintenance: archive error — {_e}", source="vault_maintenance")
+        try:
+            from .memory.vector_memory import _evict_old_memories
+            deleted = _evict_old_memories()
+            if deleted:
+                bg_log(f"Vault maintenance: evicted {deleted} low-importance memories older than 60 days",
+                       source="vault_maintenance")
+        except Exception as _e:
+            bg_log(f"Vault maintenance: memory eviction error — {_e}", source="vault_maintenance")
+
+    scheduler.add_job(
+        _vault_maintenance_job,
+        "cron",
+        day_of_week="tue",
+        hour=2,
+        minute=0,
+        id="vault_maintenance",
+        replace_existing=True,
+    )
+
     scheduler.start()
     yield
     # Flush insight log on shutdown so activity history survives redeploys
@@ -1212,6 +1241,151 @@ def delete_history(session_id: str):
     """Clear all messages for a session."""
     clear_session(session_id)
     return {"ok": True, "session_id": session_id, "cleared": True}
+
+
+@app.get("/memory/session/{session_id}", tags=["memory"])
+def memory_by_session(session_id: str, limit: int = 50):
+    """
+    Debug: return all stored memories for a specific session, newest first.
+    Queries both pg (if available) and JSON fallback.
+    """
+    from .memory.vector_memory import _pg_enabled, _conn_str, _json_path
+    results = []
+    if _pg_enabled and _conn_str:
+        try:
+            import psycopg2
+            conn = psycopg2.connect(_conn_str)
+            cur = conn.cursor()
+            cur.execute(
+                """SELECT content, source, memory_type, importance, created_at
+                   FROM agent_memories WHERE session_id = %s
+                   ORDER BY created_at DESC LIMIT %s""",
+                (session_id, limit),
+            )
+            for row in cur.fetchall():
+                results.append({
+                    "content": row[0], "source": row[1], "memory_type": row[2],
+                    "importance": row[3],
+                    "created_at": row[4].isoformat() if row[4] else None,
+                    "backend": "pg",
+                })
+            cur.close()
+            conn.close()
+        except Exception as e:
+            results.append({"error": str(e), "backend": "pg"})
+    if not results:
+        # JSON fallback
+        try:
+            import json as _json
+            p = _json_path()
+            if p.exists():
+                recs = []
+                with p.open(encoding="utf-8") as f:
+                    for line in f:
+                        try:
+                            r = _json.loads(line.strip())
+                            if r.get("session_id") == session_id:
+                                recs.append(r)
+                        except Exception:
+                            pass
+                recs.sort(key=lambda x: x.get("ts", 0), reverse=True)
+                for r in recs[:limit]:
+                    results.append({
+                        "content": r.get("content", ""),
+                        "source": "json_fallback", "memory_type": "general",
+                        "importance": 3, "created_at": None, "backend": "json",
+                    })
+        except Exception as e:
+            results.append({"error": str(e), "backend": "json"})
+    return {"session_id": session_id, "count": len(results), "memories": results}
+
+
+@app.get("/memory/top-importance", tags=["memory"])
+def memory_top_importance(limit: int = 20):
+    """Debug: return the top-importance memories across all sessions, ordered by importance DESC."""
+    from .memory.vector_memory import _pg_enabled, _conn_str, _json_path
+    results = []
+    if _pg_enabled and _conn_str:
+        try:
+            import psycopg2
+            conn = psycopg2.connect(_conn_str)
+            cur = conn.cursor()
+            cur.execute(
+                """SELECT content, source, memory_type, importance, session_id, created_at
+                   FROM agent_memories
+                   ORDER BY importance DESC, created_at DESC LIMIT %s""",
+                (limit,),
+            )
+            for row in cur.fetchall():
+                results.append({
+                    "content": row[0], "source": row[1], "memory_type": row[2],
+                    "importance": row[3], "session_id": row[4],
+                    "created_at": row[5].isoformat() if row[5] else None,
+                })
+            cur.close()
+            conn.close()
+            return {"count": len(results), "memories": results}
+        except Exception as e:
+            return {"error": str(e)}
+    # JSON fallback — parse importance from [IMPORTANT:type:N] tags
+    import json as _json
+    import re as _re
+    try:
+        p = _json_path()
+        if not p.exists():
+            return {"count": 0, "memories": []}
+        recs = []
+        with p.open(encoding="utf-8") as f:
+            for line in f:
+                try:
+                    r = _json.loads(line.strip())
+                    m = _re.search(r'\[IMPORTANT:[^:]+:(\d)\]', r.get("content", ""))
+                    r["_imp"] = int(m.group(1)) if m else 0
+                    if r["_imp"] > 0:
+                        recs.append(r)
+                except Exception:
+                    pass
+        recs.sort(key=lambda x: (x["_imp"], x.get("ts", 0)), reverse=True)
+        for r in recs[:limit]:
+            results.append({
+                "content": r.get("content", ""), "source": "json_fallback",
+                "memory_type": "general", "importance": r["_imp"],
+                "session_id": r.get("session_id"), "created_at": None,
+            })
+        return {"count": len(results), "memories": results}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/memory/by-type/{memory_type}", tags=["memory"])
+def memory_by_type(memory_type: str, limit: int = 50):
+    """Debug: return all memories of a given type (fact, decision, preference, goal, problem)."""
+    from .memory.vector_memory import _pg_enabled, _conn_str
+    if _pg_enabled and _conn_str:
+        try:
+            import psycopg2
+            conn = psycopg2.connect(_conn_str)
+            cur = conn.cursor()
+            cur.execute(
+                """SELECT content, source, importance, session_id, created_at
+                   FROM agent_memories WHERE memory_type = %s
+                   ORDER BY importance DESC, created_at DESC LIMIT %s""",
+                (memory_type, limit),
+            )
+            results = []
+            for row in cur.fetchall():
+                results.append({
+                    "content": row[0], "source": row[1], "importance": row[2],
+                    "session_id": row[3],
+                    "created_at": row[4].isoformat() if row[4] else None,
+                })
+            cur.close()
+            conn.close()
+            return {"memory_type": memory_type, "count": len(results), "memories": results}
+        except Exception as e:
+            return {"error": str(e)}
+    return {"memory_type": memory_type, "count": 0, "memories": [],
+            "note": "pgvector unavailable — JSON fallback doesn't index by type"}
 
 
 @app.get("/collective-wisdom", tags=["meta"])

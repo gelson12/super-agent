@@ -26,9 +26,12 @@ _KEYWORDS = {
                      "agent", "route", "model", "prompt"},
     "preference":   {"prefer", "always", "never", "don't", "instead of",
                      "rather than"},
+    "completion":   {"build succeeded", "deployed", "activated", "created workflow",
+                     "apk ready", "download link", "completed", "pushed to",
+                     "committed", "merged", "workflow activated"},
 }
-_MIN_RESPONSE_LEN  = 200
-_MIN_MSG_LEN       = 15
+_MIN_RESPONSE_LEN  = 50   # lowered from 200 — captures build completions, short deploy results
+_MIN_MSG_LEN       = 10
 _SESSION_COOLDOWN  = 900          # 15 minutes between vault writes per session
 _session_last_write: dict = {}    # {session_id: epoch_float}
 _session_lock = threading.Lock()

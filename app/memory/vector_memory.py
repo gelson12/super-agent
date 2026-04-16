@@ -82,9 +82,9 @@ def _embed(text: str) -> list[float] | None:
 
 def _ensure_source_columns() -> None:
     """
-    Idempotent: add source, memory_type, importance columns to agent_memories
-    if they don't exist yet. Called once at module init when pg is available.
-    These enable attribution (which model/source wrote this) and priority ranking.
+    Idempotent: add source, memory_type, importance, content_hash columns and
+    performance indexes to agent_memories if they don't exist yet.
+    Called once at module init when pg is available.
     """
     if not _pg_enabled or not _conn_str:
         return
@@ -93,23 +93,80 @@ def _ensure_source_columns() -> None:
         conn = psycopg2.connect(_conn_str)
         conn.autocommit = True
         cur = conn.cursor()
+        # Add columns
         for col, defn in [
-            ("source",      "VARCHAR(64)  DEFAULT 'unknown'"),
-            ("memory_type", "VARCHAR(32)  DEFAULT 'general'"),
-            ("importance",  "SMALLINT     DEFAULT 3"),
-            ("tags",        "TEXT[]       DEFAULT '{}'"),
+            ("source",       "VARCHAR(64)  DEFAULT 'unknown'"),
+            ("memory_type",  "VARCHAR(32)  DEFAULT 'general'"),
+            ("importance",   "SMALLINT     DEFAULT 3"),
+            ("tags",         "TEXT[]       DEFAULT '{}'"),
+            ("content_hash", "VARCHAR(64)  DEFAULT NULL"),
         ]:
             cur.execute(f"""
                 ALTER TABLE agent_memories
                 ADD COLUMN IF NOT EXISTS {col} {defn};
             """)
+        # Unique index on content_hash for dedup (skips NULL rows automatically)
+        cur.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS agent_memories_content_hash_idx
+                ON agent_memories (content_hash)
+                WHERE content_hash IS NOT NULL;
+        """)
+        # Indexes for session filtering and sorting
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS agent_memories_session_id_idx
+                ON agent_memories (session_id);
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS agent_memories_importance_idx
+                ON agent_memories (importance DESC);
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS agent_memories_created_at_idx
+                ON agent_memories (created_at DESC);
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS agent_memories_type_importance_idx
+                ON agent_memories (memory_type, importance DESC);
+        """)
         cur.close()
         conn.close()
     except Exception:
         pass
 
 
+def _evict_old_memories() -> int:
+    """
+    Delete low-importance memories older than 60 days to keep the table lean.
+    Returns count deleted (0 on failure or if pg unavailable).
+    Safe to call periodically — never raises.
+    """
+    if not _pg_enabled or not _conn_str:
+        return 0
+    try:
+        import psycopg2
+        conn = psycopg2.connect(_conn_str)
+        conn.autocommit = True
+        cur = conn.cursor()
+        cur.execute("""
+            DELETE FROM agent_memories
+            WHERE importance <= 2
+              AND created_at < NOW() - INTERVAL '60 days'
+        """)
+        deleted = cur.rowcount
+        cur.close()
+        conn.close()
+        return deleted
+    except Exception:
+        return 0
+
+
 _ensure_source_columns()
+
+
+def _content_hash(content: str) -> str:
+    """SHA-256 of the first 500 chars — used for dedup."""
+    import hashlib
+    return hashlib.sha256(content[:500].encode("utf-8")).hexdigest()[:64]
 
 
 def _pg_store(session_id: str, content: str,
@@ -120,15 +177,17 @@ def _pg_store(session_id: str, content: str,
         embedding = _embed(content)
         if embedding is None:
             return False
+        chash = _content_hash(content)
         import psycopg2
         conn = psycopg2.connect(_conn_str)
         cur = conn.cursor()
         cur.execute(
             """INSERT INTO agent_memories
-               (session_id, content, embedding, source, memory_type, importance)
-               VALUES (%s, %s, %s, %s, %s, %s)""",
+               (session_id, content, embedding, source, memory_type, importance, content_hash)
+               VALUES (%s, %s, %s, %s, %s, %s, %s)
+               ON CONFLICT (content_hash) DO NOTHING""",
             (session_id, content[:1000], json.dumps(embedding),
-             source[:64], memory_type[:32], importance),
+             source[:64], memory_type[:32], importance, chash),
         )
         conn.commit()
         cur.close()
@@ -138,15 +197,16 @@ def _pg_store(session_id: str, content: str,
         return False
 
 
-def _pg_retrieve(query: str, top_k: int = 5) -> list[str]:
+def _pg_retrieve(query: str, top_k: int = 5, session_id: str | None = None) -> list[str]:
     """
     Retrieve memories ranked by combined vector similarity × importance score.
-    Formula divides distance by (0.7 + importance*0.06) so higher-importance
-    memories surface first over pure cosine-similarity ordering. This prevents
-    high-volume low-importance memories from burying critical decisions.
-      importance=5 → divisor 1.0  (full boost)
-      importance=3 → divisor 0.88 (default)
-      importance=1 → divisor 0.76 (slight penalty)
+    Formula: distance / (1.0 + importance * 0.3) — stronger boost than the old
+    divisor so importance=5 memories surface 2.5× ahead of importance=1 ones.
+      importance=5 → divisor 2.5  (strong boost)
+      importance=3 → divisor 1.9  (default)
+      importance=1 → divisor 1.3  (slight penalty)
+
+    If session_id is provided, only returns memories for that session.
     """
     try:
         embedding = _embed(query)
@@ -155,13 +215,23 @@ def _pg_retrieve(query: str, top_k: int = 5) -> list[str]:
         import psycopg2
         conn = psycopg2.connect(_conn_str)
         cur = conn.cursor()
-        cur.execute(
-            """SELECT content
-               FROM agent_memories
-               ORDER BY (embedding <=> %s::vector) / (0.7 + COALESCE(importance, 3) * 0.06)
-               LIMIT %s""",
-            (json.dumps(embedding), top_k),
-        )
+        if session_id:
+            cur.execute(
+                """SELECT content
+                   FROM agent_memories
+                   WHERE session_id = %s
+                   ORDER BY (embedding <=> %s::vector) / (1.0 + COALESCE(importance, 3) * 0.3)
+                   LIMIT %s""",
+                (session_id, json.dumps(embedding), top_k),
+            )
+        else:
+            cur.execute(
+                """SELECT content
+                   FROM agent_memories
+                   ORDER BY (embedding <=> %s::vector) / (1.0 + COALESCE(importance, 3) * 0.3)
+                   LIMIT %s""",
+                (json.dumps(embedding), top_k),
+            )
         rows = cur.fetchall()
         cur.close()
         conn.close()
@@ -210,9 +280,24 @@ def _json_store(session_id: str, content: str) -> None:
     Append one memory record to the JSONL file.
     Embeds ISO timestamp + auto-extracted topics directly into the stored content
     so that when injected into a prompt the model sees WHEN and WHAT the memory is about.
+    Skips storing if an entry with the same first-60-chars prefix already exists (dedup).
     """
     try:
         path = _json_path()
+        prefix = content[:60]
+        # Quick dedup check — scan existing records for same content prefix
+        if path.exists():
+            try:
+                with path.open(encoding="utf-8") as _f:
+                    for _line in _f:
+                        try:
+                            _rec = json.loads(_line.strip())
+                            if _rec.get("content", "")[:60] == prefix:
+                                return  # duplicate — skip
+                        except Exception:
+                            pass
+            except Exception:
+                pass
         tokens = _tokenize(content)
         topics = _extract_topics(tokens)
         iso_ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
@@ -444,25 +529,29 @@ def export_memories(limit: int = 100, min_importance: int = 3) -> list[dict]:
     return results
 
 
-def retrieve_memories(query: str, top_k: int = 8) -> list[str]:
+def retrieve_memories(query: str, top_k: int = 8,
+                      session_id: str | None = None) -> list[str]:
     """
     Return the top-k most relevant past memories for a query.
+    If session_id is provided, pg retrieval is scoped to that session only.
     Uses pgvector if available, keyword scoring otherwise.
     """
     if _pg_enabled and _conn_str:
-        results = _pg_retrieve(query, top_k)
+        results = _pg_retrieve(query, top_k, session_id=session_id)
         if results:
             return results
     return _json_retrieve(query, top_k)
 
 
-def get_memory_context(query: str, top_k: int = 8) -> str:
+def get_memory_context(query: str, top_k: int = 8,
+                       session_id: str | None = None) -> str:
     """
     Called at the start of every dispatch.
     Returns a formatted context block of relevant past memories including timestamps,
     or empty string. top_k=8 ensures richer cross-session recall.
+    Pass session_id to scope retrieval to the current session only.
     """
-    memories = retrieve_memories(query, top_k=top_k)
+    memories = retrieve_memories(query, top_k=top_k, session_id=session_id)
     if not memories:
         return ""
     lines = "\n".join(f"- {m}" for m in memories)

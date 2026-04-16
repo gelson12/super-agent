@@ -584,7 +584,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
     # Always retrieve relevant past memories regardless of whether pgvector is up.
     # The JSON fallback in vector_memory.py ensures this always returns something
     # after the first few exchanges.
-    memory_ctx = get_memory_context(message)
+    memory_ctx = get_memory_context(message, session_id=session_id)
     _memory_count = memory_ctx.count("\n-") if memory_ctx else 0
     augmented_message = (memory_ctx + message) if memory_ctx else message
 
@@ -666,10 +666,10 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
     _system_haiku  = _raw_haiku.replace("{capabilities}", _caps).replace("{learned_context}", _learned)
 
     # ── 0d. Vault context injection ───────────────────────────────────────────
-    # Share Obsidian vault knowledge with ALL API models (Haiku, Sonnet).
+    # Share Obsidian vault knowledge with ALL API models (Haiku, Sonnet) AND
+    # all 4 operational agents (N8N, SHELL, GITHUB, SELF_IMPROVE) via message prefix.
     # Cached 30 min per topic — zero latency on cache hit. Falls back silently.
-    # Uses topic_hint so the vault search returns contextually relevant notes
-    # rather than always the same Welcome.md + daily review.
+    _vault_ctx = ""
     try:
         from ..prompts import get_vault_context_block as _get_vault
         _vault_hint = message[:60] if len(message) > 20 else ""
@@ -679,6 +679,13 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
     except Exception:
         _system_claude = _system_claude.replace("{vault_context}", "")
         _system_haiku  = _system_haiku.replace("{vault_context}",  "")
+
+    # Build agent-augmented message: vault knowledge prepended once for all 4 agents.
+    # Agents run LangGraph create_react_agent — they receive the user turn only (no
+    # separate system prompt injection), so vault context must travel in the message.
+    _agent_message = (
+        f"{_vault_ctx}\n{augmented_message}" if _vault_ctx else augmented_message
+    )
 
     # ── 0e. Context-loss escalation ───────────────────────────────────────────
     # If session history injection failed, we're flying blind — escalate complexity
@@ -809,11 +816,14 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
         # The outer augmented_message was built before we knew this was a follow-up
         # and may have a stale/failed session ctx. Rebuild it with the explicit label
         # "follow-up reply" so the agent understands the conversational context.
-        _followup_aug = (
+        _followup_base = (
             f"[Conversation history — this session]\n{_session_ctx}\n\n"
             f"[User's follow-up reply to your previous message]\n{memory_ctx}{message}"
             if _session_ctx
             else augmented_message  # best we have if context injection failed
+        )
+        _followup_aug = (
+            f"{_vault_ctx}\n{_followup_base}" if _vault_ctx else _followup_base
         )
 
         if _last_op_agent == "N8N":
@@ -880,7 +890,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
                 f"Return only the download URL and install instructions when done."
             )
             _write_active_task(session_id, message)
-            response = _safe_agent_call(run_shell_agent, augmented_message + _resume_instruction, authorized=authorized, agent_name="shell_agent")
+            response = _safe_agent_call(run_shell_agent, _agent_message + _resume_instruction, authorized=authorized, agent_name="shell_agent")
             _clear_active_task()
             store_memory(session_id, f"Q: {message[:300]} A: {response[:300]}")
             insight_log.record(message, "SHELL", response, "build_continuation", 1, session_id)
@@ -955,7 +965,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
     if _is_n8n_request(message):
         from ..agents.n8n_agent import run_n8n_agent
         _write_active_task(session_id, message)
-        response = _safe_agent_call(run_n8n_agent, augmented_message, agent_name="n8n_agent")
+        response = _safe_agent_call(run_n8n_agent, _agent_message, agent_name="n8n_agent")
         _clear_active_task()
         insight_log.record(message, "N8N", response, "n8n_early", complexity, session_id)
         adapter.tick()
@@ -973,7 +983,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
     if _is_self_improve_request(message):
         _write_active_task(session_id, message)
         _mark_working("Self-Improve Agent", message[:100])
-        response = run_self_improve_agent(message, authorized=authorized)
+        response = run_self_improve_agent(_agent_message, authorized=authorized)
         _mark_done("Self-Improve Agent")
         _clear_active_task()
         insight_log.record(message, "SELF_IMPROVE", response, "self_improve", complexity, session_id)
@@ -1153,7 +1163,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
         _msg_lower = message.lower()
         _shell_payload = (
             message if any(w in _msg_lower for w in _BUILD_TRIGGER_WORDS)
-            else augmented_message
+            else _agent_message
         )
         _write_active_task(session_id, message)
         _mark_working("Shell Agent", message[:100])
@@ -1184,7 +1194,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
         _write_active_task(session_id, message)
         _mark_working("GitHub Agent", message[:100])
         _mark_talking("Claude CLI Pro", "GitHub Agent")
-        response = _safe_agent_call(run_github_agent, augmented_message, agent_name="github_agent")
+        response = _safe_agent_call(run_github_agent, _agent_message, agent_name="github_agent")
         _clear_talking("Claude CLI Pro", "GitHub Agent")
         _mark_done("GitHub Agent")
         _clear_active_task()
@@ -1212,7 +1222,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
         _write_active_task(session_id, message)
         _mark_working("N8N Agent", message[:100])
         _mark_talking("Claude CLI Pro", "N8N Agent")
-        response = _safe_agent_call(run_n8n_agent, augmented_message, agent_name="n8n_agent")
+        response = _safe_agent_call(run_n8n_agent, _agent_message, agent_name="n8n_agent")
         _clear_talking("Claude CLI Pro", "N8N Agent")
         _mark_done("N8N Agent")
         _clear_active_task()
