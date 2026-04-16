@@ -3538,6 +3538,101 @@ async def chat_image(
     return {"response": response, "model_used": "CLAUDE", "routed_by": "vision", "session_id": session_id}
 
 
+# ── Unified Cross-Agent Memory API ───────────────────────────────────────────
+# These endpoints are intentionally duplicated from cli_worker/main.py so they
+# are reachable via port 8001 (the main app, behind nginx /) without needing a
+# separate nginx /memory/ routing block. Either service can serve them.
+
+class _MemoryItem(BaseModel):
+    content: str
+    memory_type: str = "fact"
+    importance: int = 3
+    source: str = "external"
+    session_id: str = "sync"
+
+class _MemoryIngestRequest(BaseModel):
+    memories: list[_MemoryItem]
+
+
+@app.post("/memory/ingest", tags=["memory"])
+def memory_ingest(req: _MemoryIngestRequest, request: Request):
+    """
+    Bulk-ingest memories from external agents (Claude Code, CLI Pro, etc.)
+    into the shared PostgreSQL memory store.
+    Protected by MEMORY_INGEST_SECRET header (X-Memory-Secret).
+    """
+    _secret = os.environ.get("MEMORY_INGEST_SECRET", "")
+    if _secret:
+        if request.headers.get("X-Memory-Secret", "") != _secret:
+            raise HTTPException(status_code=401, detail="Unauthorized")
+
+    try:
+        from .memory.vector_memory import ingest_external_memory
+        saved = 0
+        for item in req.memories:
+            ok = ingest_external_memory(
+                content=item.content,
+                memory_type=item.memory_type,
+                importance=item.importance,
+                source=item.source,
+                session_id=item.session_id,
+            )
+            if ok:
+                saved += 1
+        return {"saved": saved, "total": len(req.memories)}
+    except Exception as e:
+        raise HTTPException(500, f"Memory ingest failed: {e}")
+
+
+@app.get("/memory/export", tags=["memory"])
+def memory_export(limit: int = 100, min_importance: int = 3):
+    """
+    Export recent important memories from the shared DB for cross-agent sync.
+    No auth required — read-only, non-sensitive summaries only.
+    """
+    try:
+        from .memory.vector_memory import export_memories
+        memories = export_memories(limit=min(limit, 500), min_importance=min_importance)
+        return {"memories": memories, "count": len(memories)}
+    except Exception as e:
+        raise HTTPException(500, f"Memory export failed: {e}")
+
+
+@app.get("/memory/stats", tags=["memory"])
+def memory_stats():
+    """Memory store statistics: totals, sources, last write times."""
+    try:
+        from .memory.vector_memory import _get_pg_conn
+        conn = _get_pg_conn()
+        if not conn:
+            return {"total_memories": 0, "note": "PostgreSQL unavailable"}
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) FROM agent_memories")
+            total = cur.fetchone()[0]
+            cur.execute("""
+                SELECT COUNT(*) FROM agent_memories
+                WHERE created_at > NOW() - INTERVAL '24 hours'
+            """)
+            last_24h = cur.fetchone()[0]
+            try:
+                cur.execute("""
+                    SELECT source, COUNT(*) as cnt,
+                           MAX(created_at)::text as last_write
+                    FROM agent_memories
+                    GROUP BY source ORDER BY cnt DESC
+                """)
+                by_source = [
+                    {"source": r[0], "count": r[1], "last_write": r[2]}
+                    for r in cur.fetchall()
+                ]
+            except Exception:
+                by_source = []
+        conn.close()
+        return {"total_memories": total, "last_24h": last_24h, "by_source": by_source}
+    except Exception as e:
+        raise HTTPException(500, f"Stats failed: {e}")
+
+
 @app.post("/chat/audio", tags=["agent"])
 @limiter.limit("20/minute")
 async def chat_audio(

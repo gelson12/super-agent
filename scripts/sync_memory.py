@@ -50,10 +50,13 @@ CLI_WORKER_URL = os.environ.get(
 
 MEMORY_SECRET = os.environ.get("MEMORY_INGEST_SECRET", "")
 
-CLAUDE_MEMORY_DIR = Path(os.environ.get(
-    "CLAUDE_MEMORY_DIR",
-    r"C:\Users\Gelson\.claude\projects\c--Users-Gelson-Downloads-bjj-video-analysis\memory",
-))
+import platform as _platform
+_DEFAULT_MEMORY_DIR = (
+    r"C:\Users\Gelson\.claude\projects\c--Users-Gelson-Downloads-bjj-video-analysis\memory"
+    if _platform.system() == "Windows"
+    else "/workspace/memory"
+)
+CLAUDE_MEMORY_DIR = Path(os.environ.get("CLAUDE_MEMORY_DIR", _DEFAULT_MEMORY_DIR))
 
 DRY_RUN = "--dry-run" in sys.argv
 
