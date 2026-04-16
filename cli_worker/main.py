@@ -768,6 +768,84 @@ def memory_stats():
             raise HTTPException(500, f"Stats failed: {e}")
 
 
+@app.get("/memory/search")
+def memory_search(q: str, limit: int = 20, min_importance: int = 1, source: str | None = None):
+    """
+    Keyword search across the shared memory store.
+    Lets any agent explicitly query the knowledge base rather than relying
+    purely on passive injection at dispatch time.
+    """
+    if not q or len(q.strip()) < 2:
+        raise HTTPException(400, "Query 'q' must be at least 2 characters")
+    try:
+        from app.memory.vector_memory import search_memories
+        results = search_memories(q.strip(), limit=min(limit, 100),
+                                  min_importance=min_importance, source=source)
+        return {"query": q, "count": len(results), "results": results}
+    except Exception as e:
+        raise HTTPException(500, f"Search failed: {e}")
+
+
+@app.post("/memory/prune")
+def memory_prune(request: Request, days: int = 90, max_importance: int = 2):
+    """
+    Delete memories older than `days` with importance <= max_importance.
+    Protected by MEMORY_INGEST_SECRET. Called weekly by the scheduler.
+    """
+    _secret = os.environ.get("MEMORY_INGEST_SECRET", "")
+    if _secret and request.headers.get("X-Memory-Secret", "") != _secret:
+        raise HTTPException(401, "Unauthorized")
+    try:
+        from app.memory.vector_memory import prune_old_memories, deduplicate_memories
+        pruned = prune_old_memories(days=days, max_importance=max_importance)
+        deduped = deduplicate_memories()
+        _bg_log(f"memory/prune: removed {pruned} old + {deduped} duplicates", "memory")
+        return {"pruned": pruned, "deduplicated": deduped}
+    except Exception as e:
+        raise HTTPException(500, f"Prune failed: {e}")
+
+
+@app.post("/memory/n8n-ingest")
+def memory_n8n_ingest(payload: dict, request: Request):
+    """
+    Receive workflow outcomes from n8n and store them as memories.
+    n8n workflows (health monitor, verification monitor, etc.) call this
+    after significant events so automation outcomes feed the shared KB.
+
+    Payload: {"workflow": "...", "event": "...", "details": "...", "importance": 3}
+    Protected by N8N_API_KEY header.
+    """
+    _key = os.environ.get("N8N_API_KEY", "")
+    if _key and request.headers.get("X-N8N-Key", "") != _key:
+        raise HTTPException(401, "Unauthorized")
+    workflow = str(payload.get("workflow", "n8n"))
+    event = str(payload.get("event", ""))
+    details = str(payload.get("details", ""))
+    importance = int(payload.get("importance", 3))
+    if not event:
+        raise HTTPException(400, "event field required")
+    content = f"[n8n:{workflow}] {event}: {details}"[:800]
+    try:
+        from app.memory.vector_memory import ingest_external_memory
+        ok = ingest_external_memory(content=content, memory_type="fact",
+                                    importance=importance, source="n8n",
+                                    session_id="n8n_automation")
+        _bg_log(f"n8n memory ingest: {workflow}/{event} → {'ok' if ok else 'failed'}", "memory")
+        return {"ok": ok, "stored": content[:80]}
+    except Exception as e:
+        raise HTTPException(500, f"n8n ingest failed: {e}")
+
+
+@app.get("/memory/health")
+def memory_health():
+    """Detailed memory store health report — embedding coverage, growth rate, source breakdown."""
+    try:
+        from app.memory.vector_memory import memory_health_report
+        return memory_health_report()
+    except Exception as e:
+        raise HTTPException(500, f"Health report failed: {e}")
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("cli_worker.main:app", host="0.0.0.0", port=8002, reload=False)

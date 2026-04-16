@@ -68,12 +68,20 @@ _init_pg()
 
 
 def _embed(text: str) -> list[float] | None:
+    # Read API key directly from env so this works from any context
+    # (cli_worker, app, external script) without relative import issues.
     try:
-        from google import genai as google_genai
-        from ..config import settings
-        if not settings.gemini_api_key:
+        api_key = os.environ.get("GEMINI_API_KEY", "")
+        if not api_key:
+            try:
+                from ..config import settings
+                api_key = settings.gemini_api_key or ""
+            except Exception:
+                pass
+        if not api_key:
             return None
-        client = google_genai.Client(api_key=settings.gemini_api_key)
+        from google import genai as google_genai
+        client = google_genai.Client(api_key=api_key)
         result = client.models.embed_content(model="text-embedding-004", contents=text)
         return result.embeddings[0].values
     except Exception:
@@ -596,6 +604,168 @@ def export_memories(limit: int = 100, min_importance: int = 3) -> list[dict]:
     except Exception:
         pass
     return results
+
+
+def _get_pg_conn():
+    """Return a new psycopg2 connection or None if unavailable."""
+    if not _pg_enabled or not _conn_str:
+        return None
+    try:
+        import psycopg2
+        return psycopg2.connect(_conn_str)
+    except Exception:
+        return None
+
+
+def search_memories(query: str, limit: int = 20, min_importance: int = 1,
+                    source: str | None = None) -> list[dict]:
+    """
+    Keyword search across the memory store. Returns structured dicts.
+    Falls back to full scan with ILIKE when vector search unavailable.
+    Used by /memory/search endpoint so agents can explicitly query the KB.
+    """
+    results = []
+    if _pg_enabled and _conn_str:
+        try:
+            import psycopg2
+            conn = psycopg2.connect(_conn_str)
+            cur = conn.cursor()
+            source_clause = "AND source = %s" if source else ""
+            params = [f"%{query}%", min_importance]
+            if source:
+                params.append(source)
+            params.append(limit)
+            cur.execute(f"""
+                SELECT content, source, memory_type, importance, created_at
+                FROM agent_memories
+                WHERE content ILIKE %s
+                  AND importance >= %s
+                  {source_clause}
+                ORDER BY importance DESC, created_at DESC
+                LIMIT %s
+            """, params)
+            for row in cur.fetchall():
+                results.append({
+                    "content": row[0],
+                    "source": row[1] or "unknown",
+                    "memory_type": row[2] or "general",
+                    "importance": row[3] or 3,
+                    "created_at": row[4].isoformat() if row[4] else None,
+                })
+            cur.close()
+            conn.close()
+        except Exception:
+            pass
+    return results
+
+
+def prune_old_memories(days: int = 90, max_importance: int = 2) -> int:
+    """
+    Delete memories older than `days` with importance <= max_importance.
+    Keeps high-importance memories indefinitely. Returns number deleted.
+    Run weekly to prevent unbounded growth.
+    """
+    if not _pg_enabled or not _conn_str:
+        return 0
+    try:
+        import psycopg2
+        conn = psycopg2.connect(_conn_str)
+        cur = conn.cursor()
+        cur.execute("""
+            DELETE FROM agent_memories
+            WHERE created_at < NOW() - INTERVAL '%s days'
+              AND importance <= %s
+        """, (days, max_importance))
+        deleted = cur.rowcount
+        conn.commit()
+        cur.close()
+        conn.close()
+        return deleted
+    except Exception:
+        return 0
+
+
+def deduplicate_memories(similarity_threshold: int = 90) -> int:
+    """
+    Remove exact and near-duplicate memories. Keeps the highest-importance
+    version when duplicates exist (same content_hash or content prefix match).
+    Returns number of duplicates removed.
+    """
+    if not _pg_enabled or not _conn_str:
+        return 0
+    removed = 0
+    try:
+        import psycopg2
+        conn = psycopg2.connect(_conn_str)
+        cur = conn.cursor()
+        # Remove exact duplicates keeping highest importance
+        cur.execute("""
+            DELETE FROM agent_memories
+            WHERE id IN (
+                SELECT id FROM (
+                    SELECT id,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY LEFT(content, 200)
+                               ORDER BY importance DESC, created_at DESC
+                           ) AS rn
+                    FROM agent_memories
+                ) ranked
+                WHERE rn > 1
+            )
+        """)
+        removed = cur.rowcount
+        conn.commit()
+        cur.close()
+        conn.close()
+    except Exception:
+        pass
+    return removed
+
+
+def memory_health_report() -> dict:
+    """
+    Return a detailed health report of the memory store.
+    Used by the weekly performance report job.
+    """
+    if not _pg_enabled or not _conn_str:
+        return {"error": "PostgreSQL unavailable"}
+    try:
+        import psycopg2
+        conn = psycopg2.connect(_conn_str)
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM agent_memories")
+        total = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM agent_memories WHERE embedding IS NOT NULL")
+        with_embedding = cur.fetchone()[0]
+        cur.execute("""
+            SELECT source, COUNT(*), AVG(importance)::numeric(4,2)
+            FROM agent_memories GROUP BY source ORDER BY COUNT(*) DESC
+        """)
+        by_source = [{"source": r[0], "count": r[1], "avg_importance": float(r[2] or 0)}
+                     for r in cur.fetchall()]
+        cur.execute("""
+            SELECT COUNT(*) FROM agent_memories
+            WHERE created_at > NOW() - INTERVAL '7 days'
+        """)
+        last_7d = cur.fetchone()[0]
+        cur.execute("""
+            SELECT COUNT(*) FROM agent_memories
+            WHERE created_at > NOW() - INTERVAL '24 hours'
+        """)
+        last_24h = cur.fetchone()[0]
+        cur.close()
+        conn.close()
+        return {
+            "total": total,
+            "with_embedding": with_embedding,
+            "without_embedding": total - with_embedding,
+            "embedding_coverage_pct": round(with_embedding / total * 100, 1) if total else 0,
+            "last_24h": last_24h,
+            "last_7d": last_7d,
+            "by_source": by_source,
+        }
+    except Exception as e:
+        return {"error": str(e)}
 
 
 def retrieve_memories(query: str, top_k: int = 8,

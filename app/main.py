@@ -408,6 +408,205 @@ async def _lifespan(app: FastAPI):
         replace_existing=True,
     )
 
+    # ── Memory maintenance (weekly Wed 03:00 UTC) ─────────────────────────────
+    def _memory_maintenance_job():
+        try:
+            from .memory.vector_memory import prune_old_memories, deduplicate_memories, memory_health_report
+            pruned = prune_old_memories(days=90, max_importance=2)
+            deduped = deduplicate_memories()
+            report = memory_health_report()
+            bg_log(
+                f"Memory maintenance: pruned={pruned} deduped={deduped} "
+                f"total={report.get('total',0)} embedding_coverage={report.get('embedding_coverage_pct',0)}%",
+                source="memory_maintenance"
+            )
+        except Exception as _e:
+            bg_log(f"Memory maintenance error: {_e}", source="memory_maintenance")
+
+    scheduler.add_job(
+        _memory_maintenance_job,
+        "cron",
+        day_of_week="wed",
+        hour=3,
+        minute=0,
+        id="memory_maintenance",
+        replace_existing=True,
+    )
+
+    # ── Auto-update CLAUDE.md from recent memories (weekly Sat 04:00 UTC) ─────
+    def _claude_md_update_job():
+        if not _should_run("claude_md_update"):
+            return
+        try:
+            from .memory.vector_memory import export_memories
+            from .learning.routing_fallback import route_text
+            # Pull recent high-importance memories
+            recent = export_memories(limit=50, min_importance=4)
+            if not recent:
+                return
+            facts = "\n".join(f"- {m['content'][:200]}" for m in recent[:30])
+            # Read current CLAUDE.md
+            import os as _os
+            claude_md_path = "/app/CLAUDE.md"
+            current = ""
+            if _os.path.exists(claude_md_path):
+                with open(claude_md_path, "r", encoding="utf-8") as _f:
+                    current = _f.read()[:3000]
+            prompt = (
+                "You are a documentation updater. Given the current CLAUDE.md content and "
+                "recent important memories, identify ONLY facts that are new or contradict "
+                "the current content. Return a JSON object with key 'additions' (list of "
+                "short bullet-point strings to append to CLAUDE.md). Max 5 additions. "
+                "If nothing needs updating return {'additions': []}.\n\n"
+                f"Current CLAUDE.md (truncated):\n{current}\n\n"
+                f"Recent memories:\n{facts}"
+            )
+            result = route_text(prompt, source="claude_md_update")
+            import json as _json, re as _re
+            # Extract JSON from response
+            _match = _re.search(r'\{.*\}', result, _re.DOTALL)
+            if not _match:
+                return
+            data = _json.loads(_match.group())
+            additions = data.get("additions", [])
+            if not additions:
+                return
+            # Append to CLAUDE.md
+            new_section = "\n\n## Auto-updated insights (" + __import__('datetime').date.today().isoformat() + ")\n"
+            new_section += "\n".join(f"- {a}" for a in additions[:5])
+            with open(claude_md_path, "a", encoding="utf-8") as _f:
+                _f.write(new_section)
+            bg_log(f"CLAUDE.md updated with {len(additions)} new insights", source="claude_md_update")
+            # Commit the change via git
+            import subprocess as _sp
+            _sp.run(["git", "-C", "/app", "add", "CLAUDE.md"], capture_output=True)
+            _sp.run(["git", "-C", "/app", "commit", "-m",
+                     f"Auto-update CLAUDE.md from memory insights [{__import__('datetime').date.today()}]"],
+                    capture_output=True)
+            _sp.run(["git", "-C", "/app", "push", "origin", "master"], capture_output=True)
+        except Exception as _e:
+            bg_log(f"CLAUDE.md update error: {_e}", source="claude_md_update")
+
+    scheduler.add_job(
+        _claude_md_update_job,
+        "cron",
+        day_of_week="sat",
+        hour=4,
+        minute=0,
+        id="claude_md_update",
+        replace_existing=True,
+    )
+
+    # ── Weekly performance report (Mon 07:00 UTC — after benchmark) ───────────
+    def _weekly_performance_report_job():
+        if not _should_run("weekly_perf_report"):
+            return
+        try:
+            from .learning.insight_log import insight_log as _il
+            from .learning.adapter import adapter as _ad
+            from .memory.vector_memory import memory_health_report
+            from .learning.wisdom_store import wisdom_store as _ws
+            summary = _il.normalized_summary()
+            wisdom = _ad.wisdom_dict()
+            mem = memory_health_report()
+            drift = _ws.get_drift_summary()
+            report_lines = [
+                f"Weekly Super Agent Performance Report — {__import__('datetime').date.today()}",
+                "",
+                f"Total interactions: {summary.get('total_interactions', 0)}",
+                f"Error rate: {summary.get('error_rate_pct', 0)}%",
+                f"Model distribution: {summary.get('model_distribution', {})}",
+                "",
+                f"Memory store: {mem.get('total', 0)} total, {mem.get('last_7d', 0)} added this week",
+                f"Embedding coverage: {mem.get('embedding_coverage_pct', 0)}%",
+                "",
+                f"Haiku ceiling: {wisdom.get('haiku_ceiling', 3)}",
+                f"Analysis count: {wisdom.get('analysis_count', 0)}",
+            ]
+            if drift:
+                report_lines.append(f"\nDrift alerts: {len(drift)} active")
+                for d in drift[-3:]:
+                    report_lines.append(f"  - {d.get('model')} on {d.get('category')}: {d.get('win_rate', 0):.0%}")
+            report_text = "\n".join(report_lines)
+            bg_log(f"Weekly performance report:\n{report_text}", source="weekly_perf_report")
+            # Push to n8n for email delivery
+            try:
+                import requests as _req
+                _n8n = os.environ.get("N8N_BASE_URL", "")
+                _key = os.environ.get("N8N_API_KEY", "")
+                if _n8n and _key:
+                    _req.post(
+                        f"{_n8n}/webhook/super-agent-report",
+                        json={"report": report_text, "date": str(__import__('datetime').date.today())},
+                        headers={"X-N8N-Key": _key},
+                        timeout=10,
+                    )
+            except Exception:
+                pass
+        except Exception as _e:
+            bg_log(f"Weekly performance report error: {_e}", source="weekly_perf_report")
+
+    scheduler.add_job(
+        _weekly_performance_report_job,
+        "cron",
+        day_of_week="mon",
+        hour=7,
+        minute=0,
+        id="weekly_perf_report",
+        replace_existing=True,
+    )
+
+    # ── Proactive alerting — model-down notifications (every 30min check) ─────
+    # Piggybacks on the existing health check result and fires n8n alert
+    # when a model transitions from healthy to down for the first time.
+    _alert_state: dict = {}   # model → last_alerted_ts
+
+    def _proactive_alert_job():
+        try:
+            from .learning.agent_status_tracker import get_all_statuses
+            import time as _t
+            workers = get_all_statuses()
+            now = _t.time()
+            for w in workers:
+                model_id = w.get("id", "")
+                state = w.get("state", "")
+                if state in ("sick", "strike"):
+                    last_alerted = _alert_state.get(model_id, 0)
+                    if now - last_alerted > 3600:  # alert at most once per hour per model
+                        _alert_state[model_id] = now
+                        msg = (f"ALERT: {model_id} is {state}. "
+                               f"Last seen: {w.get('last_seen', 'unknown')}. "
+                               f"Consecutive errors: {w.get('consecutive_errors', 0)}")
+                        bg_log(msg, source="proactive_alert")
+                        # Push to n8n for email/Slack/webhook delivery
+                        try:
+                            import requests as _req
+                            _n8n = os.environ.get("N8N_BASE_URL", "")
+                            _key = os.environ.get("N8N_API_KEY", "")
+                            if _n8n and _key:
+                                _req.post(
+                                    f"{_n8n}/webhook/super-agent-alert",
+                                    json={"model": model_id, "state": state,
+                                          "message": msg, "ts": now},
+                                    headers={"X-N8N-Key": _key},
+                                    timeout=5,
+                                )
+                        except Exception:
+                            pass
+                else:
+                    # Clear alert state when model recovers
+                    _alert_state.pop(model_id, None)
+        except Exception as _e:
+            bg_log(f"Proactive alert check error: {_e}", source="proactive_alert")
+
+    scheduler.add_job(
+        _proactive_alert_job,
+        "interval",
+        minutes=30,
+        id="proactive_alert",
+        replace_existing=True,
+    )
+
     scheduler.start()
     yield
     # Flush insight log on shutdown so activity history survives redeploys
@@ -1510,16 +1709,23 @@ def submit_feedback(req: FeedbackRequest):
         )
 
         # Memory importance calibration: if rating >= 4, upgrade memories related
-        # to this exchange so they surface sooner in future retrievals (analytical #8).
+        # to this exchange so they surface sooner in future retrievals.
         _importance_upgraded = False
         if req.rating >= 4:
             try:
                 from .memory.vector_memory import upgrade_memory_importance as _upgrade
-                # Match memories that were about this message
                 _prefix = f"Q: {req.message[:100]}"
                 _importance_upgraded = _upgrade(_prefix, delta=1)
             except Exception:
                 pass
+
+        # Preference learning: record per-model rating so router can bias
+        # toward models users consistently rate highly over time.
+        try:
+            from .learning.adapter import adapter as _adapt
+            _adapt.record_preference(model, req.rating)
+        except Exception:
+            pass
 
         return {
             "ok": True,
@@ -3706,6 +3912,68 @@ def memory_stats():
         return {"total_memories": total, "last_24h": last_24h, "by_source": by_source}
     except Exception as e:
         raise HTTPException(500, f"Stats failed: {e}")
+
+
+@app.get("/memory/search", tags=["memory"])
+def memory_search(q: str, limit: int = 20, min_importance: int = 1, source: str | None = None):
+    """Keyword search the shared memory store — used by agents to explicitly query the KB."""
+    if not q or len(q.strip()) < 2:
+        raise HTTPException(400, "Query 'q' must be at least 2 characters")
+    try:
+        from .memory.vector_memory import search_memories
+        results = search_memories(q.strip(), limit=min(limit, 100),
+                                  min_importance=min_importance, source=source)
+        return {"query": q, "count": len(results), "results": results}
+    except Exception as e:
+        raise HTTPException(500, f"Search failed: {e}")
+
+
+@app.post("/memory/prune", tags=["memory"])
+def memory_prune_endpoint(request: Request, days: int = 90, max_importance: int = 2):
+    """Delete old low-importance memories. Protected by MEMORY_INGEST_SECRET."""
+    _secret = os.environ.get("MEMORY_INGEST_SECRET", "")
+    if _secret and request.headers.get("X-Memory-Secret", "") != _secret:
+        raise HTTPException(401, "Unauthorized")
+    try:
+        from .memory.vector_memory import prune_old_memories, deduplicate_memories
+        pruned = prune_old_memories(days=days, max_importance=max_importance)
+        deduped = deduplicate_memories()
+        return {"pruned": pruned, "deduplicated": deduped}
+    except Exception as e:
+        raise HTTPException(500, f"Prune failed: {e}")
+
+
+@app.post("/memory/n8n-ingest", tags=["memory"])
+def memory_n8n_ingest(payload: dict, request: Request):
+    """Receive n8n workflow outcomes and store as shared memories."""
+    _key = os.environ.get("N8N_API_KEY", "")
+    if _key and request.headers.get("X-N8N-Key", "") != _key:
+        raise HTTPException(401, "Unauthorized")
+    workflow = str(payload.get("workflow", "n8n"))
+    event = str(payload.get("event", ""))
+    details = str(payload.get("details", ""))
+    importance = int(payload.get("importance", 3))
+    if not event:
+        raise HTTPException(400, "event field required")
+    content = f"[n8n:{workflow}] {event}: {details}"[:800]
+    try:
+        from .memory.vector_memory import ingest_external_memory
+        ok = ingest_external_memory(content=content, memory_type="fact",
+                                    importance=importance, source="n8n",
+                                    session_id="n8n_automation")
+        return {"ok": ok, "stored": content[:80]}
+    except Exception as e:
+        raise HTTPException(500, f"n8n ingest failed: {e}")
+
+
+@app.get("/memory/health", tags=["memory"])
+def memory_health_endpoint():
+    """Detailed memory store health report — embedding coverage, growth, source breakdown."""
+    try:
+        from .memory.vector_memory import memory_health_report
+        return memory_health_report()
+    except Exception as e:
+        raise HTTPException(500, f"Health report failed: {e}")
 
 
 @app.post("/chat/audio", tags=["agent"])

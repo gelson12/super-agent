@@ -197,6 +197,79 @@ class Adapter:
         """Return max complexity score that Haiku should handle."""
         return self._wisdom.get("haiku_ceiling", 3)
 
+    def record_preference(self, model: str, rating: int) -> None:
+        """
+        Record a user rating (1-5) for a model's response.
+        Adjusts per-model preference scores used by get_preferred_model().
+        Rating >= 4 → positive signal. Rating <= 2 → negative signal.
+        """
+        prefs = self._wisdom.setdefault("model_preferences", {})
+        entry = prefs.setdefault(model.upper(), {"score": 0, "count": 0})
+        delta = (rating - 3)  # -2..+2 range centred at 3
+        entry["score"] = round(entry["score"] * 0.95 + delta, 3)  # exponential decay
+        entry["count"] += 1
+        self._save_wisdom()
+
+    def get_preferred_model(self, candidates: list[str]) -> Optional[str]:
+        """
+        Return the candidate model with the highest preference score.
+        Only acts when a model has >= 5 rated interactions and score > 1.0.
+        Returns None if no clear preference — caller falls back to normal routing.
+        """
+        prefs = self._wisdom.get("model_preferences", {})
+        best_model = None
+        best_score = 1.0  # minimum threshold to override routing
+        for model in candidates:
+            entry = prefs.get(model.upper(), {})
+            if entry.get("count", 0) >= 5 and entry.get("score", 0) > best_score:
+                best_score = entry["score"]
+                best_model = model
+        return best_model
+
+    def get_complexity_calibration(self) -> dict:
+        """
+        Return auto-calibrated complexity thresholds based on real interaction data.
+        Analyses the last 500 interactions and adjusts what complexity level
+        each model handles well (error rate < 15%).
+        Returns dict: {model: max_complexity_handled}
+        """
+        from .insight_log import LOG_PATH
+        calibration = self._wisdom.get("complexity_calibration", {})
+        entries: list[dict] = []
+        if os.path.exists(LOG_PATH):
+            try:
+                with open(LOG_PATH, "r", encoding="utf-8") as f:
+                    entries = json.load(f)
+            except (json.JSONDecodeError, OSError):
+                return calibration
+
+        recent = entries[-500:]
+        if len(recent) < 50:
+            return calibration
+
+        # For each model+complexity bucket, compute error rate
+        buckets: dict[tuple, dict] = {}
+        for e in recent:
+            key = (e.get("model", "?"), e.get("complexity", 3))
+            b = buckets.setdefault(key, {"total": 0, "errors": 0})
+            b["total"] += 1
+            if e.get("error"):
+                b["errors"] += 1
+
+        new_calibration: dict = {}
+        for (model, complexity), b in buckets.items():
+            if b["total"] < 5:
+                continue
+            error_rate = b["errors"] / b["total"]
+            if error_rate < 0.15:  # model handles this complexity well
+                current = new_calibration.get(model, 0)
+                new_calibration[model] = max(current, complexity)
+
+        if new_calibration:
+            self._wisdom["complexity_calibration"] = new_calibration
+            self._save_wisdom()
+        return self._wisdom.get("complexity_calibration", {})
+
     def wisdom_dict(self) -> dict:
         """Return full wisdom state for the /wisdom endpoint."""
         return dict(self._wisdom)
