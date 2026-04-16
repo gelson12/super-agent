@@ -205,29 +205,42 @@ class InsightLog:
 
     def get_error_breakdown(self, hours: float = 24.0) -> dict:
         cutoff = time.time() - hours * 3600
-        entries = [e for e in self._load_all() if e.get("ts", 0) >= cutoff and e.get("error")]
+        all_entries = self._load_all()
+        window = [e for e in all_entries if e.get("ts", 0) >= cutoff]
+        error_entries = [e for e in window if e.get("error")]
         breakdown: dict[str, int] = {}
-        for e in entries:
+        for e in error_entries:
             cat = e.get("error_category", "unknown")
             breakdown[cat] = breakdown.get(cat, 0) + 1
-        return {"hours": hours, "total_errors": len(entries), "by_category": breakdown}
+        total_requests = len(window)
+        error_rate = round(len(error_entries) / max(total_requests, 1) * 100, 1)
+        return {
+            "hours": hours,
+            "total": len(error_entries),
+            "breakdown": breakdown,
+            "error_rate_pct": error_rate,
+        }
 
     def get_latency_percentiles(self, hours: float = 24.0) -> dict:
         cutoff = time.time() - hours * 3600
-        latencies = sorted([
+        latencies_ms = sorted([
             e["latency_ms"] for e in self._load_all()
             if e.get("ts", 0) >= cutoff and "latency_ms" in e
         ])
-        if not latencies:
-            return {"hours": hours, "samples": 0}
+        if not latencies_ms:
+            return {"hours": hours, "samples": 0,
+                    "p50_s": 0, "p95_s": 0, "p99_s": 0, "avg_s": 0, "max_s": 0}
         def pct(p):
-            idx = int(len(latencies) * p / 100)
-            return round(latencies[min(idx, len(latencies)-1)], 1)
+            idx = int(len(latencies_ms) * p / 100)
+            return round(latencies_ms[min(idx, len(latencies_ms) - 1)] / 1000, 3)
         return {
-            "hours": hours, "samples": len(latencies),
-            "p50_ms": pct(50), "p95_ms": pct(95), "p99_ms": pct(99),
-            "avg_ms": round(sum(latencies)/len(latencies), 1),
-            "max_ms": round(latencies[-1], 1),
+            "hours": hours,
+            "samples": len(latencies_ms),
+            "p50_s": pct(50),
+            "p95_s": pct(95),
+            "p99_s": pct(99),
+            "avg_s": round(sum(latencies_ms) / len(latencies_ms) / 1000, 3),
+            "max_s": round(latencies_ms[-1] / 1000, 3),
         }
 
     def get_recent_entries(self, n: int = 50) -> list:

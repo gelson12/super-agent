@@ -444,13 +444,36 @@ function _destroyChart(id) {
   if (_charts[id]) { _charts[id].destroy(); delete _charts[id]; }
 }
 
+// ── Auth error banner ─────────────────────────────────────────────────────────
+let _authErrorShown = false;
+function _showAuthError() {
+  if (_authErrorShown) return;
+  _authErrorShown = true;
+  const b = document.getElementById('alert-banner');
+  document.getElementById('alert-text').textContent =
+    'Authentication required — token missing or invalid. Reload and enter your access token.';
+  b.style.background = '#1a1a2e';
+  b.style.borderColor = '#3b3b8e';
+  b.querySelector('span').textContent = '🔒';
+  b.classList.remove('hidden');
+  b.style.display = 'flex';
+}
+
 // ── Fetch helpers ─────────────────────────────────────────────────────────────
+// Returns: { data } on success, { error: 'auth'|'network'|'server' } on failure
 async function _get(path) {
   try {
     const r = await fetch(path, { headers: _authHeaders() });
+    if (r.status === 401 || r.status === 403) {
+      _showAuthError();
+      return null;
+    }
     if (!r.ok) return null;
     return await r.json();
-  } catch { return null; }
+  } catch {
+    // Network error — server unreachable
+    return null;
+  }
 }
 
 // ── Latency chart ─────────────────────────────────────────────────────────────
@@ -747,14 +770,15 @@ let _autoTimer = setInterval(loadAll, 60_000);
 
 // ── Grab token from parent page if available ──────────────────────────────────
 function _initAuth() {
-  // Try to inherit token from referrer storage if same origin
   try {
     const t = sessionStorage.getItem('sa_token') || localStorage.getItem('sa_token');
     if (!t) {
-      // Prompt once
-      const entered = prompt('Enter access token (leave blank if none):');
-      if (entered) {
-        sessionStorage.setItem('sa_token', entered);
+      const entered = prompt('Enter Super Agent access token (leave blank if auth is disabled):');
+      if (entered && entered.trim()) {
+        sessionStorage.setItem('sa_token', entered.trim());
+      } else if (entered === null) {
+        // User pressed Cancel — show auth hint but still try (server may be open)
+        _showAuthError();
       }
     }
   } catch {}

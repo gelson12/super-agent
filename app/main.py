@@ -1124,6 +1124,24 @@ def _chat_response_from_result(result: dict, session_id: str) -> ChatResponse:
 @limiter.limit("30/minute")
 def chat(req: ChatRequest, request: Request):
     """Auto-route message to best model via semantic classifier."""
+    # ── Safe word guard (API layer) ───────────────────────────────────────────
+    # Check before dispatching so blocked requests never reach agent processing
+    # and are never persisted to session history.
+    try:
+        from .security.safe_word import check_authorization as _check_auth
+        _authorized, _block_reason = _check_auth(req.message)
+        if not _authorized:
+            result = {
+                "model_used": "SECURITY",
+                "response": _block_reason,
+                "routed_by": "safe_word_guard",
+                "complexity": 0,
+                "cache_hit": False,
+            }
+            return _chat_response_from_result(result, req.session_id)
+    except Exception as _sw_e:
+        bg_log(f"Safe word check error: {_sw_e}", source="chat_endpoint")
+
     try:
         result = dispatch(req.message, session_id=req.session_id)
     except Exception as _e:

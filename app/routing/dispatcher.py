@@ -411,7 +411,7 @@ def get_routing_confidence_stats() -> dict:
             slope = 0.0
         result[route] = {
             "avg_confidence": avg,
-            "samples": len(vals),
+            "count": len(vals),
             "trend_slope": slope,
             "trend": "improving" if slope > 0.02 else "degrading" if slope < -0.02 else "stable",
         }

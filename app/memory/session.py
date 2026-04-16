@@ -68,6 +68,8 @@ def append_exchange(session_id: str, user_msg: str, ai_msg: str) -> None:
         history = get_session_history(session_id)
         history.add_user_message(user_msg)
         history.add_ai_message(ai_msg)
+        # Invalidate compression cache — new messages make the cached summary stale
+        _compress_cache.pop(session_id, None)
     except Exception as e:
         _log.warning("append_exchange failed for session %s: %s", session_id, e)
 
