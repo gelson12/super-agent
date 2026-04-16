@@ -58,7 +58,7 @@ from ..memory.vector_memory import (
     get_memory_context, store_memory, store_enriched_memory,
     extract_and_store_insights,
 )
-from ..memory.session import get_compressed_context, append_exchange
+from ..memory.session import get_compressed_context, append_exchange, get_session_history
 from ..prompts import (
     build_capabilities_block,
     SYSTEM_PROMPT_CLAUDE,
@@ -347,6 +347,52 @@ _SEARCH_KEYWORDS = {
 }
 
 _CACHEABLE_MODELS = {"HAIKU", "GEMINI", "DEEPSEEK", "CLAUDE"}
+
+# ── Routing confidence drift tracker ──────────────────────────────────────────
+# Tracks a rolling window of classifier confidence scores per route.
+# Drift in avg confidence signals the classifier is becoming misaligned with
+# this user's language — surfaced via GET /metrics/routing-confidence.
+import collections as _collections
+_CONF_WINDOW = 50  # last N calls per route
+_route_conf_history: dict[str, _collections.deque] = _collections.defaultdict(
+    lambda: _collections.deque(maxlen=_CONF_WINDOW)
+)
+
+
+def _record_routing_confidence(route: str, confidence: float) -> None:
+    """Append one confidence observation for a route. Never raises."""
+    try:
+        if confidence > 0:
+            _route_conf_history[route].append(round(confidence, 3))
+    except Exception:
+        pass
+
+
+def get_routing_confidence_stats() -> dict:
+    """
+    Return per-route avg confidence, sample count, and drift direction
+    (positive slope = improving, negative = degrading).
+    Exposed via GET /metrics/routing-confidence.
+    """
+    result = {}
+    for route, hist in _route_conf_history.items():
+        vals = list(hist)
+        if not vals:
+            continue
+        avg = round(sum(vals) / len(vals), 3)
+        # Simple slope: compare first half avg vs second half avg
+        mid = len(vals) // 2
+        if mid > 0:
+            slope = round((sum(vals[mid:]) / len(vals[mid:]) - sum(vals[:mid]) / len(vals[:mid])), 3)
+        else:
+            slope = 0.0
+        result[route] = {
+            "avg_confidence": avg,
+            "samples": len(vals),
+            "trend_slope": slope,
+            "trend": "improving" if slope > 0.02 else "degrading" if slope < -0.02 else "stable",
+        }
+    return result
 
 # ── Confidence scoring ────────────────────────────────────────────────────────
 
@@ -668,12 +714,21 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
     # ── 0d. Vault context injection ───────────────────────────────────────────
     # Share Obsidian vault knowledge with ALL API models (Haiku, Sonnet) AND
     # all 4 operational agents (N8N, SHELL, GITHUB, SELF_IMPROVE) via message prefix.
-    # Cached 30 min per topic — zero latency on cache hit. Falls back silently.
+    # Fast-path: if the message clearly maps to a keyword agent route, return the
+    # pre-warmed global cache directly (no topic search) — avoids MCP round-trip.
     _vault_ctx = ""
+    _is_clear_agent_route = (
+        _is_n8n_request(message) or _is_shell_request(message)
+        or _is_github_request(message) or _is_self_improve_request(message)
+    )
     try:
         from ..prompts import get_vault_context_block as _get_vault
-        _vault_hint = message[:60] if len(message) > 20 else ""
-        _vault_ctx = _get_vault(topic_hint=_vault_hint)
+        if _is_clear_agent_route:
+            # Use global cache only — skip per-topic search
+            _vault_ctx = _get_vault(topic_hint="")
+        else:
+            _vault_hint = message[:60] if len(message) > 20 else ""
+            _vault_ctx = _get_vault(topic_hint=_vault_hint)
         _system_claude = _system_claude.replace("{vault_context}", _vault_ctx)
         _system_haiku  = _system_haiku.replace("{vault_context}",  _vault_ctx)
     except Exception:
@@ -683,9 +738,60 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
     # Build agent-augmented message: vault knowledge prepended once for all 4 agents.
     # Agents run LangGraph create_react_agent — they receive the user turn only (no
     # separate system prompt injection), so vault context must travel in the message.
+    # Cap vault prefix at 1500 chars to avoid bloating short follow-up calls.
+    _vault_prefix = _vault_ctx[:1500] if _vault_ctx else ""
     _agent_message = (
-        f"{_vault_ctx}\n{augmented_message}" if _vault_ctx else augmented_message
+        f"{_vault_prefix}\n{augmented_message}" if _vault_prefix else augmented_message
     )
+
+    # ── 0e-extra. Session goal injection ─────────────────────────────────────
+    # On the first turn of a new session, extract the user's likely goal via Haiku
+    # and store it so every subsequent agent turn has goal context.
+    # On follow-up turns, retrieve the stored goal and prepend it.
+    _session_goal = ""
+    try:
+        _goal_key = f"__goal_{session_id}"
+        _goal_hist = get_session_history(_goal_key)
+        _existing_goals = _goal_hist.messages
+        if _existing_goals:
+            # Retrieve stored goal
+            _session_goal = _existing_goals[-1].content
+        elif _session_ctx == "" and len(message.split()) >= 5:
+            # First message of session — extract goal in background thread
+            import threading as _thr_goal
+            def _extract_goal():
+                try:
+                    from ..models.claude import ask_claude_haiku as _haiku
+                    _g = _haiku(
+                        f"In one sentence (max 20 words), what is the user trying to accomplish?\n\nMessage: {message[:400]}",
+                        system="Output only the goal sentence, no preamble."
+                    )
+                    _g = _g.strip()
+                    if _g and len(_g) > 10:
+                        _goal_hist.add_ai_message(_g)
+                except Exception:
+                    pass
+            _thr_goal.Thread(target=_extract_goal, daemon=True).start()
+    except Exception:
+        pass
+
+    if _session_goal:
+        _agent_message = (
+            f"[Session goal: {_session_goal}]\n{_agent_message}"
+        )
+        augmented_message = (
+            f"[Session goal: {_session_goal}]\n{augmented_message}"
+        )
+
+    # ── 0f. Proactive anomaly surface ─────────────────────────────────────────
+    # If a critical anomaly was detected within the last 5 minutes by the anomaly
+    # alerter, prepend a brief notice to the response so the user sees it in-band.
+    _pending_anomaly = ""
+    try:
+        from ..learning.anomaly_alerter import get_recent_alert as _get_anomaly
+        _pending_anomaly = _get_anomaly(max_age_s=300) or ""
+    except Exception:
+        pass
 
     # ── 0e. Context-loss escalation ───────────────────────────────────────────
     # If session history injection failed, we're flying blind — escalate complexity
@@ -693,6 +799,68 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
     if _ctx_injection_failed:
         complexity = score_complexity(message)
         complexity = max(complexity, 3)  # at minimum Sonnet, not Haiku
+
+    # ── 0g. Compound query decomposition ─────────────────────────────────────
+    # Detect messages with multiple independent requests separated by "AND", "ALSO",
+    # "THEN", "+" — fan each sub-request to the right agent and merge responses.
+    # Only applies when: no force_model, message > 15 words, at least one separator
+    # maps to two DIFFERENT agents. Falls through silently on any failure.
+    _COMPOUND_SPLITS = (" and also ", " and then ", " then ", " also ", " plus ")
+    _msg_norm = " " + message.lower() + " "
+    _split_on = next(
+        (s for s in _COMPOUND_SPLITS if _msg_norm.count(s) == 1 and len(message.split()) > 15),
+        None,
+    )
+    if _split_on and not force_model:
+        try:
+            _sep = _split_on.strip()
+            # Case-insensitive split on first occurrence
+            import re as _re_compound
+            _parts = _re_compound.split(rf'\b{_re_compound.escape(_sep)}\b', message, maxsplit=1, flags=_re_compound.IGNORECASE)
+            if len(_parts) == 2:
+                _p1, _p2 = _parts[0].strip(), _parts[1].strip()
+                def _quick_route(txt: str) -> str:
+                    if _is_n8n_request(txt):     return "N8N"
+                    if _is_shell_request(txt):   return "SHELL"
+                    if _is_github_request(txt):  return "GITHUB"
+                    if _is_self_improve_request(txt): return "SELF_IMPROVE"
+                    return "GENERAL"
+                _r1 = _quick_route(_p1)
+                _r2 = _quick_route(_p2)
+                # Only decompose if both parts are substantive and map to different agents
+                _AGENT_ROUTES_SET = {"N8N", "SHELL", "GITHUB", "SELF_IMPROVE"}
+                if (
+                    len(_p1.split()) >= 4 and len(_p2.split()) >= 4
+                    and _r1 in _AGENT_ROUTES_SET and _r2 in _AGENT_ROUTES_SET
+                    and _r1 != _r2
+                ):
+                    import threading as _thr_c
+                    _sub_responses: dict = {}
+                    def _run_sub(part, route, key):
+                        try:
+                            _sub_responses[key] = dispatch(part, session_id=session_id)
+                        except Exception as _e:
+                            _sub_responses[key] = {"response": f"[Sub-task failed: {_e}]", "model_used": route}
+                    _t1 = _thr_c.Thread(target=_run_sub, args=(_p1, _r1, "a"), daemon=True)
+                    _t2 = _thr_c.Thread(target=_run_sub, args=(_p2, _r2, "b"), daemon=True)
+                    _t1.start(); _t2.start()
+                    _t1.join(timeout=120); _t2.join(timeout=120)
+                    if "a" in _sub_responses and "b" in _sub_responses:
+                        _resp_a = _sub_responses["a"].get("response", "")
+                        _resp_b = _sub_responses["b"].get("response", "")
+                        _combined = f"**Part 1** ({_r1}):\n{_resp_a}\n\n---\n\n**Part 2** ({_r2}):\n{_resp_b}"
+                        return _build_extended_result({
+                            "model_used": f"{_r1}+{_r2}",
+                            "response": _combined,
+                            "routed_by": "compound_decomposed",
+                            "complexity": max(
+                                _sub_responses["a"].get("complexity", 2),
+                                _sub_responses["b"].get("complexity", 2),
+                            ),
+                            "cache_hit": False,
+                        }, memory_count=_memory_count)
+        except Exception:
+            pass  # Fall through to normal routing on any failure
 
     # ── 1. Safe word guard ────────────────────────────────────────────────────
     authorized, block_reason = check_authorization(message)
@@ -1054,6 +1222,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
 
     _ai_route, _ai_conf, _classifier_timed_out = _classify_with_timeout(message)
     _routing_confidence = _ai_conf
+    _record_routing_confidence(_ai_route, _ai_conf)
 
     # Keyword detection (always instant)
     _kw_route_raw = None
@@ -1172,7 +1341,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
         _clear_active_task()
         if _agent_response_is_error(response):
             _mark_error("Shell Agent", response[:200])
-            response = _auto_investigate("SHELL", message, response, full_ctx=augmented_message)
+            response = _auto_investigate("SHELL", message, response, full_ctx=_agent_message)
         store_memory(session_id, f"Q: {message[:300]} A: {response[:300]}")
         _sav = _detect_saveable_content(message, response)
         if _sav:
@@ -1200,7 +1369,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
         _clear_active_task()
         if _agent_response_is_error(response):
             _mark_error("GitHub Agent", response[:200])
-            response = _auto_investigate("GITHUB", message, response, full_ctx=augmented_message)
+            response = _auto_investigate("GITHUB", message, response, full_ctx=_agent_message)
         store_memory(session_id, f"Q: {message[:300]} A: {response[:300]}")
         _sav = _detect_saveable_content(message, response)
         if _sav:
@@ -1228,7 +1397,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
         _clear_active_task()
         if _agent_response_is_error(response):
             _mark_error("N8N Agent", response[:200])
-            response = _auto_investigate("N8N", message, response, full_ctx=augmented_message)
+            response = _auto_investigate("N8N", message, response, full_ctx=_agent_message)
         store_memory(session_id, f"Q: {message[:300]} A: {response[:300]}")
         _sav = _detect_saveable_content(message, response)
         if _sav:
@@ -1504,6 +1673,21 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
         _vault_hook(message, response, model, session_id)
     except Exception:
         pass
+
+    # ── Routing audit trail — store routed_by + confidence in session history ──
+    # Allows self_improve_agent to answer "why did you route that?" per session.
+    try:
+        _audit_hist = get_session_history(f"__audit_{session_id}")
+        _audit_hist.add_user_message(
+            f"route:{routed_by}|model:{model}|conf:{_routing_confidence:.2f}"
+            f"|complexity:{complexity}|msg:{message[:80]}"
+        )
+    except Exception:
+        pass
+
+    # ── Proactive anomaly notice ──────────────────────────────────────────────
+    if _pending_anomaly:
+        response = f"⚠️ **System Alert:** {_pending_anomaly}\n\n{response}"
 
     return _build_extended_result({
         "model_used": model,

@@ -111,6 +111,14 @@ def _ensure_source_columns() -> None:
                 ON agent_memories (content_hash)
                 WHERE content_hash IS NOT NULL;
         """)
+        # One-time backfill: compute content_hash for legacy rows that have NULL.
+        # Done in a single UPDATE so subsequent deploys are instant no-ops (WHERE IS NULL).
+        cur.execute("""
+            UPDATE agent_memories
+            SET content_hash = substr(md5(left(content, 500)), 1, 32)
+            WHERE content_hash IS NULL
+              AND content IS NOT NULL;
+        """)
         # Indexes for session filtering and sorting
         cur.execute("""
             CREATE INDEX IF NOT EXISTS agent_memories_session_id_idx
@@ -132,6 +140,33 @@ def _ensure_source_columns() -> None:
         conn.close()
     except Exception:
         pass
+
+
+def upgrade_memory_importance(content_prefix: str, delta: int = 1) -> bool:
+    """
+    Upgrade the importance of an existing memory by `delta` (capped at 5).
+    Matches on the first 100 chars of content. Used by the feedback loop to
+    reinforce memories that were cited in highly-rated responses.
+    Returns True if a row was updated.
+    """
+    if not _pg_enabled or not _conn_str:
+        return False
+    try:
+        import psycopg2
+        conn = psycopg2.connect(_conn_str)
+        conn.autocommit = True
+        cur = conn.cursor()
+        cur.execute("""
+            UPDATE agent_memories
+            SET importance = LEAST(importance + %s, 5)
+            WHERE LEFT(content, 100) = LEFT(%s, 100)
+        """, (delta, content_prefix))
+        updated = cur.rowcount > 0
+        cur.close()
+        conn.close()
+        return updated
+    except Exception:
+        return False
 
 
 def _evict_old_memories() -> int:
@@ -275,29 +310,52 @@ def _extract_topics(tokens: set[str]) -> list[str]:
     return [topic for topic, kws in _TOPIC_MAP.items() if tokens & kws] or ["general"]
 
 
-def _json_store(session_id: str, content: str) -> None:
+# In-memory prefix set for O(1) JSON dedup — populated lazily on first store call.
+# Keyed by the path string so it resets if path changes (Railway /workspace vs local).
+_json_prefix_cache: dict[str, set[str]] = {}   # path_str → set of content[:60]
+_json_prefix_loaded: dict[str, bool]   = {}    # path_str → whether file was scanned
+
+
+def _ensure_prefix_cache(path: Path) -> set[str]:
     """
-    Append one memory record to the JSONL file.
-    Embeds ISO timestamp + auto-extracted topics directly into the stored content
-    so that when injected into a prompt the model sees WHEN and WHAT the memory is about.
-    Skips storing if an entry with the same first-60-chars prefix already exists (dedup).
+    Lazily load content prefixes from the JSONL file into an in-memory set.
+    Only scans the file once per process lifetime per path.
+    Returns the live set (callers mutate it directly).
     """
-    try:
-        path = _json_path()
-        prefix = content[:60]
-        # Quick dedup check — scan existing records for same content prefix
+    key = str(path)
+    if not _json_prefix_loaded.get(key):
+        prefixes: set[str] = set()
         if path.exists():
             try:
                 with path.open(encoding="utf-8") as _f:
                     for _line in _f:
                         try:
                             _rec = json.loads(_line.strip())
-                            if _rec.get("content", "")[:60] == prefix:
-                                return  # duplicate — skip
+                            c = _rec.get("content", "")
+                            if c:
+                                prefixes.add(c[:60])
                         except Exception:
                             pass
             except Exception:
                 pass
+        _json_prefix_cache[key] = prefixes
+        _json_prefix_loaded[key] = True
+    return _json_prefix_cache[key]
+
+
+def _json_store(session_id: str, content: str) -> None:
+    """
+    Append one memory record to the JSONL file.
+    Embeds ISO timestamp + auto-extracted topics directly into the stored content
+    so that when injected into a prompt the model sees WHEN and WHAT the memory is about.
+    Dedup via in-memory prefix set — O(1) after first call.
+    """
+    try:
+        path = _json_path()
+        prefix = content[:60]
+        prefixes = _ensure_prefix_cache(path)
+        if prefix in prefixes:
+            return  # duplicate — skip
         tokens = _tokenize(content)
         topics = _extract_topics(tokens)
         iso_ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
@@ -312,6 +370,8 @@ def _json_store(session_id: str, content: str) -> None:
         }
         with path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(record) + "\n")
+        # Update in-memory set so next store in this process doesn't need a file scan
+        prefixes.add(tagged[:60])
     except Exception:
         pass
 

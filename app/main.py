@@ -241,6 +241,20 @@ async def _lifespan(app: FastAPI):
             bg_log(f"SESSION DB FAILED at startup: {e} — session memory unavailable", source="startup")
     _threading.Thread(target=_validate_session_db, daemon=True).start()
 
+    # Pre-warm vault context cache — fetches Welcome.md + daily review + recent notes
+    # in a background thread so the first user request never pays the cold-start penalty.
+    def _prewarm_vault():
+        try:
+            import time as _t
+            _t.sleep(10)  # let FastAPI fully bind first
+            from .prompts import get_vault_context_block as _gvc
+            _gvc()  # warms _vault_global_cache
+            bg_log("Vault context cache pre-warmed successfully", source="startup")
+        except Exception as _e:
+            bg_log(f"Vault pre-warm skipped (vault unreachable): {_e}", source="startup")
+    import threading as _vault_t
+    _vault_t.Thread(target=_prewarm_vault, daemon=True).start()
+
     # Seed agent status tracker from insight log so dashboard doesn't show all sleeping
     try:
         from .learning.agent_status_tracker import seed_from_insight_log, seed_live_status
@@ -1453,6 +1467,18 @@ def submit_feedback(req: FeedbackRequest):
             session_id=req.session_id,
         )
 
+        # Memory importance calibration: if rating >= 4, upgrade memories related
+        # to this exchange so they surface sooner in future retrievals (analytical #8).
+        _importance_upgraded = False
+        if req.rating >= 4:
+            try:
+                from .memory.vector_memory import upgrade_memory_importance as _upgrade
+                # Match memories that were about this message
+                _prefix = f"Q: {req.message[:100]}"
+                _importance_upgraded = _upgrade(_prefix, delta=1)
+            except Exception:
+                pass
+
         return {
             "ok": True,
             "recorded": {
@@ -1460,6 +1486,7 @@ def submit_feedback(req: FeedbackRequest):
                 "category": category,
                 "outcome": "loss" if is_error else "win",
                 "correction_saved": bool(req.correction),
+                "importance_upgraded": _importance_upgraded,
             }
         }
     except Exception as e:
@@ -3139,6 +3166,20 @@ def metrics_history(hours: float = 48.0):
     from .learning.metrics_store import get_recent
     snaps = get_recent(hours=hours)
     return {"hours": hours, "count": len(snaps), "snapshots": snaps[-200:]}
+
+
+@app.get("/metrics/routing-confidence", tags=["metrics"])
+def routing_confidence_stats():
+    """
+    Per-route classifier confidence drift analysis.
+    Shows avg confidence, sample count, and trend slope (improving/degrading/stable)
+    over the last 50 classifier calls per route.
+
+    Degrading confidence on a route means the classifier is less certain about
+    routing those requests — may signal keyword set drift or prompt misalignment.
+    """
+    from .routing.dispatcher import get_routing_confidence_stats
+    return {"routes": get_routing_confidence_stats()}
 
 
 @app.get("/credits/spend", tags=["meta"])

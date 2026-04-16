@@ -212,3 +212,25 @@ def get_recent_alerts(n: int = 20) -> list[dict]:
         return list(reversed(_load()))[:n]
     except Exception:
         return []
+
+
+def get_recent_alert(max_age_s: int = 300) -> str:
+    """
+    Return a human-readable summary of the most recent HIGH severity alert
+    fired within max_age_s seconds. Used by the dispatcher to surface critical
+    anomalies in-band to the user without them having to check logs.
+    Returns empty string if no recent high-severity alert exists.
+    """
+    try:
+        cutoff = time.time() - max_age_s
+        for alert in reversed(_load()):
+            if (
+                alert.get("fired_at_ts", 0) >= cutoff
+                and alert.get("severity", "") in ("high", "critical")
+            ):
+                name = alert.get("name", "unknown")
+                value = alert.get("metric_value", "")
+                return f"{name}: {value}" if value else name
+        return ""
+    except Exception:
+        return ""
