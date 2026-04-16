@@ -1,39 +1,86 @@
 """
 One-time seed script — pushes Claude Code local memories into the shared DB.
+Writes directly via psycopg2 so it works even when Gemini embeddings are unavailable.
+
 Run from inside the inspiring-cat container:
   cd /app && python scripts/seed_memories.py
+  OR:
+  curl -sL https://raw.githubusercontent.com/gelson12/super-agent/master/scripts/seed_memories.py -o /tmp/seed.py && python /tmp/seed.py
 """
-import json, sys, urllib.request, urllib.error, os
+import hashlib, json, os, sys
 
-SECRET = os.environ.get("MEMORY_INGEST_SECRET", "2dc6c69574c14d615ce146e54640aa13030dade7aa86697c")
-URL = "http://127.0.0.1:8003/memory/ingest"
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
+if not DATABASE_URL:
+    print("ERROR: DATABASE_URL not set", flush=True)
+    sys.exit(1)
+
+conn_str = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
 MEMORIES = [
-  {"content": "[Memory: reference_super_agent_repo]\nLocal path: c:/Users/Gelson/Downloads/super-agent/\n\nKey files:\n- n8n/business_hub_workflow.json -- 15-service webhook router\n- app/tools/n8n_tools.py -- Python HTTP wrappers for n8n REST API\n- app/agents/n8n_agent.py -- n8n agent\n- app/mcp/n8n_mcp_server.py -- MCP server exposing n8n as tools for Claude CLI\n- .mcp.json -- registers n8n MCP server with Claude Code\nWorkflow design docs: c:/Users/Gelson/Downloads/Insightful n8n Workflows/", "memory_type": "fact", "importance": 3, "source": "claude_code", "session_id": "claude_code_sync"},
-  {"content": "[Memory: project_railway_infra]\nRailway project: Jarvis Projects. Project ID: 4c972469-6e49-4ac5-9460-5e65b7eaba07. Env ID: ab62ec1d-da97-44f4-83eb-489242f8ebf7.\nServices: VS-Code-inspiring-cat (7cf85f11, inspiring-cat-production.up.railway.app), super-agent (8e928dea, super-agent-production.up.railway.app), N8N (b47ae540, outstanding-blessing-production-1d4b.up.railway.app), Postgres (0293b0b8, internal), obsidian-vault (03f72dbd, port 22360 internal), radiant-appreciation (18f8b3e3, bridge-digital-solution.com), honest-analysis (789dc0c4).\nRAILWAY_TOKEN: dbd31e84-6046-44d8-afd4-ee804a03a39d (account scope).", "memory_type": "fact", "importance": 4, "source": "claude_code", "session_id": "claude_code_sync"},
-  {"content": "[Memory: project_cli_auth_flow]\nLayer 1 (volume backup): WORKING. /workspace/.claude_credentials_backup.json exists.\nLayer 2 (Railway env var push): PERMANENTLY BLOCKED. Cloudflare blocks Railway container IPs from backboard.railway.app/graphql/v2 with HTTP 403 code 1010.\nLayer 3 (OAuth direct refresh): PERMANENTLY BLOCKED. claude.com/cai/oauth/token returns 405 from Railway NL IPs.\nLayer 4 (Playwright + n8n magic link): WORKING. Cookies at /workspace/.claude_browser_cookies.json.\nLayer 5 (GitHub Actions OAuth relay): Implemented — dispatches repository_dispatch to gelson12/super-agent, runner uses Azure IPs not blocked by CF.\nPractical path: Layer 1 instant on restart; Layer 4 full auto-recovery ~5-15 min.", "memory_type": "fact", "importance": 4, "source": "claude_code", "session_id": "claude_code_sync"},
-  {"content": "[Memory: feedback_cli_container_ownership]\nClaude CLI Pro, Gemini CLI, Playwright browser, PTY management, and all recovery endpoints live in VS-Code-inspiring-cat (cli_worker/main.py port 8003). Super-agent uses Anthropic API models ONLY.\nWhy: full_recovery_chain() running in super-agent caused queue mismatch — browser waited on inspiring-cat queue, magic links silently lost.\nRule: NEVER put CLI/PTY/recovery code in super-agent. Any code calling cli_auto_login, full_recovery_chain, auto_login_claude, send_manual_auth_code, or spawning a PTY must be in cli_worker/ or app/learning/ targeting inspiring-cat.", "memory_type": "preference", "importance": 5, "source": "claude_code", "session_id": "claude_code_sync"},
-  {"content": "[Memory: project_routing_architecture]\nCLI-first classifier (changed 2026-04-13). Tier order: 1) Claude CLI Pro (zero extra cost), 2) Gemini CLI (free ~1500/day), 3) Haiku API (costs tokens).\nKeyword routing fires before classifier: _GITHUB_KEYWORDS (website, html, instagram, bridge-digital-solution), _SHELL_KEYWORDS (terminal, flutter, build, clone), _N8N_KEYWORDS (workflow, n8n, automation, webhook).\nConfidence-arbitrated routing: AI conf>=0.75 overrides keywords; conf<0.4 escalates to peer-review (complexity 4).\nDrift-aware substitution: when win_rate<60%, router swaps to best alternative model.", "memory_type": "fact", "importance": 3, "source": "claude_code", "session_id": "claude_code_sync"},
-  {"content": "[Memory: project_website_and_n8n]\nWebsite: bridge-digital-solution.com in repo under website/index.html. Railway service: radiant-appreciation. Auto-deploys on push.\nn8n three paths: 1) Python n8n tools (always first), 2) run_shell_via_cli_worker() curl via inspiring-cat, 3) run_authorized_shell_command() via super-agent shell.\nActive workflows: jxnZZwTqJ7naPKc6 (Claude-Verification-Monitor, Outlook OAuth), ke7YzsAmGerVWVVc (Super-Agent-Health-Monitor).\nn8n URL: https://outstanding-blessing-production-1d4b.up.railway.app. API key in N8N_API_KEY env var.", "memory_type": "fact", "importance": 3, "source": "claude_code", "session_id": "claude_code_sync"},
-  {"content": "[Memory: project_obsidian_vault]\nFully working 2026-04-15. Python FastAPI/SSE server at obsidian-vault.railway.internal:22360/sse. File: super-agent/obsidian-vault/vault_mcp_server.py. Vault on volume vol_8zt6u1gqp3o57zvm at /vault.\nRegistered in inspiring-cat via ~/.claude.json (Python merge in entrypoint.cli.sh). type=sse.\nTools: list_directory, read_file, write_file, append_to_file, search_files, delete_file, get_vault_info, create_note, move_file, list_tags, get_stats, read_note_links, search_by_tag, get_recent.\nSelf-improvement pipeline stores insights here; agents read/write notes across sessions.", "memory_type": "fact", "importance": 3, "source": "claude_code", "session_id": "claude_code_sync"},
-  {"content": "[Memory: project_claude_cli_healing]\nKey files (all in inspiring-cat at /app): app/learning/cli_auto_login.py (PTY, browser automation, full_recovery_chain), cli_worker/main.py (FastAPI port 8003: /webhook/verification-code, /webhook/manual-auth-code, /auth/login-status), cli_worker/task_runner.py (_dispatch detects auth errors → triggers full_recovery_chain in background).\n4-layer recovery: L1 volume backup, L2 Railway API (blocked CF), L3 OAuth direct (blocked CF), L4 Playwright+n8n magic link.\nGemini CLI same container. Recovery: gemini_full_recovery() in cli_auto_login.py.", "memory_type": "fact", "importance": 4, "source": "claude_code", "session_id": "claude_code_sync"},
-  {"content": "[Memory: project_unified_memory]\nDeployed 2026-04-16. Shared PostgreSQL memory store (divine-contentment). Table: agent_memories (id, session_id, content, embedding 768-dim, source, memory_type, importance, tags, created_at).\nWrite paths: super_agent (every exchange via dispatcher.py), auto_extract (Haiku distils complexity>=2 exchanges), cli_pro (task_runner.py after every Claude CLI Pro task), gemini_cli (task_runner.py after every Gemini CLI task), claude_code (sync_memory.py push).\nRead paths: every API model call via get_memory_context() before building prompt.\nSync script: cd /app && python scripts/sync_memory.py. Endpoints: /memory/ingest (POST, X-Memory-Secret), /memory/export (GET), /memory/stats (GET).\nMEMORY_INGEST_SECRET: 2dc6c69574c14d615ce146e54640aa13030dade7aa86697c", "memory_type": "fact", "importance": 4, "source": "claude_code", "session_id": "claude_code_sync"},
-  {"content": "[Memory: project_pending_improvements]\nBug 1: routing_fallback.py lines 81-85 calls claude-sonnet-4-6 via anthropic client directly (bypasses ask_internal() cascade). Fix: replace with ask_internal() from internal_llm.py.\nBug 2: GEMINI.md may not auto-load. Fix: in task_runner.py, prepend GEMINI.md content to prompt when calling gemini --prompt rather than relying on auto-loading.\nHigh value: Auto-update CLAUDE.md from nightly/weekly review — self-improve agent detects outdated facts, patches CLAUDE.md, commits.", "memory_type": "fact", "importance": 3, "source": "claude_code", "session_id": "claude_code_sync"},
-  {"content": "[Memory: project_super_agent_dashboard_status]\nseed_live_status() was only one-directional (healthy->sick, no sick->idle recovery path). Fixed: now clears stale sick states when CLI is available. 30-min health check calls it periodically.\nIf stale dashboard status reported: check health check is running and seed_live_status includes recovery logic for that worker.", "memory_type": "fact", "importance": 3, "source": "claude_code", "session_id": "claude_code_sync"},
-  {"content": "[Memory: project_domain_email_setup]\nDomain bridge-digital-solution.com on Railway service radiant-appreciation. MX records can be added directly from Railway workspace domains page. Select bridge-digital-solution.com → Add DNS record type MX for Zoho Mail. No nameserver change needed — Railway handles DNS directly.", "memory_type": "fact", "importance": 2, "source": "claude_code", "session_id": "claude_code_sync"},
-  {"content": "[Memory: project_super_agent_tasks]\nANTHROPIC_API_KEY currently has no credits — user must add credits at console.anthropic.com then update Railway env var.\nAPK build: DeepSeek fallback working, but server went down during build (resource issue). Needs retry.\n401 leak fix done: CLI worker error JSON now caught via _CLI_DOWN_PHRASES in pro_router.py.\nDashboard: larger avatars, animated talking lines between agents, auto-open panel on load.", "memory_type": "fact", "importance": 3, "source": "claude_code", "session_id": "claude_code_sync"},
+  ("claude_code", "fact",       4, "Railway infrastructure: Project ID 4c972469-6e49-4ac5-9460-5e65b7eaba07, Env ID ab62ec1d-da97-44f4-83eb-489242f8ebf7. Services: VS-Code-inspiring-cat (7cf85f11, inspiring-cat-production.up.railway.app), super-agent (8e928dea, super-agent-production.up.railway.app), N8N (b47ae540, outstanding-blessing-production-1d4b.up.railway.app), Postgres (0293b0b8 internal), obsidian-vault (03f72dbd port 22360 internal), radiant-appreciation (18f8b3e3 bridge-digital-solution.com). RAILWAY_TOKEN: dbd31e84-6046-44d8-afd4-ee804a03a39d."),
+  ("claude_code", "preference",  5, "CRITICAL: Claude CLI Pro, Gemini CLI, Playwright, PTY, and all recovery endpoints live ONLY in VS-Code-inspiring-cat (cli_worker/main.py port 8003). Super-agent uses Anthropic API only. NEVER put CLI/PTY/recovery code in super-agent — causes queue mismatch where magic links are silently lost because browser waits on inspiring-cat queue while full_recovery_chain() runs in super-agent process."),
+  ("claude_code", "fact",       4, "CLI auth flow layers: L1 volume backup /workspace/.claude_credentials_backup.json (WORKING, instant on restart). L2 Railway API push (PERMANENTLY BLOCKED — Cloudflare HTTP 403 code 1010 blocks all Railway container IPs). L3 OAuth direct refresh claude.com/cai/oauth/token (PERMANENTLY BLOCKED — HTTP 405 from Railway NL IPs). L4 Playwright+n8n magic link (WORKING, ~5-15min). L5 GitHub Actions relay (IMPLEMENTED — dispatches to gelson12/super-agent, Azure IPs not CF-blocked). OAUTH_RELAY_SECRET set in both Railway and GitHub secrets."),
+  ("claude_code", "fact",       4, "Unified memory system deployed 2026-04-16. Shared PostgreSQL table agent_memories (id, session_id, content, embedding vector(768), source, memory_type, importance, content_hash, created_at). Write sources: super_agent (every API exchange), auto_extract (Haiku distils complexity>=2 exchanges), cli_pro (after Claude CLI Pro tasks), gemini_cli (after Gemini CLI tasks), claude_code (sync_memory.py). MEMORY_INGEST_SECRET: 2dc6c69574c14d615ce146e54640aa13030dade7aa86697c. Endpoints: /memory/ingest POST, /memory/export GET, /memory/stats GET."),
+  ("claude_code", "fact",       3, "Routing architecture (CLI-first since 2026-04-13): tier order = Claude CLI Pro (zero cost) > Gemini CLI (free 1500/day) > Haiku API (costs tokens). Keyword routing fires before classifier: GITHUB_KEYWORDS (website, html, instagram, bridge-digital-solution), SHELL_KEYWORDS (terminal, flutter, build, clone), N8N_KEYWORDS (workflow, n8n, automation, webhook). Confidence-arbitrated: AI conf>=0.75 overrides keywords; conf<0.4 escalates to peer-review. Drift-aware: win_rate<60% swaps to best alternative model."),
+  ("claude_code", "fact",       3, "Super-agent repo at c:/Users/Gelson/Downloads/super-agent/. Key files: app/tools/n8n_tools.py (n8n REST API wrappers), app/agents/n8n_agent.py, app/mcp/n8n_mcp_server.py (MCP tools for Claude CLI), .mcp.json (MCP registration), n8n/business_hub_workflow.json (15-service webhook router). n8n URL: outstanding-blessing-production-1d4b.up.railway.app. Active workflows: jxnZZwTqJ7naPKc6 Claude-Verification-Monitor, ke7YzsAmGerVWVVc Super-Agent-Health-Monitor."),
+  ("claude_code", "fact",       3, "Website bridge-digital-solution.com in repo under website/index.html. Railway service radiant-appreciation, auto-deploys on push. n8n three paths: 1) Python n8n tools, 2) run_shell_via_cli_worker() curl via inspiring-cat, 3) run_authorized_shell_command() via super-agent shell."),
+  ("claude_code", "fact",       3, "Obsidian vault MCP: fully working 2026-04-15. Python FastAPI/SSE server at obsidian-vault.railway.internal:22360/sse. File: obsidian-vault/vault_mcp_server.py. Vault on volume vol_8zt6u1gqp3o57zvm at /vault. Registered in inspiring-cat via ~/.claude.json (Python merge in entrypoint.cli.sh). Tools: list_directory, read_file, write_file, append_to_file, search_files, delete_file, get_vault_info, create_note, move_file, list_tags, get_stats, read_note_links, search_by_tag, get_recent."),
+  ("claude_code", "fact",       3, "CLI healing key files (all in inspiring-cat at /app): app/learning/cli_auto_login.py (PTY, browser, full_recovery_chain, gemini_full_recovery), cli_worker/main.py (FastAPI port 8003: /webhook/verification-code, /webhook/manual-auth-code, /webhook/github-oauth-result, /auth/login-status), cli_worker/task_runner.py (_dispatch detects auth errors triggers full_recovery_chain in background)."),
+  ("claude_code", "fact",       3, "Pending bugs: 1) routing_fallback.py lines 81-85 calls claude-sonnet-4-6 directly via anthropic client bypassing ask_internal() — fix: replace with ask_internal(). 2) GEMINI.md may not auto-load in gemini CLI — fix: prepend GEMINI.md content to prompt in task_runner.py. High value: auto-update CLAUDE.md from weekly self-improve review."),
+  ("claude_code", "fact",       3, "Dashboard: seed_live_status() fixed to clear sick->idle on recovery (was one-directional). 30-min health check calls it periodically. ANTHROPIC_API_KEY has no credits — user must add at console.anthropic.com. APK build: DeepSeek fallback working but server went down mid-build (resource issue), needs retry."),
+  ("claude_code", "fact",       2, "Domain bridge-digital-solution.com MX records: add directly from Railway workspace domains page. Select domain, add DNS type MX for Zoho Mail. No nameserver change needed."),
+  ("claude_code", "fact",       3, "GitHub Actions OAuth relay: workflow at .github/workflows/oauth_refresh.yml in gelson12/super-agent. Triggered by repository_dispatch type claude_oauth_refresh. Runner POSTs to claude.com/cai/oauth/token (Azure IPs not CF-blocked), callbacks to /webhook/github-oauth-result with OAUTH_RELAY_SECRET. Secret set in both Railway inspiring-cat vars and GitHub Actions secrets."),
 ]
 
-print(f"Seeding {len(MEMORIES)} memories to {URL} ...", flush=True)
-data = json.dumps({"memories": MEMORIES}).encode()
-req = urllib.request.Request(URL, data=data, headers={"Content-Type": "application/json", "X-Memory-Secret": SECRET}, method="POST")
 try:
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        result = json.loads(resp.read())
-        print(f"Done — {result.get('saved', '?')}/{result.get('total', '?')} memories stored in shared DB.", flush=True)
-except urllib.error.HTTPError as e:
-    print(f"HTTP {e.code}: {e.read().decode()}", flush=True)
+    import psycopg2
+except ImportError:
+    print("ERROR: psycopg2 not installed", flush=True)
     sys.exit(1)
+
+print(f"Connecting to PostgreSQL ...", flush=True)
+try:
+    conn = psycopg2.connect(conn_str)
+    conn.autocommit = False
+    cur = conn.cursor()
 except Exception as e:
-    print(f"Error: {e}", flush=True)
+    print(f"ERROR: DB connect failed: {e}", flush=True)
     sys.exit(1)
+
+# Ensure columns exist (idempotent)
+for col, coltype in [("source","TEXT"), ("memory_type","TEXT"), ("importance","INT DEFAULT 3"), ("content_hash","TEXT")]:
+    try:
+        cur.execute(f"ALTER TABLE agent_memories ADD COLUMN IF NOT EXISTS {col} {coltype}")
+    except Exception:
+        conn.rollback()
+
+try:
+    cur.execute("ALTER TABLE agent_memories ADD CONSTRAINT agent_memories_content_hash_key UNIQUE (content_hash)")
+    conn.commit()
+except Exception:
+    conn.rollback()
+
+saved = 0
+skipped = 0
+for source, mtype, importance, content in MEMORIES:
+    chash = hashlib.sha256(content.encode()).hexdigest()[:64]
+    try:
+        cur.execute(
+            """INSERT INTO agent_memories (session_id, content, source, memory_type, importance, content_hash)
+               VALUES (%s, %s, %s, %s, %s, %s)
+               ON CONFLICT (content_hash) DO NOTHING""",
+            ("claude_code_sync", content[:1000], source, mtype, importance, chash)
+        )
+        if cur.rowcount > 0:
+            saved += 1
+        else:
+            skipped += 1
+    except Exception as e:
+        conn.rollback()
+        print(f"  row failed: {e}", flush=True)
+        continue
+
+conn.commit()
+cur.close()
+conn.close()
+print(f"Done — {saved} new, {skipped} already existed. Total attempted: {len(MEMORIES)}", flush=True)
