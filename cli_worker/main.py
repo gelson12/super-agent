@@ -27,7 +27,7 @@ from datetime import datetime, timedelta, timezone
 
 import psycopg2
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
 
 from . import migrations, task_runner
@@ -157,6 +157,45 @@ def _gemini_watchdog_job() -> None:
         _bg_log(f"Gemini watchdog error: {e}", "gemini_watchdog")
 
 
+def _refresh_token_keepalive_job() -> None:
+    """
+    Runs weekly. Forces a full_recovery_chain() if the OAuth token has not been
+    refreshed in the past 25 days — prevents the refresh_token itself from
+    expiring due to inactivity (Anthropic expires stale refresh_tokens after ~30
+    days; this job ensures there is always at least 5 days of headroom).
+    """
+    try:
+        import sys
+        import time as _t
+        sys.path.insert(0, "/app")
+        from app.learning.agent_status_tracker import get_worker_status
+        from app.learning.cli_auto_login import full_recovery_chain
+        workers = get_worker_status()
+        cli_w = next((w for w in workers if w.get("id") == "Claude CLI Pro"), None)
+        last_recovery = cli_w.get("last_recovery_at") if cli_w else None
+        if last_recovery is None or (_t.time() - last_recovery) > 25 * 86400:
+            days_since = int((_t.time() - last_recovery) / 86400) if last_recovery else -1
+            _bg_log(
+                f"Refresh token keepalive: last refresh was "
+                f"{'never' if days_since < 0 else f'{days_since}d ago'} — "
+                f"triggering full_recovery_chain() to keep refresh_token alive",
+                "keepalive",
+            )
+            ok = full_recovery_chain()
+            _bg_log(
+                f"Refresh token keepalive: {'SUCCESS ✓' if ok else 'FAILED — refresh_token may expire soon'}",
+                "keepalive",
+            )
+        else:
+            days_since = int((_t.time() - last_recovery) / 86400)
+            _bg_log(
+                f"Refresh token keepalive: last refresh was {days_since}d ago — still fresh, nothing to do",
+                "keepalive",
+            )
+    except Exception as e:
+        _bg_log(f"Refresh token keepalive error: {e}", "keepalive")
+
+
 def _cookie_keepalive_job() -> None:
     """
     Runs every 12 hours. Headless browser touches claude.ai to refresh the
@@ -227,8 +266,14 @@ async def lifespan(app: FastAPI):
     _scheduler.add_job(_cookie_keepalive_job, "interval", hours=12,
                        id="cookie_keepalive", replace_existing=True,
                        start_date=datetime.now(timezone.utc) + timedelta(hours=6))
+    # Refresh token keepalive: weekly job that forces a full recovery if the
+    # OAuth token hasn't been refreshed in 25 days — prevents refresh_token expiry.
+    # Staggered 3h from boot so it doesn't race with the startup watchdog.
+    _scheduler.add_job(_refresh_token_keepalive_job, "interval", days=7,
+                       id="refresh_token_keepalive", replace_existing=True,
+                       start_date=datetime.now(timezone.utc) + timedelta(hours=3))
     _scheduler.start()
-    _bg_log("CLI maintenance scheduler started (pro_keeper 15min, gemini_keeper 4h, claude_watchdog 90s, gemini_watchdog 90s, proactive_refresh 12h, cookie_keepalive 12h+6h offset)", "boot")
+    _bg_log("CLI maintenance scheduler started (pro_keeper 15min, gemini_keeper 4h, claude_watchdog 90s, gemini_watchdog 90s, proactive_refresh 12h, cookie_keepalive 12h+6h offset, refresh_keepalive 7d)", "boot")
 
     # Boot-time: run watchdog immediately so CLI health is confirmed before the
     # first real request (normally would wait 90s). Run cookie keepalive too so
@@ -375,7 +420,7 @@ def health():
 
 
 @app.post("/webhook/verification-code")
-def receive_verification_code(request: dict):
+async def receive_verification_code(body: dict, req: Request):
     """
     Receive magic link URL (or 6-digit code) from n8n for automated Claude CLI re-login.
     Claude.ai sends a MAGIC LINK email — n8n extracts the URL and POSTs it here.
@@ -383,11 +428,22 @@ def receive_verification_code(request: dict):
     The Playwright browser automation runs inside THIS container (VS-Code-inspiring-cat).
     The magic link URL must be placed in THIS process's _verification_code_queue so the
     waiting browser thread can navigate to it.
+
+    Security: if WEBHOOK_SECRET env var is set, the caller must supply the matching
+    X-Webhook-Secret header. Requests with a wrong/missing secret are rejected 403.
+    When WEBHOOK_SECRET is not set the check is skipped (backward compatible).
     """
+    _expected_secret = os.environ.get("WEBHOOK_SECRET", "")
+    if _expected_secret:
+        _incoming_secret = req.headers.get("X-Webhook-Secret", "")
+        if _incoming_secret != _expected_secret:
+            _bg_log("Verification webhook: rejected — invalid or missing X-Webhook-Secret", "webhook")
+            raise HTTPException(status_code=403, detail="Invalid webhook secret")
+
     # Accept magic link URL (new) or legacy 6-digit code
     auth_payload = (
-        str(request.get("url", "")).strip()
-        or str(request.get("code", "")).strip()
+        str(body.get("url", "")).strip()
+        or str(body.get("code", "")).strip()
     )
     if not auth_payload:
         return {"ok": False, "error": "No 'url' or 'code' field in payload"}

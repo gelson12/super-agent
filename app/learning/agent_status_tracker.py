@@ -419,6 +419,24 @@ def mark_sick(worker_id: str) -> None:
     _log_agent_event(worker_id, "sick", "Token invalid or expired — self-healing active")
 
 
+def mark_recovering(worker_id: str) -> None:
+    """Mark a worker as actively running the auto-recovery pipeline.
+
+    Distinct from 'sick' (token error detected, idle) — 'recovering' means
+    full_recovery_chain() is currently executing (Playwright / browser automation
+    is in flight). Dashboard renders this as teal / 🔧 so operators can see
+    recovery is progressing rather than stalled.
+
+    sick_since is preserved so the 15-min grace window is not reset."""
+    with _lock:
+        w = _ensure_worker(worker_id)
+        if w.get("sick_since") is None:
+            w["sick_since"] = time.time()
+        w["state"] = "recovering"
+        w["task"] = "Auto-recovering session token…"
+    _log_agent_event(worker_id, "recovering", "Recovery pipeline running — Playwright in flight")
+
+
 def record_recovery(worker_id: str, layer: str, duration_s: float,
                     contestants: list | None = None) -> None:
     """Record a completed recovery event — updates last_recovery_at, daily count,

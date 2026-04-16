@@ -78,6 +78,9 @@ _RATELIMIT_DEFAULT_COOLDOWN = 86400  # 24h for any hit beyond index 3
 # trigger). Set whenever the browser attempt times out; cleared after 20 minutes.
 _last_playwright_timeout: float = 0.0
 _PLAYWRIGHT_BACKOFF_S: float = 20 * 60  # 20 minutes between Playwright attempts
+# Timestamps of every Playwright browser-login attempt (unix epoch, float).
+# Used to detect thrashing: alert if > 3 attempts within a 1-hour window.
+_playwright_attempts_log: list = []
 
 
 def _record_ratelimit_hit() -> int:
@@ -2297,7 +2300,22 @@ def maybe_proactive_refresh() -> bool:
             _log("Proactive refresh: recovery already in progress — skipping.")
             return True
 
-        return _try_direct_refresh()
+        _refresh_ok = _try_direct_refresh()
+        if _refresh_ok:
+            return True
+        # Direct refresh failed (Cloudflare blocks datacenter IPs for the OAuth endpoint).
+        # If the token is within 2 hours of expiry, escalate to full_recovery_chain()
+        # so a fresh token is obtained before any request fails.
+        if expires_at_ms is not None and remaining_s < 7200:
+            _log(
+                f"Proactive refresh: direct refresh failed, token expires in "
+                f"{int(remaining_s // 60)}m — escalating to full_recovery_chain()"
+            )
+            try:
+                return full_recovery_chain()
+            except Exception as _pe:
+                _log(f"Proactive refresh: recovery escalation error — {_pe}")
+        return False
 
     except Exception as _e:
         _log(f"Proactive refresh error: {_e}")
@@ -2585,6 +2603,12 @@ def full_recovery_chain() -> bool:
 
     _recovery_started_at = time.time()
     _recovery_running.set()
+    # Signal dashboard: recovery pipeline is now actively running
+    try:
+        from .agent_status_tracker import mark_recovering as _mark_recovering
+        _mark_recovering("Claude CLI Pro")
+    except Exception:
+        pass
     try:
         import concurrent.futures as _cf
         _log("=== Starting parallel CLI recovery chain (all methods fire simultaneously) ===")
@@ -2611,7 +2635,21 @@ def full_recovery_chain() -> bool:
             return ok, "Direct OAuth refresh"
 
         def _browser_attempt() -> tuple[bool, str]:
+            global _playwright_attempts_log
             _t = time.time()
+            # Track attempt timestamp; prune to last hour; alert if thrashing
+            _playwright_attempts_log.append(_t)
+            _playwright_attempts_log = [ts for ts in _playwright_attempts_log if _t - ts < 3600]
+            if len(_playwright_attempts_log) > 3:
+                _log(
+                    f"[ALERT] {len(_playwright_attempts_log)} Playwright recovery attempts in the last hour "
+                    f"(threshold: 3) — possible auth loop. Check n8n + Anthropic email delivery."
+                )
+                try:
+                    from .pro_token_keeper import _send_vault_alert
+                    _send_vault_alert(len(_playwright_attempts_log))
+                except Exception:
+                    pass
             result = auto_login_claude()
             ok = result[0] if isinstance(result, tuple) else bool(result)
             _race_contestants.append({

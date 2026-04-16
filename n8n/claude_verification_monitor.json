@@ -88,6 +88,15 @@
         "method": "POST",
         "url": "https://inspiring-cat-production.up.railway.app/webhook/verification-code",
         "authentication": "none",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Webhook-Secret",
+              "value": "={{ $env.WEBHOOK_SECRET }}"
+            }
+          ]
+        },
         "sendBody": true,
         "contentType": "json",
         "specifyBody": "json",
