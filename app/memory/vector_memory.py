@@ -80,7 +80,42 @@ def _embed(text: str) -> list[float] | None:
         return None
 
 
-def _pg_store(session_id: str, content: str) -> bool:
+def _ensure_source_columns() -> None:
+    """
+    Idempotent: add source, memory_type, importance columns to agent_memories
+    if they don't exist yet. Called once at module init when pg is available.
+    These enable attribution (which model/source wrote this) and priority ranking.
+    """
+    if not _pg_enabled or not _conn_str:
+        return
+    try:
+        import psycopg2
+        conn = psycopg2.connect(_conn_str)
+        conn.autocommit = True
+        cur = conn.cursor()
+        for col, defn in [
+            ("source",      "VARCHAR(64)  DEFAULT 'unknown'"),
+            ("memory_type", "VARCHAR(32)  DEFAULT 'general'"),
+            ("importance",  "SMALLINT     DEFAULT 3"),
+            ("tags",        "TEXT[]       DEFAULT '{}'"),
+        ]:
+            cur.execute(f"""
+                ALTER TABLE agent_memories
+                ADD COLUMN IF NOT EXISTS {col} {defn};
+            """)
+        cur.close()
+        conn.close()
+    except Exception:
+        pass
+
+
+_ensure_source_columns()
+
+
+def _pg_store(session_id: str, content: str,
+              source: str = "unknown",
+              memory_type: str = "general",
+              importance: int = 3) -> bool:
     try:
         embedding = _embed(content)
         if embedding is None:
@@ -89,8 +124,11 @@ def _pg_store(session_id: str, content: str) -> bool:
         conn = psycopg2.connect(_conn_str)
         cur = conn.cursor()
         cur.execute(
-            "INSERT INTO agent_memories (session_id, content, embedding) VALUES (%s, %s, %s)",
-            (session_id, content[:1000], json.dumps(embedding)),
+            """INSERT INTO agent_memories
+               (session_id, content, embedding, source, memory_type, importance)
+               VALUES (%s, %s, %s, %s, %s, %s)""",
+            (session_id, content[:1000], json.dumps(embedding),
+             source[:64], memory_type[:32], importance),
         )
         conn.commit()
         cur.close()
@@ -257,14 +295,22 @@ def _json_retrieve(query: str, top_k: int = 5) -> list[str]:
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
-def store_memory(session_id: str, content: str) -> None:
+def store_memory(session_id: str, content: str,
+                 source: str = "unknown") -> None:
     """
     Store an exchange in long-term memory.
     Uses pgvector if available, JSON file otherwise.
     Best-effort — never raises.
+
+    source: which agent/model wrote this memory
+      "super_agent"   — API call via dispatcher
+      "claude_code"   — synced from Claude Code local memory files
+      "cli_pro"       — inspiring-cat Claude CLI Pro task result
+      "auto_extract"  — auto-extracted insight (Haiku distillation)
+      "unknown"       — legacy, unattributed
     """
     if _pg_enabled and _conn_str:
-        stored = _pg_store(session_id, content)
+        stored = _pg_store(session_id, content, source=source)
         if stored:
             return
     # Always write to JSON fallback — acts as secondary backup even when pg works
@@ -276,17 +322,114 @@ def store_enriched_memory(
     content: str,
     memory_type: str = "general",
     importance: int = 3,
+    source: str = "unknown",
 ) -> None:
     """
     Store a memory with enriched metadata for proactive recall.
 
     memory_type: one of "decision", "preference", "fact", "goal", "problem"
     importance: 1 (low) to 5 (critical)
+    source: which agent/process wrote this (see store_memory docstring)
 
     High-importance memories are tagged so retrieval can boost them.
     """
     tagged = f"[IMPORTANT:{memory_type}:{importance}] {content}"
-    store_memory(session_id, tagged)
+    if _pg_enabled and _conn_str:
+        stored = _pg_store(session_id, tagged,
+                           source=source,
+                           memory_type=memory_type,
+                           importance=importance)
+        if stored:
+            _json_store(session_id, tagged)  # always write JSON too
+            return
+    _json_store(session_id, tagged)
+
+
+def ingest_external_memory(
+    content: str,
+    memory_type: str = "fact",
+    importance: int = 3,
+    source: str = "claude_code",
+    session_id: str = "shared",
+) -> bool:
+    """
+    Store a memory that originated OUTSIDE the current session —
+    e.g. synced from Claude Code local markdown files, or from the
+    inspiring-cat CLI Pro container.
+
+    This is the write path for the unified cross-model memory system.
+    Returns True if stored successfully.
+    """
+    try:
+        tagged = f"[IMPORTANT:{memory_type}:{importance}][source:{source}] {content[:800]}"
+        if _pg_enabled and _conn_str:
+            return _pg_store(session_id, tagged,
+                             source=source,
+                             memory_type=memory_type,
+                             importance=importance)
+        _json_store(session_id, tagged)
+        return True
+    except Exception:
+        return False
+
+
+def export_memories(limit: int = 100, min_importance: int = 3) -> list[dict]:
+    """
+    Export recent important memories as structured dicts.
+    Used by the /memory/export endpoint so Claude Code can pull
+    cross-session insights and write them to local memory files.
+    """
+    results = []
+    if _pg_enabled and _conn_str:
+        try:
+            import psycopg2
+            conn = psycopg2.connect(_conn_str)
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT content, source, memory_type, importance, created_at
+                FROM agent_memories
+                WHERE importance >= %s
+                ORDER BY created_at DESC
+                LIMIT %s
+            """, (min_importance, limit))
+            for row in cur.fetchall():
+                results.append({
+                    "content": row[0],
+                    "source": row[1] or "unknown",
+                    "memory_type": row[2] or "general",
+                    "importance": row[3] or 3,
+                    "created_at": row[4].isoformat() if row[4] else None,
+                })
+            cur.close()
+            conn.close()
+            return results
+        except Exception:
+            pass
+    # JSON fallback
+    try:
+        path = _json_path()
+        if not path.exists():
+            return []
+        records = []
+        with path.open(encoding="utf-8") as f:
+            for line in f:
+                try:
+                    records.append(json.loads(line.strip()))
+                except Exception:
+                    pass
+        records = [r for r in records if "[IMPORTANT:" in r.get("content", "")]
+        records.sort(key=lambda r: r.get("ts", 0), reverse=True)
+        for r in records[:limit]:
+            results.append({
+                "content": r["content"],
+                "source": "json_fallback",
+                "memory_type": "general",
+                "importance": 3,
+                "created_at": None,
+            })
+    except Exception:
+        pass
+    return results
 
 
 def retrieve_memories(query: str, top_k: int = 8) -> list[str]:
@@ -316,3 +459,78 @@ def get_memory_context(query: str, top_k: int = 8) -> str:
         f"{lines}\n"
         "[End of past context — reference these naturally in your response when relevant]\n\n"
     )
+
+
+# ── Auto-insight extraction ────────────────────────────────────────────────────
+# Runs in a daemon thread after every significant exchange. Uses Claude Haiku
+# to distil 1-3 key facts/decisions/preferences from the Q&A pair and stores
+# them as enriched memories. This is the "accumulate and get smarter" mechanism:
+# raw Q&A → distilled knowledge that survives context window limits.
+
+_extract_lock = __import__("threading").Lock()
+_extract_cooldown: dict = {}   # session_id → last_extract_epoch
+_EXTRACT_INTERVAL = 300        # at most one extraction per 5 min per session
+_MIN_RESPONSE_LEN_FOR_EXTRACT = 300   # only worthwhile on substantive answers
+
+
+def extract_and_store_insights(
+    message: str,
+    response: str,
+    model: str,
+    session_id: str,
+    source: str = "auto_extract",
+) -> None:
+    """
+    Fire-and-forget: distil the exchange into 1-3 named insights.
+    Runs in a daemon thread — never blocks the response path.
+    Never raises.
+    """
+    if len(response) < _MIN_RESPONSE_LEN_FOR_EXTRACT:
+        return
+
+    import threading as _thr
+
+    def _run():
+        try:
+            import time as _time
+            # Per-session cooldown — avoid flooding on rapid-fire short exchanges
+            with _extract_lock:
+                last = _extract_cooldown.get(session_id, 0)
+                if _time.time() - last < _EXTRACT_INTERVAL:
+                    return
+                _extract_cooldown[session_id] = _time.time()
+
+            from ..models.claude import ask_claude_haiku as _haiku
+            prompt = (
+                "Extract 1-3 concise, reusable facts, decisions, or preferences "
+                "from this conversation exchange. Each fact must be a single sentence, "
+                "self-contained (no pronouns referring to the exchange), and useful in "
+                "future conversations. Return ONLY a JSON array of strings, no commentary.\n\n"
+                f"User: {message[:500]}\n\nAgent: {response[:800]}"
+            )
+            raw = _haiku(prompt, system="You are a memory distillation engine. Output only valid JSON.")
+            raw = raw.strip()
+            # parse the JSON array
+            import json as _json
+            # strip markdown code fences if present
+            if raw.startswith("```"):
+                raw = raw.split("```")[1]
+                if raw.startswith("json"):
+                    raw = raw[4:]
+            facts = _json.loads(raw)
+            if not isinstance(facts, list):
+                return
+            for fact in facts[:3]:
+                if isinstance(fact, str) and len(fact) > 20:
+                    ingest_external_memory(
+                        content=fact,
+                        memory_type="fact",
+                        importance=3,
+                        source=f"{source}:{model}",
+                        session_id=session_id,
+                    )
+        except Exception:
+            pass  # Never let extraction fail loudly
+
+    t = _thr.Thread(target=_run, daemon=True)
+    t.start()

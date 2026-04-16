@@ -352,6 +352,44 @@ def fetch_pending_task() -> dict | None:
         return None
 
 
+def _push_result_to_shared_memory(task_type: str, payload: dict, result: str) -> None:
+    """
+    Fire-and-forget: after a successful CLI Pro / shell task, extract the
+    prompt + result as a shared memory entry so all models benefit from it.
+
+    Only fires for claude_pro tasks with substantive results (>200 chars).
+    Runs in the calling thread (already background from main worker loop).
+    Never raises.
+    """
+    try:
+        if task_type not in ("claude_pro", "claude_auth") or len(result) < 200:
+            return
+        prompt = payload.get("prompt", "")
+        if not prompt:
+            return
+        import sys
+        sys.path.insert(0, "/app")
+        from app.memory.vector_memory import ingest_external_memory, extract_and_store_insights
+        # Store the raw exchange
+        ingest_external_memory(
+            content=f"CLI Pro task — Q: {prompt[:300]} A: {result[:400]}",
+            memory_type="fact",
+            importance=3,
+            source="cli_pro",
+            session_id="cli_pro_shared",
+        )
+        # Also fire Haiku distillation (runs async in daemon thread)
+        extract_and_store_insights(
+            message=prompt,
+            response=result,
+            model="CLI_PRO",
+            session_id="cli_pro_shared",
+            source="auto_extract",
+        )
+    except Exception:
+        pass
+
+
 def run_task_from_record(task: dict) -> None:
     """Execute a task that was already marked running by fetch_pending_task."""
     task_id   = task["id"]
@@ -362,6 +400,8 @@ def run_task_from_record(task: dict) -> None:
     try:
         result = _dispatch(task_type, payload, timeout)
         _mark_done(task_id, result)
+        # Contribute CLI Pro results to the shared cross-model memory store
+        _push_result_to_shared_memory(task_type, payload, result)
     except Exception as e:
         try:
             _mark_failed(task_id, str(e))

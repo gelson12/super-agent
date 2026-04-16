@@ -54,7 +54,10 @@ except Exception:
     def _resolve_worker(m): return m
     def _mark_strike(w): pass
     def _mark_error(w, detail=""): pass
-from ..memory.vector_memory import get_memory_context, store_memory, store_enriched_memory
+from ..memory.vector_memory import (
+    get_memory_context, store_memory, store_enriched_memory,
+    extract_and_store_insights,
+)
 from ..memory.session import get_compressed_context, append_exchange
 from ..prompts import (
     build_capabilities_block,
@@ -1156,7 +1159,8 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
     insight_log.record(message, model, response, routed_by, complexity, session_id)
     adapter.tick()
     # Feature 4: store exchange in semantic memory for future cross-session recall
-    store_memory(session_id, f"Q: {message[:300]} A: {response[:300]}")
+    store_memory(session_id, f"Q: {message[:300]} A: {response[:300]}",
+                 source="super_agent")
 
     # Feature 4b: proactive memory — detect saveable content and enrich
     _saveable = _detect_saveable_content(message, response)
@@ -1166,10 +1170,18 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
             f"Q: {message[:300]} A: {response[:300]}",
             memory_type=_saveable["type"],
             importance=_saveable["importance"],
+            source="super_agent",
         )
         # For high-importance items, hint to the user
         if _saveable["importance"] >= 4:
             response = response.rstrip() + "\n\n_Noted for future reference._"
+
+    # Feature 4c: auto-insight extraction — distil exchange into reusable facts
+    # Runs in daemon thread (fire-and-forget, never blocks response path).
+    # Only fires for non-trivial responses to avoid burning Haiku quota on greetings.
+    if complexity >= 2:
+        extract_and_store_insights(message, response, model, session_id,
+                                   source="auto_extract")
     # Prompt library outcome tracking (for prompt version error-rate correlation)
     if model in ("CLAUDE", "HAIKU"):
         try:

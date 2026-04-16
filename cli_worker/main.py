@@ -645,6 +645,129 @@ def list_recent_tasks(limit: int = 20):
         raise HTTPException(500, f"DB error: {e}")
 
 
+# ── Unified Memory API ────────────────────────────────────────────────────────
+# These endpoints bridge Claude Code (local) ↔ super-agent (Railway) ↔
+# inspiring-cat (Railway) so all agents share one growing knowledge base.
+
+class MemoryItem(BaseModel):
+    content: str
+    memory_type: str = "fact"       # fact | decision | preference | goal | problem
+    importance: int = 3             # 1 (low) to 5 (critical)
+    source: str = "claude_code"     # who is writing this
+    session_id: str = "shared"
+
+
+class MemoryIngestRequest(BaseModel):
+    memories: list[MemoryItem]
+
+
+@app.post("/memory/ingest")
+def memory_ingest(req: MemoryIngestRequest, request: Request):
+    """
+    Accept memories from external agents (Claude Code, inspiring-cat, etc.)
+    and store them in the shared PostgreSQL memory store.
+
+    This is the write path for the unified cross-model memory system:
+    - Claude Code pushes its local markdown memory files here
+    - inspiring-cat CLI Pro pushes task insights here
+    - Any agent can write facts/decisions/preferences
+
+    Protected by MEMORY_INGEST_SECRET env var if set.
+    """
+    _secret = os.environ.get("MEMORY_INGEST_SECRET", "")
+    if _secret:
+        provided = request.headers.get("X-Memory-Secret", "")
+        if provided != _secret:
+            raise HTTPException(status_code=403, detail="Invalid secret")
+
+    saved = 0
+    try:
+        import sys
+        sys.path.insert(0, "/app")
+        from app.memory.vector_memory import ingest_external_memory
+        for item in req.memories:
+            ok = ingest_external_memory(
+                content=item.content,
+                memory_type=item.memory_type,
+                importance=item.importance,
+                source=item.source,
+                session_id=item.session_id,
+            )
+            if ok:
+                saved += 1
+        _bg_log(f"memory/ingest: stored {saved}/{len(req.memories)} memories "
+                f"from source={req.memories[0].source if req.memories else '?'}",
+                "memory")
+        return {"ok": True, "saved": saved, "total": len(req.memories)}
+    except Exception as e:
+        _bg_log(f"memory/ingest error: {e}", "memory")
+        raise HTTPException(500, f"Memory ingest failed: {e}")
+
+
+@app.get("/memory/export")
+def memory_export(limit: int = 100, min_importance: int = 3):
+    """
+    Export recent important memories as JSON.
+
+    Used by Claude Code to pull cross-session insights and write them
+    to local memory markdown files — closing the sync loop.
+
+    Returns memories ordered by recency, filtered by importance threshold.
+    """
+    try:
+        import sys
+        sys.path.insert(0, "/app")
+        from app.memory.vector_memory import export_memories
+        memories = export_memories(limit=min(limit, 500), min_importance=min_importance)
+        return {"memories": memories, "count": len(memories)}
+    except Exception as e:
+        raise HTTPException(500, f"Memory export failed: {e}")
+
+
+@app.get("/memory/stats")
+def memory_stats():
+    """
+    Show memory store statistics: total count, sources, last writes.
+    Useful for confirming that cross-agent memory sync is working.
+    """
+    try:
+        with _db_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT COUNT(*) FROM agent_memories")
+                total = cur.fetchone()[0]
+                cur.execute("""
+                    SELECT source, COUNT(*), MAX(created_at)
+                    FROM agent_memories
+                    GROUP BY source
+                    ORDER BY COUNT(*) DESC
+                """)
+                by_source = [
+                    {"source": r[0] or "unknown", "count": r[1],
+                     "last_write": r[2].isoformat() if r[2] else None}
+                    for r in cur.fetchall()
+                ]
+                cur.execute("""
+                    SELECT COUNT(*) FROM agent_memories
+                    WHERE created_at > NOW() - INTERVAL '24 hours'
+                """)
+                last_24h = cur.fetchone()[0]
+        return {
+            "total_memories": total,
+            "last_24h": last_24h,
+            "by_source": by_source,
+        }
+    except Exception as e:
+        # If source column doesn't exist yet (pre-migration), return basic stats
+        try:
+            with _db_conn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT COUNT(*) FROM agent_memories")
+                    total = cur.fetchone()[0]
+            return {"total_memories": total, "note": str(e)}
+        except Exception:
+            raise HTTPException(500, f"Stats failed: {e}")
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("cli_worker.main:app", host="0.0.0.0", port=8002, reload=False)
