@@ -326,6 +326,11 @@ _AGENT_SLEEPING_AFTER = 2  * 3600 # 2 hours → sleeping
 
 _SICK_GRACE_PERIOD = 15 * 60  # 15 min — show "recovering" before escalating to "sick"
 
+# Rolling window size for per-worker error-rate tracking.
+# Keeps the last N request outcomes (True=success, False=error/sick/strike).
+# Enough to detect degradation trends without over-weighting a single failure.
+_REQ_WINDOW_SIZE = 20
+
 
 def _ensure_worker(worker_id: str) -> dict:
     if worker_id not in _workers:
@@ -341,6 +346,7 @@ def _ensure_worker(worker_id: str) -> dict:
             "recovery_count_today": 0,      # resets at UTC midnight
             "_recovery_day": 0,             # internal: UTC day number for daily reset
             "recovery_race_history": [],    # list of last 10 race results (newest first)
+            "_req_window": [],              # rolling list[bool]: True=success, False=failure (last 20)
         }
     return _workers[worker_id]
 
@@ -376,6 +382,11 @@ def mark_done(worker_id: str) -> None:
         w["talking_to"] = None
         w["sick_since"] = None   # clear sick grace period on recovery
         w["error_detail"] = None  # clear any error state on success
+        # Record successful outcome in rolling error-rate window
+        window = w.setdefault("_req_window", [])
+        window.append(True)
+        if len(window) > _REQ_WINDOW_SIZE:
+            window.pop(0)
     _log_agent_event(worker_id, "done")
 
 
@@ -389,6 +400,11 @@ def mark_error(worker_id: str, detail: str = "") -> None:
         w["task"] = detail[:200] if detail else "Last response was an error"
         w["error_detail"] = detail[:400] if detail else ""
         w["last_worked"] = time.time()
+        # Record failure outcome in rolling error-rate window
+        window = w.setdefault("_req_window", [])
+        window.append(False)
+        if len(window) > _REQ_WINDOW_SIZE:
+            window.pop(0)
     _log_agent_event(worker_id, "error", detail[:200])
 
 
@@ -536,6 +552,15 @@ def get_worker_status(worker_id: str) -> dict:
 
         sick_since = w.get("sick_since")
         sick_for_seconds = round(now - sick_since) if sick_since else None
+
+        # Per-worker rolling error rate (last up-to-20 requests)
+        window = w.get("_req_window", [])
+        if len(window) >= 3:  # require at least 3 samples to be meaningful
+            error_count = window.count(False)
+            error_rate_pct = round(error_count / len(window) * 100)
+        else:
+            error_rate_pct = None  # not enough data yet
+
         return {
             "id": worker_id,
             "state": state,
@@ -549,6 +574,8 @@ def get_worker_status(worker_id: str) -> dict:
             "last_recovery_layer": w.get("last_recovery_layer", ""),
             "recovery_count_today": w.get("recovery_count_today", 0),
             "recovery_race_history": w.get("recovery_race_history", []),
+            "error_rate_pct": error_rate_pct,              # 0-100 or None (insufficient data)
+            "req_window_size": len(window),                # how many samples in window
         }
 
 

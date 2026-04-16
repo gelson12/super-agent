@@ -636,7 +636,7 @@ def dashboard_n8n_workflows():
     """
     Return all n8n workflows as structured JSON split into active (working) and
     inactive (non-working) lists. Used by the office panel 'View Workflows' popup.
-    Each workflow has: id, name, active, updatedAt (if available).
+    Each workflow has: id, name, active, updatedAt, lastRunAt, lastRunStatus.
     """
     try:
         from .tools.n8n_tools import _check_config, _get
@@ -663,16 +663,47 @@ def dashboard_n8n_workflows():
         inactive = []
         for w in all_rows:
             entry = {
-                "id":        w.get("id", ""),
-                "name":      w.get("name", "Unnamed"),
-                "active":    bool(w.get("active", False)),
-                "updatedAt": (w.get("updatedAt") or w.get("updated_at") or "")[:19],
-                "tags":      [t.get("name", "") for t in (w.get("tags") or [])],
+                "id":            w.get("id", ""),
+                "name":          w.get("name", "Unnamed"),
+                "active":        bool(w.get("active", False)),
+                "updatedAt":     (w.get("updatedAt") or w.get("updated_at") or "")[:19],
+                "tags":          [t.get("name", "") for t in (w.get("tags") or [])],
+                "lastRunAt":     "",   # filled below from executions API
+                "lastRunStatus": "",   # success | error | crashed | waiting | running
             }
             (active if entry["active"] else inactive).append(entry)
 
         active.sort(key=lambda x: x["name"].lower())
         inactive.sort(key=lambda x: x["name"].lower())
+
+        # Enrich with last-execution data (single API call, newest-first).
+        # Covers all workflows that have run in the most recent 250 executions.
+        # Non-fatal — if the executions endpoint is unavailable the dashboard
+        # still works, just without last-run timestamps.
+        try:
+            exec_result = _get("/api/v1/executions?limit=250&includeData=false")
+            if isinstance(exec_result, dict):
+                execution_map: dict[str, dict] = {}
+                for ex in (exec_result.get("data") or []):
+                    # n8n v1 API: workflowId is top-level; fall back to nested path
+                    wf_id = str(
+                        ex.get("workflowId")
+                        or (ex.get("data") or {}).get("workflowData", {}).get("id", "")
+                        or ""
+                    )
+                    if wf_id and wf_id not in execution_map:
+                        # First match = most recent (API returns newest-first)
+                        execution_map[wf_id] = {
+                            "lastRunAt":     (ex.get("startedAt") or ex.get("stoppedAt") or ""),
+                            "lastRunStatus": ex.get("status", ""),
+                        }
+                for entry in active + inactive:
+                    ex = execution_map.get(str(entry["id"]))
+                    if ex:
+                        entry["lastRunAt"]     = (ex["lastRunAt"]     or "")[:24]
+                        entry["lastRunStatus"] = (ex["lastRunStatus"] or "")[:20]
+        except Exception:
+            pass  # non-fatal
 
         return {
             "active":   active,

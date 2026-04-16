@@ -15,13 +15,15 @@
       color: #e8e8e8;
       min-height: 100vh;
       overflow-x: hidden;
+      overflow-y: scroll;
       scrollbar-width: thin;
-      scrollbar-color: #6b5337 #2d1f0e;
+      scrollbar-color: #c9a96e #1a1208;
     }
-    body::-webkit-scrollbar        { width: 6px; }
-    body::-webkit-scrollbar-track  { background: #2d1f0e; }
-    body::-webkit-scrollbar-thumb  { background: #6b5337; border-radius: 3px; }
-    body::-webkit-scrollbar-thumb:hover { background: #c9a96e; }
+    body::-webkit-scrollbar        { width: 8px; }
+    body::-webkit-scrollbar-track  { background: #1a1208; border-left: 1px solid #3d2b16; }
+    body::-webkit-scrollbar-thumb  { background: linear-gradient(180deg, #8b6f47, #c9a96e); border-radius: 4px; border: 1px solid #5a4430; }
+    body::-webkit-scrollbar-thumb:hover { background: linear-gradient(180deg, #c9a96e, #e8d5a0); }
+    html { overflow-y: scroll; }
 
     /* ── Header ──────────────────────────────────────────────────── */
     .header {
@@ -109,11 +111,14 @@
       display: flex;
       flex-direction: column;
       align-items: center;
-      transition: border-color 0.3s;
+      transition: border-color 0.3s, transform 0.2s ease, box-shadow 0.3s;
+      will-change: transform;
     }
 
-    .desk:hover {
+    .desk:not([data-state="strike"]):hover {
       border-color: #8b7355;
+      transform: translateY(-5px);
+      box-shadow: 0 8px 20px rgba(0,0,0,0.4);
     }
 
     /* Worker name */
@@ -143,6 +148,7 @@
     .status-label.strike       { background: #7f1d1d; color: #fca5a5; }
     .status-label.sick         { background: #713f12; color: #fde68a; }
     .status-label.recovering   { background: #134e4a; color: #5eead4; }
+    .status-label.error        { background: #431407; color: #fb923c; }
 
     /* ── Monitor (screen) ────────────────────────────────────────── */
     .monitor {
@@ -227,6 +233,17 @@
       box-shadow: 0 0 8px rgba(129, 140, 248, 0.25);
     }
 
+    .monitor.on-orange {
+      background: linear-gradient(135deg, #431407 0%, #9a3412 100%);
+      border-color: #fb923c;
+      box-shadow: 0 0 10px rgba(251, 146, 60, 0.35);
+      animation: error-glow 1.2s ease-in-out infinite;
+    }
+    @keyframes error-glow {
+      0%, 100% { box-shadow: 0 0 6px rgba(251,146,60,0.3); }
+      50%       { box-shadow: 0 0 18px rgba(251,146,60,0.7); }
+    }
+
     /* Screen content */
     .screen-content {
       position: absolute;
@@ -265,6 +282,7 @@
       font-size: 26px;
       margin-top: 12px;
       position: relative;
+      overflow: visible;
     }
 
     /* Zzz animation for sleeping */
@@ -632,6 +650,695 @@
       }
       .desk { min-height: 150px; }
     }
+
+    /* ══════════════════════════════════════════════════════════
+       ENHANCED ANIMATIONS & EFFECTS
+       ══════════════════════════════════════════════════════════ */
+
+    /* ── Desk state glow by data-state ──────────────────────── */
+    .desk[data-state="working"] {
+      border-color: #3b82f6 !important;
+      animation: desk-work-glow 3s ease-in-out infinite;
+    }
+    @keyframes desk-work-glow {
+      0%, 100% { box-shadow: 0 0 8px rgba(59,130,246,0.15); }
+      50%       { box-shadow: 0 0 24px rgba(59,130,246,0.4), 0 0 6px rgba(96,165,250,0.2); }
+    }
+
+    .desk[data-state="talking"] {
+      border-color: #8b5cf6 !important;
+      animation: desk-talk-glow 1.5s ease-in-out infinite;
+    }
+    @keyframes desk-talk-glow {
+      0%, 100% { box-shadow: 0 0 8px rgba(139,92,246,0.2); }
+      50%       { box-shadow: 0 0 26px rgba(139,92,246,0.6); }
+    }
+
+    .desk[data-state="recovering"] {
+      border-color: #0d9488 !important;
+      animation: desk-recover-glow 2s ease-in-out infinite;
+    }
+    @keyframes desk-recover-glow {
+      0%, 100% { box-shadow: 0 0 6px rgba(13,148,136,0.2); }
+      50%       { box-shadow: 0 0 20px rgba(94,234,212,0.45); }
+    }
+
+    .desk[data-state="strike"] {
+      border-color: #ef4444 !important;
+      animation: desk-strike-shake 0.22s ease-in-out infinite;
+    }
+    @keyframes desk-strike-shake {
+      0%, 100% { transform: translateX(0); }
+      25%  { transform: translateX(-2px); }
+      75%  { transform: translateX(2px); }
+    }
+    .desk[data-state="strike"]:hover {
+      transform: translateY(-4px) !important;
+      animation: none !important;
+    }
+
+    .desk[data-state="sick"] {
+      border-color: #ca8a04 !important;
+      animation: desk-sick-pulse 2s ease-in-out infinite;
+    }
+    @keyframes desk-sick-pulse {
+      0%, 100% { box-shadow: 0 0 4px rgba(234,179,8,0.1); }
+      50%       { box-shadow: 0 0 14px rgba(234,179,8,0.35); }
+    }
+
+    /* ── Monitor CRT scanlines (::before free — stand uses ::after) */
+    .monitor::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: repeating-linear-gradient(
+        0deg,
+        transparent,
+        transparent 2px,
+        rgba(0,0,0,0.06) 2px,
+        rgba(0,0,0,0.06) 4px
+      );
+      z-index: 2;
+      pointer-events: none;
+      border-radius: 2px;
+    }
+
+    /* ── Working monitor subtle flicker ─────────────────────── */
+    @keyframes monitor-flicker {
+      0%, 94%, 100% { opacity: 1; }
+      96% { opacity: 0.88; }
+      98% { opacity: 1; }
+      99% { opacity: 0.92; }
+    }
+    .monitor.on-blue { animation: working-glow 2s ease-in-out infinite, monitor-flicker 9s ease-in-out infinite; }
+
+    /* ── Avatar animations by state ─────────────────────────── */
+    .desk[data-state="working"] .avatar {
+      animation: avatar-type 0.18s ease-in-out infinite;
+    }
+    @keyframes avatar-type {
+      0%, 100% { transform: translateY(0); }
+      50%       { transform: translateY(-2px); }
+    }
+
+    .desk[data-state="sleeping"] .avatar {
+      animation: avatar-sleep-bob 4s ease-in-out infinite;
+    }
+    @keyframes avatar-sleep-bob {
+      0%, 100% { transform: rotate(-4deg) translateY(0); }
+      50%       { transform: rotate(4deg) translateY(3px); }
+    }
+
+    .desk[data-state="talking"] .avatar {
+      animation: avatar-talk-nod 0.85s ease-in-out infinite;
+    }
+    @keyframes avatar-talk-nod {
+      0%, 100% { transform: translateY(0) rotate(0deg); }
+      50%       { transform: translateY(-3px) rotate(-2deg); }
+    }
+
+    .desk[data-state="idle"] .avatar {
+      animation: avatar-idle-breathe 5s ease-in-out infinite;
+    }
+    @keyframes avatar-idle-breathe {
+      0%, 100% { transform: scale(1); }
+      50%       { transform: scale(1.05); }
+    }
+
+    .desk[data-state="recovering"] .avatar {
+      animation: avatar-recover-pulse 1.4s ease-in-out infinite;
+    }
+    @keyframes avatar-recover-pulse {
+      0%, 100% { filter: drop-shadow(0 0 4px rgba(94,234,212,0.3)); }
+      50%       { filter: drop-shadow(0 0 14px rgba(94,234,212,0.9)); }
+    }
+
+    .desk[data-state="sick"] .avatar {
+      animation: avatar-sick-sway 1.1s ease-in-out infinite;
+    }
+    @keyframes avatar-sick-sway {
+      0%, 100% { transform: rotate(-4deg); }
+      50%       { transform: rotate(4deg); }
+    }
+
+    .desk[data-state="coffee_break"] .avatar {
+      animation: avatar-coffee-relax 3s ease-in-out infinite;
+    }
+    @keyframes avatar-coffee-relax {
+      0%, 100% { transform: translateX(0) rotate(-1.5deg); }
+      50%       { transform: translateX(3px) rotate(1.5deg); }
+    }
+
+    .desk[data-state="break"] .avatar {
+      animation: avatar-break-lean 4s ease-in-out infinite;
+    }
+    @keyframes avatar-break-lean {
+      0%, 100% { transform: rotate(0deg); }
+      30%  { transform: rotate(-5deg) translateX(-2px); }
+      70%  { transform: rotate(5deg) translateX(2px); }
+    }
+
+    /* ── Status label glow on important states ──────────────── */
+    .status-label.working {
+      animation: status-work-glow 2s ease-in-out infinite;
+    }
+    @keyframes status-work-glow {
+      0%, 100% { box-shadow: none; }
+      50%       { box-shadow: 0 0 10px rgba(96,165,250,0.65); }
+    }
+
+    .status-label.talking {
+      animation: status-talk-glow 1.4s ease-in-out infinite;
+    }
+    @keyframes status-talk-glow {
+      0%, 100% { box-shadow: none; }
+      50%       { box-shadow: 0 0 10px rgba(196,181,253,0.75); }
+    }
+
+    .status-label.recovering {
+      animation: status-recover-glow 1.6s ease-in-out infinite;
+    }
+    @keyframes status-recover-glow {
+      0%, 100% { box-shadow: none; }
+      50%       { box-shadow: 0 0 10px rgba(94,234,212,0.65); }
+    }
+
+    /* ── Multi-bubble Zzz for sleeping ──────────────────────── */
+    .zzz { display: none; } /* hide old single zzz — replaced by zzz-bubbles */
+    .zzz-bubble {
+      position: absolute;
+      color: #777;
+      font-family: 'Press Start 2P', monospace;
+      pointer-events: none;
+      opacity: 0;
+    }
+    .zzz-bubble.z1 { top: -10px; right: -8px;  font-size: 0.32rem; animation: zzz-float 2.5s ease-in-out infinite 0s; }
+    .zzz-bubble.z2 { top: -20px; right:  0px;  font-size: 0.42rem; animation: zzz-float 2.5s ease-in-out infinite 0.85s; }
+    .zzz-bubble.z3 { top: -30px; right:  9px;  font-size: 0.52rem; animation: zzz-float 2.5s ease-in-out infinite 1.7s; }
+    @keyframes zzz-float {
+      0%   { opacity: 0; transform: translateY(0) translateX(0) scale(0.8); }
+      25%  { opacity: 0.9; }
+      100% { opacity: 0; transform: translateY(-16px) translateX(5px) scale(1); }
+    }
+
+    /* ── Coffee steam wisps ──────────────────────────────────── */
+    .steam-wisp {
+      position: absolute;
+      font-size: 9px;
+      color: rgba(200,149,108,0.6);
+      top: -24px;
+      right: -14px;
+      pointer-events: none;
+      animation: steam-rise 2.2s ease-in-out infinite;
+    }
+    .steam-wisp.w2 {
+      right: -22px;
+      top: -20px;
+      font-size: 7px;
+      animation-delay: 0.9s;
+    }
+    @keyframes steam-rise {
+      0%   { opacity: 0; transform: translateY(0) scaleX(1) rotate(0deg); }
+      35%  { opacity: 0.85; }
+      100% { opacity: 0; transform: translateY(-14px) scaleX(0.4) rotate(10deg); }
+    }
+
+    /* ── Recovery health bar ─────────────────────────────────── */
+    .health-bar-wrap {
+      width: 88%;
+      height: 5px;
+      background: #111;
+      border-radius: 3px;
+      margin-top: 6px;
+      overflow: hidden;
+      border: 1px solid #0d9488;
+    }
+    .health-bar-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #0d9488, #5eead4, #a7f3d0);
+      border-radius: 3px;
+      transition: width 1s ease;
+      animation: health-shimmer 1.8s ease-in-out infinite;
+    }
+    @keyframes health-shimmer {
+      0%, 100% { filter: brightness(1); }
+      50%       { filter: brightness(1.5); }
+    }
+
+    /* ── Idle thought bubble ─────────────────────────────────── */
+    .thought-bubble {
+      position: absolute;
+      top: -24px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 0.24rem;
+      color: #4ade80;
+      background: rgba(20,83,45,0.92);
+      padding: 2px 5px;
+      border-radius: 2px;
+      white-space: nowrap;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.5s ease;
+      z-index: 10;
+      border: 1px solid #166534;
+    }
+
+    /* ── Office clock in header ──────────────────────────────── */
+    #office-clock {
+      font-size: 0.45rem;
+      color: #c9a96e;
+      opacity: 0.85;
+      letter-spacing: 1px;
+      min-width: 60px;
+      text-align: center;
+    }
+
+    /* ── Desk state-changed flash ─────────────────────────────── */
+    @keyframes desk-state-flash {
+      0%   { background: #3d3020; }
+      100% { background: #2a1e10; }
+    }
+    .desk.state-changed { animation: desk-state-flash 0.7s ease-out; }
+
+    /* ── Stats counter pop ───────────────────────────────────── */
+    @keyframes stat-pop {
+      0%   { transform: scale(1.6); color: #fff; }
+      100% { transform: scale(1);   color: #c9a96e; }
+    }
+    .stat-value.popped { animation: stat-pop 0.4s ease-out; }
+
+    /* ── Talking ring pulse around avatar ─────────────────────── */
+    .desk[data-state="talking"] .avatar::before {
+      content: "";
+      position: absolute;
+      inset: -6px;
+      border-radius: 50%;
+      border: 2px solid rgba(139,92,246,0.5);
+      animation: talk-ring 1.2s ease-out infinite;
+    }
+    @keyframes talk-ring {
+      0%   { opacity: 0.9; transform: scale(1); }
+      100% { opacity: 0;   transform: scale(1.6); }
+    }
+
+    /* ── Working avatar: glow ring ───────────────────────────── */
+    .desk[data-state="working"] .avatar::before {
+      content: "";
+      position: absolute;
+      inset: -4px;
+      border-radius: 50%;
+      border: 2px solid rgba(59,130,246,0.4);
+      animation: work-ring 2s ease-out infinite;
+    }
+    @keyframes work-ring {
+      0%   { opacity: 0.8; transform: scale(1); }
+      100% { opacity: 0;   transform: scale(1.5); }
+    }
+
+    /* ── Sick avatar yellow throb ────────────────────────────── */
+    .desk[data-state="sick"] .avatar::before {
+      content: "";
+      position: absolute;
+      inset: -4px;
+      border-radius: 50%;
+      border: 2px solid rgba(234,179,8,0.5);
+      animation: sick-ring 1.5s ease-out infinite;
+    }
+    @keyframes sick-ring {
+      0%   { opacity: 0.8; transform: scale(1); }
+      100% { opacity: 0;   transform: scale(1.5); }
+    }
+
+    /* ── Plant sway decoration ───────────────────────────────── */
+    .plant { animation: plant-sway 6s ease-in-out infinite; transform-origin: bottom center; }
+    @keyframes plant-sway {
+      0%, 100% { transform: rotate(-4deg); }
+      50%       { transform: rotate(4deg); }
+    }
+
+    /* ── Error state desk glow ──────────────────────────────── */
+    .desk[data-state="error"] {
+      border-color: #fb923c !important;
+      animation: desk-error-glow 1.2s ease-in-out infinite;
+    }
+    @keyframes desk-error-glow {
+      0%, 100% { box-shadow: 0 0 8px rgba(251,146,60,0.2); }
+      50%       { box-shadow: 0 0 22px rgba(251,146,60,0.55); }
+    }
+    .desk[data-state="error"] .avatar {
+      animation: avatar-error-shake 0.4s ease-in-out infinite;
+    }
+    @keyframes avatar-error-shake {
+      0%, 100% { transform: rotate(0deg); }
+      25%  { transform: rotate(-3deg); }
+      75%  { transform: rotate(3deg); }
+    }
+    .desk[data-state="error"] .avatar::before {
+      content: "";
+      position: absolute;
+      inset: -4px;
+      border-radius: 50%;
+      border: 2px solid rgba(251,146,60,0.5);
+      animation: error-ring 1s ease-out infinite;
+    }
+    @keyframes error-ring {
+      0%   { opacity: 0.9; transform: scale(1); }
+      100% { opacity: 0; transform: scale(1.55); }
+    }
+    .status-label.error {
+      animation: status-error-glow 1.2s ease-in-out infinite;
+    }
+    @keyframes status-error-glow {
+      0%, 100% { box-shadow: none; }
+      50%       { box-shadow: 0 0 10px rgba(251,146,60,0.7); }
+    }
+
+    /* ── Pro subscription flag badges ────────────────────────── */
+    .pro-flag-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      font-size: 0.28rem;
+      padding: 2px 5px;
+      border-radius: 2px;
+      margin-top: 4px;
+      font-family: 'Press Start 2P', monospace;
+      white-space: nowrap;
+    }
+    .pro-flag-badge.burst {
+      background: #431407;
+      color: #fb923c;
+      border: 1px solid #7c2d12;
+      animation: flag-pulse-orange 1.5s ease-in-out infinite;
+    }
+    .pro-flag-badge.daily {
+      background: #450a0a;
+      color: #fca5a5;
+      border: 1px solid #7f1d1d;
+      animation: flag-pulse-red 2s ease-in-out infinite;
+    }
+    .pro-flag-badge.cli_down {
+      background: #422006;
+      color: #fde68a;
+      border: 1px solid #713f12;
+      animation: flag-pulse-yellow 1.8s ease-in-out infinite;
+    }
+    @keyframes flag-pulse-orange {
+      0%, 100% { box-shadow: none; opacity: 1; }
+      50%       { box-shadow: 0 0 6px rgba(251,146,60,0.6); opacity: 0.85; }
+    }
+    @keyframes flag-pulse-red {
+      0%, 100% { box-shadow: none; }
+      50%       { box-shadow: 0 0 6px rgba(239,68,68,0.5); }
+    }
+    @keyframes flag-pulse-yellow {
+      0%, 100% { box-shadow: none; }
+      50%       { box-shadow: 0 0 6px rgba(234,179,8,0.5); }
+    }
+
+    /* ── Error detail line ───────────────────────────────────── */
+    .error-detail {
+      font-size: 0.26rem;
+      color: #fb923c;
+      margin-top: 4px;
+      text-align: center;
+      max-width: 160px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      opacity: 0.85;
+    }
+
+    /* ── Recovery layer badge ────────────────────────────────── */
+    .recovery-layer {
+      font-size: 0.26rem;
+      color: #5eead4;
+      margin-top: 3px;
+      text-align: center;
+      opacity: 0.8;
+    }
+
+    /* ── Recovery count badge ────────────────────────────────── */
+    .recovery-count-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 2px;
+      font-size: 0.28rem;
+      padding: 1px 4px;
+      border-radius: 2px;
+      background: #1a1208;
+      border: 1px solid #4a3520;
+      color: #c9a96e;
+      margin-left: 4px;
+      vertical-align: middle;
+    }
+    .recovery-count-badge.high {
+      background: #431407;
+      border-color: #7c2d12;
+      color: #fb923c;
+      animation: flag-pulse-orange 1.5s ease-in-out infinite;
+    }
+
+    /* ── System health bar at top of office ─────────────────── */
+    #system-health-bar {
+      background: #0f0b05;
+      border-bottom: 2px solid #3d2b16;
+      padding: 6px 20px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      font-size: 0.3rem;
+      flex-wrap: wrap;
+    }
+    .health-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 7px;
+      border-radius: 3px;
+      font-size: 0.28rem;
+      border: 1px solid transparent;
+    }
+    .health-pill.ok     { background: #14532d; color: #4ade80; border-color: #166534; }
+    .health-pill.warn   { background: #431407; color: #fb923c; border-color: #7c2d12; animation: flag-pulse-orange 2s ease-in-out infinite; }
+    .health-pill.danger { background: #450a0a; color: #fca5a5; border-color: #7f1d1d; animation: flag-pulse-red 1.2s ease-in-out infinite; }
+    .health-pill.info   { background: #1c1c3a; color: #818cf8; border-color: #312e81; }
+    .health-pill .h-dot {
+      width: 5px; height: 5px;
+      border-radius: 50%;
+      display: inline-block;
+    }
+    .health-pill.ok .h-dot     { background: #4ade80; animation: pulse 2s ease-in-out infinite; }
+    .health-pill.warn .h-dot   { background: #fb923c; animation: pulse 1s ease-in-out infinite; }
+    .health-pill.danger .h-dot { background: #fca5a5; animation: pulse 0.6s ease-in-out infinite; }
+    .health-pill.info .h-dot   { background: #818cf8; }
+    #health-bar-label {
+      font-size: 0.28rem;
+      color: #5a4430;
+      margin-right: 4px;
+    }
+
+    /* ── Per-worker error rate bar ──────────────────────────── */
+    .error-rate-bar-wrap {
+      width: 90%;
+      height: 3px;
+      background: #111;
+      border-radius: 2px;
+      margin-top: 5px;
+      overflow: hidden;
+      position: relative;
+    }
+    .error-rate-bar-fill {
+      height: 100%;
+      border-radius: 2px;
+      transition: width 0.8s ease, background 0.8s ease;
+    }
+    .error-rate-bar-fill.level-low    { background: #eab308; }  /* 1-10%  yellow  */
+    .error-rate-bar-fill.level-mid    { background: #f97316; }  /* 10-25% orange  */
+    .error-rate-bar-fill.level-high   { background: #ef4444; animation: err-bar-pulse 1s ease-in-out infinite; }  /* 25%+   red     */
+    @keyframes err-bar-pulse {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0.5; }
+    }
+    .error-rate-label {
+      font-size: 0.24rem;
+      text-align: center;
+      margin-top: 2px;
+    }
+    .error-rate-label.level-low  { color: #eab308; }
+    .error-rate-label.level-mid  { color: #f97316; }
+    .error-rate-label.level-high { color: #ef4444; }
+
+    /* ── Login ratelimit badge ───────────────────────────────── */
+    .pro-flag-badge.ratelimit {
+      background: #3b0764;
+      color: #e879f9;
+      border: 1px solid #6b21a8;
+      animation: flag-pulse-purple 1.2s ease-in-out infinite;
+    }
+    @keyframes flag-pulse-purple {
+      0%, 100% { box-shadow: none; opacity: 1; }
+      50%       { box-shadow: 0 0 8px rgba(232,121,249,0.6); opacity: 0.85; }
+    }
+
+    /* ── Timeout counter badge ───────────────────────────────── */
+    .timeout-badge {
+      font-size: 0.28rem;
+      padding: 2px 5px;
+      border-radius: 2px;
+      margin-top: 3px;
+      font-family: 'Press Start 2P', monospace;
+      display: inline-block;
+      border: 1px solid transparent;
+    }
+    .timeout-badge.level-warn   { background: #422006; color: #fb923c; border-color: #7c2d12; }
+    .timeout-badge.level-danger { background: #450a0a; color: #fca5a5; border-color: #7f1d1d;
+                                   animation: flag-pulse-red 0.8s ease-in-out infinite; }
+
+    /* ── Toast notifications ─────────────────────────────────── */
+    #toast-container {
+      position: fixed;
+      bottom: 24px;
+      left: 20px;
+      z-index: 2000;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      pointer-events: none;
+    }
+    .toast-notification {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: #1a1208;
+      border: 2px solid #6b5337;
+      border-radius: 4px;
+      padding: 8px 12px;
+      font-family: 'Press Start 2P', monospace;
+      font-size: 0.32rem;
+      color: #c9a96e;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+      animation: toast-slide-in 0.3s ease-out;
+      min-width: 180px;
+      max-width: 280px;
+    }
+    .toast-notification.toast-exit {
+      animation: toast-slide-out 0.4s ease-in forwards;
+    }
+    @keyframes toast-slide-in {
+      from { transform: translateX(-110%); opacity: 0; }
+      to   { transform: translateX(0);     opacity: 1; }
+    }
+    @keyframes toast-slide-out {
+      from { transform: translateX(0);     opacity: 1; }
+      to   { transform: translateX(-110%); opacity: 0; }
+    }
+    .toast-avatar { font-size: 22px; flex-shrink: 0; }
+    .toast-body   { line-height: 1.6; }
+    .toast-body strong { color: #e8d5a0; }
+    .toast-transition  { color: #8b7355; font-size: 0.28rem; }
+
+    /* ── Keyboard shortcut hint ──────────────────────────────── */
+    .shortcut-hint {
+      font-size: 0.28rem;
+      color: #444;
+      margin-left: auto;
+      align-self: center;
+    }
+
+    /* ── Working monitor scan line ───────────────────────────── */
+    .screen-scan-line {
+      position: absolute;
+      left: 0; right: 0;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, rgba(96,165,250,0.5), transparent);
+      pointer-events: none;
+      z-index: 3;
+      animation: scan-sweep 2.2s linear infinite;
+    }
+    @keyframes scan-sweep {
+      from { top: 0%; opacity: 0.9; }
+      to   { top: 100%; opacity: 0.2; }
+    }
+
+    /* ── Sick/strike "!" attention badge ────────────────────── */
+    .attention-badge {
+      position: absolute;
+      top: 6px; right: 6px;
+      width: 14px; height: 14px;
+      background: #dc2626;
+      border-radius: 50%;
+      color: #fff;
+      font-size: 0.35rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: 'Press Start 2P', monospace;
+      animation: attention-blink 0.8s ease-in-out infinite;
+      z-index: 5;
+    }
+    @keyframes attention-blink {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50%       { opacity: 0.5; transform: scale(0.85); }
+    }
+
+    /* ── Sick: yellow attention badge ───────────────────────── */
+    .desk[data-state="sick"] .attention-badge {
+      background: #ca8a04;
+      animation: attention-blink-yellow 1s ease-in-out infinite;
+    }
+    @keyframes attention-blink-yellow {
+      0%, 100% { opacity: 1; box-shadow: 0 0 6px rgba(234,179,8,0.7); }
+      50%       { opacity: 0.6; box-shadow: none; }
+    }
+
+    /* ── Office clock + date ─────────────────────────────────── */
+    .office-clock-wrap {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 2px;
+    }
+    #office-date {
+      font-size: 0.25rem;
+      color: #6b5337;
+      letter-spacing: 1px;
+    }
+
+    /* ── Section label emoji ─────────────────────────────────── */
+    .section-label .s-icon {
+      margin-right: 6px;
+      font-style: normal;
+    }
+
+    /* ── "NO CREDITS!" animated screen ─────────────────────── */
+    .monitor.on-red .screen-content {
+      animation: nocredits-flash 1s step-end infinite;
+    }
+    @keyframes nocredits-flash {
+      0%, 100% { color: #fca5a5; }
+      50%       { color: #fff; }
+    }
+
+    /* ── Recovering screen healing pulse ────────────────────── */
+    .monitor.on-teal .screen-content {
+      animation: healing-text-pulse 1.5s ease-in-out infinite;
+    }
+    @keyframes healing-text-pulse {
+      0%, 100% { opacity: 0.7; }
+      50%       { opacity: 1; }
+    }
+
+    /* ── Hover desk spotlight ────────────────────────────────── */
+    .desk:hover::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      border-radius: 4px;
+      background: radial-gradient(circle at 50% 30%, rgba(201,169,110,0.06) 0%, transparent 70%);
+      pointer-events: none;
+    }
   </style>
 </head>
 <body>
@@ -641,7 +1348,20 @@
     <span class="status-dot"></span>
     <h1 style="display:inline">SUPER AGENT OFFICE</h1>
   </div>
+  <div class="office-clock-wrap">
+    <span id="office-clock">--:--:--</span>
+    <span id="office-date"></span>
+  </div>
   <a href="/" class="back-link">&larr; BACK TO CHAT</a>
+</div>
+
+<div id="system-health-bar">
+  <span id="health-bar-label">SYSTEM</span>
+  <span class="health-pill ok" id="hp-pro"><span class="h-dot"></span>Pro CLI</span>
+  <span class="health-pill ok" id="hp-api"><span class="h-dot"></span>API</span>
+  <span class="health-pill ok" id="hp-agents"><span class="h-dot"></span>Agents</span>
+  <span class="health-pill info" id="hp-pro-mode" style="display:none"></span>
+  <span id="hp-errors" style="margin-left:auto;font-size:0.26rem;color:#5a4430;"></span>
 </div>
 
 <div class="office">
@@ -656,6 +1376,8 @@
     <div class="legend-item"><div class="legend-dot" style="background:#ef4444"></div> Strike</div>
     <div class="legend-item"><div class="legend-dot" style="background:#eab308"></div> Sick</div>
     <div class="legend-item"><div class="legend-dot" style="background:#0d9488"></div> Recovering</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#fb923c"></div> Error</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#eab308;height:3px;border-radius:1px;width:20px"></div> ERR rate bar</div>
   </div>
 
   <!-- Summary stats -->
@@ -665,19 +1387,20 @@
     <div class="stat-item">Sleeping: <span class="stat-value" id="count-sleeping">0</span></div>
     <div class="stat-item">Issues: <span class="stat-value" id="count-issues">0</span></div>
     <div class="refresh-indicator"><span class="dot"></span>Live (5s)</div>
+    <div class="shortcut-hint">[R] refresh</div>
   </div>
 
   <!-- Models section -->
-  <div class="section-label">LLM Models</div>
+  <div class="section-label"><i class="s-icon">🧠</i>LLM Models</div>
   <div class="desks" id="models-desks"></div>
 
   <!-- Agents section -->
-  <div class="section-label">Specialized Agents</div>
+  <div class="section-label"><i class="s-icon">🤖</i>Specialized Agents</div>
   <div class="desks" id="agents-desks"></div>
 
   <!-- Interactions feed -->
   <div class="section-label" style="margin-top:24px;">
-    Recent Agent Interactions
+    <i class="s-icon">📡</i>Recent Agent Interactions
     <span id="interactions-live" style="font-size:0.35rem;color:#8b5cf6;margin-left:10px;">
       <span class="dot" style="background:#8b5cf6;display:inline-block;width:6px;height:6px;border-radius:50%;animation:pulse 2s ease-in-out infinite;margin-right:4px;"></span>Live
     </span>
@@ -692,6 +1415,7 @@
 </div>
 
 <div class="filing-cabinet">🗄️</div>
+<div id="toast-container"></div>
 <svg id="talking-lines" style="position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:999;"></svg>
 
 <!-- Log panel overlay + drawer -->
@@ -789,6 +1513,7 @@ function getMonitorClass(state) {
     case "talking":      return "on-purple";
     case "strike":       return "on-red";
     case "sick":         return "on-yellow";
+    case "error":        return "on-orange";
     default:             return "off";
   }
 }
@@ -812,6 +1537,9 @@ function getScreenContent(worker) {
     case "talking":      return `w/ ${esc(worker.talking_to || "?")}`;
     case "strike":       return "NO CREDITS!";
     case "sick":         return "TOKEN ERR";
+    case "error":        return worker.error_detail
+                           ? esc(worker.error_detail.substring(0, 35))
+                           : "TASK ERROR";
     default:             return "";
   }
 }
@@ -819,11 +1547,14 @@ function getScreenContent(worker) {
 function getOverlay(worker) {
   if (isRecovering(worker)) return '<span class="sick-indicator">🔧</span>';
   switch (worker.state) {
-    case "sleeping":     return '<span class="zzz">Zzz</span>';
-    case "coffee_break": return '<span class="coffee-cup">☕</span>';
+    case "sleeping":
+      return '<span class="zzz-bubble z1">z</span><span class="zzz-bubble z2">Z</span><span class="zzz-bubble z3">Z</span>';
+    case "coffee_break":
+      return '<span class="coffee-cup">☕</span><span class="steam-wisp">〰</span><span class="steam-wisp w2">〰</span>';
     case "strike":       return '<span class="strike-sign">🪧</span>';
     case "sick":         return '<span class="sick-indicator">🤒</span>';
     case "talking":      return '<span class="talk-bubble">💬</span>';
+    case "error":        return '<span class="strike-sign" style="font-size:13px">⚠️</span>';
     default:             return "";
   }
 }
@@ -850,6 +1581,58 @@ function renderDesk(worker) {
     extras += `<div class="talking-to">talking to ${esc(worker.talking_to)}</div>`;
   if (worker.state === "working" && worker.task)
     extras += `<div class="task-info">${esc(worker.task)}</div>`;
+  if (worker.state === "error" && worker.error_detail)
+    extras += `<div class="error-detail" title="${esc(worker.error_detail)}">⚠ ${esc(worker.error_detail.substring(0, 30))}</div>`;
+  if (isRecovering(worker)) {
+    const pct = Math.min(100, Math.round(((worker.sick_for_seconds || 0) / 900) * 100));
+    extras += `<div class="health-bar-wrap"><div class="health-bar-fill" style="width:${pct}%"></div></div>`;
+    if (worker.last_recovery_layer)
+      extras += `<div class="recovery-layer">via ${esc(worker.last_recovery_layer)}</div>`;
+  }
+
+  // Pro subscription flag badges (Claude CLI Pro only)
+  let proFlagHtml = "";
+  if (worker.pro_flags) {
+    const f = worker.pro_flags;
+    const r = worker.pro_resets_in || {};
+    if (f.daily_limit_active)
+      proFlagHtml += `<span class="pro-flag-badge daily" title="${esc(worker.pro_message || '')}">📅 DAILY LIMIT ~${r.daily_hours != null ? r.daily_hours + 'h' : '?'}</span>`;
+    else if (f.burst_throttled)
+      proFlagHtml += `<span class="pro-flag-badge burst" title="${esc(worker.pro_message || '')}">⚡ BURST ~${r.burst_minutes != null ? r.burst_minutes + 'm' : '?'}</span>`;
+    else if (f.cli_down)
+      proFlagHtml += `<span class="pro-flag-badge cli_down" title="${esc(worker.pro_message || '')}">🔌 CLI DOWN ~${r.cli_down_minutes != null ? r.cli_down_minutes + 'm' : '?'}</span>`;
+  }
+
+  // Login rate-limit badge (Claude CLI Pro only, when recovery is blocked)
+  if (worker.login_ratelimit_remaining_s > 0) {
+    const remS = worker.login_ratelimit_remaining_s;
+    const h = Math.floor(remS / 3600);
+    const m = Math.floor((remS % 3600) / 60);
+    const timeStr = h > 0 ? `${h}h ${m}m` : `${m}m`;
+    const hit = worker.login_ratelimit_hit_count || 1;
+    const escalation = hit >= 3 ? '(24h escalated)' : hit >= 2 ? '(4h escalated)' : '';
+    proFlagHtml += `<span class="pro-flag-badge ratelimit" title="Playwright login blocked ${escalation} — hit #${hit}">🔒 RECOVERY LOCKED ${timeStr}</span>`;
+  }
+
+  // CLI timeout count badge (Claude CLI Pro only, threshold ≥3)
+  let timeoutBadgeHtml = "";
+  if ((worker.cli_timeout_count || 0) >= 3) {
+    const t = worker.cli_timeout_count;
+    const lvl = t >= 5 ? 'danger' : 'warn';
+    timeoutBadgeHtml = `<span class="timeout-badge level-${lvl}" title="${t} CLI timeouts this session">⏱ ${t} timeout${t !== 1 ? 's' : ''}</span>`;
+  }
+
+  // Error rate bar (all workers, only if ≥3 samples and rate > 0)
+  let errorRateHtml = "";
+  if (worker.error_rate_pct != null && worker.error_rate_pct > 0) {
+    const pct = worker.error_rate_pct;
+    const lvl = pct >= 25 ? 'level-high' : pct >= 10 ? 'level-mid' : 'level-low';
+    errorRateHtml = `
+      <div class="error-rate-bar-wrap" title="Error rate: ${pct}% of last ${worker.req_window_size || '?'} requests">
+        <div class="error-rate-bar-fill ${lvl}" style="width:${pct}%"></div>
+      </div>
+      <div class="error-rate-label ${lvl}">ERR ${pct}%</div>`;
+  }
 
   let tooltip;
   if (isRecovering(worker)) {
@@ -862,18 +1645,30 @@ function renderDesk(worker) {
       : `${worker.id} — never active — click for activity log`;
   }
 
+  const needsAttention = worker.state === "strike" || worker.state === "sick" || worker.state === "error";
+  const scanLine = worker.state === "working" ? '<div class="screen-scan-line"></div>' : "";
+
   return `
     <div class="desk" data-worker="${esc(worker.id)}" data-state="${worker.state}"
          title="${esc(tooltip)}" onclick="openLog(this.dataset.worker)">
-      <div class="name">${esc(worker.id)}${worker.id === 'Claude CLI Pro' && (worker.recovery_count_today||0) >= 3 ? ` <span title="${worker.recovery_count_today} recoveries today — hot streak!" style="font-size:9px">🔥</span>` : ''}</div>
+      ${needsAttention ? '<div class="attention-badge">!</div>' : ''}
+      <div class="name">
+        ${esc(worker.id)}
+        ${(worker.recovery_count_today||0) > 0 ? `<span class="recovery-count-badge ${(worker.recovery_count_today||0) >= 3 ? 'high' : ''}" title="${worker.recovery_count_today} auto-recoveries today">↺${worker.recovery_count_today}${(worker.recovery_count_today||0) >= 3 ? ' 🔥' : ''}</span>` : ''}
+      </div>
       <div class="status-label ${worker.state}">${worker.state === "coffee_break" ? "coffee break" : worker.state}</div>
+      ${proFlagHtml}
+      ${timeoutBadgeHtml}
       <div class="monitor ${monitorClass}">
+        ${scanLine}
         <div class="screen-content">${screenContent}</div>
       </div>
       <div class="desk-surface"></div>
+      ${errorRateHtml}
       <div class="avatar">
         ${avatar}
         ${overlay}
+        ${worker.state === "idle" ? `<div class="thought-bubble" data-idle-thought></div>` : ""}
       </div>
       ${timeAgo ? `<div class="last-worked">${timeAgo}${dateStr ? " (" + dateStr + ")" : ""}</div>` : ""}
       ${extras}
@@ -893,10 +1688,10 @@ function renderAll(workers) {
   // Update stats bar
   const counts = { working: 0, idle: 0, sleeping: 0, issues: 0 };
   allWorkers.forEach(w => {
-    if (w.state === "working")                                        counts.working++;
-    else if (w.state === "idle")                                      counts.idle++;
-    else if (w.state === "strike" || w.state === "sick")              counts.issues++;
-    else                                                              counts.sleeping++; // break/coffee_break/sleeping/recovering
+    if (w.state === "working")                                              counts.working++;
+    else if (w.state === "idle")                                            counts.idle++;
+    else if (w.state === "strike" || w.state === "sick" || w.state === "error") counts.issues++;
+    else                                                                    counts.sleeping++; // break/coffee_break/sleeping/recovering/talking
   });
   document.getElementById("count-working").textContent  = counts.working;
   document.getElementById("count-idle").textContent     = counts.idle;
@@ -1044,17 +1839,121 @@ document.addEventListener("keydown", e => { if (e.key === "Escape") closeLog(); 
 
 // ── Main status poll ───────────────────────────────────────────────────────
 
+const _workerStateCache = {};
+
 async function fetchAndRender() {
   try {
     const resp = await fetch("/dashboard/agents/status");
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const data = await resp.json();
     const workers = data.workers || [];
+    // Detect state changes → toast notifications
+    workers.forEach(w => {
+      const prev = _workerStateCache[w.id];
+      if (prev !== undefined && prev !== w.state) showToast(w.id, prev, w.state);
+      _workerStateCache[w.id] = w.state;
+    });
     renderAll(workers);
     drawTalkingLines(workers);
+    updateSystemHealthBar(workers);
   } catch (err) {
     console.error("Failed to fetch agent status:", err);
   }
+}
+
+// ── System health bar ──────────────────────────────────────────────────────
+function updateSystemHealthBar(workers) {
+  const workerMap = {};
+  workers.forEach(w => workerMap[w.id] = w);
+
+  // Pro CLI pill
+  const proWorker = workerMap["Claude CLI Pro"];
+  const hpPro = document.getElementById('hp-pro');
+  const hpProMode = document.getElementById('hp-pro-mode');
+  if (hpPro && proWorker) {
+    const flags = proWorker.pro_flags || {};
+    const resets = proWorker.pro_resets_in || {};
+    const rlRemaining = proWorker.login_ratelimit_remaining_s || 0;
+    const timeouts = proWorker.cli_timeout_count || 0;
+    if (flags.daily_limit_active) {
+      setPill(hpPro, 'danger', `📅 Pro: DAILY LIMIT ${resets.daily_hours != null ? '~' + resets.daily_hours + 'h' : ''}`);
+    } else if (flags.burst_throttled) {
+      setPill(hpPro, 'warn', `⚡ Pro: BURST ${resets.burst_minutes != null ? '~' + resets.burst_minutes + 'm' : ''}`);
+    } else if (flags.cli_down) {
+      setPill(hpPro, 'warn', `🔌 Pro CLI: DOWN ${resets.cli_down_minutes != null ? '~' + resets.cli_down_minutes + 'm' : ''}`);
+    } else if (rlRemaining > 0) {
+      const h = Math.floor(rlRemaining / 3600), m = Math.floor((rlRemaining % 3600) / 60);
+      setPill(hpPro, 'danger', `🔒 RECOVERY LOCKED ${h > 0 ? h + 'h ' : ''}${m}m`);
+    } else if (proWorker.state === 'sick') {
+      setPill(hpPro, 'danger', '🤒 Pro CLI: TOKEN ERR');
+    } else if (proWorker.state === 'strike') {
+      setPill(hpPro, 'danger', '🪧 Pro CLI: STRIKE');
+    } else if (timeouts >= 5) {
+      setPill(hpPro, 'warn', `⏱ Pro CLI: ${timeouts} TIMEOUTS`);
+    } else {
+      setPill(hpPro, 'ok', '✓ Pro CLI');
+    }
+    // Pro mode label
+    if (hpProMode) {
+      const mode = proWorker.pro_mode || '';
+      if (mode && mode !== 'pro_primary') {
+        const modeLabel = mode === 'api_fallback_burst' ? '⚡ API fallback (burst)'
+          : mode === 'api_fallback_daily' ? '📅 API fallback (daily cap)'
+          : mode === 'api_fallback_cli_down' ? '🔌 API fallback (CLI down)'
+          : mode;
+        hpProMode.textContent = modeLabel;
+        hpProMode.style.display = '';
+        hpProMode.className = 'health-pill warn';
+      } else {
+        hpProMode.style.display = 'none';
+      }
+    }
+  }
+
+  // API workers pill (Haiku/Sonnet/Opus)
+  const apiWorkers = ['Anthropic Haiku','Sonnet Anthropic','Opus Anthropic']
+    .map(id => workerMap[id]).filter(Boolean);
+  const hpApi = document.getElementById('hp-api');
+  if (hpApi) {
+    const allStrike = apiWorkers.length && apiWorkers.every(w => w.state === 'strike');
+    const someStrike = apiWorkers.some(w => w.state === 'strike');
+    const someError  = apiWorkers.some(w => w.state === 'error');
+    if (allStrike)       setPill(hpApi, 'danger', '🪧 API: NO CREDITS');
+    else if (someStrike) setPill(hpApi, 'warn',   '⚠ API: PARTIAL');
+    else if (someError)  setPill(hpApi, 'warn',   '⚠ API: ERRORS');
+    else                 setPill(hpApi, 'ok',      '✓ API');
+  }
+
+  // Agents pill
+  const agentWorkers = ['Shell Agent','GitHub Agent','N8N Agent','Self-Improve Agent']
+    .map(id => workerMap[id]).filter(Boolean);
+  const hpAgents = document.getElementById('hp-agents');
+  if (hpAgents) {
+    const hasProblem = agentWorkers.some(w => ['strike','sick','error'].includes(w.state));
+    const hasError   = agentWorkers.some(w => w.state === 'error');
+    if (hasProblem) setPill(hpAgents, hasError ? 'warn' : 'danger', '⚠ Agents: ISSUE');
+    else            setPill(hpAgents, 'ok', '✓ Agents');
+  }
+
+  // Error count hint
+  const errCount = workers.filter(w => ['strike','sick','error'].includes(w.state)).length;
+  const hpErrors = document.getElementById('hp-errors');
+  if (hpErrors) {
+    hpErrors.textContent = errCount > 0
+      ? `${errCount} worker${errCount > 1 ? 's' : ''} need${errCount === 1 ? 's' : ''} attention`
+      : '';
+    hpErrors.style.color = errCount > 0 ? '#fb923c' : '#5a4430';
+  }
+}
+
+function setPill(el, level, text) {
+  el.className = `health-pill ${level}`;
+  // preserve the dot span
+  const dot = el.querySelector('.h-dot') || document.createElement('span');
+  dot.className = 'h-dot';
+  el.innerHTML = '';
+  el.appendChild(dot);
+  el.appendChild(document.createTextNode(' ' + text));
 }
 
 fetchAndRender();
@@ -1105,6 +2004,87 @@ function renderInteractions(rows) {
 
 fetchInteractions();
 setInterval(fetchInteractions, 15000);
+
+// ── Live clock ─────────────────────────────────────────────────────────────
+function updateClock() {
+  const now = new Date();
+  const pad = n => String(n).padStart(2, '0');
+  const clockEl = document.getElementById('office-clock');
+  if (clockEl) clockEl.textContent = `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+  const dateEl = document.getElementById('office-date');
+  if (dateEl) dateEl.textContent = now.toLocaleDateString(undefined, { weekday:'short', month:'short', day:'numeric' }).toUpperCase();
+}
+updateClock();
+setInterval(updateClock, 1000);
+
+// ── Idle thought bubbles ────────────────────────────────────────────────────
+const IDLE_THOUGHTS = [
+  "waiting...", "all clear ✓", "standing by", "system ok",
+  "ready!", "nominal", "ping?", "...", "☕ soon?",
+  "available", "nothing to do", "10-4", "online", "*yawn*",
+  "any requests?", "fully charged", "bored.gif"
+];
+function triggerIdleThoughts() {
+  document.querySelectorAll('[data-idle-thought]').forEach(el => {
+    if (Math.random() < 0.35) {
+      el.textContent = IDLE_THOUGHTS[Math.floor(Math.random() * IDLE_THOUGHTS.length)];
+      el.style.opacity = '1';
+      setTimeout(() => { el.style.opacity = '0'; }, 2800);
+    }
+  });
+}
+setInterval(triggerIdleThoughts, 5500);
+
+// ── Stats counter pop (MutationObserver approach — no patching needed) ──────
+['count-working','count-idle','count-sleeping','count-issues'].forEach(id => {
+  const el = document.getElementById(id);
+  if (!el) return;
+  let _prev = el.textContent;
+  new MutationObserver(() => {
+    const cur = el.textContent;
+    if (cur !== _prev) {
+      _prev = cur;
+      el.classList.remove('popped');
+      void el.offsetWidth;
+      el.classList.add('popped');
+      setTimeout(() => el.classList.remove('popped'), 450);
+    }
+  }).observe(el, { childList: true, subtree: true, characterData: true });
+});
+
+// ── Toast notification system ───────────────────────────────────────────────
+const TOAST_STATE_ICONS = {
+  working: "🔵", idle: "✅", sleeping: "💤", sick: "🤒",
+  strike: "🪧", recovering: "🔧", talking: "💬",
+  break: "⏸️", coffee_break: "☕", error: "⚠️"
+};
+function showToast(workerId, fromState, toState) {
+  const container = document.getElementById('toast-container');
+  if (!container) return;
+  const avatar = AVATARS[workerId] || "👤";
+  const icon   = TOAST_STATE_ICONS[toState] || "▸";
+  const el = document.createElement("div");
+  el.className = "toast-notification";
+  el.innerHTML = `
+    <span class="toast-avatar">${avatar}</span>
+    <span class="toast-body">
+      <strong>${esc(workerId)}</strong><br>
+      <span class="toast-transition">${esc(fromState)} → ${esc(toState)} ${icon}</span>
+    </span>`;
+  container.appendChild(el);
+  setTimeout(() => el.classList.add("toast-exit"), 3000);
+  setTimeout(() => { if (el.parentNode) el.parentNode.removeChild(el); }, 3500);
+}
+
+// ── Keyboard shortcuts ──────────────────────────────────────────────────────
+document.addEventListener("keydown", e => {
+  if (e.key === "r" || e.key === "R") {
+    if (!e.ctrlKey && !e.metaKey && document.activeElement.tagName !== "INPUT") {
+      fetchAndRender();
+      fetchInteractions();
+    }
+  }
+});
 </script>
 </body>
 </html>

@@ -1263,6 +1263,21 @@ def try_pro(prompt: str, system: str = "") -> str | None:
 
 # ── Status reporting ───────────────────────────────────────────────────────────
 
+def get_cli_timeout_count() -> int:
+    """
+    Return the cumulative CLI timeout count recorded in the session counter file.
+    Resets when the counter file is deleted (e.g. container restart).
+    Safe to call frequently — reads a small file, no subprocess or network I/O.
+    """
+    try:
+        path = _FLAG_DIR / ".cli_timeout_count"
+        if path.exists():
+            return int(path.read_text().strip() or "0")
+    except Exception:
+        pass
+    return 0
+
+
 def get_status() -> dict:
     daily_active    = _daily_flag_active()
     burst_active    = _flag_active(_BURST_FLAG, _BURST_TTL)

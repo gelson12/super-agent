@@ -169,6 +169,29 @@ def _check_ratelimit() -> float:
     return remaining if remaining > 0 else 0.0
 
 
+def get_login_ratelimit_status() -> dict:
+    """
+    Public helper for the dashboard — returns login rate-limit state without
+    exposing private internals.  Safe to call frequently (reads a small file).
+
+    Returns:
+        {"blocked": bool, "remaining_s": int, "hit_count": int}
+        remaining_s is 0 when not blocked.  hit_count indicates escalation level
+        (1→1h cooldown, 2→4h, 3+→24h).
+    """
+    remaining = _check_ratelimit()
+    if remaining <= 0:
+        return {"blocked": False, "remaining_s": 0, "hit_count": 0}
+    hit_count = 1
+    try:
+        if _RATELIMIT_FILE.exists():
+            parts = _RATELIMIT_FILE.read_text().strip().split()
+            hit_count = int(parts[1]) if len(parts) >= 2 else 1
+    except Exception:
+        pass
+    return {"blocked": True, "remaining_s": round(remaining), "hit_count": hit_count}
+
+
 def _log(msg: str) -> None:
     # Always print so Railway container logs capture it (bg_log only writes to local file)
     print(f"[cli_auto_login] {msg}", flush=True)
