@@ -123,22 +123,62 @@ _HANDLERS = {
 # Used to re-route short follow-up replies back to the right agent when the
 # message has no keywords (e.g. user answers "2" after the n8n agent listed options).
 _session_last_agent: dict[str, str] = {}  # session_id → "N8N" | "SHELL" | "GITHUB" | "SELF_IMPROVE"
-_SESSION_LAST_AGENT_TTL = 1800  # 30 min
+_SESSION_LAST_AGENT_TTL = 7200  # 2 hours — matches typical session length; was 30 min which was too short
 _session_last_agent_ts: dict[str, float] = {}
 
 
 def _set_last_agent(session_id: str, agent: str) -> None:
+    """
+    Record which operational agent handled the last turn for this session.
+    Stored in-process dict (fast) AND persisted to the session store as a
+    special marker message so it survives process restarts (Improvement B).
+    """
     _session_last_agent[session_id] = agent
     _session_last_agent_ts[session_id] = _time.time()
+    # Persist to DB as a system marker — prefixed so it's invisible to models
+    # but readable by _get_last_agent on next process boot.
+    try:
+        from ..memory.session import get_session_history
+        hist = get_session_history(f"__meta_{session_id}")
+        hist.add_user_message(f"__last_agent__:{agent}:{_time.time()}")
+    except Exception:
+        pass  # never block on metadata write
 
 
 def _get_last_agent(session_id: str) -> str | None:
-    if session_id not in _session_last_agent:
-        return None
-    if _time.time() - _session_last_agent_ts.get(session_id, 0) > _SESSION_LAST_AGENT_TTL:
-        _session_last_agent.pop(session_id, None)
-        return None
-    return _session_last_agent[session_id]
+    """
+    Retrieve last operational agent for this session.
+    Checks in-process dict first (fast path), then falls back to DB persistence
+    so last_agent survives process restarts (Improvement B).
+    """
+    # Fast path: in-process dict
+    if session_id in _session_last_agent:
+        if _time.time() - _session_last_agent_ts.get(session_id, 0) > _SESSION_LAST_AGENT_TTL:
+            _session_last_agent.pop(session_id, None)
+        else:
+            return _session_last_agent[session_id]
+    # Slow path: DB fallback — only on cache miss (rare: first request after restart)
+    try:
+        from ..memory.session import get_session_history
+        hist = get_session_history(f"__meta_{session_id}")
+        msgs = hist.messages
+        # Most recent __last_agent__ entry wins
+        for m in reversed(msgs):
+            c = getattr(m, "content", "")
+            if c.startswith("__last_agent__:"):
+                parts = c.split(":")
+                if len(parts) >= 3:
+                    agent_name = parts[1]
+                    ts = float(parts[2])
+                    if _time.time() - ts < _SESSION_LAST_AGENT_TTL:
+                        # Warm the in-process cache
+                        _session_last_agent[session_id] = agent_name
+                        _session_last_agent_ts[session_id] = ts
+                        return agent_name
+                break
+    except Exception:
+        pass
+    return None
 
 # ── Proactive memory detection ────────────────────────────────────────────────
 
@@ -551,6 +591,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
     # ── 0b. Session history injection ─────────────────────────────────────────
     # Prepend compressed conversation history so models have full in-session context
     _session_ctx = ""
+    _ctx_injection_failed = False
     try:
         _session_ctx = get_compressed_context(session_id)
         if _session_ctx:
@@ -559,37 +600,49 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
                 f"[Current message]\n{augmented_message}"
             )
     except Exception as _session_err:
+        _ctx_injection_failed = True
         from ..activity_log import bg_log as _bg_session
         _bg_session(
             f"Session context injection failed for session={session_id}: {_session_err}",
             source="dispatcher",
         )
-        # Never let session history crash dispatch
+        # Session history lost — escalate complexity so peer-review/ensemble compensates
 
     # ── 0c-extra. Continuation detection ─────────────────────────────────────
-    # Short follow-up messages ("nothing", "you didn't give", "what about",
-    # "fix that", "try again") have no keywords and get mis-routed to web_search.
+    # Short follow-up messages ("nothing", "you didn't give", "fix that", "try again")
+    # have no keywords and get mis-routed to web_search.
     # If the session has recent history AND the message is short + complaint-like,
     # inject full session context and route to Claude directly rather than searching.
-    _CONTINUATION_PATTERNS = (
-        "didn't", "did not", "nothing", "no link", "no download", "failed",
-        "wrong", "incorrect", "try again", "retry", "what about", "and the",
-        "you forgot", "you missed", "you didn't", "fix that", "what happened",
-        "still", "but you", "you said", "as i said", "i said",
-        # Phase/progress follow-ups
-        "what phase", "which phase", "where is", "where's the", "where is the link",
-        "download link", "the link", "whats happening", "what's happening",
-        "so what", "any update", "status", "progress", "are you done",
-        "did you finish", "is it ready", "still building", "still working",
-        "continue", "keep going", "go on", "proceed", "next step",
-        "it failed", "it didn't", "it did not", "not working", "broken",
-        "missing", "incomplete", "you stopped", "you didn't finish",
+    #
+    # TIGHTENED RULES (was too generic — "still", "what about", "so what" matched
+    # unrelated new questions): require EITHER a precise pattern OR 2+ loose patterns.
+    _CONTINUATION_PRECISE = (
+        # Explicit complaints about the previous response
+        "you didn't", "you did not", "you forgot", "you missed", "you stopped",
+        "you didn't finish", "it failed", "it didn't work", "it did not work",
+        "no link", "no download", "no url", "fix that", "try again", "retry",
+        # Explicit follow-up intents with no ambiguity
+        "where is the link", "where's the link", "download link", "what's the url",
+        "still building", "still working", "are you done", "did you finish",
+        "is it ready", "keep going", "next step", "go on", "proceed",
+    )
+    _CONTINUATION_LOOSE = (
+        # Ambiguous — only count if 2+ match
+        "still", "what about", "and the", "but you", "you said", "as i said",
+        "i said", "what phase", "which phase", "where is", "what happened",
+        "whats happening", "what's happening", "any update", "status", "progress",
+        "continue", "didn't", "did not", "nothing", "wrong", "incorrect",
+        "broken", "missing", "incomplete", "not working", "failed",
+        "so what", "the link",
     )
     _active_task_exists, _active_task_sid, _active_task_desc = _read_active_task()
+    _msg_lower_cont = message.lower()
+    _precise_match = any(p in _msg_lower_cont for p in _CONTINUATION_PRECISE)
+    _loose_count = sum(1 for p in _CONTINUATION_LOOSE if p in _msg_lower_cont)
     _is_short_followup = (
         len(message.split()) <= 25
         and (_session_ctx or _active_task_exists)
-        and any(p in message.lower() for p in _CONTINUATION_PATTERNS)
+        and (_precise_match or _loose_count >= 2)
     )
 
     # If an active task is running but session history isn't stored yet
@@ -614,15 +667,25 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
 
     # ── 0d. Vault context injection ───────────────────────────────────────────
     # Share Obsidian vault knowledge with ALL API models (Haiku, Sonnet).
-    # Cached 30 min — zero latency on cache hit. Falls back silently on error.
+    # Cached 30 min per topic — zero latency on cache hit. Falls back silently.
+    # Uses topic_hint so the vault search returns contextually relevant notes
+    # rather than always the same Welcome.md + daily review.
     try:
         from ..prompts import get_vault_context_block as _get_vault
-        _vault_ctx = _get_vault()
+        _vault_hint = message[:60] if len(message) > 20 else ""
+        _vault_ctx = _get_vault(topic_hint=_vault_hint)
         _system_claude = _system_claude.replace("{vault_context}", _vault_ctx)
         _system_haiku  = _system_haiku.replace("{vault_context}",  _vault_ctx)
     except Exception:
         _system_claude = _system_claude.replace("{vault_context}", "")
         _system_haiku  = _system_haiku.replace("{vault_context}",  "")
+
+    # ── 0e. Context-loss escalation ───────────────────────────────────────────
+    # If session history injection failed, we're flying blind — escalate complexity
+    # so peer-review or ensemble compensates for missing context.
+    if _ctx_injection_failed:
+        complexity = score_complexity(message)
+        complexity = max(complexity, 3)  # at minimum Sonnet, not Haiku
 
     # ── 1. Safe word guard ────────────────────────────────────────────────────
     authorized, block_reason = check_authorization(message)
@@ -742,10 +805,21 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
         _is_n8n_request(message) or _is_shell_request(message)
         or _is_github_request(message) or _is_self_improve_request(message)
     ):
+        # BUG 1 FIX: rebuild augmented_message specifically for the follow-up.
+        # The outer augmented_message was built before we knew this was a follow-up
+        # and may have a stale/failed session ctx. Rebuild it with the explicit label
+        # "follow-up reply" so the agent understands the conversational context.
+        _followup_aug = (
+            f"[Conversation history — this session]\n{_session_ctx}\n\n"
+            f"[User's follow-up reply to your previous message]\n{memory_ctx}{message}"
+            if _session_ctx
+            else augmented_message  # best we have if context injection failed
+        )
+
         if _last_op_agent == "N8N":
             from ..agents.n8n_agent import run_n8n_agent
             _write_active_task(session_id, message)
-            response = _safe_agent_call(run_n8n_agent, augmented_message, agent_name="n8n_agent")
+            response = _safe_agent_call(run_n8n_agent, _followup_aug, agent_name="n8n_agent")
             _clear_active_task()
             insight_log.record(message, "N8N", response, "agent_followup", 2, session_id)
             adapter.tick()
@@ -761,7 +835,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
         elif _last_op_agent in ("SHELL", "SELF_IMPROVE"):
             _agent_fn = run_shell_agent if _last_op_agent == "SHELL" else run_self_improve_agent
             _write_active_task(session_id, message)
-            response = _safe_agent_call(_agent_fn, augmented_message, agent_name=_last_op_agent.lower())
+            response = _safe_agent_call(_agent_fn, _followup_aug, agent_name=_last_op_agent.lower())
             _clear_active_task()
             insight_log.record(message, _last_op_agent, response, "agent_followup", 2, session_id)
             adapter.tick()
@@ -787,23 +861,26 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
         _ctx_lower = (_session_ctx + " " + _active_task_desc).lower()
         _is_build_continuation = any(h in _ctx_lower for h in _BUILD_CONTINUATION_HINTS)
         # Don't hijack messages that explicitly target a different agent
-        if _is_n8n_request(message) or _is_github_request(message):
+        # Also don't hijack if last agent was N8N/GITHUB — context says we're not in a build
+        if (
+            _is_n8n_request(message) or _is_github_request(message)
+            or _last_op_agent in ("N8N", "GITHUB")
+        ):
             _is_build_continuation = False
 
         if _is_build_continuation:
             # Re-route to shell agent — call build_flutter_voice_app() unconditionally.
-            # DO NOT tell the agent to "check workspace state" or "determine what step
-            # was last completed" — that causes it to inspect and then ask the user
-            # clarifying questions instead of building.
-            _resume_msg = (
-                f"The user wants the Super Agent Voice Android APK built and delivered.\n"
-                f"Call build_flutter_voice_app() RIGHT NOW. No questions, no inspection first.\n"
-                f"build_flutter_voice_app() handles everything: scaffold → pubspec → main.dart "
-                f"→ manifest → pub get → build APK → upload → return download URL.\n"
+            # BUG 8 FIX: put user context FIRST so agent sees what was asked,
+            # THEN the imperative instruction. Prevents instructions from drowning
+            # out nuanced follow-ups like "just check if it's done".
+            _resume_instruction = (
+                f"\n\n[BUILD AGENT INSTRUCTION] The conversation above shows an in-progress "
+                f"APK build. Call build_flutter_voice_app() NOW — no inspection, no questions. "
+                f"build_flutter_voice_app() handles everything end-to-end. "
                 f"Return only the download URL and install instructions when done."
             )
             _write_active_task(session_id, message)
-            response = _safe_agent_call(run_shell_agent, _resume_msg + "\n\n" + augmented_message, authorized=authorized, agent_name="shell_agent")
+            response = _safe_agent_call(run_shell_agent, augmented_message + _resume_instruction, authorized=authorized, agent_name="shell_agent")
             _clear_active_task()
             store_memory(session_id, f"Q: {message[:300]} A: {response[:300]}")
             insight_log.record(message, "SHELL", response, "build_continuation", 1, session_id)
@@ -846,10 +923,19 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
     ):
         from ..tools.search_tools import web_search
         results = web_search.invoke({"query": message})
+        # BUG 5 FIX: include session context so follow-up search questions like
+        # "what about the Python one?" have context about what was discussed before.
+        _search_ctx = (
+            f"[Conversation context]\n{_session_ctx[:600]}\n\n"
+            if _session_ctx
+            else ""
+        )
         synthesis_prompt = (
+            f"{_search_ctx}"
             f"Web search results for the query: '{message}'\n\n"
             f"{results}\n\n"
-            f"Synthesize a clear, accurate, and concise answer based on these results."
+            f"Synthesize a clear, accurate, and concise answer. "
+            f"Reference the conversation context above if relevant to this query."
         )
         response = ask_claude(synthesis_prompt, system=_system_claude)
         store_memory(session_id, f"Q: {message[:300]} A: {response[:300]}")
@@ -937,21 +1023,26 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
     #   This prevents "n8n" keyword false-positives from hijacking SHELL requests
     #   that happen to mention "workflow" but are really about code/shell work.
 
-    def _classify_with_timeout(msg: str, timeout_s: float = 10.0) -> tuple[str, float]:
-        """Run _classify_route_with_confidence with a hard timeout. Returns GENERAL/0.0 on timeout."""
+    def _classify_with_timeout(msg: str, timeout_s: float = 10.0) -> tuple[str, float, bool]:
+        """
+        Run _classify_route_with_confidence with a hard timeout.
+        Returns (route, confidence, timed_out). Returns GENERAL/0.0/True on timeout.
+        BUG 10 FIX: returns timed_out flag so callers can tag the routing path.
+        """
         import concurrent.futures as _cf2
         with _cf2.ThreadPoolExecutor(max_workers=1) as _pool2:
             fut = _pool2.submit(_classify_route_with_confidence, msg)
             try:
-                return fut.result(timeout=timeout_s)
+                route, conf = fut.result(timeout=timeout_s)
+                return route, conf, False
             except _cf2.TimeoutError:
                 from ..activity_log import bg_log as _bg_cl
-                _bg_cl("Classifier timed out after 10s — falling back to GENERAL", "dispatcher")
-                return "GENERAL", 0.0
+                _bg_cl("Classifier timed out after 10s — falling back to keyword/GENERAL", "dispatcher")
+                return "GENERAL", 0.0, True
             except Exception:
-                return "GENERAL", 0.0
+                return "GENERAL", 0.0, True
 
-    _ai_route, _ai_conf = _classify_with_timeout(message)
+    _ai_route, _ai_conf, _classifier_timed_out = _classify_with_timeout(message)
     _routing_confidence = _ai_conf
 
     # Keyword detection (always instant)
@@ -964,11 +1055,22 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
         _kw_route_raw = "N8N"
 
     # Arbitration
-    if _ai_conf >= 0.75 and _ai_route not in ("GENERAL", "SEARCH"):
-        # AI is confident → trust it, even if keywords disagree
+    # BUG 6 FIX: high-confidence AI route is trusted UNLESS keywords strongly disagree.
+    # A high-confidence wrong classification (e.g. classifier returns N8N at 0.90 but
+    # keywords match GITHUB strongly) should trigger keyword override, not blind trust.
+    _AGENT_ROUTES = {"SHELL", "GITHUB", "N8N", "SELF_IMPROVE"}
+    _strong_kw_disagrees = (
+        _kw_route_raw is not None
+        and _kw_route_raw in _AGENT_ROUTES
+        and _ai_route in _AGENT_ROUTES
+        and _kw_route_raw != _ai_route
+        and _ai_conf < 0.90  # only trust AI over keywords when it's extremely confident
+    )
+    if _ai_conf >= 0.75 and _ai_route not in ("GENERAL", "SEARCH") and not _strong_kw_disagrees:
+        # AI is confident and keywords don't strongly disagree → trust AI
         _kw_route = _ai_route
     elif _kw_route_raw is not None:
-        # AI uncertain but keyword matches → use keyword
+        # AI uncertain OR keywords disagree with confident AI → use keyword
         _kw_route = _kw_route_raw
     elif _ai_conf >= 0.4 and _ai_route not in ("GENERAL", "SEARCH"):
         # AI has moderate confidence — use it
@@ -976,11 +1078,15 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
     else:
         _kw_route = None  # falls through to complexity-based model selection
 
-    # Low-confidence escalation: if both AI and keywords are uncertain (confidence < 0.4),
-    # bump complexity so the query gets ensemble/peer-review treatment rather than
-    # being quietly misrouted to HAIKU with low confidence.
+    # Low-confidence or timed-out classifier: escalate complexity
     if _ai_conf < 0.4 and _kw_route is None:
         complexity = max(complexity, 4)  # escalate to peer-review tier
+    # Session context failure also escalates (set earlier in 0e)
+    if _ctx_injection_failed:
+        complexity = max(complexity, 3)
+
+    # Tag the routing path for observability (Bug 10 fix)
+    _classifier_tag = "classifier_timeout" if _classifier_timed_out else "classifier"
 
     # ── Error-interception helper ─────────────────────────────────────────────
     def _agent_response_is_error(resp: str) -> bool:
@@ -1004,22 +1110,33 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
             "timeout", "not found", "unavailable", "could not", "exception",
         ))
 
-    def _auto_investigate(failed_agent: str, original_msg: str, err_resp: str) -> str:
+    def _auto_investigate(failed_agent: str, original_msg: str, err_resp: str,
+                          full_ctx: str = "") -> str:
         """
         When an agent fails, autonomously route to self_improve_agent with a
         diagnostic brief — it has full infrastructure access to find and fix the issue.
         Only called once (no recursion) to avoid infinite loops.
+        BUG 4 FIX: accepts full_ctx (augmented_message with session history) so
+        the investigation agent has the user's complete conversational context,
+        not just the bare request string.
         """
+        _ctx_section = (
+            f"\nSession context that led to this request:\n{full_ctx[:600]}\n"
+            if full_ctx and full_ctx != original_msg
+            else ""
+        )
         brief = (
             f"AUTONOMOUS INVESTIGATION REQUIRED — {failed_agent} agent just failed.\n"
-            f"User's original request: {original_msg[:200]}\n"
-            f"Error returned: {err_resp[:300]}\n\n"
+            f"User's original request: {original_msg[:300]}\n"
+            f"{_ctx_section}"
+            f"Error returned: {err_resp[:400]}\n\n"
             f"Immediately investigate using your tools:\n"
             f"1. railway_get_logs + railway_get_deployment_status\n"
             f"2. db_health_check + db_get_failure_patterns\n"
             f"3. Check if the relevant service is running (n8n, code-server, uvicorn)\n"
-            f"4. Apply a SAFE fix autonomously if possible\n"
-            f"5. Report exactly what you found and what you did\n"
+            f"4. Distinguish retryable errors (network/timeout) from logic errors (config/code)\n"
+            f"5. Apply a SAFE fix autonomously if possible\n"
+            f"6. Report exactly what you found and what you did\n"
             f"Do NOT ask the user for context — you have the full error above."
         )
         try:
@@ -1045,7 +1162,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
         _clear_active_task()
         if _agent_response_is_error(response):
             _mark_error("Shell Agent", response[:200])
-            response = _auto_investigate("SHELL", message, response)
+            response = _auto_investigate("SHELL", message, response, full_ctx=augmented_message)
         store_memory(session_id, f"Q: {message[:300]} A: {response[:300]}")
         _sav = _detect_saveable_content(message, response)
         if _sav:
@@ -1073,7 +1190,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
         _clear_active_task()
         if _agent_response_is_error(response):
             _mark_error("GitHub Agent", response[:200])
-            response = _auto_investigate("GITHUB", message, response)
+            response = _auto_investigate("GITHUB", message, response, full_ctx=augmented_message)
         store_memory(session_id, f"Q: {message[:300]} A: {response[:300]}")
         _sav = _detect_saveable_content(message, response)
         if _sav:
@@ -1101,7 +1218,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
         _clear_active_task()
         if _agent_response_is_error(response):
             _mark_error("N8N Agent", response[:200])
-            response = _auto_investigate("N8N", message, response)
+            response = _auto_investigate("N8N", message, response, full_ctx=augmented_message)
         store_memory(session_id, f"Q: {message[:300]} A: {response[:300]}")
         _sav = _detect_saveable_content(message, response)
         if _sav:
@@ -1140,7 +1257,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
         else:
             classified = classify_request(message)
             model = classified
-            routed_by = "classifier"
+            routed_by = _classifier_tag  # "classifier" or "classifier_timeout" (Bug 10)
     else:
         model = suggested
         routed_by = "complexity_score"
@@ -1209,7 +1326,13 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
             })
 
     # ── 8a. Ensemble (complexity == 5) ────────────────────────────────────────
-    if complexity == 5:
+    # BUG 9 FIX: skip ensemble when a keyword agent route is set.
+    # A very complex N8N workflow request should go directly to the N8N agent
+    # (which has specialized tools) rather than to multi-model voting which produces
+    # text answers without tool execution.
+    # _kw_route at this point should already have been consumed by the agent routing
+    # above — but if complexity was set to 5 by scoring before routing, guard here too.
+    if complexity == 5 and _kw_route not in ("SHELL", "N8N", "GITHUB", "SELF_IMPROVE"):
         # All 3 models talk to each other during parallel ensemble voting
         _mark_talking("Claude CLI Pro", "Gemini CLI")
         _mark_talking("Claude CLI Pro", "DeepSeek")

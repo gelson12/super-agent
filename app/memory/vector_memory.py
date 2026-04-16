@@ -139,6 +139,15 @@ def _pg_store(session_id: str, content: str,
 
 
 def _pg_retrieve(query: str, top_k: int = 5) -> list[str]:
+    """
+    Retrieve memories ranked by combined vector similarity × importance score.
+    Formula divides distance by (0.7 + importance*0.06) so higher-importance
+    memories surface first over pure cosine-similarity ordering. This prevents
+    high-volume low-importance memories from burying critical decisions.
+      importance=5 → divisor 1.0  (full boost)
+      importance=3 → divisor 0.88 (default)
+      importance=1 → divisor 0.76 (slight penalty)
+    """
     try:
         embedding = _embed(query)
         if embedding is None:
@@ -147,7 +156,10 @@ def _pg_retrieve(query: str, top_k: int = 5) -> list[str]:
         conn = psycopg2.connect(_conn_str)
         cur = conn.cursor()
         cur.execute(
-            "SELECT content FROM agent_memories ORDER BY embedding <=> %s::vector LIMIT %s",
+            """SELECT content
+               FROM agent_memories
+               ORDER BY (embedding <=> %s::vector) / (0.7 + COALESCE(importance, 3) * 0.06)
+               LIMIT %s""",
             (json.dumps(embedding), top_k),
         )
         rows = cur.fetchall()

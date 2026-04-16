@@ -107,9 +107,14 @@ def get_compressed_context(session_id: str) -> str:
         summary = ask_internal_fast(summary_prompt)
     except Exception as e:
         _log.warning("Haiku compression failed for session: %s", e)
-        # Fallback: show last few old messages instead of losing all context
-        fallback_old = old_msgs[-3:] if len(old_msgs) > 3 else old_msgs
+        # Fallback: keep the last 5 old messages so critical context isn't lost
+        # (was 3 — too few when the key decision is 4–6 messages back)
+        fallback_old = old_msgs[-5:] if len(old_msgs) > 5 else old_msgs
         summary = "[Earlier context — recent excerpt]\n" + _format(fallback_old)
+
+    # Cap summary at 2000 chars to prevent unbounded context injection
+    if len(summary) > 2000:
+        summary = summary[:2000] + "\n[...summary truncated...]"
 
     recent_text = _format(recent_msgs)
     return f"[Summary of earlier conversation]\n{summary}\n\n[Recent messages]\n{recent_text}"
