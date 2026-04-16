@@ -1398,6 +1398,37 @@
   <div class="section-label"><i class="s-icon">🤖</i>Specialized Agents</div>
   <div class="desks" id="agents-desks"></div>
 
+  <!-- Memory panel -->
+  <div class="section-label" style="margin-top:24px;">
+    <i class="s-icon">🧬</i>Shared Memory Store
+    <span id="memory-live" style="font-size:0.35rem;color:#10b981;margin-left:10px;">
+      <span class="dot" style="background:#10b981;display:inline-block;width:6px;height:6px;border-radius:50%;animation:pulse 2s ease-in-out infinite;margin-right:4px;"></span>Live
+    </span>
+  </div>
+  <div style="max-width:760px;margin:0 auto 16px;display:grid;grid-template-columns:repeat(4,1fr);gap:8px;">
+    <div style="background:#0a1a12;border:1px solid #10b981;border-radius:6px;padding:8px 10px;text-align:center;">
+      <div style="font-size:0.55rem;color:#10b981;font-weight:700;" id="mem-total">—</div>
+      <div style="font-size:0.28rem;color:#6b7280;margin-top:2px;">Total Memories</div>
+    </div>
+    <div style="background:#0a1a12;border:1px solid #10b981;border-radius:6px;padding:8px 10px;text-align:center;">
+      <div style="font-size:0.55rem;color:#10b981;font-weight:700;" id="mem-24h">—</div>
+      <div style="font-size:0.28rem;color:#6b7280;margin-top:2px;">Added (24h)</div>
+    </div>
+    <div style="background:#0a1a12;border:1px solid #10b981;border-radius:6px;padding:8px 10px;text-align:center;">
+      <div style="font-size:0.55rem;color:#10b981;font-weight:700;" id="mem-embedding">—</div>
+      <div style="font-size:0.28rem;color:#6b7280;margin-top:2px;">Embedding %</div>
+    </div>
+    <div style="background:#0a1a12;border:1px solid #10b981;border-radius:6px;padding:8px 10px;text-align:center;">
+      <div style="font-size:0.55rem;color:#10b981;font-weight:700;" id="mem-sources">—</div>
+      <div style="font-size:0.28rem;color:#6b7280;margin-top:2px;">Sources</div>
+    </div>
+  </div>
+  <div id="mem-source-breakdown" style="
+    max-width:760px;margin:0 auto 24px;
+    background:#0a1a12;border:1px solid #1e3a2a;border-radius:6px;
+    padding:8px 12px;font-size:0.29rem;color:#6b7280;display:flex;gap:16px;flex-wrap:wrap;
+  ">Loading memory sources…</div>
+
   <!-- Interactions feed -->
   <div class="section-label" style="margin-top:24px;">
     <i class="s-icon">📡</i>Recent Agent Interactions
@@ -1958,6 +1989,34 @@ function setPill(el, level, text) {
 
 fetchAndRender();
 setInterval(fetchAndRender, 5000);
+
+// ── Memory panel ──────────────────────────────────────────────────────────
+
+async function fetchMemoryStats() {
+  try {
+    const resp = await fetch("/memory/health");
+    if (!resp.ok) return;
+    const d = await resp.json();
+    if (d.error) return;
+    document.getElementById("mem-total").textContent = (d.total || 0).toLocaleString();
+    document.getElementById("mem-24h").textContent = "+" + (d.last_24h || 0);
+    document.getElementById("mem-embedding").textContent = (d.embedding_coverage_pct || 0) + "%";
+    document.getElementById("mem-sources").textContent = (d.by_source || []).length;
+    const breakdown = document.getElementById("mem-source-breakdown");
+    if (d.by_source && d.by_source.length > 0) {
+      breakdown.innerHTML = d.by_source.map(s =>
+        `<span style="color:#10b981;font-weight:600;">${s.source}</span>
+         <span style="color:#d1d5db;margin-left:4px;">${s.count}</span>
+         <span style="color:#4b5563;margin-left:2px;">(avg importance: ${(s.avg_importance||0).toFixed(1)})</span>`
+      ).join('<span style="color:#374151;margin:0 8px;">|</span>');
+    } else {
+      breakdown.textContent = "No memories yet";
+    }
+  } catch (_) { /* non-critical */ }
+}
+
+fetchMemoryStats();
+setInterval(fetchMemoryStats, 60000);  // refresh every 60s
 
 // ── Interactions feed ──────────────────────────────────────────────────────
 
