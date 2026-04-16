@@ -1478,12 +1478,38 @@ def _automate_browser(oauth_url: str, email: str) -> tuple[bool, str | None]:
                         _log("Browser: popup on consent page — clicking Approve in popup")
                         _approved = _click_approve(_popup)
                         if _approved:
-                            _log("Browser: Approve clicked in popup — waiting for callback")
-                            _popup_ac, _popup_ok = _wait_for_callback_and_extract(_popup)
+                            _log("Browser: Approve clicked in popup — polling for callback URL")
+                            # Log URL immediately after click to diagnose timing
+                            try:
+                                _log(f"Browser: popup URL 0.1s after Approve: {_popup.url[:120]}")
+                            except Exception as _ue0:
+                                _log(f"Browser: popup already closed 0.1s after Approve: {_ue0}")
+                            # Poll popup URL every 0.5s for up to 25 seconds
+                            _popup_ac = None
+                            _popup_ok = False
+                            for _poll_i in range(50):  # 50 × 0.5s = 25s
+                                try:
+                                    _poll_url = _popup.url
+                                    if _poll_i % 4 == 0:  # log every 2s
+                                        _log(f"Browser: popup poll #{_poll_i} URL: {_poll_url[:120]}")
+                                    if "platform.claude.com" in _poll_url or _is_callback_url(_poll_url):
+                                        _log(f"Browser: popup reached callback at poll #{_poll_i}: {_poll_url[:120]}")
+                                        try:
+                                            _popup.wait_for_load_state("networkidle", timeout=8000)
+                                        except Exception:
+                                            pass
+                                        time.sleep(2)
+                                        _popup_ac = _extract_oauth_code_from_page(_popup)
+                                        _popup_ok = True
+                                        break
+                                except Exception as _poll_e:
+                                    _log(f"Browser: popup closed/error at poll #{_poll_i}: {_poll_e}")
+                                    break
+                                time.sleep(0.5)
                             if _popup_ok:
                                 _save_cookies(_popup)
                             _popup_auth_result = (_popup_ac, _popup_ok)
-                            _log(f"Browser: popup consent flow result: ok={_popup_ok}")
+                            _log(f"Browser: popup consent flow result: ok={_popup_ok}, code={_popup_ac[:20] if _popup_ac else None}")
                         else:
                             _log(f"Browser: could not find Approve button. Page: {_tab_body[:200]}")
 
