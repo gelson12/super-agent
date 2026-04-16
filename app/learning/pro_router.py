@@ -685,6 +685,31 @@ def _try_restore_claude_auth() -> bool:
             _log(f"Auto-restore failed: cannot base64-decode CLAUDE_SESSION_TOKEN — {e}")
             return False
 
+    # ── Expiry gate: reject token if expiresAt is already in the past ─────────
+    # This prevents the watchdog from overwriting fresh credentials (written by
+    # a successful Playwright login) with a stale env-var token that will fail
+    # immediately after the write, causing a restore→fail→restore loop.
+    import time as _time2
+    try:
+        import json as _json2
+        _cred_data = _json2.loads(decoded.decode("utf-8", errors="replace"))
+        _oauth = _cred_data.get("claudeAiOauth", {})
+        _expires_at_ms = _oauth.get("expiresAt") or _oauth.get("expires_at")
+        if _expires_at_ms:
+            _expires_at_s = float(_expires_at_ms) / 1000.0  # stored in milliseconds
+            _now = _time2.time()
+            if _expires_at_s < _now - 300:  # 5-min grace period
+                _log(
+                    f"Auto-restore SKIPPED — token expired "
+                    f"{int((_now - _expires_at_s) / 3600)}h ago "
+                    f"(expiresAt={_expires_at_ms}). "
+                    f"Stale token would overwrite fresh credentials. "
+                    f"Update CLAUDE_SESSION_TOKEN in Railway vars after next successful login."
+                )
+                return False
+    except Exception as _exp_e:
+        _log(f"Auto-restore: could not parse expiresAt from token — {_exp_e}. Proceeding with restore.")
+
     # Write to EVERY location Claude Code CLI may look for credentials
     cred_dir = Path("/root/.claude")
     cred_dir.mkdir(parents=True, exist_ok=True)
