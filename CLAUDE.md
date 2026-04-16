@@ -1,5 +1,5 @@
 # Super-Agent — Claude CLI Context
-**Last updated:** 2026-04-15
+**Last updated:** 2026-04-16
 
 This file is auto-loaded by `claude -p` on every invocation inside this repo.
 It gives Claude CLI situational awareness of the system architecture.
@@ -169,7 +169,8 @@ The Claude CLI login flow in container/headless mode:
 
 ---
 
-## PENDING ISSUES (as of 2026-04-13)
+## PENDING ISSUES (as of 2026-04-16)
 
-- Anthropic API account has NO CREDITS — Haiku/Sonnet/Opus API calls will fail. Top up at console.anthropic.com.
-- Verify inspiring-cat shell task type works end-to-end after redeploy: `run_shell_via_cli_worker("git -C /workspace/super-agent pull")`
+- **Health:** nominal — nightly review found no regressions.
+- **Priorities for tomorrow:** none.
+- **Routing observations:** none observed in last 24h.

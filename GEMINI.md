@@ -1,5 +1,5 @@
 # Super-Agent — Gemini CLI Context
-**Last updated:** 2026-04-13
+**Last updated:** 2026-04-16
 
 This file is auto-loaded by `gemini --prompt` on every invocation inside this repo.
 It gives Gemini CLI situational awareness of the system architecture.
@@ -102,7 +102,8 @@ cd /workspace/super-agent && git add <files> && git commit -m "msg" && git push 
 
 ---
 
-## PENDING ISSUES (2026-04-13)
+## PENDING ISSUES (2026-04-16)
 
-- Anthropic API has NO CREDITS — Haiku/Sonnet/Opus API calls will fail until topped up at console.anthropic.com
-- Verify shell task type end-to-end after inspiring-cat redeploy
+- **Health:** nominal — nightly review found no regressions.
+- **Priorities for tomorrow:** none.
+- **Routing observations:** none observed in last 24h.
