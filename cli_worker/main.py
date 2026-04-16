@@ -170,8 +170,7 @@ def _refresh_token_keepalive_job() -> None:
         sys.path.insert(0, "/app")
         from app.learning.agent_status_tracker import get_worker_status
         from app.learning.cli_auto_login import full_recovery_chain
-        workers = get_worker_status()
-        cli_w = next((w for w in workers if w.get("id") == "Claude CLI Pro"), None)
+        cli_w = get_worker_status("Claude CLI Pro")
         last_recovery = cli_w.get("last_recovery_at") if cli_w else None
         if last_recovery is None or (_t.time() - last_recovery) > 25 * 86400:
             days_since = int((_t.time() - last_recovery) / 86400) if last_recovery else -1
