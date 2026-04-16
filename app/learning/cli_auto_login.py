@@ -1429,11 +1429,27 @@ def _automate_browser(oauth_url: str, email: str) -> tuple[bool, str | None]:
                     six_digit_code = _stripped
                     _log(f"Browser: received direct numeric verification code from queue: {six_digit_code}")
                     break
-                # Case B: URL was posted — open in new tab, extract the 6-digit code
-                _log(f"Browser: opening magic link in new tab to extract code: {magic_url[:80]}...")
+                # Case B: URL was posted — open in a fresh browser context to extract the 6-digit code.
+                # We use browser.new_context() rather than page.context.new_page() because
+                # some Playwright context configurations do not allow additional tabs via new_page().
+                _log(f"Browser: opening magic link in fresh browser context to extract code: {magic_url[:80]}...")
+                _new_ctx = None
                 _new_tab = None
                 try:
-                    _new_tab = page.context.new_page()
+                    _browser_obj = page.context.browser
+                    if _browser_obj is None:
+                        raise RuntimeError("page.context.browser is None — cannot open fresh context")
+                    _new_ctx = _browser_obj.new_context(
+                        user_agent=(
+                            "Mozilla/5.0 (X11; Linux x86_64) "
+                            "AppleWebKit/537.36 (KHTML, like Gecko) "
+                            "Chrome/120.0.0.0 Safari/537.36"
+                        ),
+                        viewport={"width": 1280, "height": 800},
+                        locale="en-US",
+                        timezone_id="America/New_York",
+                    )
+                    _new_tab = _new_ctx.new_page()
                     _new_tab.goto(magic_url, timeout=30000)
                     try:
                         _new_tab.wait_for_load_state("networkidle", timeout=15000)
@@ -1450,11 +1466,18 @@ def _automate_browser(oauth_url: str, email: str) -> tuple[bool, str | None]:
                         six_digit_code = _m.group(1)
                         _log(f"Browser: extracted verification code from magic link page: {six_digit_code}")
                 except Exception as _tab_e:
-                    _log(f"Browser: error in new tab for magic link code extraction: {_tab_e}")
+                    _log(f"Browser: error in fresh context for magic link code extraction: {_tab_e}")
+                    import traceback as _tb
+                    _log(f"Browser: magic-link-tab traceback: {_tb.format_exc()[:400]}")
                 finally:
                     if _new_tab:
                         try:
                             _new_tab.close()
+                        except Exception:
+                            pass
+                    if _new_ctx:
+                        try:
+                            _new_ctx.close()
                         except Exception:
                             pass
                 if six_digit_code:
