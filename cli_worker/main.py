@@ -316,13 +316,14 @@ def _probe_claude_prompt(timeout: int = 20) -> bool:
     """
     try:
         r = subprocess.run(
-            ["claude", "-p", "ok", "--max-tokens", "3", "--output-format", "text"],
+            ["claude", "-p", "ok"],
             capture_output=True,
+            stdin=subprocess.DEVNULL,
             timeout=timeout,
             env={**os.environ, "HOME": "/root"},
         )
-        # Any non-empty stdout on returncode 0 means the prompt is alive
-        if r.returncode == 0 and (r.stdout or b"").strip():
+        # returncode 0 means auth is valid — stdout may be empty for short prompts
+        if r.returncode == 0:
             return True
         # Non-zero exit with auth-related error → definitely down
         combined = ((r.stdout or b"") + (r.stderr or b"")).decode("utf-8", errors="replace").lower()

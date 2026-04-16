@@ -1385,13 +1385,160 @@ def _automate_browser(oauth_url: str, email: str) -> tuple[bool, str | None]:
             except Exception:
                 pass
             return False, None
-        _log("Browser: waiting for magic link URL(s) from n8n email monitor...")
+        _log("Browser: waiting for magic link URL(s) or verification code from n8n email monitor...")
         magic_urls = _collect_magic_links()
         if not magic_urls:
             _log("Browser: TIMEOUT — n8n did not deliver any magic link URL.")
             return False, None
 
-        # ── Step 3: Try magic links newest-first until one works ─────────
+        # ── Step 3: Detect auth flow variant ────────────────────────────────
+        # New Anthropic flow (2026+): magic link page now shows a 6-digit
+        # "Use verification code: XXXXXX" UI. That code must be entered on
+        # the ORIGINAL OAuth page (the tab this browser is already on).
+        # Detection: look for a numeric code-entry input on the current page.
+        # Legacy flow: magic link navigation goes straight to callback URL or
+        # OAuth consent screen — no code input on this page.
+        import re as _re2
+        _verification_input = None
+        for _vsel in [
+            'input[autocomplete="one-time-code"]',
+            'input[inputmode="numeric"]',
+            'input[name="code"]',
+            'input[type="text"][maxlength="6"]',
+            'input[placeholder*="code" i]',
+            'input[placeholder*="verification" i]',
+        ]:
+            try:
+                _vi = page.query_selector(_vsel)
+                if _vi and _vi.is_visible():
+                    _verification_input = _vi
+                    _log(f"Browser: verification code input detected (selector={_vsel!r}) — new auth flow")
+                    break
+            except Exception:
+                pass
+
+        if _verification_input:
+            # ── New flow: extract 6-digit code then enter on THIS page ──────
+            # The magic link URL, when navigated, shows the code on the page.
+            # Open it in a new tab so we don't lose the original OAuth session.
+            six_digit_code = None
+            for magic_url in reversed(magic_urls):
+                # Case A: n8n/user already extracted the code and posted it directly
+                _stripped = magic_url.strip()
+                if _stripped.isdigit() and 4 <= len(_stripped) <= 8:
+                    six_digit_code = _stripped
+                    _log(f"Browser: received direct numeric verification code from queue: {six_digit_code}")
+                    break
+                # Case B: URL was posted — open in new tab, extract the 6-digit code
+                _log(f"Browser: opening magic link in new tab to extract code: {magic_url[:80]}...")
+                _new_tab = None
+                try:
+                    _new_tab = page.context.new_page()
+                    _new_tab.goto(magic_url, timeout=30000)
+                    try:
+                        _new_tab.wait_for_load_state("networkidle", timeout=15000)
+                    except Exception:
+                        time.sleep(3)
+                    _tab_body = ""
+                    try:
+                        _tab_body = _new_tab.inner_text("body") or ""
+                    except Exception:
+                        pass
+                    _log(f"Browser: [magic-link-tab] body (first 400): {_tab_body[:400]}")
+                    _m = _re2.search(r'\b(\d{6})\b', _tab_body)
+                    if _m:
+                        six_digit_code = _m.group(1)
+                        _log(f"Browser: extracted verification code from magic link page: {six_digit_code}")
+                except Exception as _tab_e:
+                    _log(f"Browser: error in new tab for magic link code extraction: {_tab_e}")
+                finally:
+                    if _new_tab:
+                        try:
+                            _new_tab.close()
+                        except Exception:
+                            pass
+                if six_digit_code:
+                    break
+
+            if not six_digit_code:
+                _log("Browser: could not extract 6-digit verification code from any magic link.")
+                return False, None
+
+            # Enter the code into the input field on the current (original) page
+            try:
+                _verification_input.fill(six_digit_code)
+            except Exception:
+                # Re-query in case field was re-rendered
+                for _vsel2 in ['input[autocomplete="one-time-code"]', 'input[inputmode="numeric"]',
+                               'input[name="code"]', 'input[type="text"][maxlength="6"]']:
+                    try:
+                        _vi2 = page.query_selector(_vsel2)
+                        if _vi2 and _vi2.is_visible():
+                            _vi2.fill(six_digit_code)
+                            break
+                    except Exception:
+                        pass
+            _log(f"Browser: entered verification code {six_digit_code} into input field")
+            time.sleep(0.5)
+
+            # Submit the code
+            _submit_btn = None
+            for _sbtn_sel in [
+                'button[type="submit"]',
+                'button:has-text("Verify")',
+                'button:has-text("Continue")',
+                'button:has-text("Sign in")',
+            ]:
+                try:
+                    _sb = page.query_selector(_sbtn_sel)
+                    if _sb and _sb.is_visible():
+                        _submit_btn = _sb
+                        break
+                except Exception:
+                    pass
+            if _submit_btn:
+                _submit_btn.click()
+                _log("Browser: clicked submit button for verification code")
+            else:
+                page.keyboard.press("Enter")
+                _log("Browser: pressed Enter to submit verification code")
+
+            # Wait for redirect after code submission (up to 15s)
+            for _wi in range(15):
+                time.sleep(1)
+                if (_is_callback_url(page.url)
+                        or "consent" in page.url
+                        or "authorize" in page.url):
+                    break
+            _log(f"Browser: after code submission, URL = {page.url[:120]}")
+
+            if _is_callback_url(page.url):
+                auth_code = (
+                    _extract_oauth_code_from_page(page)
+                    if "platform.claude.com" in page.url else None
+                )
+                _save_cookies(page)
+                return True, auth_code
+
+            # May land on OAuth consent screen
+            time.sleep(2)
+            _log("Browser: looking for Approve button after verification code submission...")
+            approved = _click_approve(page)
+            if approved:
+                _log("Browser: Approve clicked — waiting for callback redirect...")
+                auth_code, ok = _wait_for_callback_and_extract(page)
+                if ok:
+                    _save_cookies(page)
+                return ok, auth_code
+
+            _log(f"Browser: no callback or approve after code submission. URL: {page.url[:120]}")
+            try:
+                _log(f"Browser: page body after code: {page.inner_text('body')[:600]}")
+            except Exception:
+                pass
+            return False, None
+
+        # ── Legacy flow: navigate magic link directly in this tab ────────────
         # n8n sends ALL unread Anthropic emails — the inbox has many old ones.
         # Old magic links are single-use and already consumed → "unable to verify".
         # The NEWEST email has the fresh link for this session.
@@ -1429,6 +1576,15 @@ def _automate_browser(oauth_url: str, email: str) -> tuple[bool, str | None]:
                 )
                 _save_cookies(page)
                 return True, auth_code
+
+            # Check if the magic link page itself shows a verification code
+            # (new Anthropic flow applied on a direct navigation, not a code input)
+            _ml_code_match = _re2.search(r'\b(\d{6})\b', _ml_body)
+            if _ml_code_match and "verification" in _ml_body.lower():
+                _log(f"Browser: magic link page shows verification code {_ml_code_match.group(1)} "
+                     f"— cannot enter it (navigated away from original OAuth page). "
+                     f"Try next magic link or manual intervention.")
+                continue
 
             _log("Browser: looking for Approve button on consent screen...")
             # Wait for React to render the consent UI
