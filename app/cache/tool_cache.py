@@ -18,6 +18,20 @@ import functools
 import time
 
 _store: dict[str, tuple[str, float]] = {}
+_hits: int = 0
+_misses: int = 0
+
+
+def stats() -> dict:
+    """Return cache hit/miss counts and current entry statistics."""
+    total = _hits + _misses
+    hit_rate = round(_hits / total * 100, 1) if total > 0 else 0.0
+    return {
+        "hits": _hits,
+        "misses": _misses,
+        "entries": len(_store),
+        "hit_rate_pct": hit_rate,
+    }
 
 
 def cached_tool(ttl: int = 300):
@@ -28,11 +42,14 @@ def cached_tool(ttl: int = 300):
     def decorator(fn):
         @functools.wraps(fn)
         def wrapper(*args, **kwargs):
+            global _hits, _misses
             key = f"{fn.__name__}:{args}:{sorted(kwargs.items())}"
             if key in _store:
                 value, ts = _store[key]
                 if time.time() - ts < ttl:
+                    _hits += 1
                     return value  # return cached value transparently
+            _misses += 1
             result = fn(*args, **kwargs)
             # Only cache successful results (not error strings)
             if isinstance(result, str) and not result.startswith("["):

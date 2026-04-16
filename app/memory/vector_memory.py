@@ -603,6 +603,13 @@ def retrieve_memories(query: str, top_k: int = 8,
     return _json_retrieve(query, top_k)
 
 
+def _extract_ts_prefix(m: str) -> str:
+    """Extract [YYYY-MM-DD HH:MM UTC] prefix if present, return as '(DATE) '."""
+    import re as _re
+    match = _re.match(r'\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC)\]', m)
+    return f"({match.group(1)}) " if match else ""
+
+
 def get_memory_context(query: str, top_k: int = 8,
                        session_id: str | None = None) -> str:
     """
@@ -614,9 +621,22 @@ def get_memory_context(query: str, top_k: int = 8,
     memories = retrieve_memories(query, top_k=top_k, session_id=session_id)
     if not memories:
         return ""
-    lines = "\n".join(f"- {m}" for m in memories)
+
+    # Extract timestamps for header (oldest/newest range)
+    import re as _re
+    _ts_pattern = _re.compile(r'\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC)\]')
+    timestamps = [m.group(1) for mem in memories for m in [_ts_pattern.search(mem)] if m]
+    if timestamps:
+        header = (
+            f"[Cross-session memory — {len(memories)} memories, "
+            f"oldest: {min(timestamps)}, newest: {max(timestamps)}]"
+        )
+    else:
+        header = f"[Cross-session memory — {len(memories)} memories]"
+
+    lines = "\n".join(f"- {_extract_ts_prefix(m)}{m}" for m in memories)
     return (
-        "[Cross-session memory — these are real past interactions, ordered by relevance]\n"
+        f"{header}\n"
         f"{lines}\n"
         "[End of past context — reference these naturally in your response when relevant]\n\n"
     )

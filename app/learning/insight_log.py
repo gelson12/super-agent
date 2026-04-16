@@ -20,6 +20,28 @@ import time
 from typing import Optional
 
 
+def _categorize_error(response: str) -> str:
+    """Categorize error responses into structured types for targeted alerting."""
+    lower = response.lower()
+    if any(k in lower for k in ("timeout", "timed out", "deadline")):
+        return "timeout"
+    if any(k in lower for k in ("connection", "connect error", "unreachable", "refused")):
+        return "network"
+    if any(k in lower for k in ("401", "403", "unauthorized", "forbidden", "api key", "not set")):
+        return "auth"
+    if any(k in lower for k in ("404", "not found")):
+        return "not_found"
+    if any(k in lower for k in ("500", "502", "503", "server error", "internal error")):
+        return "server_error"
+    if any(k in lower for k in ("oom", "memory", "out of memory", "killed")):
+        return "oom"
+    if any(k in lower for k in ("circuit breaker", "circuit_breaker")):
+        return "circuit_breaker"
+    if any(k in lower for k in ("rate limit", "too many", "quota")):
+        return "rate_limit"
+    return "unknown"
+
+
 def _resolve_path() -> str:
     for candidate in ("/workspace/super_agent_insights.json", "./super_agent_insights.json"):
         directory = os.path.dirname(candidate) or "."
@@ -59,6 +81,8 @@ class InsightLog:
             "error": response.startswith("[") and response.endswith("]"),
             "session": session or "default",
         }
+        if entry["error"]:
+            entry["error_category"] = _categorize_error(response)
         # Optional enrichment fields — only written when provided
         if latency_ms is not None:
             entry["latency_ms"] = round(latency_ms, 1)
@@ -177,6 +201,39 @@ class InsightLog:
             "error_count": error_count,
             "error_rate_pct": round(error_count / total * 100, 1),
         }
+
+
+    def get_error_breakdown(self, hours: float = 24.0) -> dict:
+        cutoff = time.time() - hours * 3600
+        entries = [e for e in self._load_all() if e.get("ts", 0) >= cutoff and e.get("error")]
+        breakdown: dict[str, int] = {}
+        for e in entries:
+            cat = e.get("error_category", "unknown")
+            breakdown[cat] = breakdown.get(cat, 0) + 1
+        return {"hours": hours, "total_errors": len(entries), "by_category": breakdown}
+
+    def get_latency_percentiles(self, hours: float = 24.0) -> dict:
+        cutoff = time.time() - hours * 3600
+        latencies = sorted([
+            e["latency_ms"] for e in self._load_all()
+            if e.get("ts", 0) >= cutoff and "latency_ms" in e
+        ])
+        if not latencies:
+            return {"hours": hours, "samples": 0}
+        def pct(p):
+            idx = int(len(latencies) * p / 100)
+            return round(latencies[min(idx, len(latencies)-1)], 1)
+        return {
+            "hours": hours, "samples": len(latencies),
+            "p50_ms": pct(50), "p95_ms": pct(95), "p99_ms": pct(99),
+            "avg_ms": round(sum(latencies)/len(latencies), 1),
+            "max_ms": round(latencies[-1], 1),
+        }
+
+    def get_recent_entries(self, n: int = 50) -> list:
+        """Return the last N insight log entries, newest first."""
+        all_entries = self._load_all()
+        return list(reversed(all_entries[-n:]))
 
 
 def _normalize_model(raw: str) -> str:

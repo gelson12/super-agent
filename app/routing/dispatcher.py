@@ -118,6 +118,29 @@ _HANDLERS = {
     "GITHUB":   run_github_agent,
 }
 
+# ── Circuit breaker (in-memory, per-service) ──────────────────────────────────
+# Prevents repeated calls to a service that is clearly down.
+# Opens after _CB_THRESHOLD failures within _CB_WINDOW seconds.
+_CB_FAILURES: dict[str, list[float]] = {}  # service → list of failure timestamps
+_CB_WINDOW = 120    # 2-minute sliding window
+_CB_THRESHOLD = 3   # open after 3 failures
+
+
+def _cb_record_failure(service: str) -> None:
+    """Record a failure timestamp for the given service."""
+    now = _time.time()
+    _CB_FAILURES.setdefault(service, [])
+    _CB_FAILURES[service] = [t for t in _CB_FAILURES[service] if now - t < _CB_WINDOW]
+    _CB_FAILURES[service].append(now)
+
+
+def _cb_is_open(service: str) -> bool:
+    """Return True if the circuit breaker is open (service appears down)."""
+    now = _time.time()
+    recent = [t for t in _CB_FAILURES.get(service, []) if now - t < _CB_WINDOW]
+    return len(recent) >= _CB_THRESHOLD
+
+
 # ── Per-session last-agent memory (in-process, best-effort) ──────────────────
 # Tracks which operational agent handled the previous turn for each session.
 # Used to re-route short follow-up replies back to the right agent when the
@@ -654,6 +677,12 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
         )
         # Session history lost — escalate complexity so peer-review/ensemble compensates
 
+    if _ctx_injection_failed:
+        augmented_message = (
+            augmented_message
+            + "\n[⚠️ Note: Session history is temporarily unavailable — context from earlier in this conversation may be missing.]"
+        )
+
     # ── 0c-extra. Continuation detection ─────────────────────────────────────
     # Short follow-up messages ("nothing", "you didn't give", "fix that", "try again")
     # have no keywords and get mis-routed to web_search.
@@ -721,19 +750,24 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
         _is_n8n_request(message) or _is_shell_request(message)
         or _is_github_request(message) or _is_self_improve_request(message)
     )
-    try:
-        from ..prompts import get_vault_context_block as _get_vault
-        if _is_clear_agent_route:
-            # Use global cache only — skip per-topic search
-            _vault_ctx = _get_vault(topic_hint="")
-        else:
-            _vault_hint = message[:60] if len(message) > 20 else ""
-            _vault_ctx = _get_vault(topic_hint=_vault_hint)
-        _system_claude = _system_claude.replace("{vault_context}", _vault_ctx)
-        _system_haiku  = _system_haiku.replace("{vault_context}",  _vault_ctx)
-    except Exception:
+    if _cb_is_open("vault"):
         _system_claude = _system_claude.replace("{vault_context}", "")
         _system_haiku  = _system_haiku.replace("{vault_context}",  "")
+    else:
+        try:
+            from ..prompts import get_vault_context_block as _get_vault
+            if _is_clear_agent_route:
+                # Use global cache only — skip per-topic search
+                _vault_ctx = _get_vault(topic_hint="")
+            else:
+                _vault_hint = message[:60] if len(message) > 20 else ""
+                _vault_ctx = _get_vault(topic_hint=_vault_hint)
+            _system_claude = _system_claude.replace("{vault_context}", _vault_ctx)
+            _system_haiku  = _system_haiku.replace("{vault_context}",  _vault_ctx)
+        except Exception:
+            _cb_record_failure("vault")
+            _system_claude = _system_claude.replace("{vault_context}", "")
+            _system_haiku  = _system_haiku.replace("{vault_context}",  "")
 
     # Build agent-augmented message: vault knowledge prepended once for all 4 agents.
     # Agents run LangGraph create_react_agent — they receive the user turn only (no
@@ -1131,10 +1165,23 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
     # Checked before self_improve and debug so complex n8n design prompts that
     # happen to contain words like "error", "optimize", "check" are not misrouted.
     if _is_n8n_request(message):
+        if _cb_is_open("n8n"):
+            return _build_extended_result({
+                "model_used": "N8N",
+                "response": "[n8n circuit breaker open — service appears down, skipping to avoid 17s timeout. Try again in 2 minutes.]",
+                "routed_by": "circuit_breaker",
+                "complexity": 1,
+                "cache_hit": False,
+            })
         from ..agents.n8n_agent import run_n8n_agent
         _write_active_task(session_id, message)
         response = _safe_agent_call(run_n8n_agent, _agent_message, agent_name="n8n_agent")
         _clear_active_task()
+        # Record CB failure inline (can't call _agent_response_is_error — defined later in scope)
+        if response and response.startswith("[") and any(
+            k in response.lower() for k in ("error", "failed", "timeout", "unreachable", "refused")
+        ):
+            _cb_record_failure("n8n")
         insight_log.record(message, "N8N", response, "n8n_early", complexity, session_id)
         adapter.tick()
         store_memory(session_id, f"Q: {message[:300]} A: {response[:300]}")
@@ -1319,9 +1366,28 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
             f"Do NOT ask the user for context — you have the full error above."
         )
         try:
-            return run_self_improve_agent(brief, authorized=False)
+            investigate_result = run_self_improve_agent(brief, authorized=False)
         except Exception as _e:
             return f"{err_resp}\n\n[Auto-investigation also failed: {_e}]"
+
+        # If investigation succeeded (not an error), retry the original agent once
+        if not investigate_result.startswith("[") and failed_agent != "SELF_IMPROVE":
+            try:
+                _retry_fn = {
+                    "SHELL": run_shell_agent,
+                    "N8N": run_n8n_agent,
+                    "GITHUB": run_github_agent,
+                }.get(failed_agent)
+                if _retry_fn:
+                    _retry_result = _retry_fn(original_msg[:500], authorized=False)
+                    if not _retry_result.startswith("["):
+                        return (
+                            f"[Auto-fixed]\n{investigate_result}\n\n---\n"
+                            f"**Retry succeeded:**\n{_retry_result}"
+                        )
+            except Exception:
+                pass
+        return investigate_result
 
     if _kw_route == "SHELL":
         # For build requests, send the raw message only — not the augmented version.
@@ -1388,6 +1454,14 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
         })
 
     if _kw_route == "N8N":
+        if _cb_is_open("n8n"):
+            return _build_extended_result({
+                "model_used": "N8N",
+                "response": "[n8n circuit breaker open — service appears down, skipping to avoid 17s timeout. Try again in 2 minutes.]",
+                "routed_by": "circuit_breaker",
+                "complexity": 1,
+                "cache_hit": False,
+            })
         _write_active_task(session_id, message)
         _mark_working("N8N Agent", message[:100])
         _mark_talking("Claude CLI Pro", "N8N Agent")
@@ -1396,6 +1470,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
         _mark_done("N8N Agent")
         _clear_active_task()
         if _agent_response_is_error(response):
+            _cb_record_failure("n8n")
             _mark_error("N8N Agent", response[:200])
             response = _auto_investigate("N8N", message, response, full_ctx=_agent_message)
         store_memory(session_id, f"Q: {message[:300]} A: {response[:300]}")

@@ -15,10 +15,17 @@ keeping token usage bounded on long sessions.
 """
 import logging
 import os
+import time as _time
 from langchain_community.chat_message_histories import SQLChatMessageHistory
 from langchain_core.messages import BaseMessage
 
 _log = logging.getLogger("session")
+
+# ── Compression cache ─────────────────────────────────────────────────────────
+# Avoids calling Haiku on every request for long sessions.
+# Key: session_id → (summary_text, epoch_ts, msg_count_at_compression)
+_compress_cache: dict[str, tuple[str, float, int]] = {}
+_COMPRESS_TTL = 1800  # 30 minutes
 
 
 def _resolve_db_path() -> str:
@@ -52,6 +59,7 @@ def clear_session(session_id: str) -> None:
     """Wipe all messages for a given session."""
     history = get_session_history(session_id)
     history.clear()
+    _compress_cache.pop(session_id, None)
 
 
 def append_exchange(session_id: str, user_msg: str, ai_msg: str) -> None:
@@ -100,11 +108,30 @@ def get_compressed_context(session_id: str) -> str:
     recent_msgs = messages[-6:]
     history_text = _format(old_msgs)
 
+    # ── Compression cache check ───────────────────────────────────────────────
+    # Reuse a cached summary if it's less than 30 min old AND message count
+    # hasn't grown (i.e. no new messages have been pushed into old_msgs).
+    _cached = _compress_cache.get(session_id)
+    if _cached is not None:
+        _cached_summary, _cached_ts, _cached_count = _cached
+        if (
+            _time.time() - _cached_ts < _COMPRESS_TTL
+            and _cached_count == len(old_msgs)
+        ):
+            summary = _cached_summary
+            # Cap summary at 2000 chars to prevent unbounded context injection
+            if len(summary) > 2000:
+                summary = summary[:2000] + "\n[...summary truncated...]"
+            recent_text = _format(recent_msgs)
+            return f"[Summary of earlier conversation]\n{summary}\n\n[Recent messages]\n{recent_text}"
+
     try:
         from ..learning.internal_llm import ask_internal_fast
         from ..prompts import COMPRESSION_PROMPT
         summary_prompt = COMPRESSION_PROMPT.format(history=history_text)
         summary = ask_internal_fast(summary_prompt)
+        # Cache the successful result
+        _compress_cache[session_id] = (summary, _time.time(), len(old_msgs))
     except Exception as e:
         _log.warning("Haiku compression failed for session: %s", e)
         # Fallback: keep the last 5 old messages so critical context isn't lost

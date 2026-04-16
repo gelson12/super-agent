@@ -11,6 +11,7 @@ Endpoints:
   POST /storage/upload      — upload file with auto quota management
 """
 import os
+import re
 import secrets
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form, Depends
@@ -42,12 +43,27 @@ from .learning.credit_throttle import should_run as _should_run, health_check_us
 
 limiter = Limiter(key_func=get_remote_address)
 
+# ── Error sanitization ────────────────────────────────────────────────────────
+_RE_PG_URL = re.compile(r"postgresql?://[^\s\"']+", re.IGNORECASE)
+_RE_API_KEY = re.compile(r"(api[_-]?key\s*=\s*)[^\s\"'&]+", re.IGNORECASE)
+
+
+def _sanitize_error(text: str) -> str:
+    """Strip sensitive secrets (DB connection strings, API keys) from error messages."""
+    text = _RE_PG_URL.sub("[db-url-redacted]", text)
+    text = _RE_API_KEY.sub(r"\1[redacted]", text)
+    return text
+
+
 # ── Auth middleware ────────────────────────────────────────────────────────────
 # Protected paths require header: X-Token: <UI_PASSWORD>
 # If UI_PASSWORD is not set, auth is disabled.
 
 _OPEN_PATHS = {"/", "/health", "/auth", "/credits/pro-status", "/credits/pro-reset", "/agents", "/dashboard", "/stats", "/stats/report"}
 _OPEN_PREFIXES = ("/static", "/downloads", "/webhook", "/n8n/connection-info", "/activity", "/dashboard/", "/stats/")  # token-in-URL or public info
+# NOTE: /chat, /chat/stream, /chat/direct, and /install-guide are intentionally
+# NOT in _OPEN_PATHS/_OPEN_PREFIXES — they require X-Token when UI_PASSWORD is set.
+# /install-guide has its own inline token check (see endpoint definition below).
 
 
 class AuthMiddleware(BaseHTTPMiddleware):
@@ -422,6 +438,13 @@ app.add_middleware(
 )
 
 
+@app.exception_handler(500)
+async def _internal_error_handler(request: Request, exc: Exception):
+    """Sanitize 500 error responses to strip secrets from error details."""
+    detail = _sanitize_error(str(exc))
+    return JSONResponse({"detail": detail}, status_code=500)
+
+
 # ── Schemas ───────────────────────────────────────────────────────────────────
 
 class ChatRequest(BaseModel):
@@ -496,6 +519,25 @@ def agents_page():
     if os.path.isfile(path):
         return FileResponse(path)
     return {"error": "agents.html not found in static/"}
+
+
+@app.get("/observability", include_in_schema=False)
+def observability_page():
+    """Serve the observability / metrics dashboard."""
+    path = os.path.join(_static_dir, "observe.html")
+    if os.path.isfile(path):
+        return FileResponse(path)
+    return {"error": "observe.html not found in static/"}
+
+
+@app.get("/anomaly-alerts", tags=["meta"])
+def anomaly_alerts_endpoint(n: int = 20):
+    """Return the N most recent anomaly alerts, newest first."""
+    try:
+        from .learning.anomaly_alerter import get_recent_alerts
+        return get_recent_alerts(n=n)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 @app.get("/dashboard/agents/status", tags=["meta"])
@@ -1654,11 +1696,16 @@ def build_mobile(req: MobileBuildRequest, request: Request):
 
 
 @app.get("/install-guide", tags=["mobile"], response_class=FileResponse)
-def install_guide():
+def install_guide(request: Request):
     """
     Return the mobile app installation guide (Markdown).
     Covers Android APK sideloading and iOS AltStore installation step-by-step.
+    Requires X-Token header when UI_PASSWORD is configured.
     """
+    if settings.ui_password:
+        token = request.headers.get("X-Token", "")
+        if not secrets.compare_digest(token, settings.ui_password):
+            raise HTTPException(status_code=401, detail="Unauthorized")
     guide_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "INSTALL_GUIDE.md")
     if os.path.isfile(guide_path):
         return FileResponse(guide_path, media_type="text/markdown", filename="INSTALL_GUIDE.md")
@@ -3166,6 +3213,34 @@ def metrics_history(hours: float = 48.0):
     from .learning.metrics_store import get_recent
     snaps = get_recent(hours=hours)
     return {"hours": hours, "count": len(snaps), "snapshots": snaps[-200:]}
+
+
+@app.get("/metrics/errors", tags=["metrics"])
+def metrics_errors(hours: float = 24.0):
+    """Error breakdown by category for the last N hours."""
+    return insight_log.get_error_breakdown(hours=hours)
+
+
+@app.get("/metrics/latency", tags=["metrics"])
+def metrics_latency(hours: float = 24.0):
+    """Latency percentiles (p50/p95/p99) for the last N hours."""
+    return insight_log.get_latency_percentiles(hours=hours)
+
+
+@app.get("/metrics/recent", tags=["metrics"])
+def metrics_recent(n: int = 50):
+    """Last N interactions with full metadata."""
+    return {"entries": insight_log.get_recent_entries(n=n)}
+
+
+@app.get("/metrics/tool-cache", tags=["metrics"])
+def metrics_tool_cache():
+    """Tool cache hit/miss statistics."""
+    try:
+        from .cache.tool_cache import stats as _tc_stats
+        return _tc_stats()
+    except Exception as e:
+        return {"error": str(e)}
 
 
 @app.get("/metrics/routing-confidence", tags=["metrics"])
