@@ -2555,6 +2555,34 @@ def full_recovery_chain() -> bool:
             return True
         return False
 
+    # ── Cross-process file lock ──────────────────────────────────────────────
+    # The threading.Lock above only prevents double-recovery within the same
+    # process. If a shell task or external script calls full_recovery_chain()
+    # while the cli_worker process is already recovering, the threading.Lock
+    # is invisible to it. fcntl.flock() works across OS processes on the same
+    # filesystem — the second caller gets LOCK_EX | LOCK_NB immediately, and
+    # if it fails (EWOULDBLOCK), it backs off gracefully without consuming a
+    # magic link email.
+    _flock_fd = None
+    try:
+        import fcntl as _fcntl
+        _FLOCK_PATH = Path("/workspace/.recovery_in_progress.lock")
+        _flock_fd = open(_FLOCK_PATH, "w")
+        _fcntl.flock(_flock_fd, _fcntl.LOCK_EX | _fcntl.LOCK_NB)
+        # Lock acquired — we are the sole recovery process
+    except (IOError, OSError) as _fle:
+        _log(f"=== Cross-process recovery already running (flock: {_fle}) — backing off ===")
+        try:
+            if _flock_fd:
+                _flock_fd.close()
+        except Exception:
+            pass
+        _recovery_lock.release()
+        return False
+    except Exception as _fle2:
+        # fcntl unavailable (Windows dev env, non-POSIX) — log and continue
+        _log(f"=== Cross-process flock unavailable ({_fle2}) — proceeding without file lock ===")
+
     _recovery_started_at = time.time()
     _recovery_running.set()
     try:
@@ -2679,3 +2707,11 @@ def full_recovery_chain() -> bool:
     finally:
         _recovery_running.clear()
         _recovery_lock.release()
+        # Release cross-process file lock
+        if _flock_fd is not None:
+            try:
+                import fcntl as _fcntl
+                _fcntl.flock(_flock_fd, _fcntl.LOCK_UN)
+                _flock_fd.close()
+            except Exception:
+                pass
