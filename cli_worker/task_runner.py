@@ -362,7 +362,7 @@ def _push_result_to_shared_memory(task_type: str, payload: dict, result: str) ->
     Never raises.
     """
     try:
-        if task_type not in ("claude_pro", "claude_auth") or len(result) < 200:
+        if task_type not in ("claude_pro", "claude_auth", "gemini_cli") or len(result) < 200:
             return
         prompt = payload.get("prompt", "")
         if not prompt:
@@ -370,20 +370,26 @@ def _push_result_to_shared_memory(task_type: str, payload: dict, result: str) ->
         import sys
         sys.path.insert(0, "/app")
         from app.memory.vector_memory import ingest_external_memory, extract_and_store_insights
+
+        # Identify source label based on which CLI ran the task
+        source_label = "gemini_cli" if task_type == "gemini_cli" else "cli_pro"
+        model_label  = "GEMINI_CLI" if task_type == "gemini_cli" else "CLI_PRO"
+        tag_label    = f"{source_label} task"
+
         # Store the raw exchange
         ingest_external_memory(
-            content=f"CLI Pro task — Q: {prompt[:300]} A: {result[:400]}",
+            content=f"{tag_label} — Q: {prompt[:300]} A: {result[:400]}",
             memory_type="fact",
             importance=3,
-            source="cli_pro",
-            session_id="cli_pro_shared",
+            source=source_label,
+            session_id=f"{source_label}_shared",
         )
         # Also fire Haiku distillation (runs async in daemon thread)
         extract_and_store_insights(
             message=prompt,
             response=result,
-            model="CLI_PRO",
-            session_id="cli_pro_shared",
+            model=model_label,
+            session_id=f"{source_label}_shared",
             source="auto_extract",
         )
     except Exception:
