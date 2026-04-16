@@ -39,6 +39,37 @@ def ensure_table() -> None:
         conn.commit()
 
 
+def ensure_credentials_table() -> None:
+    """
+    Create claude_credentials table for cross-restart token persistence.
+
+    This is Layer 2b of the auth recovery chain — an alternative to the
+    volume backup that works even if the Railway volume is unavailable.
+    Unlike the Railway API approach (blocked by Cloudflare SSRF from inside
+    containers), this writes directly to our PostgreSQL database which is
+    always reachable from within Railway.
+
+    Schema:
+      id            — always 'primary' (only one row needed)
+      credentials_b64 — base64-encoded /root/.claude/.credentials.json
+      expires_at    — Unix ms timestamp extracted from credentials (0 if unknown)
+      subscription_type — 'max', 'pro', etc. (empty if unknown)
+      updated_at    — when this row was last written
+    """
+    with _conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS claude_credentials (
+                    id               VARCHAR(32) PRIMARY KEY,
+                    credentials_b64  TEXT        NOT NULL,
+                    expires_at       BIGINT      NOT NULL DEFAULT 0,
+                    subscription_type VARCHAR(32) NOT NULL DEFAULT '',
+                    updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );
+            """)
+        conn.commit()
+
+
 def requeue_stale_tasks() -> int:
     """
     Reset tasks stuck in 'running' for more than 3 minutes back to 'pending'.

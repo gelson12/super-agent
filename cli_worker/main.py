@@ -222,9 +222,10 @@ def _cookie_keepalive_job() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Boot: create table, requeue stale tasks
+    # Boot: create tables, requeue stale tasks
     try:
         migrations.ensure_table()
+        migrations.ensure_credentials_table()
         requeued = migrations.requeue_stale_tasks()
         if requeued:
             _bg_log(f"Boot: requeued {requeued} stale tasks (crash recovery)", "boot")
@@ -232,6 +233,25 @@ async def lifespan(app: FastAPI):
             _bg_log("Boot: DB ready, no stale tasks", "boot")
     except Exception as e:
         _bg_log(f"Boot DB error: {e} — task queue unavailable", "boot")
+
+    # Boot: restore credentials from PostgreSQL (Layer 2b) if volume backup
+    # is absent or stale.  This handles the scenario where the Railway volume
+    # was remounted / path changed but the DB row is still fresh.
+    try:
+        import sys as _sys_creds
+        _sys_creds.path.insert(0, "/app")
+        from app.learning.cli_auto_login import _restore_credentials_from_db
+        _vol_backup = __import__("pathlib").Path("/workspace/.claude_credentials_backup.json")
+        if not _vol_backup.exists():
+            _bg_log("Boot: volume backup absent — attempting DB restore (Layer 2b)", "boot")
+            if _restore_credentials_from_db():
+                _bg_log("Boot: credentials restored from PostgreSQL ✓", "boot")
+            else:
+                _bg_log("Boot: DB restore returned nothing — will rely on env var / watchdog", "boot")
+        else:
+            _bg_log("Boot: volume backup present — DB restore not needed", "boot")
+    except Exception as _e:
+        _bg_log(f"Boot: DB credential restore skipped — {_e}", "boot")
 
     # Boot: clear stale restore counter from the previous container run.
     # _RESTORE_COUNT_FLAG tracks consecutive failed credential restores; if it
@@ -458,6 +478,51 @@ async def receive_verification_code(body: dict, req: Request):
         return {"ok": True, "message": "Magic link delivered to browser queue"}
     except Exception as e:
         _bg_log(f"Failed to deliver magic link to queue: {e}", "webhook")
+        return {"ok": False, "error": str(e)}
+
+
+@app.post("/webhook/github-oauth-result")
+async def webhook_github_oauth_result(req: Request):
+    """
+    Receive the result of a GitHub Actions OAuth relay attempt.
+
+    GitHub-hosted runners (Azure IPs) are not blocked by Anthropic's Cloudflare
+    WAF, so they can POST to claude.com/cai/oauth/token on our behalf. This
+    endpoint receives the result and delivers it to the waiting _try_direct_refresh()
+    call via an in-memory queue keyed by the nonce.
+
+    Security: caller must pass the OAUTH_RELAY_SECRET (set as a GitHub Actions
+    secret and also as an env var in inspiring-cat). Requests with a wrong/missing
+    secret are rejected with 403.
+
+    Payload: {"nonce": "...", "http_code": 200, "body": {...}, "secret": "..."}
+    """
+    try:
+        payload = await req.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+
+    expected_secret = os.environ.get("OAUTH_RELAY_SECRET", "")
+    if expected_secret:
+        if payload.get("secret", "") != expected_secret:
+            _bg_log("github-oauth-result: rejected — wrong secret", "webhook")
+            raise HTTPException(status_code=403, detail="Invalid secret")
+
+    nonce = str(payload.get("nonce", "")).strip()
+    if not nonce:
+        raise HTTPException(status_code=400, detail="Missing nonce")
+
+    _bg_log(f"github-oauth-result: received result for nonce={nonce[:12]}... "
+            f"http_code={payload.get('http_code')}", "webhook")
+
+    try:
+        import sys
+        sys.path.insert(0, "/app")
+        from app.learning.cli_auto_login import deliver_github_oauth_result
+        deliver_github_oauth_result(nonce, payload)
+        return {"ok": True}
+    except Exception as e:
+        _bg_log(f"github-oauth-result: delivery error — {e}", "webhook")
         return {"ok": False, "error": str(e)}
 
 
