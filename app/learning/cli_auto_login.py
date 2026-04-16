@@ -1449,6 +1449,15 @@ def _automate_browser(oauth_url: str, email: str) -> tuple[bool, str | None]:
                         locale="en-US",
                         timezone_id="America/New_York",
                     )
+                    # Copy cookies from main context so Cloudflare doesn't
+                    # treat the fresh context as an unknown bot.
+                    try:
+                        _existing_cookies = page.context.cookies()
+                        if _existing_cookies:
+                            _new_ctx.add_cookies(_existing_cookies)
+                            _log(f"Browser: copied {len(_existing_cookies)} cookies to magic-link context")
+                    except Exception as _ck_e:
+                        _log(f"Browser: cookie copy warning (non-fatal): {_ck_e}")
                     _new_tab = _new_ctx.new_page()
                     _new_tab.goto(magic_url, timeout=30000)
                     try:
