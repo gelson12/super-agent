@@ -1506,8 +1506,38 @@ def _automate_browser(oauth_url: str, email: str) -> tuple[bool, str | None]:
                                     _log(f"Browser: popup closed/error at poll #{_poll_i}: {_poll_e}")
                                     break
                                 time.sleep(0.5)
+                            # If popup closed before we caught callback, check main page and all context pages.
+                            # OAuth servers often navigate the opener (main page) to the callback URL
+                            # when Authorize is clicked inside a popup.
+                            if not _popup_ok:
+                                try:
+                                    _main_url = page.url
+                                    _log(f"Browser: popup closed — checking main page URL: {_main_url[:120]}")
+                                    if "platform.claude.com" in _main_url or _is_callback_url(_main_url):
+                                        _log("Browser: main page is on callback URL — extracting code from main page")
+                                        _popup_ac = _extract_oauth_code_from_page(page)
+                                        _popup_ok = True
+                                except Exception as _mpe:
+                                    _log(f"Browser: error reading main page after popup close: {_mpe}")
+                                if not _popup_ok:
+                                    try:
+                                        for _ctxp in page.context.pages:
+                                            try:
+                                                _ctxu = _ctxp.url
+                                                if ("platform.claude.com" in _ctxu or _is_callback_url(_ctxu)) and _ctxp != page:
+                                                    _log(f"Browser: found callback in context page: {_ctxu[:120]}")
+                                                    _popup_ac = _extract_oauth_code_from_page(_ctxp)
+                                                    _popup_ok = True
+                                                    break
+                                            except Exception:
+                                                pass
+                                    except Exception:
+                                        pass
                             if _popup_ok:
-                                _save_cookies(_popup)
+                                try:
+                                    _save_cookies(_popup if not _popup.is_closed() else page)
+                                except Exception:
+                                    _save_cookies(page)
                             _popup_auth_result = (_popup_ac, _popup_ok)
                             _log(f"Browser: popup consent flow result: ok={_popup_ok}, code={_popup_ac[:20] if _popup_ac else None}")
                         else:
