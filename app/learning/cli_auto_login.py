@@ -1429,64 +1429,40 @@ def _automate_browser(oauth_url: str, email: str) -> tuple[bool, str | None]:
                     six_digit_code = _stripped
                     _log(f"Browser: received direct numeric verification code from queue: {six_digit_code}")
                     break
-                # Case B: URL was posted — open in a fresh browser context to extract the 6-digit code.
-                # We use browser.new_context() rather than page.context.new_page() because
-                # some Playwright context configurations do not allow additional tabs via new_page().
-                _log(f"Browser: opening magic link in fresh browser context to extract code: {magic_url[:80]}...")
-                _new_ctx = None
-                _new_tab = None
+                # Case B: URL was posted — open it as a popup in the SAME browser context.
+                # Using page.expect_popup() + window.open() shares cookies and TLS fingerprint
+                # with the main page, bypassing Cloudflare bot detection.
+                # Avoids page.context.new_page() (throws in some Playwright configs) and
+                # browser.new_context() (no cookies → Cloudflare blocks).
+                _log(f"Browser: opening magic link as popup (same context) to extract code: {magic_url[:80]}...")
+                _popup = None
                 try:
-                    _browser_obj = page.context.browser
-                    if _browser_obj is None:
-                        raise RuntimeError("page.context.browser is None — cannot open fresh context")
-                    _new_ctx = _browser_obj.new_context(
-                        user_agent=(
-                            "Mozilla/5.0 (X11; Linux x86_64) "
-                            "AppleWebKit/537.36 (KHTML, like Gecko) "
-                            "Chrome/120.0.0.0 Safari/537.36"
-                        ),
-                        viewport={"width": 1280, "height": 800},
-                        locale="en-US",
-                        timezone_id="America/New_York",
-                    )
-                    # Copy cookies from main context so Cloudflare doesn't
-                    # treat the fresh context as an unknown bot.
+                    _safe_url = magic_url.replace("'", "%27").replace("\\", "%5C")
+                    with page.expect_popup(timeout=35000) as _popup_info:
+                        page.evaluate(f"window.open('{_safe_url}', '_blank')")
+                    _popup = _popup_info.value
                     try:
-                        _existing_cookies = page.context.cookies()
-                        if _existing_cookies:
-                            _new_ctx.add_cookies(_existing_cookies)
-                            _log(f"Browser: copied {len(_existing_cookies)} cookies to magic-link context")
-                    except Exception as _ck_e:
-                        _log(f"Browser: cookie copy warning (non-fatal): {_ck_e}")
-                    _new_tab = _new_ctx.new_page()
-                    _new_tab.goto(magic_url, timeout=30000)
-                    try:
-                        _new_tab.wait_for_load_state("networkidle", timeout=15000)
+                        _popup.wait_for_load_state("networkidle", timeout=15000)
                     except Exception:
                         time.sleep(3)
                     _tab_body = ""
                     try:
-                        _tab_body = _new_tab.inner_text("body") or ""
+                        _tab_body = _popup.inner_text("body") or ""
                     except Exception:
                         pass
-                    _log(f"Browser: [magic-link-tab] body (first 400): {_tab_body[:400]}")
+                    _log(f"Browser: [magic-link-popup] body (first 400): {_tab_body[:400]}")
                     _m = _re2.search(r'\b(\d{6})\b', _tab_body)
                     if _m:
                         six_digit_code = _m.group(1)
-                        _log(f"Browser: extracted verification code from magic link page: {six_digit_code}")
+                        _log(f"Browser: extracted verification code from magic link popup: {six_digit_code}")
                 except Exception as _tab_e:
-                    _log(f"Browser: error in fresh context for magic link code extraction: {_tab_e}")
+                    _log(f"Browser: error in popup for magic link code extraction: {_tab_e}")
                     import traceback as _tb
-                    _log(f"Browser: magic-link-tab traceback: {_tb.format_exc()[:400]}")
+                    _log(f"Browser: magic-link-popup traceback: {_tb.format_exc()[:400]}")
                 finally:
-                    if _new_tab:
+                    if _popup:
                         try:
-                            _new_tab.close()
-                        except Exception:
-                            pass
-                    if _new_ctx:
-                        try:
-                            _new_ctx.close()
+                            _popup.close()
                         except Exception:
                             pass
                 if six_digit_code:
