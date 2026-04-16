@@ -320,10 +320,20 @@ def stats():
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    import sys as _sys
+    # Force line-buffered output so PowerShell shows progress immediately
+    _sys.stdout.reconfigure(line_buffering=True)
+
     op = "both"
     for arg in sys.argv[1:]:
         if arg in ("push", "pull", "both", "stats"):
             op = arg
+
+    print(f"[sync_memory] Starting — op={op}", flush=True)
+    print(f"[sync_memory] CLI_WORKER_URL = {CLI_WORKER_URL}", flush=True)
+    print(f"[sync_memory] MEMORY_SECRET  = {'<set>' if MEMORY_SECRET else '<NOT SET — will be rejected>'}", flush=True)
+    print(f"[sync_memory] MEMORY_DIR     = {CLAUDE_MEMORY_DIR}", flush=True)
+    print(flush=True)
 
     if op == "push":
         push()
@@ -333,7 +343,7 @@ if __name__ == "__main__":
         stats()
     else:
         push()
-        print()
+        print(flush=True)
         pull()
-        print()
+        print(flush=True)
         stats()
