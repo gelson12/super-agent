@@ -3,19 +3,37 @@
   "nodes": [
     {
       "parameters": {
-        "pollTimes": {
-          "item": [{ "mode": "everyMinute" }]
-        },
+        "rule": {
+          "interval": [
+            {
+              "field": "seconds",
+              "secondsInterval": 30
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Every 30 Seconds",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 400]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "getAll",
+        "returnAll": false,
+        "limit": 10,
         "filters": {
           "readStatus": "unread"
         },
         "options": {}
       },
-      "id": "outlook-trigger",
-      "name": "Watch Outlook for Anthropic Emails",
-      "type": "n8n-nodes-base.microsoftOutlookTrigger",
-      "typeVersion": 1,
-      "position": [240, 400],
+      "id": "read-outlook",
+      "name": "Read Unread Outlook Emails",
+      "type": "n8n-nodes-base.microsoftOutlook",
+      "typeVersion": 2,
+      "position": [460, 400],
       "credentials": {
         "microsoftOutlookOAuth2Api": {
           "id": "9paQ8IJLgiLbjEYI",
@@ -27,13 +45,43 @@
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
-        "jsCode": "const items = $input.all();\nconst results = [];\nfor (const item of items) {\n  const subject = (item.json.subject || '').toLowerCase();\n  const from = (item.json.from && item.json.from.emailAddress && item.json.from.emailAddress.address || item.json.from || '').toLowerCase();\n  const bodyHtml = (item.json.body && item.json.body.content) || '';\n  const bodyText = item.json.bodyPreview || '';\n  const searchIn = bodyHtml + ' ' + bodyText;\n  const isAnthropicSender = from.includes('anthropic.com') || from.includes('claude.ai');\n  const isLoginSubject = subject.includes('claude') || subject.includes('sign in') || subject.includes('secure link') || subject.includes('log in') || subject.includes('magic') || subject.includes('verify') || subject.includes('login') || subject.includes('authenticate');\n  if (!isAnthropicSender && !isLoginSubject) continue;\n  // Skip emails older than 5 minutes — stale magic links cause 'unable to verify'.\n  // The Hotmail inbox accumulates many unread Anthropic emails from repeated attempts;\n  // only the most recently received one has a valid single-use magic link.\n  const receivedAt = new Date(item.json.receivedDateTime || item.json.createdDateTime || 0);\n  const ageMs = Date.now() - receivedAt.getTime();\n  if (ageMs > 5 * 60 * 1000) continue;\n  let magicUrl = null;\n  const patterns = [\n    /https:\\/\\/claude\\.ai\\/magic-link[^\\s\"'<>)\\\\]+/i,\n    /https:\\/\\/platform\\.claude\\.com\\/magic-link[^\\s\"'<>)\\\\]+/i,\n    /https:\\/\\/claude\\.ai\\/verify[^\\s\"'<>)\\\\]+/i,\n    /https:\\/\\/claude\\.ai\\/login[^\\s\"'<>)\\\\]+token[^\\s\"'<>)\\\\]+/i,\n    /https:\\/\\/platform\\.claude\\.com\\/[^\\s\"'<>)\\\\]+/i,\n    /https:\\/\\/claude\\.com\\/[^\\s\"'<>)\\\\]*(?:magic|verify|link|token)[^\\s\"'<>)\\\\]+/i,\n    /https:\\/\\/[^\\s\"'<>)\\\\]+\\.claude\\.(?:ai|com)\\/[^\\s\"'<>)\\\\]+/i,\n  ];\n  for (const pattern of patterns) {\n    const m = searchIn.match(pattern);\n    if (m) { magicUrl = m[0].replace(/&amp;/g, '&').replace(/[.,;!?]+$/, ''); break; }\n  }\n  if (magicUrl) results.push({ json: { url: magicUrl, subject: item.json.subject, from: from, timestamp: new Date().toISOString() } });\n}\nreturn results.length ? results : [];"
+        "jsCode": "// Filter to only recent Anthropic verification emails.\n// Returns the message ID so the next step can fetch the full body.\nconst items = $input.all();\nconst results = [];\nfor (const item of items) {\n  const subject = (item.json.subject || '').toLowerCase();\n  const from = (item.json.from && item.json.from.emailAddress && item.json.from.emailAddress.address || item.json.from || '').toLowerCase();\n  const isAnthropicSender = from.includes('anthropic.com') || from.includes('claude.ai');\n  const isLoginSubject = subject.includes('claude') || subject.includes('sign in') || subject.includes('secure link') || subject.includes('log in') || subject.includes('magic') || subject.includes('verify') || subject.includes('login') || subject.includes('authenticate');\n  if (!isAnthropicSender && !isLoginSubject) continue;\n  // Only process emails received within the last 8 minutes\n  const receivedAt = new Date(item.json.receivedDateTime || item.json.createdDateTime || 0);\n  const ageMs = Date.now() - receivedAt.getTime();\n  if (ageMs > 8 * 60 * 1000) continue;\n  if (!item.json.id) continue;\n  results.push({ json: { id: item.json.id, subject: item.json.subject, receivedDateTime: item.json.receivedDateTime } });\n}\nreturn results;"
+      },
+      "id": "filter-anthropic",
+      "name": "Filter Anthropic Emails",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 400]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "get",
+        "messageId": "={{ $json.id }}"
+      },
+      "id": "get-full-email",
+      "name": "Get Full Email Body",
+      "type": "n8n-nodes-base.microsoftOutlook",
+      "typeVersion": 2,
+      "position": [900, 400],
+      "credentials": {
+        "microsoftOutlookOAuth2Api": {
+          "id": "9paQ8IJLgiLbjEYI",
+          "name": "Microsoft Outlook account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Extract magic link URL from full email body (body.content is available after Get Full Email Body step).\nconst items = $input.all();\nconst results = [];\nfor (const item of items) {\n  const bodyHtml = (item.json.body && item.json.body.content) || '';\n  const bodyText = item.json.bodyPreview || '';\n  const searchIn = bodyHtml + ' ' + bodyText;\n  let magicUrl = null;\n  const patterns = [\n    /https:\\/\\/claude\\.ai\\/magic-link[^\\s\"'<>)\\\\]+/i,\n    /https:\\/\\/platform\\.claude\\.com\\/magic-link[^\\s\"'<>)\\\\]+/i,\n    /https:\\/\\/claude\\.ai\\/verify[^\\s\"'<>)\\\\]+/i,\n    /https:\\/\\/claude\\.ai\\/login[^\\s\"'<>)\\\\]+token[^\\s\"'<>)\\\\]+/i,\n    /https:\\/\\/platform\\.claude\\.com\\/[^\\s\"'<>)\\\\]+/i,\n    /https:\\/\\/claude\\.com\\/[^\\s\"'<>)\\\\]*(?:magic|verify|link|token)[^\\s\"'<>)\\\\]+/i,\n    /https:\\/\\/[^\\s\"'<>)\\\\]+\\.claude\\.(?:ai|com)\\/[^\\s\"'<>)\\\\]+/i,\n  ];\n  for (const pattern of patterns) {\n    const m = searchIn.match(pattern);\n    if (m) { magicUrl = m[0].replace(/&amp;/g, '&').replace(/[.,;!?]+$/, ''); break; }\n  }\n  if (magicUrl) results.push({ json: { url: magicUrl, subject: item.json.subject, messageId: item.json.id } });\n}\nreturn results.length ? results : [];"
       },
       "id": "extract-code",
       "name": "Extract Magic Link URL",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [480, 300]
+      "position": [1120, 280]
     },
     {
       "parameters": {
@@ -52,19 +100,7 @@
       "name": "POST Magic Link to CLI Worker",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
-      "position": [720, 300]
-    },
-    {
-      "parameters": {
-        "mode": "runOnceForAllItems",
-        "language": "javaScript",
-        "jsCode": "const items = $input.all();\nconst toDelete = [];\nfor (const item of items) {\n  const subject = (item.json.subject || '').toLowerCase();\n  const from = (item.json.from && item.json.from.emailAddress && item.json.from.emailAddress.address || item.json.from || '').toLowerCase();\n  const isAnthropicSender = from.includes('anthropic.com') || from.includes('claude.ai');\n  const isLoginSubject = subject.includes('claude') || subject.includes('sign in') || subject.includes('secure link') || subject.includes('log in') || subject.includes('magic') || subject.includes('verify');\n  if ((!isAnthropicSender && !isLoginSubject) || !item.json.id) continue;\n  toDelete.push({ json: { id: item.json.id, subject: item.json.subject } });\n}\nreturn toDelete;"
-      },
-      "id": "delete-filter",
-      "name": "Delete Anthropic Emails",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [480, 520]
+      "position": [1340, 280]
     },
     {
       "parameters": {
@@ -72,10 +108,10 @@
         "messageId": "={{ $json.id }}"
       },
       "id": "delete-message",
-      "name": "Microsoft Outlook (Delete)",
+      "name": "Delete Anthropic Email",
       "type": "n8n-nodes-base.microsoftOutlook",
       "typeVersion": 2,
-      "position": [720, 520],
+      "position": [1120, 520],
       "credentials": {
         "microsoftOutlookOAuth2Api": {
           "id": "9paQ8IJLgiLbjEYI",
@@ -85,17 +121,33 @@
     }
   ],
   "connections": {
-    "Watch Outlook for Anthropic Emails": {
+    "Every 30 Seconds": {
       "main": [
-        [{ "node": "Extract Magic Link URL", "type": "main", "index": 0 }],
-        [{ "node": "Delete Anthropic Emails", "type": "main", "index": 0 }]
+        [{ "node": "Read Unread Outlook Emails", "type": "main", "index": 0 }]
+      ]
+    },
+    "Read Unread Outlook Emails": {
+      "main": [
+        [{ "node": "Filter Anthropic Emails", "type": "main", "index": 0 }]
+      ]
+    },
+    "Filter Anthropic Emails": {
+      "main": [
+        [{ "node": "Get Full Email Body", "type": "main", "index": 0 }]
+      ]
+    },
+    "Get Full Email Body": {
+      "main": [
+        [
+          { "node": "Extract Magic Link URL", "type": "main", "index": 0 },
+          { "node": "Delete Anthropic Email", "type": "main", "index": 0 }
+        ]
       ]
     },
     "Extract Magic Link URL": {
-      "main": [[{ "node": "POST Magic Link to CLI Worker", "type": "main", "index": 0 }]]
-    },
-    "Delete Anthropic Emails": {
-      "main": [[{ "node": "Microsoft Outlook (Delete)", "type": "main", "index": 0 }]]
+      "main": [
+        [{ "node": "POST Magic Link to CLI Worker", "type": "main", "index": 0 }]
+      ]
     }
   },
   "settings": {
