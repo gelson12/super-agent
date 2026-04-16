@@ -76,7 +76,7 @@
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
-        "jsCode": "const items = $input.all();\nconst toDelete = [];\nfor (const item of items) {\n  if (!item.json.messageId) continue;\n  toDelete.push({ json: { id: item.json.messageId, subject: item.json.subject } });\n}\nreturn toDelete;"
+        "jsCode": "const items = $input.all();\nconst toDelete = [];\nfor (const item of items) {\n  // Accept id from raw Outlook output (item.json.id) OR from Extract node (item.json.messageId)\n  const id = item.json.messageId || item.json.id;\n  if (!id) continue;\n  // Only delete Anthropic/Claude verification emails — leave other emails (job alerts etc.) untouched\n  const from = ((item.json.from && item.json.from.emailAddress && item.json.from.emailAddress.address) || item.json.from || '').toLowerCase();\n  const subject = (item.json.subject || '').toLowerCase();\n  const isVerificationEmail = from.includes('anthropic.com') || from.includes('claude.ai') ||\n    subject.includes('claude') || subject.includes('sign in') || subject.includes('secure link') ||\n    subject.includes('log in') || subject.includes('magic') || subject.includes('verify') ||\n    subject.includes('login') || subject.includes('authenticate');\n  if (!isVerificationEmail) continue;\n  toDelete.push({ json: { id: id, subject: item.json.subject } });\n}\nreturn toDelete;"
       },
       "id": "delete-filter",
       "name": "Mark For Deletion",
