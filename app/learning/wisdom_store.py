@@ -217,6 +217,27 @@ class WisdomStore:
 
     # ── Query interface ───────────────────────────────────────────────────────
 
+    def is_model_in_drift(self, model: str, category: str) -> bool:
+        """
+        Return True if this model has a recent drift alert for this category.
+        Used by the router to skip a drifting model even when it's the 'primary' choice.
+        A drift alert is considered recent if it was recorded within the last 2 hours.
+        """
+        cutoff = time.time() - 7200  # 2-hour window
+        with self._lock:
+            alerts = self._pool.get("drift_alerts", [])
+        return any(
+            a.get("model") == model.upper()
+            and a.get("category") == category
+            and a.get("ts", 0) > cutoff
+            for a in alerts
+        )
+
+    def get_drift_summary(self) -> list[dict]:
+        """Return recent drift alerts — used by /collective-wisdom endpoint."""
+        with self._lock:
+            return list(self._pool.get("drift_alerts", []))[-10:]
+
     def get_best_model_for_category(self, category: str) -> str:
         """
         Return the model with the highest win rate for a given category.

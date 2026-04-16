@@ -1189,7 +1189,76 @@ def collective_wisdom():
     Collective intelligence state: per-model win rates by category,
     drift alerts, last Cloudinary sync timestamp, interaction count.
     """
-    return wisdom_store.wisdom_dict()
+    result = wisdom_store.wisdom_dict()
+    result["drift_summary"] = wisdom_store.get_drift_summary()
+    return result
+
+
+class FeedbackRequest(BaseModel):
+    session_id: str = "default"
+    message: str                    # the original user message
+    model_used: str                 # which model responded
+    routed_by: str = ""             # how it was routed
+    rating: int                     # 1 (wrong) to 5 (perfect)
+    correction: str = ""            # optional: what the right answer was
+
+
+@app.post("/feedback", tags=["learning"])
+def submit_feedback(req: FeedbackRequest):
+    """
+    User feedback loop — closes the calibration cycle.
+
+    When a user rates a response as wrong (rating <= 2), this endpoint:
+    1. Records a loss outcome in wisdom_store for this model/category
+    2. Saves the correction as an enriched memory (importance=4)
+    3. Logs the incident so adapter._analyse() picks it up
+
+    This makes the system actually learn from user corrections rather than
+    just from whether responses START with "[" (the current error proxy).
+    """
+    try:
+        from .learning.wisdom_store import wisdom_store as _ws
+        from .memory.vector_memory import store_enriched_memory as _store_mem, ingest_external_memory
+
+        model = req.model_used.upper()
+        is_error = req.rating <= 2
+
+        # Record outcome in wisdom store (penalises wrong answers)
+        category = _ws._detect_category(req.routed_by, model)
+        _ws.record_outcome(model, category, error=is_error)
+
+        # High-importance memory: save the correction so future calls benefit
+        if req.correction:
+            ingest_external_memory(
+                content=f"User correction for {model}: Original Q='{req.message[:200]}' "
+                        f"was rated {req.rating}/5. Correct answer: {req.correction[:400]}",
+                memory_type="preference" if req.rating <= 2 else "fact",
+                importance=5 if req.rating == 1 else 4,
+                source="user_feedback",
+                session_id=req.session_id,
+            )
+
+        # Always store the rating as a fact regardless of whether correction was given
+        ingest_external_memory(
+            content=f"Response quality signal: {model} on '{req.message[:150]}' "
+                    f"rated {req.rating}/5 (routed_by={req.routed_by})",
+            memory_type="fact",
+            importance=3,
+            source="user_feedback",
+            session_id=req.session_id,
+        )
+
+        return {
+            "ok": True,
+            "recorded": {
+                "model": model,
+                "category": category,
+                "outcome": "loss" if is_error else "win",
+                "correction_saved": bool(req.correction),
+            }
+        }
+    except Exception as e:
+        raise HTTPException(500, f"Feedback recording failed: {e}")
 
 
 @app.get("/peer-review-stats", tags=["meta"])

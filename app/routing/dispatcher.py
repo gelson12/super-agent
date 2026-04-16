@@ -1070,6 +1070,26 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
     except Exception:
         pass
 
+    # ── 6a-2. Drift-aware model substitution ─────────────────────────────────
+    # If the chosen model is currently in drift (win rate < 60% over last 100
+    # exchanges), swap to the wisdom store's current best for this category.
+    # This is the "learning that actually acts" fix — drift detection was already
+    # logging alerts but never routing around the degraded model.
+    try:
+        _primary_cat_for_drift = wisdom_store._detect_category(routed_by, model)
+        _drift_safe = adapter.suggest_model_avoiding_drift(_primary_cat_for_drift, model)
+        if _drift_safe != model:
+            from ..activity_log import bg_log as _bg_drift
+            _bg_drift(
+                f"Drift-avoidance: swapping {model} → {_drift_safe} "
+                f"(category={_primary_cat_for_drift}, drift detected)",
+                "dispatcher",
+            )
+            model = _drift_safe
+            routed_by = f"{routed_by}_drift_swap"
+    except Exception:
+        pass  # Never let drift logic crash dispatch
+
     # ── 6b. Algorithm-store routing override ─────────────────────────────────
     # Lazy import — only loads algorithm_store after startup is complete.
     try:
@@ -1207,7 +1227,13 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
     # ── 9. Cache + log + adapt + wisdom + memory ─────────────────────────────
     if model in _CACHEABLE_MODELS:
         cache.set(message, model, response)
-    insight_log.record(message, model, response, routed_by, complexity, session_id)
+    _dispatch_latency_ms = (_time.time() - _dispatch_start) * 1000
+    insight_log.record(
+        message, model, response, routed_by, complexity, session_id,
+        latency_ms=_dispatch_latency_ms,
+        confidence=_routing_confidence if _routing_confidence > 0 else None,
+        memory_hits=_memory_count,
+    )
     adapter.tick()
     # Feature 4: store exchange in semantic memory for future cross-session recall
     store_memory(session_id, f"Q: {message[:300]} A: {response[:300]}",

@@ -92,15 +92,63 @@ class Adapter:
             return ""
 
     def get_learned_context(self) -> str:
-        """Return combined learned + collective context for system prompt injection."""
+        """
+        Return combined learned + collective context for system prompt injection.
+
+        Staleness guard: if the last analysis was more than 24 hours ago and we
+        have enough interactions, schedule a fresh analysis in the background so
+        the next call returns up-to-date context. This prevents the system from
+        injecting obsolete patterns that no longer reflect current reality.
+        """
         ctx = self._wisdom.get("learned_context", "")
+        last_ts = self._wisdom.get("last_analysed_ts", 0)
+
+        # If context is older than 24h and we have enough data, force a refresh
+        if ctx and (time.time() - last_ts) > 86400 and self._interaction_count >= 10:
+            import threading as _thr
+            _thr.Thread(target=self._analyse, daemon=True).start()
+            ctx = ""  # Return empty this call; fresh context will be cached for next call
+
         collective = self.get_collective_context()
         parts = []
         if ctx:
             parts.append(f"[Adaptive context from past interactions]\n{ctx}")
         if collective:
             parts.append(collective)
+
+        # Append live drift warnings so models know which peers are unreliable
+        try:
+            from .wisdom_store import wisdom_store as _ws
+            _drift = _ws.get_drift_summary()
+            if _drift:
+                _drift_lines = [
+                    f"  - {d['model']} performing below threshold on {d['category']} "
+                    f"(win_rate={d['win_rate']:.0%}, {d['samples']} samples)"
+                    for d in _drift[-3:]
+                ]
+                parts.append("[Current model drift alerts — route away from these if possible]\n"
+                             + "\n".join(_drift_lines))
+        except Exception:
+            pass
+
         return "\n\n".join(parts) if parts else ""
+
+    def suggest_model_avoiding_drift(self, category: str, default_model: str) -> str:
+        """
+        Return the best model for category, skipping any currently in drift.
+        Falls back to default_model if no alternative with enough data.
+        """
+        try:
+            from .wisdom_store import wisdom_store as _ws
+            if not _ws.is_model_in_drift(default_model, category):
+                return default_model
+            # Default is drifting — find next best
+            best = _ws.get_best_model_for_category(category)
+            if best != default_model:
+                return best
+        except Exception:
+            pass
+        return default_model
 
     def analyse_peer_review_impact(self) -> dict:
         """

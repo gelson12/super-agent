@@ -44,6 +44,10 @@ class InsightLog:
         routed_by: str,
         complexity: int,
         session: Optional[str] = None,
+        latency_ms: Optional[float] = None,
+        confidence: Optional[float] = None,
+        memory_hits: int = 0,
+        cache_hit: bool = False,
     ) -> None:
         entry = {
             "ts": round(time.time(), 2),
@@ -55,6 +59,15 @@ class InsightLog:
             "error": response.startswith("[") and response.endswith("]"),
             "session": session or "default",
         }
+        # Optional enrichment fields — only written when provided
+        if latency_ms is not None:
+            entry["latency_ms"] = round(latency_ms, 1)
+        if confidence is not None:
+            entry["confidence"] = round(confidence, 3)
+        if memory_hits:
+            entry["memory_hits"] = memory_hits
+        if cache_hit:
+            entry["cache_hit"] = True
         self._buffer.append(entry)
         self._total += 1
         if len(self._buffer) >= 3:
