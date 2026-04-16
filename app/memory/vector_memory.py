@@ -209,21 +209,30 @@ def _pg_store(session_id: str, content: str,
               memory_type: str = "general",
               importance: int = 3) -> bool:
     try:
-        embedding = _embed(content)
-        if embedding is None:
-            return False
+        embedding = _embed(content)  # None is acceptable — stored as NULL
         chash = _content_hash(content)
         import psycopg2
         conn = psycopg2.connect(_conn_str)
         cur = conn.cursor()
-        cur.execute(
-            """INSERT INTO agent_memories
-               (session_id, content, embedding, source, memory_type, importance, content_hash)
-               VALUES (%s, %s, %s, %s, %s, %s, %s)
-               ON CONFLICT (content_hash) DO NOTHING""",
-            (session_id, content[:1000], json.dumps(embedding),
-             source[:64], memory_type[:32], importance, chash),
-        )
+        if embedding is not None:
+            cur.execute(
+                """INSERT INTO agent_memories
+                   (session_id, content, embedding, source, memory_type, importance, content_hash)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s)
+                   ON CONFLICT (content_hash) DO NOTHING""",
+                (session_id, content[:1000], json.dumps(embedding),
+                 source[:64], memory_type[:32], importance, chash),
+            )
+        else:
+            # Store without embedding — text search still works, vector search skips these
+            cur.execute(
+                """INSERT INTO agent_memories
+                   (session_id, content, source, memory_type, importance, content_hash)
+                   VALUES (%s, %s, %s, %s, %s, %s)
+                   ON CONFLICT (content_hash) DO NOTHING""",
+                (session_id, content[:1000],
+                 source[:64], memory_type[:32], importance, chash),
+            )
         conn.commit()
         cur.close()
         conn.close()
