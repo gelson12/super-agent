@@ -318,6 +318,26 @@
     .icon-btn:disabled { opacity: 0.4; cursor: not-allowed; }
     .icon-btn.recording { border-color: #ef4444; color: #ef4444; animation: pulse 1s infinite; }
 
+    /* ── Weather widget ───────────────────────────────────────────────────── */
+    #weather-widget {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background: #1a1a1a;
+      border: 1px solid #2a2a2a;
+      border-radius: 10px;
+      padding: 4px 10px;
+      cursor: default;
+      transition: border-color 0.2s;
+      max-width: 180px;
+      overflow: hidden;
+    }
+    #weather-widget:hover { border-color: #3a3a3a; }
+    #weather-icon { font-size: 16px; flex-shrink: 0; }
+    #weather-info { display: flex; flex-direction: column; line-height: 1.2; min-width: 0; }
+    #weather-temp { font-size: 13px; font-weight: 600; color: #e8e8e8; white-space: nowrap; }
+    #weather-loc  { font-size: 10px; color: #555; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 120px; }
+
     @keyframes pulse {
       0%, 100% { box-shadow: 0 0 0 0 rgba(239,68,68,0.4); }
       50%       { box-shadow: 0 0 0 6px rgba(239,68,68,0); }
@@ -1144,6 +1164,13 @@
   <div class="header-left">
     <div class="dot"></div>
     <span id="session-label" style="font-size:12px;color:#666;">Session: default</span>
+    <div id="weather-widget" title="Live weather · browser location">
+      <span id="weather-icon">🌡</span>
+      <div id="weather-info">
+        <span id="weather-temp">—</span>
+        <span id="weather-loc">locating…</span>
+      </div>
+    </div>
   </div>
   <div class="header-center">
     <img class="bridge-logo" id="header-logo" src="/static/logo.png?v=7" alt="Bridge" />
@@ -3136,6 +3163,69 @@
     if (!_officeOpen) toggleOfficePanel();
     _renderDefaultDesks(); // Show desks immediately
   }, 300);
+
+// ── Live weather + location (browser APIs only, no agent call) ────────────────
+const _WMO_ICONS = {
+  0:'☀️', 1:'🌤', 2:'⛅', 3:'☁️',
+  45:'🌫', 48:'🌫',
+  51:'🌦', 53:'🌦', 55:'🌧',
+  61:'🌧', 63:'🌧', 65:'🌧',
+  71:'🌨', 73:'🌨', 75:'❄️',
+  80:'🌦', 81:'🌧', 82:'⛈',
+  95:'⛈', 96:'⛈', 99:'⛈',
+};
+
+async function _fetchWeather(lat, lon) {
+  try {
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current_weather=true&hourly=&daily=&timezone=auto`;
+    const r = await fetch(url);
+    if (!r.ok) throw new Error('weather api');
+    const d = await r.json();
+    const cw = d.current_weather;
+    const icon = _WMO_ICONS[cw.weathercode] ?? '🌡';
+    const temp = Math.round(cw.temperature);
+    const unit = d.current_weather_units?.temperature ?? '°C';
+    document.getElementById('weather-icon').textContent = icon;
+    document.getElementById('weather-temp').textContent = `${temp}${unit}`;
+  } catch { /* non-critical */ }
+}
+
+async function _reverseGeocode(lat, lon) {
+  try {
+    const r = await fetch(`https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json`);
+    if (!r.ok) throw new Error();
+    const d = await r.json();
+    const city = d.address?.city || d.address?.town || d.address?.village || d.address?.county || '';
+    const country = d.address?.country_code?.toUpperCase() || '';
+    document.getElementById('weather-loc').textContent = city ? `${city}, ${country}` : country || 'Unknown';
+  } catch {
+    document.getElementById('weather-loc').textContent = `${lat.toFixed(2)}, ${lon.toFixed(2)}`;
+  }
+}
+
+function _initWeather() {
+  if (!navigator.geolocation) {
+    document.getElementById('weather-loc').textContent = 'no location';
+    return;
+  }
+  navigator.geolocation.getCurrentPosition(
+    pos => {
+      const { latitude: lat, longitude: lon } = pos.coords;
+      _fetchWeather(lat, lon);
+      _reverseGeocode(lat, lon);
+      // Refresh weather every 15 min
+      setInterval(() => _fetchWeather(lat, lon), 900_000);
+    },
+    () => {
+      document.getElementById('weather-icon').textContent = '📍';
+      document.getElementById('weather-temp').textContent = '—';
+      document.getElementById('weather-loc').textContent = 'location denied';
+    },
+    { timeout: 8000 }
+  );
+}
+
+_initWeather();
 </script>
 </body>
 </html>

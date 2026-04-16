@@ -59,7 +59,7 @@ def _sanitize_error(text: str) -> str:
 # Protected paths require header: X-Token: <UI_PASSWORD>
 # If UI_PASSWORD is not set, auth is disabled.
 
-_OPEN_PATHS = {"/", "/health", "/auth", "/credits/pro-status", "/credits/pro-reset", "/agents", "/dashboard", "/stats", "/stats/report"}
+_OPEN_PATHS = {"/", "/health", "/auth", "/credits/pro-status", "/credits/pro-reset", "/agents", "/dashboard", "/observability", "/stats", "/stats/report"}
 _OPEN_PREFIXES = ("/static", "/downloads", "/webhook", "/n8n/connection-info", "/activity", "/dashboard/", "/stats/")  # token-in-URL or public info
 # NOTE: /chat, /chat/stream, /chat/direct, and /install-guide are intentionally
 # NOT in _OPEN_PATHS/_OPEN_PREFIXES — they require X-Token when UI_PASSWORD is set.
@@ -411,12 +411,16 @@ async def _lifespan(app: FastAPI):
     # ── Memory maintenance (weekly Wed 03:00 UTC) ─────────────────────────────
     def _memory_maintenance_job():
         try:
-            from .memory.vector_memory import prune_old_memories, deduplicate_memories, memory_health_report
+            from .memory.vector_memory import (
+                prune_old_memories, deduplicate_memories, memory_health_report,
+                apply_importance_decay,
+            )
             pruned = prune_old_memories(days=90, max_importance=2)
             deduped = deduplicate_memories()
+            decayed = apply_importance_decay()
             report = memory_health_report()
             bg_log(
-                f"Memory maintenance: pruned={pruned} deduped={deduped} "
+                f"Memory maintenance: pruned={pruned} deduped={deduped} decayed={decayed} "
                 f"total={report.get('total',0)} embedding_coverage={report.get('embedding_coverage_pct',0)}%",
                 source="memory_maintenance"
             )
@@ -430,6 +434,65 @@ async def _lifespan(app: FastAPI):
         hour=3,
         minute=0,
         id="memory_maintenance",
+        replace_existing=True,
+    )
+
+    # ── Nightly embedding backfill (02:00 UTC — after traffic drops) ──────────
+    def _embedding_backfill_job():
+        try:
+            from .memory.vector_memory import backfill_embeddings
+            result = backfill_embeddings(batch_size=30)
+            bg_log(
+                f"Embedding backfill: processed={result.get('processed',0)} "
+                f"success={result.get('success',0)} skipped={result.get('skipped',0)} "
+                + (f"error={result['error']}" if result.get('error') else ""),
+                source="embedding_backfill",
+            )
+        except Exception as _e:
+            bg_log(f"Embedding backfill error: {_e}", source="embedding_backfill")
+
+    scheduler.add_job(
+        _embedding_backfill_job,
+        "cron",
+        hour=2,
+        minute=0,
+        id="embedding_backfill",
+        replace_existing=True,
+    )
+
+    # ── Obsidian vault daily notes (23:30 UTC) ────────────────────────────────
+    def _vault_daily_notes_job():
+        try:
+            from .learning.insight_log import insight_log as _il
+            from .memory.vector_memory import memory_health_report
+            from .learning.vault_insight_hook import _append_to_vault
+            import datetime as _dt
+            today = _dt.date.today().isoformat()
+            summary = _il.normalized_summary()
+            mem = memory_health_report()
+            note = (
+                f"\n# Daily Agent Summary — {today}\n\n"
+                f"## Interactions\n"
+                f"- Total (all time): {summary.get('total_interactions', 0)}\n"
+                f"- Error rate: {summary.get('error_rate_pct', 0)}%\n"
+                f"- Model distribution: {summary.get('model_distribution', {})}\n\n"
+                f"## Memory Store\n"
+                f"- Total memories: {mem.get('total', 0)}\n"
+                f"- Added today: {mem.get('last_24h', 0)}\n"
+                f"- Added this week: {mem.get('last_7d', 0)}\n"
+                f"- Embedding coverage: {mem.get('embedding_coverage_pct', 0)}%\n"
+            )
+            _append_to_vault(f"DailyNotes/{today}.md", note)
+            bg_log(f"Vault daily notes written for {today}", source="vault_daily_notes")
+        except Exception as _e:
+            bg_log(f"Vault daily notes error: {_e}", source="vault_daily_notes")
+
+    scheduler.add_job(
+        _vault_daily_notes_job,
+        "cron",
+        hour=23,
+        minute=30,
+        id="vault_daily_notes",
         replace_existing=True,
     )
 
