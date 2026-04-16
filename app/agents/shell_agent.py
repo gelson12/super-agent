@@ -43,6 +43,7 @@ from ..tools.database_tools import (
     db_get_failure_patterns,
 )
 from ..tools.obsidian_tools import OBSIDIAN_TOOLS
+from ..tools.secretary_tools import SECRETARY_TOOLS
 
 _SYSTEM_PROMPT = """You are Super Agent's terminal interface with LIVE access to a Linux workspace AND full Railway infrastructure visibility.
 
@@ -138,6 +139,8 @@ def run_shell_agent(message: str, authorized: bool = False, debug_mode: bool = F
         tools.append(railway_redeploy)
     # Obsidian knowledge vault — read/write notes, search prior context
     tools.extend(OBSIDIAN_TOOLS)
+    # Secretary — email and calendar via n8n webhook
+    tools.extend(SECRETARY_TOOLS)
 
     # Inject winning build recipe if one exists — agent replays what worked last time
     _recipe_hint = ""

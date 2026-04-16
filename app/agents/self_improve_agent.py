@@ -92,15 +92,8 @@ from ..tools.flutter_tools import (
     upload_build_artifact,
     flutter_git_push,
 )
-from ..tools.obsidian_tools import (
-    obsidian_list_notes,
-    obsidian_read_note,
-    obsidian_write_note,
-    obsidian_append_to_note,
-    obsidian_search_vault,
-    obsidian_discover_tools,
-    obsidian_call_tool,
-)
+from ..tools.obsidian_tools import OBSIDIAN_TOOLS as _OBSIDIAN_TOOLS
+from ..tools.secretary_tools import SECRETARY_TOOLS as _SECRETARY_TOOLS
 
 _SYSTEM = """You are Super Agent's autonomous self-improvement and self-repair engine.
 
@@ -210,6 +203,19 @@ Returns `(CATEGORY, confidence 0.0–1.0)`. Route only applied if confidence ≥
 - Add verb to `_OPERATIONAL_KEYWORDS[agent_type]` in agent_routing.py
 - Lower confidence threshold from 0.7 if too many requests fall through to GENERAL
 
+## OBSIDIAN VAULT — PERSISTENT KNOWLEDGE BASE
+You have read/write access to the Obsidian knowledge vault (14 tools: obsidian_list_notes,
+obsidian_read_note, obsidian_write_note, obsidian_append_to_note, obsidian_search_vault,
+obsidian_list_folders, obsidian_get_recent_notes, obsidian_get_vault_summary,
+obsidian_move_note, obsidian_search_by_tag, obsidian_get_note_metadata,
+obsidian_archive_old_notes, obsidian_discover_tools, obsidian_call_tool).
+
+USE THE VAULT:
+- Before starting any self-improvement task: search vault for prior context, improvement logs, past decisions
+- After completing a self-improvement task: write a summary to improvements/YYYY-MM-DD.md
+- When you discover a pattern, bug, or insight: append to improvements/log.md
+- To archive notes older than 90 days: call obsidian_archive_old_notes(dry_run=True) first
+
 ## REMEMBER
 - You are fully autonomous for safe operations — don't ask permission for things you can do safely
 - Always report what you found, what you did, and what still needs attention
@@ -249,9 +255,9 @@ _SELF_IMPROVE_TOOLS = [
     flutter_create_project, flutter_build_apk, flutter_test,
     upload_build_artifact, flutter_git_push,
     # Obsidian knowledge vault (read/write improvement notes, search prior context)
-    obsidian_list_notes, obsidian_read_note, obsidian_write_note,
-    obsidian_append_to_note, obsidian_search_vault,
-    obsidian_discover_tools, obsidian_call_tool,
+    *_OBSIDIAN_TOOLS,
+    # Secretary — email and calendar via n8n webhook
+    *_SECRETARY_TOOLS,
 ]
 
 _agent = None

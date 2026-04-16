@@ -194,6 +194,13 @@ _GITHUB_KEYWORDS = {
 }
 
 _SHELL_KEYWORDS = {
+    # Email / calendar / secretary
+    "email", "send email", "reply email", "forward email", "draft email",
+    "inbox", "outlook", "calendar", "meeting", "schedule meeting",
+    "secretary", "mark as read", "flag email", "delete email",
+    "list emails", "search emails", "get email", "move email",
+    "calendar event", "create event", "list events",
+    # Shell / terminal
     "terminal", "shell", "run command", "execute", "workspace",
     "clone repo", "clone the repo", "list workspace", "ls /", "git clone",
     "fix the code", "auto fix", "autofix", "run the tests", "install package",
@@ -506,6 +513,10 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
     except Exception:
         pass  # Never block dispatch on parser failure — fall through to normal routing
     # ── End APP_CONTEXT ───────────────────────────────────────────────────────
+
+    # Track wall-clock latency for the full dispatch — emitted in insight_log
+    _dispatch_start = _time.time()
+    _routing_confidence: float = 0.0  # filled in by classifier; used in insight_log
 
     # ── 0. Proactive cross-session memory injection ───────────────────────────
     # Always retrieve relevant past memories regardless of whether pgvector is up.
@@ -831,22 +842,62 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
             "cache_hit": False,
         })
 
-    # ── 5. Keyword routing + confidence boost (Features 1 & 5) ───────────────
-    # Keywords give immediate 1.0 confidence. If no keyword matches, the CLI-first
-    # classifier runs (Claude CLI Pro → Gemini CLI → Haiku API as last resort).
-    _kw_route = None
-    if _is_shell_request(message):
-        _kw_route = "SHELL"
-    elif _is_github_request(message):
-        _kw_route = "GITHUB"
-    elif _is_n8n_request(message):
-        _kw_route = "N8N"
+    # ── 5. Routing: AI classifier (with timeout) + keyword arbitration ───────
+    #
+    # Strategy (fixes priority inversion from pure-keyword approach):
+    #   1. Run AI classifier with 10s timeout — gets confidence score
+    #   2. Run keyword detection in parallel (instant, no network)
+    #   3. Arbitration:
+    #      a. AI confident (>= 0.75) → trust AI, ignore keywords
+    #      b. AI uncertain (< 0.75) AND keyword matches → use keyword
+    #      c. AI uncertain, no keyword → use AI route anyway (best guess)
+    #   This prevents "n8n" keyword false-positives from hijacking SHELL requests
+    #   that happen to mention "workflow" but are really about code/shell work.
 
-    if _kw_route is None:
-        # No keyword match — ask Haiku to classify (Feature 5)
-        _ai_route, _ai_conf = _classify_route_with_confidence(message)
-        if _ai_conf >= 0.7 and _ai_route not in ("GENERAL", "SEARCH"):
-            _kw_route = _ai_route
+    def _classify_with_timeout(msg: str, timeout_s: float = 10.0) -> tuple[str, float]:
+        """Run _classify_route_with_confidence with a hard timeout. Returns GENERAL/0.0 on timeout."""
+        import concurrent.futures as _cf2
+        with _cf2.ThreadPoolExecutor(max_workers=1) as _pool2:
+            fut = _pool2.submit(_classify_route_with_confidence, msg)
+            try:
+                return fut.result(timeout=timeout_s)
+            except _cf2.TimeoutError:
+                from ..activity_log import bg_log as _bg_cl
+                _bg_cl("Classifier timed out after 10s — falling back to GENERAL", "dispatcher")
+                return "GENERAL", 0.0
+            except Exception:
+                return "GENERAL", 0.0
+
+    _ai_route, _ai_conf = _classify_with_timeout(message)
+    _routing_confidence = _ai_conf
+
+    # Keyword detection (always instant)
+    _kw_route_raw = None
+    if _is_shell_request(message):
+        _kw_route_raw = "SHELL"
+    elif _is_github_request(message):
+        _kw_route_raw = "GITHUB"
+    elif _is_n8n_request(message):
+        _kw_route_raw = "N8N"
+
+    # Arbitration
+    if _ai_conf >= 0.75 and _ai_route not in ("GENERAL", "SEARCH"):
+        # AI is confident → trust it, even if keywords disagree
+        _kw_route = _ai_route
+    elif _kw_route_raw is not None:
+        # AI uncertain but keyword matches → use keyword
+        _kw_route = _kw_route_raw
+    elif _ai_conf >= 0.4 and _ai_route not in ("GENERAL", "SEARCH"):
+        # AI has moderate confidence — use it
+        _kw_route = _ai_route
+    else:
+        _kw_route = None  # falls through to complexity-based model selection
+
+    # Low-confidence escalation: if both AI and keywords are uncertain (confidence < 0.4),
+    # bump complexity so the query gets ensemble/peer-review treatment rather than
+    # being quietly misrouted to HAIKU with low confidence.
+    if _ai_conf < 0.4 and _kw_route is None:
+        complexity = max(complexity, 4)  # escalate to peer-review tier
 
     # ── Error-interception helper ─────────────────────────────────────────────
     def _agent_response_is_error(resp: str) -> bool:

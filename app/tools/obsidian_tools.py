@@ -236,6 +236,31 @@ def obsidian_search_by_tag(tag: str) -> str:
 
 # ── Convenience list for agent tool registration ──────────────────────────────
 
+@tool
+def obsidian_get_note_metadata(file_path: str) -> str:
+    """
+    Read YAML frontmatter metadata from a vault note without loading the full content.
+    Returns a JSON object with frontmatter fields (tags, date, type, etc.).
+    Use this for fast tag/date scanning without reading thousands of characters.
+    """
+    return _run_async(_call_mcp("get_note_metadata", {"path": file_path}))
+
+
+@tool
+def obsidian_archive_old_notes(days: int = 90, dry_run: bool = False) -> str:
+    """
+    Move notes older than N days into Archive/YYYY-MM/ folders to keep the
+    active vault clean without deleting history.
+    - days: age threshold (default 90). Notes last modified before this are archived.
+    - dry_run: if True, reports what would be moved without actually moving anything.
+    Returns a summary of archived and kept note counts.
+    Always call with dry_run=True first to preview before actually archiving.
+    """
+    return _run_async(_call_mcp("archive_old_notes", {"days": days, "dry_run": dry_run}))
+
+
+# ── Convenience list for agent tool registration ──────────────────────────────
+
 OBSIDIAN_TOOLS = [
     obsidian_list_notes,
     obsidian_read_note,
@@ -249,4 +274,6 @@ OBSIDIAN_TOOLS = [
     obsidian_get_vault_summary,
     obsidian_move_note,
     obsidian_search_by_tag,
+    obsidian_get_note_metadata,
+    obsidian_archive_old_notes,
 ]

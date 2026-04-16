@@ -459,10 +459,52 @@ def agents_page():
 def agents_status():
     """
     Real-time status of all models and agents for the visual dashboard.
-    Each worker has: id, state (working/idle/sleeping/talking), last_worked, talking_to, task.
+    Enriched with Pro subscription flags for Claude CLI Pro so the UI can show
+    burst/daily/cli_down states without a separate API call.
     """
     from .learning.agent_status_tracker import get_all_statuses
-    return {"workers": get_all_statuses()}
+    workers = get_all_statuses()
+
+    # Inject Pro subscription state into Claude CLI Pro worker (instant — reads flag files only)
+    try:
+        from .learning.pro_router import get_status as _pro_status
+        pro = _pro_status()
+        for w in workers:
+            if w["id"] == "Claude CLI Pro":
+                w["pro_mode"]      = pro.get("mode", "pro_primary")
+                w["pro_flags"]     = pro.get("flags", {})
+                w["pro_resets_in"] = pro.get("resets_in", {})
+                w["pro_message"]   = pro.get("message", "")
+                break
+    except Exception:
+        pass  # Non-fatal — dashboard degrades gracefully without Pro flags
+
+    # Inject login rate-limit status for Claude CLI Pro (reads flag file — no network I/O)
+    try:
+        from .learning.cli_auto_login import get_login_ratelimit_status as _rl_status
+        rl = _rl_status()
+        if rl.get("blocked"):
+            for w in workers:
+                if w["id"] == "Claude CLI Pro":
+                    w["login_ratelimit_remaining_s"] = rl["remaining_s"]
+                    w["login_ratelimit_hit_count"]   = rl["hit_count"]
+                    break
+    except Exception:
+        pass  # Non-fatal
+
+    # Inject CLI timeout count for Claude CLI Pro (reads counter file — no network I/O)
+    try:
+        from .learning.pro_router import get_cli_timeout_count as _timeout_count
+        count = _timeout_count()
+        if count > 0:
+            for w in workers:
+                if w["id"] == "Claude CLI Pro":
+                    w["cli_timeout_count"] = count
+                    break
+    except Exception:
+        pass  # Non-fatal
+
+    return {"workers": workers}
 
 
 @app.get("/dashboard/agents/{worker_id}/history", tags=["meta"])
@@ -683,6 +725,20 @@ def debug_n8n_cleanup():
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 
+def _check_vault_mcp() -> bool:
+    """Ping vault MCP server — returns True if reachable."""
+    try:
+        import httpx
+        r = httpx.get(
+            "http://obsidian-vault.railway.internal:22360/sse",
+            timeout=3,
+            headers={"Accept": "text/event-stream"},
+        )
+        return r.status_code < 500
+    except Exception:
+        return False
+
+
 @app.get("/health", tags=["meta"])
 def health():
     try:
@@ -696,6 +752,13 @@ def health():
         getattr(settings, "gemini_api_key", None)
         or os.environ.get("GEMINI_SESSION_TOKEN")
     )
+    _vault = _check_vault_mcp()
+    if not _vault:
+        try:
+            from .alerts.notifier import alert_vault_unreachable
+            alert_vault_unreachable("health check ping failed")
+        except Exception:
+            pass
     _status = "healthy" if _pro else ("degraded" if (_api or _gemini) else "critical")
     return {
         "ok": True,
@@ -705,6 +768,7 @@ def health():
         "cli_down_flag": _cli_down,
         "gemini_available": _gemini,
         "api_key_available": _api,
+        "vault_mcp_available": _vault,
     }
 
 

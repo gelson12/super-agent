@@ -57,6 +57,8 @@ async def list_tools() -> list[Tool]:
         Tool(name="get_vault_summary",description="Return a digest of all notes grouped by folder with note names and word counts.",    inputSchema={"type":"object","properties":{},"required":[]}),
         Tool(name="move_file",        description="Move or rename a note. from_path and to_path are relative .md paths.",              inputSchema={"type":"object","properties":{"from_path":{"type":"string"},"to_path":{"type":"string"}},"required":["from_path","to_path"]}),
         Tool(name="search_by_tag",    description="Find notes that contain a YAML frontmatter tag or inline #tag. Case-insensitive.", inputSchema={"type":"object","properties":{"tag":{"type":"string"}},"required":["tag"]}),
+        Tool(name="get_note_metadata",description="Read YAML frontmatter only (tags, date, type) without loading full note content. Fast metadata scan.", inputSchema={"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}),
+        Tool(name="archive_old_notes",description="Move notes older than N days into Archive/YYYY-MM/ folder. Default days=90. Keeps active vault clean.", inputSchema={"type":"object","properties":{"days":{"type":"integer","default":90},"dry_run":{"type":"boolean","default":False}},"required":[]}),
     ]
 
 
@@ -198,6 +200,48 @@ def _dispatch(name: str, args: dict) -> str:
             if pat_inline.search(text) or pat_yaml_val.search(text):
                 results.append(str(md.relative_to(VAULT_PATH)))
         return "\n".join(results) if results else f"No notes found with tag: #{tag}"
+
+    elif name == "get_note_metadata":
+        target = _rel(args["path"])
+        if not target.exists():
+            return f"Note not found: {args['path']}"
+        text = target.read_text(encoding="utf-8")
+        fm_match = re.match(r'^---\s*\n(.*?)\n---', text, re.DOTALL)
+        if not fm_match:
+            return json.dumps({"path": args["path"], "has_frontmatter": False, "raw": ""})
+        raw_fm = fm_match.group(1)
+        meta: dict = {"path": args["path"], "has_frontmatter": True}
+        for line in raw_fm.splitlines():
+            if ":" in line:
+                k, _, v = line.partition(":")
+                meta[k.strip()] = v.strip()
+        return json.dumps(meta, indent=2)
+
+    elif name == "archive_old_notes":
+        days    = int(args.get("days", 90))
+        dry_run = bool(args.get("dry_run", False))
+        cutoff  = time.time() - days * 86400
+        moved, skipped = [], []
+        for md in list(VAULT_PATH.rglob("*.md")):
+            if any(p.startswith(".") for p in md.parts):
+                continue
+            rel = md.relative_to(VAULT_PATH)
+            if str(rel).startswith("Archive"):
+                continue
+            if md.stat().st_mtime < cutoff:
+                mtime = time.localtime(md.stat().st_mtime)
+                dest_dir = VAULT_PATH / "Archive" / time.strftime("%Y-%m", mtime)
+                dest = dest_dir / md.name
+                if not dry_run:
+                    dest_dir.mkdir(parents=True, exist_ok=True)
+                    md.rename(dest)
+                moved.append(str(rel))
+            else:
+                skipped.append(str(rel))
+        prefix = "[DRY RUN] Would move" if dry_run else "Moved"
+        return json.dumps({"archived": len(moved), "kept": len(skipped),
+                           "note": f"{prefix} {len(moved)} notes older than {days} days to Archive/",
+                           "files": moved}, indent=2)
 
     return f"Unknown tool: {name}"
 

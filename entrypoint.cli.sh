@@ -492,6 +492,29 @@ Use an HTTP Request node pointing at Super Agent:
 - Platform: Railway (Docker container, europe-west4)
 - Python: 3.12 | Node: 20
 - Flutter: /opt/flutter | Android SDK: /opt/android-sdk
+
+## Obsidian Knowledge Vault — MCP Tools (14 tools, registered as mcp__obsidian__*)
+The vault MCP server runs at http://obsidian-vault.railway.internal:22360/sse and is
+pre-registered in ~/.claude.json with all mcp__obsidian__* permissions pre-approved.
+
+Available tools:
+- mcp__obsidian__list_directory     — list markdown notes (pass path="" for all)
+- mcp__obsidian__read_file          — read full note content
+- mcp__obsidian__write_file         — create or overwrite a note
+- mcp__obsidian__append_to_file     — append to note without overwriting
+- mcp__obsidian__search_files       — full-text search across all notes
+- mcp__obsidian__delete_file        — delete a note
+- mcp__obsidian__get_vault_info     — vault stats (note count, size, folders)
+- mcp__obsidian__list_folders       — list folder structure
+- mcp__obsidian__get_recent_notes   — N most recently modified notes
+- mcp__obsidian__get_vault_summary  — all notes grouped by folder with word counts
+- mcp__obsidian__move_file          — move or rename a note
+- mcp__obsidian__search_by_tag      — find notes by YAML frontmatter or inline #tag
+- mcp__obsidian__get_note_metadata  — read YAML frontmatter only (fast, no full content)
+- mcp__obsidian__archive_old_notes  — move old notes to Archive/YYYY-MM/ (use dry_run=true first)
+
+Use the vault to: save improvement logs, record architecture decisions, store session context,
+search prior work, and keep notes for future Claude sessions.
 CLAUDEMD
 echo "[entrypoint] CLAUDE.md written to /workspace."
 fi  # end CLAUDE.md guard

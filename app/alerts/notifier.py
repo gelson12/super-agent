@@ -304,6 +304,23 @@ def alert_high_dispatch_error_rate(error_rate: float, window: int) -> bool:
     )
 
 
+def alert_vault_unreachable(error: str) -> bool:
+    """Alert when the Obsidian vault MCP server is unreachable."""
+    return send_alert(
+        subject="Obsidian vault MCP unreachable",
+        body=(
+            f"The Obsidian vault MCP server at port 22360 is not responding.\n"
+            f"Error: {error[:300]}\n\n"
+            f"Knowledge vault tools (read/write notes, search) are unavailable to all agents.\n"
+            f"Check Railway obsidian-vault service logs.\n\n"
+            f"VS Code: {_vscode_url()}"
+        ),
+        alert_key="vault_mcp_unreachable",
+        level="WARNING",
+        ttl=1800,
+    )
+
+
 def alert_n8n_unreachable(error: str) -> bool:
     """Alert when n8n is unreachable after auto-repair was attempted."""
     return send_alert(

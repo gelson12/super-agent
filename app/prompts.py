@@ -60,15 +60,18 @@ _vault_ctx_ts: float = 0.0
 _VAULT_CTX_TTL = 1800  # 30 minutes
 
 
-def get_vault_context_block() -> str:
+def get_vault_context_block(topic_hint: str = "") -> str:
     """
-    Fetch key vault notes (Welcome.md + latest daily review) for injection
-    into all model system prompts. Cached 30 min. Never raises.
+    Fetch key vault notes for injection into model system prompts.
+    - Always fetches Welcome.md + latest daily review
+    - If topic_hint is provided, also fetches recent notes + topic search results
+    Cached 30 min per unique topic_hint. Never raises.
     On failure returns stale cache (better than nothing).
     """
     global _vault_ctx_cache, _vault_ctx_ts
     import time as _time
-    if _vault_ctx_cache and (_time.time() - _vault_ctx_ts) < _VAULT_CTX_TTL:
+    cache_key = topic_hint.lower().strip()[:40]
+    if _vault_ctx_cache and not cache_key and (_time.time() - _vault_ctx_ts) < _VAULT_CTX_TTL:
         return _vault_ctx_cache
     try:
         import asyncio as _asyncio
@@ -89,16 +92,28 @@ def get_vault_context_block() -> str:
                     )
                     _w = _welcome.content[0].text if _welcome.content else ""
                     _d = _daily.content[0].text   if _daily.content   else ""
-                    return _w, _d
+                    _recent = ""
+                    _search = ""
+                    if topic_hint:
+                        _r = await s.call_tool("get_recent_notes", {"n": 3})
+                        _recent = _r.content[0].text if _r.content else ""
+                        _s = await s.call_tool("search_files", {"query": topic_hint})
+                        _search = _s.content[0].text if _s.content else ""
+                    return _w, _d, _recent, _search
 
-        _w_text, _d_text = _asyncio.run(_fetch())
+        _w_text, _d_text, _recent_text, _search_text = _asyncio.run(_fetch())
         _block = "\n## KNOWLEDGE VAULT (shared Obsidian memory)\n"
         if _w_text and "not found" not in _w_text.lower():
             _block += _w_text[:600] + "\n"
         if _d_text and "not found" not in _d_text.lower():
             _block += f"\n### Latest Daily Review ({_today})\n" + _d_text[:800] + "\n"
-        _vault_ctx_cache = _block
-        _vault_ctx_ts = _time.time()
+        if _recent_text and "vault is empty" not in _recent_text.lower():
+            _block += f"\n### Recent Notes\n{_recent_text[:400]}\n"
+        if _search_text and "no matches" not in _search_text.lower():
+            _block += f"\n### Relevant Notes (topic: {topic_hint})\n{_search_text[:600]}\n"
+        if not cache_key:
+            _vault_ctx_cache = _block
+            _vault_ctx_ts = _time.time()
         return _block
     except Exception:
         return _vault_ctx_cache  # stale cache on error
