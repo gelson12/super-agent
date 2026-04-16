@@ -1434,27 +1434,48 @@ def _automate_browser(oauth_url: str, email: str) -> tuple[bool, str | None]:
                 # with the main page, bypassing Cloudflare bot detection.
                 # Avoids page.context.new_page() (throws in some Playwright configs) and
                 # browser.new_context() (no cookies → Cloudflare blocks).
+                # After opening, we navigate explicitly via popup.goto() to ensure the full
+                # URL (including the # fragment) is loaded, then wait for content to render.
                 _log(f"Browser: opening magic link as popup (same context) to extract code: {magic_url[:80]}...")
                 _popup = None
                 try:
-                    _safe_url = magic_url.replace("'", "%27").replace("\\", "%5C")
+                    # Open about:blank popup in the same context (shares all cookies/CF clearance)
                     with page.expect_popup(timeout=35000) as _popup_info:
-                        page.evaluate(f"window.open('{_safe_url}', '_blank')")
+                        page.evaluate("window.open('about:blank', '_blank')")
                     _popup = _popup_info.value
+                    # Explicitly navigate so Playwright handles the # fragment and load states
+                    _popup.goto(magic_url, timeout=30000)
                     try:
                         _popup.wait_for_load_state("networkidle", timeout=15000)
                     except Exception:
-                        time.sleep(3)
+                        pass
+                    # Extra wait for JavaScript to render the code after networkidle
+                    time.sleep(2)
+                    _tab_url = ""
                     _tab_body = ""
                     try:
+                        _tab_url = _popup.url
                         _tab_body = _popup.inner_text("body") or ""
                     except Exception:
                         pass
-                    _log(f"Browser: [magic-link-popup] body (first 400): {_tab_body[:400]}")
+                    _log(f"Browser: [magic-link-popup] url={_tab_url[:120]} body (first 400): {_tab_body[:400]}")
                     _m = _re2.search(r'\b(\d{6})\b', _tab_body)
                     if _m:
                         six_digit_code = _m.group(1)
                         _log(f"Browser: extracted verification code from magic link popup: {six_digit_code}")
+                    else:
+                        # Fallback: try waiting longer (JS may still be rendering)
+                        time.sleep(3)
+                        try:
+                            _tab_body2 = _popup.inner_text("body") or ""
+                        except Exception:
+                            _tab_body2 = ""
+                        if _tab_body2 != _tab_body:
+                            _log(f"Browser: [magic-link-popup] body after extra wait (first 400): {_tab_body2[:400]}")
+                        _m2 = _re2.search(r'\b(\d{6})\b', _tab_body2)
+                        if _m2:
+                            six_digit_code = _m2.group(1)
+                            _log(f"Browser: extracted verification code (after extra wait): {six_digit_code}")
                 except Exception as _tab_e:
                     _log(f"Browser: error in popup for magic link code extraction: {_tab_e}")
                     import traceback as _tb
