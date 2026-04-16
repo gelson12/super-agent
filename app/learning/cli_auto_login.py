@@ -1275,9 +1275,17 @@ def _automate_browser(oauth_url: str, email: str) -> tuple[bool, str | None]:
                 _page_text_now = page.inner_text("body")
             except Exception:
                 _page_text_now = ""
-            if "error sending" in _page_text_now.lower() or "error sending you a login link" in _page_text_now.lower():
-                _log("Browser: ERROR — Anthropic returned 'error sending login link'. "
-                     "This is usually a rate-limit. Setting 1-hour cooldown.")
+            _ERR_PHRASES = (
+                "error sending",                       # English
+                "error sending you a login link",      # English exact
+                "une erreur s'est produite",           # French
+                "er is een fout opgetreden",           # Dutch
+                "ein fehler ist aufgetreten",          # German
+                "se ha producido un error",            # Spanish
+            )
+            if any(p in _page_text_now.lower() for p in _ERR_PHRASES):
+                _log("Browser: ERROR — Anthropic returned 'error sending login link' "
+                     f"(detected in page text). This is usually a rate-limit. Setting cooldown.")
                 _record_ratelimit_hit()
                 return False, None
 
@@ -1379,14 +1387,18 @@ def _automate_browser(oauth_url: str, email: str) -> tuple[bool, str | None]:
             _final_pre_wait_text = ""
 
         # Abort early if Anthropic returned an error at this stage too
-        if "error sending" in _final_pre_wait_text.lower():
+        _ERR_PHRASES_PREFLIGHT = (
+            "error sending",
+            "error sending you a login link",
+            "une erreur s'est produite",
+            "er is een fout opgetreden",
+            "ein fehler ist aufgetreten",
+            "se ha producido un error",
+        )
+        if any(p in _final_pre_wait_text.lower() for p in _ERR_PHRASES_PREFLIGHT):
             _log("Browser: ERROR — Anthropic returned 'error sending login link' before "
-                 "magic link wait. Setting 1-hour cooldown.")
-            try:
-                _RATELIMIT_FILE.parent.mkdir(parents=True, exist_ok=True)
-                _RATELIMIT_FILE.write_text(str(time.time() + _RATELIMIT_COOLDOWN))
-            except Exception:
-                pass
+                 "magic link wait (detected in page text). Setting cooldown via _record_ratelimit_hit().")
+            _record_ratelimit_hit()
             return False, None
         _log("Browser: waiting for magic link URL(s) or verification code from n8n email monitor...")
         magic_urls = _collect_magic_links()
@@ -1738,6 +1750,13 @@ def _automate_browser(oauth_url: str, email: str) -> tuple[bool, str | None]:
         try:
             with Camoufox(headless=True, geoip=True) as browser:
                 page = browser.new_page()
+                # Force English regardless of the container's GeoIP (Railway NL
+                # datacenter causes Anthropic to serve French without this header,
+                # breaking the English-only error-phrase detection below).
+                try:
+                    page.set_extra_http_headers({"Accept-Language": "en-US,en;q=0.9"})
+                except Exception:
+                    pass
                 return _page_flow(page)
         except Exception as _e:
             _log(f"Browser automation error (camoufox): {_e}")
@@ -1784,6 +1803,10 @@ def _automate_browser(oauth_url: str, email: str) -> tuple[bool, str | None]:
                 Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']});
             """)
             page = context.new_page()
+            # Belt-and-suspenders: locale="en-US" is set on the context above,
+            # but the HTTP header ensures Anthropic's server returns English even
+            # if the navigator locale hint is overridden by Railway's GeoIP.
+            page.set_extra_http_headers({"Accept-Language": "en-US,en;q=0.9"})
             result = _page_flow(page)
             browser.close()
             return result
