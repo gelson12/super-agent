@@ -1432,12 +1432,12 @@ def _automate_browser(oauth_url: str, email: str) -> tuple[bool, str | None]:
                 # Case B: URL was posted — open it as a popup in the SAME browser context.
                 # Using page.expect_popup() + window.open() shares cookies and TLS fingerprint
                 # with the main page, bypassing Cloudflare bot detection.
-                # Avoids page.context.new_page() (throws in some Playwright configs) and
-                # browser.new_context() (no cookies → Cloudflare blocks).
-                # After opening, we navigate explicitly via popup.goto() to ensure the full
-                # URL (including the # fragment) is loaded, then wait for content to render.
-                _log(f"Browser: opening magic link as popup (same context) to extract code: {magic_url[:80]}...")
+                # The magic link may behave in two ways:
+                #  (a) Complete auth inline → consent page → callback URL (new 2026 flow)
+                #  (b) Show a 6-digit code that must be entered on the original page (alt flow)
+                _log(f"Browser: opening magic link as popup (same context): {magic_url[:80]}...")
                 _popup = None
+                _popup_auth_result = None   # (auth_code, ok) if popup completes auth itself
                 try:
                     # Open about:blank popup in the same context (shares all cookies/CF clearance)
                     with page.expect_popup(timeout=35000) as _popup_info:
@@ -1449,7 +1449,7 @@ def _automate_browser(oauth_url: str, email: str) -> tuple[bool, str | None]:
                         _popup.wait_for_load_state("networkidle", timeout=15000)
                     except Exception:
                         pass
-                    # Extra wait for JavaScript to render the code after networkidle
+                    # Brief wait for JavaScript to render content after networkidle
                     time.sleep(2)
                     _tab_url = ""
                     _tab_body = ""
@@ -1458,26 +1458,57 @@ def _automate_browser(oauth_url: str, email: str) -> tuple[bool, str | None]:
                         _tab_body = _popup.inner_text("body") or ""
                     except Exception:
                         pass
-                    _log(f"Browser: [magic-link-popup] url={_tab_url[:120]} body (first 400): {_tab_body[:400]}")
-                    _m = _re2.search(r'\b(\d{6})\b', _tab_body)
-                    if _m:
-                        six_digit_code = _m.group(1)
-                        _log(f"Browser: extracted verification code from magic link popup: {six_digit_code}")
+                    _log(f"Browser: [magic-link-popup] url={_tab_url[:120]}")
+                    _log(f"Browser: [magic-link-popup] body (first 400): {_tab_body[:400]}")
+
+                    # Path A: popup already landed on callback URL (direct auth)
+                    if _is_callback_url(_tab_url):
+                        _log("Browser: popup completed auth directly → callback URL")
+                        _popup_auth_code = _extract_oauth_code_from_page(_popup)
+                        _save_cookies(_popup)
+                        _popup_auth_result = (_popup_auth_code, True)
+
+                    # Path B: popup on OAuth consent page → click Approve, wait for callback
+                    elif ("oauth/authorize" in _tab_url or "claude.ai" in _tab_url) and (
+                        "would like to connect" in _tab_body.lower()
+                        or "your account will be used" in _tab_body.lower()
+                        or "account to authenticate" in _tab_body.lower()
+                        or "approve" in _tab_body.lower()
+                    ):
+                        _log("Browser: popup on consent page — clicking Approve in popup")
+                        _approved = _click_approve(_popup)
+                        if _approved:
+                            _log("Browser: Approve clicked in popup — waiting for callback")
+                            _popup_ac, _popup_ok = _wait_for_callback_and_extract(_popup)
+                            if _popup_ok:
+                                _save_cookies(_popup)
+                            _popup_auth_result = (_popup_ac, _popup_ok)
+                            _log(f"Browser: popup consent flow result: ok={_popup_ok}")
+                        else:
+                            _log(f"Browser: could not find Approve button. Page: {_tab_body[:200]}")
+
+                    # Path C: try to extract 6-digit code from popup body
                     else:
-                        # Fallback: try waiting longer (JS may still be rendering)
-                        time.sleep(3)
-                        try:
-                            _tab_body2 = _popup.inner_text("body") or ""
-                        except Exception:
-                            _tab_body2 = ""
-                        if _tab_body2 != _tab_body:
-                            _log(f"Browser: [magic-link-popup] body after extra wait (first 400): {_tab_body2[:400]}")
-                        _m2 = _re2.search(r'\b(\d{6})\b', _tab_body2)
-                        if _m2:
-                            six_digit_code = _m2.group(1)
-                            _log(f"Browser: extracted verification code (after extra wait): {six_digit_code}")
+                        _m = _re2.search(r'\b(\d{6})\b', _tab_body)
+                        if _m:
+                            six_digit_code = _m.group(1)
+                            _log(f"Browser: extracted 6-digit code from popup: {six_digit_code}")
+                        else:
+                            # Fallback: wait longer (JS may still be rendering)
+                            time.sleep(3)
+                            try:
+                                _tab_body2 = _popup.inner_text("body") or ""
+                            except Exception:
+                                _tab_body2 = ""
+                            if _tab_body2 != _tab_body:
+                                _log(f"Browser: [magic-link-popup] body after extra wait: {_tab_body2[:400]}")
+                            _m2 = _re2.search(r'\b(\d{6})\b', _tab_body2)
+                            if _m2:
+                                six_digit_code = _m2.group(1)
+                                _log(f"Browser: extracted 6-digit code (after extra wait): {six_digit_code}")
+
                 except Exception as _tab_e:
-                    _log(f"Browser: error in popup for magic link code extraction: {_tab_e}")
+                    _log(f"Browser: error in popup for magic link: {_tab_e}")
                     import traceback as _tb
                     _log(f"Browser: magic-link-popup traceback: {_tb.format_exc()[:400]}")
                 finally:
@@ -1486,6 +1517,12 @@ def _automate_browser(oauth_url: str, email: str) -> tuple[bool, str | None]:
                             _popup.close()
                         except Exception:
                             pass
+
+                # If popup completed the full auth flow, return immediately
+                if _popup_auth_result is not None:
+                    _auth_code_from_popup, _ok_from_popup = _popup_auth_result
+                    return _ok_from_popup, _auth_code_from_popup
+
                 if six_digit_code:
                     break
 
