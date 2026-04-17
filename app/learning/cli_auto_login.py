@@ -79,8 +79,28 @@ _RATELIMIT_DEFAULT_COOLDOWN = 86400  # 24h for any hit beyond index 3
 _last_playwright_timeout: float = 0.0
 _PLAYWRIGHT_BACKOFF_S: float = 20 * 60  # 20 minutes between Playwright attempts
 # Timestamps of every Playwright browser-login attempt (unix epoch, float).
-# Used to detect thrashing: alert if > 3 attempts within a 1-hour window.
-_playwright_attempts_log: list = []
+# Persisted to /workspace so restarts don't reset the 1-hour thrash counter.
+_PLAYWRIGHT_ATTEMPTS_FILE = Path("/workspace/.playwright_attempts.json")
+
+def _load_playwright_attempts() -> list:
+    """Load attempt timestamps from disk; prune entries older than 1h."""
+    try:
+        import json as _j
+        raw = _j.loads(_PLAYWRIGHT_ATTEMPTS_FILE.read_text())
+        cutoff = time.time() - 3600
+        return [ts for ts in raw if ts > cutoff]
+    except Exception:
+        return []
+
+def _save_playwright_attempts(log: list) -> None:
+    """Persist attempt timestamps to disk. Never raises."""
+    try:
+        import json as _j
+        _PLAYWRIGHT_ATTEMPTS_FILE.write_text(_j.dumps(log))
+    except Exception:
+        pass
+
+_playwright_attempts_log: list = _load_playwright_attempts()
 
 # ── GitHub Actions OAuth relay (Layer 3 workaround) ──────────────────────────
 # When direct POST to claude.com/cai/oauth/token is blocked by Cloudflare from
@@ -2946,9 +2966,10 @@ def full_recovery_chain() -> bool:
         def _browser_attempt() -> tuple[bool, str]:
             global _playwright_attempts_log
             _t = time.time()
-            # Track attempt timestamp; prune to last hour; alert if thrashing
+            # Track attempt timestamp; prune to last hour; persist; alert if thrashing
             _playwright_attempts_log.append(_t)
             _playwright_attempts_log = [ts for ts in _playwright_attempts_log if _t - ts < 3600]
+            _save_playwright_attempts(_playwright_attempts_log)
             if len(_playwright_attempts_log) > 3:
                 _log(
                     f"[ALERT] {len(_playwright_attempts_log)} Playwright recovery attempts in the last hour "

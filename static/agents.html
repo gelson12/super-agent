@@ -370,6 +370,22 @@
       text-align: center;
     }
 
+    /* ── Token expiry countdown (Claude CLI Pro desk card) ───────── */
+    .token-expiry {
+      font-size: 0.28rem;
+      margin-top: 3px;
+      text-align: center;
+      padding: 1px 5px;
+      border-radius: 2px;
+    }
+    .token-expiry.fresh  { color: #4ade80; }
+    .token-expiry.warn   { color: #fbbf24; }
+    .token-expiry.urgent { color: #f87171; animation: token-urgent-blink 1s step-end infinite; }
+    @keyframes token-urgent-blink {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0.4; }
+    }
+
     /* ── Talking to info ─────────────────────────────────────────── */
     .talking-to {
       font-size: 0.3rem;
@@ -1702,6 +1718,7 @@ function renderDesk(worker) {
         ${worker.state === "idle" ? `<div class="thought-bubble" data-idle-thought></div>` : ""}
       </div>
       ${timeAgo ? `<div class="last-worked">${timeAgo}${dateStr ? " (" + dateStr + ")" : ""}</div>` : ""}
+      ${worker.id === "Claude CLI Pro" ? `<div class="token-expiry fresh"></div>` : ""}
       ${extras}
     </div>
   `;
@@ -1989,6 +2006,55 @@ function setPill(el, level, text) {
 
 fetchAndRender();
 setInterval(fetchAndRender, 5000);
+
+// ── Detailed health (token expiry, layer status) ───────────────────────────
+
+let _detailedHealth = null;
+
+async function fetchDetailedHealth() {
+  try {
+    const resp = await fetch("/health/detailed");
+    if (!resp.ok) return;
+    _detailedHealth = await resp.json();
+    _applyTokenExpiry();
+  } catch (err) {
+    // non-fatal — dashboard still works without TTL data
+  }
+}
+
+function _applyTokenExpiry() {
+  if (!_detailedHealth) return;
+  const s = _detailedHealth.token_expires_in_s;
+
+  // Update Pro CLI health pill with TTL
+  const hpPro = document.getElementById('hp-pro');
+  if (hpPro && s != null) {
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const ttlStr = h > 0 ? `${h}h ${m}m` : `${m}m`;
+    const pillText = hpPro.textContent || '';
+    // Only annotate the OK pill — don't overwrite warning states
+    if (hpPro.classList.contains('ok')) {
+      const dot = hpPro.querySelector('.h-dot');
+      hpPro.innerHTML = '';
+      if (dot) hpPro.appendChild(dot);
+      hpPro.appendChild(document.createTextNode(` ✓ Pro CLI · ${ttlStr}`));
+    }
+  }
+
+  // Update token expiry badge on the Claude CLI Pro desk card
+  document.querySelectorAll('.desk[data-worker="Claude CLI Pro"] .token-expiry').forEach(el => {
+    if (s == null) { el.remove(); return; }
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const ttlStr = h > 0 ? `${h}h ${m}m` : `${m}m`;
+    el.textContent = `🔑 token: ${ttlStr}`;
+    el.className = 'token-expiry ' + (s < 1800 ? 'urgent' : s < 7200 ? 'warn' : 'fresh');
+  });
+}
+
+fetchDetailedHealth();
+setInterval(fetchDetailedHealth, 30000);
 
 // ── Memory panel ──────────────────────────────────────────────────────────
 

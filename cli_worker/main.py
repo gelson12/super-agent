@@ -253,6 +253,43 @@ async def lifespan(app: FastAPI):
     except Exception as _e:
         _bg_log(f"Boot: DB credential restore skipped — {_e}", "boot")
 
+    # Boot: validate Layer 1 backup integrity — check that the backup file
+    # exists AND contains a non-expired token.  If the backup is stale (written
+    # with an already-expired token) we schedule an immediate full recovery
+    # rather than waiting up to 90s for the watchdog to discover the bad creds.
+    try:
+        import json as _jboot
+        from pathlib import Path as _Pboot
+        _bpath = _Pboot("/workspace/.claude_credentials_backup.json")
+        if _bpath.exists():
+            _bd = _jboot.loads(_bpath.read_text())
+            _bms = None
+            for _bk in ("expiresAt", "expires_at"):
+                if _bk in _bd:
+                    _bms = _bd[_bk]; break
+            if _bms is None:
+                for _bnk in ("claudeAiOauth", "claudeAiOAuth", "oauth", "session"):
+                    _bn = _bd.get(_bnk, {})
+                    if isinstance(_bn, dict):
+                        for _bk in ("expiresAt", "expires_at"):
+                            if _bk in _bn:
+                                _bms = _bn[_bk]; break
+                    if _bms is not None:
+                        break
+            if _bms is not None:
+                _remaining = int((_bms - _time.time() * 1000) / 1000)
+                if _remaining > 0:
+                    _bg_log(f"Boot: Layer 1 backup valid — expires in {_remaining // 3600}h {(_remaining % 3600) // 60}m", "boot")
+                else:
+                    _bg_log(f"Boot: Layer 1 backup EXPIRED ({abs(_remaining) // 60}m ago) — scheduling immediate recovery", "boot")
+                    asyncio.get_event_loop().run_in_executor(None, lambda: __import__("sys") or __import__("sys").path.insert(0, "/app") or __import__("app.learning.cli_auto_login", fromlist=["full_recovery_chain"]).full_recovery_chain())
+            else:
+                _bg_log("Boot: Layer 1 backup present but no expiresAt found — watchdog will verify", "boot")
+        else:
+            _bg_log("Boot: Layer 1 backup absent — watchdog will recover", "boot")
+    except Exception as _be:
+        _bg_log(f"Boot: Layer 1 integrity check skipped — {_be}", "boot")
+
     # Boot: clear stale restore counter from the previous container run.
     # _RESTORE_COUNT_FLAG tracks consecutive failed credential restores; if it
     # survived a restart it would force an immediate Playwright escalation on
@@ -402,6 +439,35 @@ def _probe_claude_prompt(timeout: int = 20) -> bool:
         return _probe(["claude", "--version"])
 
 
+def _read_token_expiry() -> dict:
+    """Read token expiry info from credentials file. Never raises. Returns dict."""
+    try:
+        import json as _j
+        _creds_path = "/root/.claude/.credentials.json"
+        creds = _j.loads(open(_creds_path).read())
+        expires_at_ms = None
+        for _k in ("expiresAt", "expires_at"):
+            if _k in creds:
+                expires_at_ms = creds[_k]
+                break
+        if expires_at_ms is None:
+            for _nk in ("claudeAiOauth", "claudeAiOAuth", "oauth", "session"):
+                _n = creds.get(_nk, {})
+                if isinstance(_n, dict):
+                    for _k in ("expiresAt", "expires_at"):
+                        if _k in _n:
+                            expires_at_ms = _n[_k]
+                            break
+                if expires_at_ms is not None:
+                    break
+        if expires_at_ms is not None:
+            remaining_s = int((expires_at_ms - _time.time() * 1000) / 1000)
+            return {"expires_in_s": remaining_s, "expires_at_ms": int(expires_at_ms)}
+    except Exception:
+        pass
+    return {"expires_in_s": None, "expires_at_ms": None}
+
+
 @app.get("/health")
 def health():
     """
@@ -427,15 +493,108 @@ def health():
         db_ok = True
     except Exception:
         pass
+
+    expiry = _read_token_expiry()
     result = {
         "status": "ok" if (claude_ok and db_ok) else "degraded",
         "claude_available": claude_ok,
         "gemini_available": gemini_ok,
         "db_connected": db_ok,
+        "claude_token_expires_in_s": expiry["expires_in_s"],
     }
     _health_cache = result
     _health_cache_ts = _time.time()
     return result
+
+
+@app.get("/health/detailed")
+def health_detailed():
+    """
+    Detailed layer-by-layer status. Read-only — no side effects.
+    Returns token TTL, backup integrity, cookie freshness, and recovery history
+    so external monitors and the dashboard can display full system state.
+    """
+    import json as _j
+    from pathlib import Path as _P
+
+    # Token expiry
+    expiry = _read_token_expiry()
+
+    # Layer 1: backup integrity
+    _backup_path = _P("/workspace/.claude_credentials_backup.json")
+    layer1_exists = _backup_path.exists()
+    layer1_expires_in_s = None
+    layer1_valid = False
+    if layer1_exists:
+        try:
+            bd = _j.loads(_backup_path.read_text())
+            _bms = None
+            for _k in ("expiresAt", "expires_at"):
+                if _k in bd:
+                    _bms = bd[_k]; break
+            if _bms is None:
+                for _nk in ("claudeAiOauth", "claudeAiOAuth", "oauth", "session"):
+                    _n = bd.get(_nk, {})
+                    if isinstance(_n, dict):
+                        for _k in ("expiresAt", "expires_at"):
+                            if _k in _n:
+                                _bms = _n[_k]; break
+                    if _bms is not None:
+                        break
+            if _bms is not None:
+                layer1_expires_in_s = int((_bms - _time.time() * 1000) / 1000)
+                layer1_valid = layer1_expires_in_s > 0
+        except Exception:
+            pass
+
+    # Layer 4: browser cookies
+    _cookies_path = _P("/workspace/.claude_browser_cookies.json")
+    layer4_cookies_exist = _cookies_path.exists()
+    layer4_cookies_age_s = None
+    if layer4_cookies_exist:
+        try:
+            layer4_cookies_age_s = int(_time.time() - _cookies_path.stat().st_mtime)
+        except Exception:
+            pass
+
+    # Recovery history from agent_status_tracker
+    last_recovery_at = None
+    last_recovery_layer = None
+    recovery_count_today = 0
+    playwright_attempts_last_1h = 0
+    try:
+        import sys as _sys
+        _sys.path.insert(0, "/app")
+        from app.learning.agent_status_tracker import get_worker_status
+        w = get_worker_status("Claude CLI Pro")
+        if w.get("last_recovery_at"):
+            last_recovery_at = datetime.fromtimestamp(
+                w["last_recovery_at"], tz=timezone.utc
+            ).isoformat()
+        last_recovery_layer = w.get("last_recovery_layer")
+        recovery_count_today = w.get("recovery_count_today", 0)
+    except Exception:
+        pass
+    try:
+        from app.learning.cli_auto_login import _playwright_attempts_log
+        _now = _time.time()
+        playwright_attempts_last_1h = sum(1 for ts in _playwright_attempts_log if _now - ts < 3600)
+    except Exception:
+        pass
+
+    return {
+        "token_expires_in_s": expiry["expires_in_s"],
+        "token_expires_at_ms": expiry["expires_at_ms"],
+        "layer1_backup_exists": layer1_exists,
+        "layer1_backup_valid": layer1_valid,
+        "layer1_backup_expires_in_s": layer1_expires_in_s,
+        "layer4_cookies_exist": layer4_cookies_exist,
+        "layer4_cookies_age_s": layer4_cookies_age_s,
+        "last_recovery_at": last_recovery_at,
+        "last_recovery_layer": last_recovery_layer,
+        "recovery_count_today": recovery_count_today,
+        "playwright_attempts_last_1h": playwright_attempts_last_1h,
+    }
 
 
 @app.post("/webhook/verification-code")
