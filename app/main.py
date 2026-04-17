@@ -963,6 +963,18 @@ def agents_status():
     except Exception:
         pass  # Non-fatal
 
+    # Inject token TTL into Claude CLI Pro worker so the dashboard can show
+    # expiry countdown and fire popup alerts without a separate /health/detailed fetch.
+    try:
+        _ttl = _cli_health.get("claude_token_expires_in_s")
+        if _ttl is not None:
+            for w in workers:
+                if w["id"] == "Claude CLI Pro":
+                    w["token_expires_in_s"] = int(_ttl)
+                    break
+    except Exception:
+        pass
+
     return {"workers": workers}
 
 

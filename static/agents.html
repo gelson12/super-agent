@@ -1371,6 +1371,97 @@
       background: radial-gradient(circle at 50% 30%, rgba(201,169,110,0.06) 0%, transparent 70%);
       pointer-events: none;
     }
+
+    /* ── Token alert toasts ────────────────────────────────────────────────── */
+    #token-alert-container {
+      position: fixed;
+      top: 16px;
+      right: 16px;
+      z-index: 9999;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      pointer-events: none;
+      max-width: 340px;
+    }
+    .token-alert-toast {
+      pointer-events: all;
+      font-family: 'Press Start 2P', monospace;
+      font-size: 0.5rem;
+      line-height: 1.7;
+      padding: 12px 28px 12px 14px;
+      border-radius: 3px;
+      cursor: pointer;
+      position: relative;
+      animation: toast-slide-in 0.35s cubic-bezier(0.22,1,0.36,1) forwards;
+      transition: opacity 0.4s ease, transform 0.4s ease;
+    }
+    .token-alert-toast.level-info {
+      background: #0d1f12;
+      border: 2px solid #4ade80;
+      color: #86efac;
+      box-shadow: 0 0 14px #4ade8055, 0 0 32px #4ade8022;
+      animation: toast-slide-in 0.35s cubic-bezier(0.22,1,0.36,1) forwards,
+                 toast-glow-green 2.5s ease-in-out infinite;
+    }
+    .token-alert-toast.level-warn {
+      background: #221800;
+      border: 2px solid #fbbf24;
+      color: #fde68a;
+      box-shadow: 0 0 16px #fbbf2466, 0 0 40px #fbbf2433;
+      animation: toast-slide-in 0.35s cubic-bezier(0.22,1,0.36,1) forwards,
+                 toast-glow-warn 1.8s ease-in-out infinite;
+    }
+    .token-alert-toast.level-urgent {
+      background: #1f0a00;
+      border: 2px solid #fb923c;
+      color: #fed7aa;
+      box-shadow: 0 0 20px #fb923c88, 0 0 50px #fb923c44;
+      animation: toast-slide-in 0.35s cubic-bezier(0.22,1,0.36,1) forwards,
+                 toast-glow-urgent 1s ease-in-out infinite;
+    }
+    .token-alert-toast.level-critical {
+      background: #1a0000;
+      border: 2px solid #ef4444;
+      color: #fca5a5;
+      box-shadow: 0 0 24px #ef444499, 0 0 60px #ef444455;
+      animation: toast-slide-in 0.35s cubic-bezier(0.22,1,0.36,1) forwards,
+                 toast-flash-critical 0.6s step-end infinite;
+    }
+    .token-alert-dismiss {
+      position: absolute;
+      top: 5px;
+      right: 8px;
+      font-size: 0.38rem;
+      opacity: 0.55;
+      line-height: 1;
+    }
+    .token-alert-dismiss:hover { opacity: 1; }
+    .token-alert-toast.toast-fade-out {
+      opacity: 0;
+      transform: translateX(40px);
+      pointer-events: none;
+    }
+    @keyframes toast-slide-in {
+      from { opacity: 0; transform: translateX(50px); }
+      to   { opacity: 1; transform: translateX(0); }
+    }
+    @keyframes toast-glow-green {
+      0%,100% { box-shadow: 0 0 14px #4ade8055, 0 0 32px #4ade8022; }
+      50%      { box-shadow: 0 0 24px #4ade80aa, 0 0 55px #4ade8044; }
+    }
+    @keyframes toast-glow-warn {
+      0%,100% { box-shadow: 0 0 16px #fbbf2466, 0 0 40px #fbbf2433; }
+      50%      { box-shadow: 0 0 28px #fbbf24aa, 0 0 65px #fbbf2466; }
+    }
+    @keyframes toast-glow-urgent {
+      0%,100% { box-shadow: 0 0 20px #fb923c88, 0 0 50px #fb923c44; }
+      50%      { box-shadow: 0 0 36px #fb923ccc, 0 0 80px #fb923c88; }
+    }
+    @keyframes toast-flash-critical {
+      0%,49% { box-shadow: 0 0 24px #ef444499, 0 0 60px #ef444455; border-color: #ef4444; }
+      50%,100%{ box-shadow: 0 0 48px #ef4444ff, 0 0 100px #ef444499; border-color: #ff8888; }
+    }
   </style>
 </head>
 <body>
@@ -1941,6 +2032,18 @@ async function fetchAndRender() {
     renderAll(workers);
     drawTalkingLines(workers);
     updateSystemHealthBar(workers);
+    // Token alert check — use TTL injected by agents/status (no extra fetch needed)
+    const _cliWorker = workers.find(w => w.id === "Claude CLI Pro");
+    if (_cliWorker && _cliWorker.token_expires_in_s != null) {
+      _checkTokenAlerts(_cliWorker.token_expires_in_s);
+      // Also sync the desk card badge directly from here
+      document.querySelectorAll('.desk[data-worker="Claude CLI Pro"] .token-expiry').forEach(el => {
+        const s = _cliWorker.token_expires_in_s;
+        const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+        el.textContent = `🔑 token: ${h > 0 ? h + 'h ' + m + 'm' : m + 'm'}`;
+        el.className = 'token-expiry ' + (s < 1800 ? 'urgent' : s < 7200 ? 'warn' : 'fresh');
+      });
+    }
   } catch (err) {
     console.error("Failed to fetch agent status:", err);
   }
@@ -2088,6 +2191,64 @@ function _applyTokenExpiry() {
     el.textContent = `🔑 token: ${ttlStr}`;
     el.className = 'token-expiry ' + (s < 1800 ? 'urgent' : s < 7200 ? 'warn' : 'fresh');
   });
+
+  _checkTokenAlerts(s);
+}
+
+// ── Token alert popup system ────────────────────────────────────────────────
+//
+// Fires once per page session per threshold. Critical/urgent toasts stay until
+// dismissed; info/warn auto-dismiss after a few seconds.
+//
+const _TOKEN_ALERT_THRESHOLDS = [
+  { limit: 21600, key: '6h',  level: 'level-info',     autoDismissMs: 12000,
+    msg: '🔔 <strong>Proactive refresh window open</strong><br>Recovery chain activating in background.' },
+  { limit: 7200,  key: '2h',  level: 'level-warn',     autoDismissMs: 15000,
+    msg: '⚠️ <strong>Token expires in ~2h</strong><br>Automatic recovery will fire soon.' },
+  { limit: 1800,  key: '30m', level: 'level-urgent',   autoDismissMs: 0,
+    msg: '🚨 <strong>TOKEN EXPIRES IN 30 MIN</strong><br>Recovery chain is active — watch the desk.' },
+  { limit: 600,   key: '10m', level: 'level-critical', autoDismissMs: 0,
+    msg: '🔴 <strong>TOKEN CRITICAL — 10 MINUTES</strong><br>If desk shows sick, recovery is running.' },
+];
+const _firedTokenAlerts = new Set();
+
+function _getAlertContainer() {
+  let c = document.getElementById('token-alert-container');
+  if (!c) {
+    c = document.createElement('div');
+    c.id = 'token-alert-container';
+    document.body.appendChild(c);
+  }
+  return c;
+}
+
+function _showTokenAlert(level, msg, autoDismissMs) {
+  const container = _getAlertContainer();
+  const toast = document.createElement('div');
+  toast.className = `token-alert-toast ${level}`;
+  toast.innerHTML = `<span class="token-alert-dismiss" title="Dismiss">✕</span>${msg}`;
+  container.appendChild(toast);
+
+  const dismiss = () => {
+    toast.classList.add('toast-fade-out');
+    setTimeout(() => { if (toast.parentNode) toast.remove(); }, 450);
+  };
+  toast.querySelector('.token-alert-dismiss').addEventListener('click', e => { e.stopPropagation(); dismiss(); });
+  toast.addEventListener('click', dismiss);
+  if (autoDismissMs > 0) setTimeout(dismiss, autoDismissMs);
+}
+
+function _checkTokenAlerts(expiresInS) {
+  if (expiresInS == null || expiresInS <= 0) return;
+  for (const t of _TOKEN_ALERT_THRESHOLDS) {
+    if (expiresInS <= t.limit && !_firedTokenAlerts.has(t.key)) {
+      _firedTokenAlerts.add(t.key);
+      const h = Math.floor(expiresInS / 3600);
+      const m = Math.floor((expiresInS % 3600) / 60);
+      const ttl = h > 0 ? `${h}h ${m}m` : `${m}m`;
+      _showTokenAlert(t.level, `${t.msg}<br><span style="opacity:0.6;font-size:0.38rem">⏱ ${ttl} remaining — click to dismiss</span>`, t.autoDismissMs);
+    }
+  }
 }
 
 fetchDetailedHealth();
