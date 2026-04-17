@@ -1239,6 +1239,11 @@
     </div>
     <div class="office-section-label">AGENTS</div>
     <div class="office-desks" id="office-agents"></div>
+    <div class="office-decor-shelf">
+      <span>📚</span><span>🗂️</span><span>📓</span><span>🔮</span>
+    </div>
+    <div class="office-section-label">SERVICES</div>
+    <div class="office-desks" id="office-services"></div>
     <div class="office-decor-bottom">
       <span>🗄️</span><span>📁</span><span>🖨️</span><span>🗑️</span><span>🪴</span>
     </div>
@@ -2041,12 +2046,14 @@
   }
 
   // ── Agent Office Panel ─────────────────────────────────────────────────────
-  const _OFFICE_MODELS = ["Claude CLI Pro","Gemini CLI","Anthropic Haiku","Sonnet Anthropic","Opus Anthropic","DeepSeek"];
-  const _OFFICE_AGENTS = ["Shell Agent","GitHub Agent","N8N Agent","Self-Improve Agent"];
+  const _OFFICE_MODELS   = ["Claude CLI Pro","Gemini CLI","Anthropic Haiku","Sonnet Anthropic","Opus Anthropic","DeepSeek"];
+  const _OFFICE_AGENTS   = ["Shell Agent","GitHub Agent","N8N Agent","Self-Improve Agent"];
+  const _OFFICE_SERVICES = ["Daphney"];
   const _OFFICE_AVATARS = {
     "Claude CLI Pro":"👨🏿‍💻","Gemini CLI":"👩🏼‍💻","Anthropic Haiku":"🧑🏻‍💻",
     "Sonnet Anthropic":"👨🏽‍🔧","Opus Anthropic":"👩🏻‍🔬","DeepSeek":"🧑🏽‍🔬",
-    "Shell Agent":"👷🏼","GitHub Agent":"👷🏿‍♀️","N8N Agent":"👷🏽‍♂️","Self-Improve Agent":"🧑🏼‍🏫"
+    "Shell Agent":"👷🏼","GitHub Agent":"👷🏿‍♀️","N8N Agent":"👷🏽‍♂️","Self-Improve Agent":"🧑🏼‍🏫",
+    "Daphney":"💁🏿‍♀️"
   };
 
   // ── Workflow avatar pool — diverse skin tones, hair, and gender ────────────
@@ -2099,6 +2106,7 @@
     "GitHub Agent":        { title: "Software Engineer",            full: "GitHub Agent" },
     "N8N Agent":           { title: "HR & Procurement",             full: "N8N Agent" },
     "Self-Improve Agent":  { title: "Performance Coach",            full: "Self-Improve Agent" },
+    "Daphney":             { title: "Daphney — Secretary",          full: "Obsidian Knowledge Vault" },
   };
   let _officeOpen = false;
   let _officeTimer = null;
@@ -2231,6 +2239,10 @@
     popupRows += `<div class="o-popup-row" style="margin-top:4px"><a href="#" onclick="_oShowHistory('${_oEsc(w.id)}',event)" style="color:#c9a96e;font-size:8px;text-decoration:underline;">View Activity Report</a></div>`;
     if (w.id === 'N8N Agent') {
       popupRows += `<div class="o-popup-row" style="margin-top:2px"><a href="#" onclick="_oShowWorkflows(event)" style="color:#8b5cf6;font-size:8px;text-decoration:underline;">View Workflows</a></div>`;
+    }
+    if (w.id === 'Daphney') {
+      popupRows += `<div class="o-popup-row" style="color:#a78bfa;margin-top:2px;">📚 Obsidian Knowledge Vault</div>`;
+      popupRows += `<div class="o-popup-row" style="margin-top:2px"><a href="#" onclick="_oShowHistory('Daphney',event)" style="color:#a78bfa;font-size:8px;text-decoration:underline;">View Vault Activity</a></div>`;
     }
     if (w.id === 'Claude CLI Pro') {
       const _rc = w.recovery_count_today || 0;
@@ -3159,10 +3171,11 @@
         line.setAttribute('y1', y1);
         line.setAttribute('x2', x2);
         line.setAttribute('y2', y2);
-        line.setAttribute('stroke', '#8b5cf6');
-        line.setAttribute('stroke-width', '2');
-        line.setAttribute('stroke-dasharray', '6,4');
-        line.setAttribute('opacity', '0.7');
+        const toVault = (w.id === 'Daphney' || w.talking_to === 'Daphney');
+        line.setAttribute('stroke', toVault ? '#a78bfa' : '#8b5cf6');
+        line.setAttribute('stroke-width', toVault ? '3' : '2');
+        line.setAttribute('stroke-dasharray', toVault ? '8,4' : '6,4');
+        line.setAttribute('opacity', toVault ? '0.85' : '0.7');
         const anim = document.createElementNS('http://www.w3.org/2000/svg', 'animate');
         anim.setAttribute('attributeName', 'stroke-dashoffset');
         anim.setAttribute('from', '0');
@@ -3178,8 +3191,9 @@
   // Render default sleeping desks immediately (before any API call)
   function _renderDefaultDesks() {
     const defW = id => ({id, state:'sleeping', last_worked:0, last_worked_ago:null, talking_to:null, task:''});
-    document.getElementById('office-models').innerHTML = _OFFICE_MODELS.map(id => _oDesk(defW(id))).join('');
-    document.getElementById('office-agents').innerHTML = _OFFICE_AGENTS.map(id => _oDesk(defW(id))).join('');
+    document.getElementById('office-models').innerHTML   = _OFFICE_MODELS.map(id => _oDesk(defW(id))).join('');
+    document.getElementById('office-agents').innerHTML   = _OFFICE_AGENTS.map(id => _oDesk(defW(id))).join('');
+    document.getElementById('office-services').innerHTML = _OFFICE_SERVICES.map(id => _oDesk(defW(id))).join('');
   }
 
   // Module-level worker map — kept fresh by every _fetchOffice() poll.
@@ -3197,8 +3211,9 @@
       const workers = data.workers || [];
       workers.forEach(w => { workerMap[w.id] = w; });
       const defW = id => workerMap[id] || {id, state:'sleeping', last_worked:0, last_worked_ago:null, talking_to:null, task:''};
-      document.getElementById('office-models').innerHTML = _OFFICE_MODELS.map(id => _oDesk(defW(id))).join('');
-      document.getElementById('office-agents').innerHTML = _OFFICE_AGENTS.map(id => _oDesk(defW(id))).join('');
+      document.getElementById('office-models').innerHTML   = _OFFICE_MODELS.map(id => _oDesk(defW(id))).join('');
+      document.getElementById('office-agents').innerHTML   = _OFFICE_AGENTS.map(id => _oDesk(defW(id))).join('');
+      document.getElementById('office-services').innerHTML = _OFFICE_SERVICES.map(id => _oDesk(defW(id))).join('');
       // Draw violet talking lines between collaborating avatars
       _drawTalkingLines(workers);
     } catch(e) {
