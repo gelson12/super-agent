@@ -819,15 +819,72 @@ def anomaly_alerts_endpoint(n: int = 20):
         raise HTTPException(status_code=500, detail=str(exc))
 
 
+# Cache for the live inspiring-cat health check used by agents_status().
+# Avoids hitting inspiring-cat on every 3-second dashboard poll.
+_cli_health_cache: dict = {}
+_cli_health_cache_ts: float = 0.0
+_CLI_HEALTH_CACHE_TTL = 15  # seconds
+
+
+def _fetch_cli_worker_health() -> dict:
+    """
+    Fetch inspiring-cat /health with a 15s cache.
+    Returns {} on any error so callers can treat missing fields as unknown.
+    """
+    global _cli_health_cache, _cli_health_cache_ts
+    import time as _t
+    import urllib.request, json as _j
+    if _t.time() - _cli_health_cache_ts < _CLI_HEALTH_CACHE_TTL:
+        return _cli_health_cache
+    cli_url = os.environ.get("CLI_WORKER_URL", "").rstrip("/")
+    if not cli_url:
+        return {}
+    try:
+        with urllib.request.urlopen(f"{cli_url}/health", timeout=3) as _r:
+            _cli_health_cache = _j.loads(_r.read().decode())
+            _cli_health_cache_ts = _t.time()
+            return _cli_health_cache
+    except Exception:
+        return {}
+
+
 @app.get("/dashboard/agents/status", tags=["meta"])
 def agents_status():
     """
     Real-time status of all models and agents for the visual dashboard.
     Enriched with Pro subscription flags for Claude CLI Pro so the UI can show
     burst/daily/cli_down states without a separate API call.
+
+    Live reconciliation: if in-memory tracker says Claude CLI Pro is sick/recovering
+    but inspiring-cat /health reports claude_available=true, mark_done() is called
+    immediately so the dashboard reflects the actual backend state on the same request.
     """
-    from .learning.agent_status_tracker import get_all_statuses
+    from .learning.agent_status_tracker import get_all_statuses, mark_done as _md
     workers = get_all_statuses()
+
+    # ── Live reconciliation for Claude CLI Pro ────────────────────────────────
+    # The in-memory tracker and the actual CLI state can diverge when recovery
+    # happens via a path that doesn't call mark_done() (e.g. GitHub Actions relay,
+    # cookie keepalive, manual token push, container restart clearing flag files).
+    # Fix: cross-check on every status poll — if sick/recovering but CLI is actually
+    # healthy, clear the stale state immediately so the dashboard is always accurate.
+    try:
+        from .learning.pro_router import is_cli_down as _is_cli_down
+        _cli_health = _fetch_cli_worker_health()
+        _cli_actually_up = _cli_health.get("claude_available", False)
+        _flag_down = _is_cli_down()
+        for _w in workers:
+            if _w["id"] == "Claude CLI Pro" and _w.get("state") in ("sick", "recovering"):
+                if _cli_actually_up and not _flag_down:
+                    # Confirmed mismatch: tracker says sick, backend says healthy.
+                    # Clear stale state right now so this response is accurate.
+                    _md("Claude CLI Pro")
+                    _w["state"] = "idle"
+                    _w["sick_since"] = None
+                    _w["error_detail"] = None
+                break
+    except Exception:
+        pass
 
     # Inject Pro subscription state into Claude CLI Pro worker (instant — reads flag files only)
     try:
@@ -869,6 +926,42 @@ def agents_status():
         pass  # Non-fatal
 
     return {"workers": workers}
+
+
+@app.post("/admin/clear-sick", tags=["meta"])
+@app.get("/admin/clear-sick", tags=["meta"])
+def admin_clear_sick():
+    """
+    Immediately clear the stale sick/recovering state for Claude CLI Pro
+    if the actual backend (inspiring-cat) confirms the CLI is healthy.
+    Safe to call at any time — no side effects beyond marking the agent idle.
+    Used by the dashboard's own auto-reconcile and as a manual escape hatch.
+    """
+    try:
+        from .learning.agent_status_tracker import get_worker_status, mark_done as _md2
+        from .learning.pro_router import is_cli_down as _icd
+        _h = _fetch_cli_worker_health()
+        _up = _h.get("claude_available", False)
+        _down = _icd()
+        _ws = get_worker_status("Claude CLI Pro")
+        _was_sick = _ws.get("state") in ("sick", "recovering")
+        if _up and not _down:
+            _md2("Claude CLI Pro")
+            return {
+                "ok": True,
+                "cleared": _was_sick,
+                "cli_available": _up,
+                "message": "Claude CLI Pro marked idle — backend confirmed healthy.",
+            }
+        return {
+            "ok": False,
+            "cleared": False,
+            "cli_available": _up,
+            "cli_down_flag": _down,
+            "message": "Backend not confirmed healthy — sick state preserved.",
+        }
+    except Exception as _e:
+        return {"ok": False, "error": str(_e)}
 
 
 @app.get("/dashboard/agents/{worker_id}/history", tags=["meta"])
