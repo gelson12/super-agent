@@ -386,6 +386,17 @@
       50%       { opacity: 0.4; }
     }
 
+    /* ── Worker subtitle (e.g. "Secretary" under Obsidian Vault) ─── */
+    .worker-subtitle {
+      font-size: 0.28rem;
+      color: #a78bfa;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin-top: -3px;
+      margin-bottom: 2px;
+      font-weight: 600;
+    }
+
     /* ── Talking to info ─────────────────────────────────────────── */
     .talking-to {
       font-size: 0.3rem;
@@ -1414,6 +1425,10 @@
   <div class="section-label"><i class="s-icon">🤖</i>Specialized Agents</div>
   <div class="desks" id="agents-desks"></div>
 
+  <!-- Services section -->
+  <div class="section-label" style="margin-top:24px;"><i class="s-icon">🗄️</i>Services</div>
+  <div class="desks" id="services-desks"></div>
+
   <!-- Memory panel -->
   <div class="section-label" style="margin-top:24px;">
     <i class="s-icon">🧬</i>Shared Memory Store
@@ -1493,6 +1508,9 @@ const MODEL_WORKERS = [
 const AGENT_WORKERS = [
   "Shell Agent", "GitHub Agent", "N8N Agent", "Self-Improve Agent"
 ];
+const SERVICE_WORKERS = [
+  "Obsidian Vault"
+];
 
 const AVATARS = {
   "Claude CLI Pro": "👨🏿‍💻",
@@ -1505,6 +1523,7 @@ const AVATARS = {
   "GitHub Agent": "👷🏿‍♀️",
   "N8N Agent": "👷🏽‍♂️",
   "Self-Improve Agent": "🧑🏼‍🏫",
+  "Obsidian Vault": "👩🏿‍💼",
 };
 
 const EVENT_ICONS = {
@@ -1695,6 +1714,10 @@ function renderDesk(worker) {
   const needsAttention = worker.state === "strike" || worker.state === "sick" || worker.state === "error";
   const scanLine = worker.state === "working" ? '<div class="screen-scan-line"></div>' : "";
 
+  const _WORKER_SUBTITLES = { "Obsidian Vault": "Secretary" };
+  const subtitle = _WORKER_SUBTITLES[worker.id]
+    ? `<div class="worker-subtitle">${esc(_WORKER_SUBTITLES[worker.id])}</div>` : "";
+
   return `
     <div class="desk" data-worker="${esc(worker.id)}" data-state="${worker.state}"
          title="${esc(tooltip)}" onclick="openLog(this.dataset.worker)">
@@ -1703,6 +1726,7 @@ function renderDesk(worker) {
         ${esc(worker.id)}
         ${(worker.recovery_count_today||0) > 0 ? `<span class="recovery-count-badge ${(worker.recovery_count_today||0) >= 3 ? 'high' : ''}" title="${worker.recovery_count_today} auto-recoveries today">↺${worker.recovery_count_today}${(worker.recovery_count_today||0) >= 3 ? ' 🔥' : ''}</span>` : ''}
       </div>
+      ${subtitle}
       <div class="status-label ${worker.state}">${worker.state === "coffee_break" ? "coffee break" : worker.state}</div>
       ${proFlagHtml}
       ${timeoutBadgeHtml}
@@ -1728,7 +1752,7 @@ function renderAll(workers) {
   const workerMap = {};
   workers.forEach(w => workerMap[w.id] = w);
 
-  const allIds     = [...MODEL_WORKERS, ...AGENT_WORKERS];
+  const allIds     = [...MODEL_WORKERS, ...AGENT_WORKERS, ...SERVICE_WORKERS];
   const allWorkers = allIds.map(id =>
     workerMap[id] || { id, state: "sleeping", last_worked: 0, last_worked_ago: null, talking_to: null, task: "" }
   );
@@ -1736,10 +1760,10 @@ function renderAll(workers) {
   // Update stats bar
   const counts = { working: 0, idle: 0, sleeping: 0, issues: 0 };
   allWorkers.forEach(w => {
-    if (w.state === "working")                                              counts.working++;
+    if (w.state === "working" || w.state === "talking")                     counts.working++;
     else if (w.state === "idle")                                            counts.idle++;
     else if (w.state === "strike" || w.state === "sick" || w.state === "error") counts.issues++;
-    else                                                                    counts.sleeping++; // break/coffee_break/sleeping/recovering/talking
+    else                                                                    counts.sleeping++; // break/coffee_break/sleeping/recovering
   });
   document.getElementById("count-working").textContent  = counts.working;
   document.getElementById("count-idle").textContent     = counts.idle;
@@ -1753,6 +1777,11 @@ function renderAll(workers) {
 
   document.getElementById("agents-desks").innerHTML =
     AGENT_WORKERS.map(id => renderDesk(
+      workerMap[id] || { id, state: "sleeping", last_worked: 0, last_worked_ago: null, talking_to: null, task: "" }
+    )).join("");
+
+  document.getElementById("services-desks").innerHTML =
+    SERVICE_WORKERS.map(id => renderDesk(
       workerMap[id] || { id, state: "sleeping", last_worked: 0, last_worked_ago: null, talking_to: null, task: "" }
     )).join("");
 
@@ -1785,10 +1814,11 @@ function drawTalkingLines(workers) {
       line.setAttribute('y1', ra.top  + ra.height / 2);
       line.setAttribute('x2', rb.left + rb.width / 2);
       line.setAttribute('y2', rb.top  + rb.height / 2);
-      line.setAttribute('stroke', '#8b5cf6');
-      line.setAttribute('stroke-width', '2');
-      line.setAttribute('stroke-dasharray', '6,4');
-      line.setAttribute('opacity', '0.7');
+      const toVault = (w.id === "Obsidian Vault" || w.talking_to === "Obsidian Vault");
+      line.setAttribute('stroke', toVault ? '#a78bfa' : '#8b5cf6');
+      line.setAttribute('stroke-width', toVault ? '3' : '2');
+      line.setAttribute('stroke-dasharray', toVault ? '8,4' : '6,4');
+      line.setAttribute('opacity', toVault ? '0.85' : '0.7');
       const anim = document.createElementNS('http://www.w3.org/2000/svg', 'animate');
       anim.setAttribute('attributeName', 'stroke-dashoffset');
       anim.setAttribute('from', '0');

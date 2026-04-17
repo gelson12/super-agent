@@ -21,12 +21,47 @@ import asyncio
 import json
 import logging
 import os
+import threading
 import concurrent.futures
 from langchain.tools import tool
 
 logger = logging.getLogger(__name__)
 
 _OBSIDIAN_URL = os.environ.get("OBSIDIAN_MCP_URL", "http://obsidian-vault.railway.internal:22360/sse")
+
+# ── Calling-agent context (set by agent dispatch layer) ──────────────────────
+_agent_ctx = threading.local()
+
+
+def set_calling_agent(agent_name: str) -> None:
+    """Set which agent is currently running, so vault tools can draw the right talking line."""
+    _agent_ctx.name = agent_name
+
+
+def _get_calling_agent() -> str:
+    return getattr(_agent_ctx, "name", "Self-Improve Agent")
+
+
+def _vault_enter(tool_name: str) -> str:
+    """Mark vault as active and show talking line to the calling agent."""
+    caller = _get_calling_agent()
+    try:
+        from ..learning.agent_status_tracker import mark_working, mark_talking
+        mark_working("Obsidian Vault", tool_name)
+        mark_talking(caller, "Obsidian Vault")
+    except Exception:
+        pass
+    return caller
+
+
+def _vault_exit(caller: str) -> None:
+    """Mark vault as done and clear talking line."""
+    try:
+        from ..learning.agent_status_tracker import mark_done, clear_talking
+        clear_talking(caller, "Obsidian Vault")
+        mark_done("Obsidian Vault")
+    except Exception:
+        pass
 
 
 # ── Async MCP WebSocket client ────────────────────────────────────────────────
@@ -90,6 +125,15 @@ def _run_async(coro, timeout: int = 20) -> str:
         return "[obsidian vault timed out — service may be starting up, retry in ~15s]"
 
 
+def _run_vault_tool(tool_name: str, coro, timeout: int = 20) -> str:
+    """Run a vault MCP call with dashboard tracking (working state + talking lines)."""
+    caller = _vault_enter(tool_name)
+    try:
+        return _run_async(coro, timeout=timeout)
+    finally:
+        _vault_exit(caller)
+
+
 # ── LangChain tools ───────────────────────────────────────────────────────────
 
 @tool
@@ -101,7 +145,7 @@ def obsidian_list_notes(directory: str = "") -> str:
     Use this to discover what knowledge is stored in the vault before reading.
     """
     args = {"path": directory} if directory else {}
-    return _run_async(_call_mcp("list_directory", args))
+    return _run_vault_tool("list_notes", _call_mcp("list_directory", args))
 
 
 @tool
@@ -112,7 +156,7 @@ def obsidian_read_note(file_path: str) -> str:
     (e.g. "Self-Improvement Ideas.md" or "context/architecture.md").
     Use this to read existing knowledge, improvement ideas, or saved context.
     """
-    return _run_async(_call_mcp("read_file", {"path": file_path}))
+    return _run_vault_tool("read_note", _call_mcp("read_file", {"path": file_path}))
 
 
 @tool
@@ -125,7 +169,7 @@ def obsidian_write_note(file_path: str, content: str) -> str:
     log improvement reports, or store any knowledge for future reference.
     Overwriting an existing file replaces its content entirely.
     """
-    return _run_async(_call_mcp("write_file", {"path": file_path, "content": content}))
+    return _run_vault_tool("write_note", _call_mcp("write_file", {"path": file_path, "content": content}))
 
 
 @tool
@@ -137,7 +181,7 @@ def obsidian_append_to_note(file_path: str, content: str) -> str:
     Use this to add new entries to ongoing logs, improvement diaries, or running lists.
     Creates the file if it does not exist.
     """
-    return _run_async(_call_mcp("append_to_file", {"path": file_path, "content": content}))
+    return _run_vault_tool("append_note", _call_mcp("append_to_file", {"path": file_path, "content": content}))
 
 
 @tool
@@ -148,7 +192,7 @@ def obsidian_search_vault(query: str) -> str:
     Use this to find prior improvement ideas, past decisions, architecture notes,
     or any previously saved knowledge relevant to the current task.
     """
-    return _run_async(_call_mcp("search_files", {"query": query}))
+    return _run_vault_tool("search_vault", _call_mcp("search_files", {"query": query}))
 
 
 @tool
@@ -176,9 +220,9 @@ def obsidian_call_tool(tool_name: str, arguments_json: str = "{}") -> str:
     """
     try:
         args = json.loads(arguments_json) if arguments_json.strip() else {}
-    except json.JSONDecodeError as e:
+    except json.JSONDecodeError as e:  # noqa: F841
         return f"[invalid arguments_json: {e}]"
-    return _run_async(_call_mcp(tool_name, args))
+    return _run_vault_tool(tool_name, _call_mcp(tool_name, args))
 
 
 @tool
@@ -189,7 +233,7 @@ def obsidian_list_folders() -> str:
     Returns a newline-separated list of folder paths, plus '(root)' if notes
     exist at the top level.
     """
-    return _run_async(_call_mcp("list_folders", {}))
+    return _run_vault_tool("list_folders", _call_mcp("list_folders", {}))
 
 
 @tool
@@ -199,7 +243,7 @@ def obsidian_get_recent_notes(n: int = 10) -> str:
     Default is 10. Use this to catch up on recent activity or find the latest
     improvement logs, conversation notes, or engineering decisions.
     """
-    return _run_async(_call_mcp("get_recent_notes", {"n": n}))
+    return _run_vault_tool("get_recent_notes", _call_mcp("get_recent_notes", {"n": n}))
 
 
 @tool
@@ -209,7 +253,7 @@ def obsidian_get_vault_summary() -> str:
     names and approximate word counts. Use this to get a bird's-eye view of
     everything stored in the vault before deciding which notes to read.
     """
-    return _run_async(_call_mcp("get_vault_summary", {}))
+    return _run_vault_tool("get_vault_summary", _call_mcp("get_vault_summary", {}))
 
 
 @tool
@@ -220,7 +264,7 @@ def obsidian_move_note(from_path: str, to_path: str) -> str:
     - to_path:   new relative path   (e.g. "Engineering/architecture.md")
     Creates intermediate folders automatically. The original file is removed.
     """
-    return _run_async(_call_mcp("move_file", {"from_path": from_path, "to_path": to_path}))
+    return _run_vault_tool("move_note", _call_mcp("move_file", {"from_path": from_path, "to_path": to_path}))
 
 
 @tool
@@ -231,7 +275,7 @@ def obsidian_search_by_tag(tag: str) -> str:
     Pass the tag without the # prefix (e.g. "architecture" not "#architecture").
     Returns a newline-separated list of matching file paths.
     """
-    return _run_async(_call_mcp("search_by_tag", {"tag": tag}))
+    return _run_vault_tool("search_by_tag", _call_mcp("search_by_tag", {"tag": tag}))
 
 
 # ── Convenience list for agent tool registration ──────────────────────────────
@@ -243,7 +287,7 @@ def obsidian_get_note_metadata(file_path: str) -> str:
     Returns a JSON object with frontmatter fields (tags, date, type, etc.).
     Use this for fast tag/date scanning without reading thousands of characters.
     """
-    return _run_async(_call_mcp("get_note_metadata", {"path": file_path}))
+    return _run_vault_tool("get_note_metadata", _call_mcp("get_note_metadata", {"path": file_path}))
 
 
 @tool
@@ -256,7 +300,7 @@ def obsidian_archive_old_notes(days: int = 90, dry_run: bool = False) -> str:
     Returns a summary of archived and kept note counts.
     Always call with dry_run=True first to preview before actually archiving.
     """
-    return _run_async(_call_mcp("archive_old_notes", {"days": days, "dry_run": dry_run}))
+    return _run_vault_tool("archive_old_notes", _call_mcp("archive_old_notes", {"days": days, "dry_run": dry_run}))
 
 
 @tool
@@ -273,7 +317,7 @@ def obsidian_update_frontmatter(file_path: str, fields_json: str, merge: bool = 
         fields = json.loads(fields_json)
     except Exception as e:
         return f"[invalid fields_json: {e}]"
-    return _run_async(_call_mcp("update_note_frontmatter", {"path": file_path, "fields": fields, "merge": merge}))
+    return _run_vault_tool("update_frontmatter", _call_mcp("update_note_frontmatter", {"path": file_path, "fields": fields, "merge": merge}))
 
 
 @tool
@@ -284,7 +328,7 @@ def obsidian_get_backlinks(file_path: str) -> str:
     Use this to understand the knowledge graph — which notes reference a decision, architecture doc, etc.
     Essential before renaming or deleting a note to understand its impact.
     """
-    return _run_async(_call_mcp("get_backlinks", {"path": file_path}))
+    return _run_vault_tool("get_backlinks", _call_mcp("get_backlinks", {"path": file_path}))
 
 
 @tool
@@ -304,7 +348,7 @@ def obsidian_search_with_filters(
     - frontmatter_value: combined with frontmatter_key — only notes where key=value
     Example: find all approved decisions → tag="decision", frontmatter_key="status", frontmatter_value="approved"
     """
-    return _run_async(_call_mcp("search_with_filters", {
+    return _run_vault_tool("search_with_filters", _call_mcp("search_with_filters", {
         "content_query": content_query,
         "tag": tag,
         "path_prefix": path_prefix,
@@ -323,7 +367,7 @@ def obsidian_rename_note(from_path: str, to_path: str) -> str:
     - to_path:   new relative path   (e.g. "Decisions/new-name.md")
     Returns a summary of the move and how many files had their backlinks updated.
     """
-    return _run_async(_call_mcp("rename_note_with_backlink_update", {"from_path": from_path, "to_path": to_path}))
+    return _run_vault_tool("rename_note", _call_mcp("rename_note_with_backlink_update", {"from_path": from_path, "to_path": to_path}))
 
 
 @tool
@@ -341,7 +385,7 @@ def obsidian_create_from_template(template_path: str, new_note_path: str, variab
         variables = json.loads(variables_json)
     except Exception:
         variables = {}
-    return _run_async(_call_mcp("create_note_from_template", {
+    return _run_vault_tool("create_from_template", _call_mcp("create_note_from_template", {
         "template_path": template_path,
         "new_note_path": new_note_path,
         "variables": variables,
@@ -356,7 +400,7 @@ def obsidian_get_all_tags() -> str:
     Use this to understand how the vault is categorised, find related notes by tag cluster,
     or audit the tag taxonomy before doing bulk operations.
     """
-    return _run_async(_call_mcp("get_all_tags", {}))
+    return _run_vault_tool("get_all_tags", _call_mcp("get_all_tags", {}))
 
 
 @tool
@@ -367,7 +411,7 @@ def obsidian_rename_tag(old_tag: str, new_tag: str) -> str:
     Example: rename "infra" to "infrastructure" everywhere.
     Returns a count of notes updated and their file paths.
     """
-    return _run_async(_call_mcp("rename_tag_everywhere", {"old_tag": old_tag, "new_tag": new_tag}))
+    return _run_vault_tool("rename_tag", _call_mcp("rename_tag_everywhere", {"old_tag": old_tag, "new_tag": new_tag}))
 
 
 @tool
@@ -379,7 +423,7 @@ def obsidian_bulk_move(pattern: str, destination_folder: str) -> str:
     Creates the destination folder if it doesn't exist. Skips files that already exist at destination.
     Returns a count and list of moved files. Use for bulk vault reorganisation.
     """
-    return _run_async(_call_mcp("bulk_move_files", {"pattern": pattern, "destination_folder": destination_folder}))
+    return _run_vault_tool("bulk_move", _call_mcp("bulk_move_files", {"pattern": pattern, "destination_folder": destination_folder}))
 
 
 @tool
@@ -392,7 +436,7 @@ def obsidian_vault_analytics() -> str:
     - notes_per_folder: breakdown of how many notes are in each folder
     Use this periodically to keep the vault healthy and discover forgotten notes.
     """
-    return _run_async(_call_mcp("get_vault_analytics", {}))
+    return _run_vault_tool("vault_analytics", _call_mcp("get_vault_analytics", {}))
 
 
 @tool
@@ -405,7 +449,7 @@ def obsidian_get_note_links(file_path: str) -> str:
     Returns structured JSON with all link types and a total count.
     Use this to understand a note's connections before editing or to build a local graph view.
     """
-    return _run_async(_call_mcp("get_note_links", {"path": file_path}))
+    return _run_vault_tool("get_note_links", _call_mcp("get_note_links", {"path": file_path}))
 
 
 # ── Convenience list for agent tool registration ──────────────────────────────

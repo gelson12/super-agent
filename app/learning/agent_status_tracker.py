@@ -286,6 +286,8 @@ _KNOWN_WORKERS = [
     "GitHub Agent",
     "N8N Agent",
     "Self-Improve Agent",
+    # Services
+    "Obsidian Vault",
 ]
 
 # Map from insight_log model names / routing sources → display worker IDs
@@ -313,7 +315,7 @@ _API_MODELS  = {"Anthropic Haiku", "Sonnet Anthropic", "Opus Anthropic", "DeepSe
 # CLI workers: auth-dependent, token can expire — degrade over time.
 _CLI_WORKERS = {"Claude CLI Pro", "Gemini CLI"}
 # Agents: demand-triggered — moderate thresholds, no coffee_break.
-_AGENTS      = {"Shell Agent", "GitHub Agent", "N8N Agent", "Self-Improve Agent"}
+_AGENTS      = {"Shell Agent", "GitHub Agent", "N8N Agent", "Self-Improve Agent", "Obsidian Vault"}
 
 # CLI worker idle thresholds
 _CLI_BREAK_AFTER    = 30 * 60    # 30 min  → break

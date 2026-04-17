@@ -145,6 +145,19 @@ def tiered_agent_invoke(
     """
     _source = source or f"{agent_type}_agent"
 
+    # ── Set Obsidian vault calling-agent context for talking-line tracking ──
+    _AGENT_TYPE_TO_WORKER = {
+        "shell": "Shell Agent",
+        "github": "GitHub Agent",
+        "n8n": "N8N Agent",
+        "self_improve": "Self-Improve Agent",
+    }
+    try:
+        from ..tools.obsidian_tools import set_calling_agent as _set_ca
+        _set_ca(_AGENT_TYPE_TO_WORKER.get(agent_type, "Self-Improve Agent"))
+    except Exception:
+        pass
+
     # ── Status tracker helpers (for Anthropic/DeepSeek LangGraph tiers) ──
     def _track(worker, task=""):
         try:
