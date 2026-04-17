@@ -3123,7 +3123,7 @@ async def github_scheduled_sync(request: Request):
     github_token = os.environ.get("GITHUB_PAT", "") or os.environ.get("GITHUB_TOKEN", "")
     github_repo  = os.environ.get("GITHUB_REPO", "gelson12/super-agent")
     nonce        = _secrets.token_hex(8)
-    self_url     = os.environ.get("SELF_URL", "").rstrip("/")
+    self_url     = (os.environ.get("SELF_URL") or "https://super-agent-production.up.railway.app").rstrip("/")
 
     if not github_token:
         return {"ok": False, "reason": "GITHUB_PAT not set — cannot fire dispatch"}
@@ -3787,15 +3787,19 @@ async def metrics_layer_health():
             r = await client.get(f"{inspiring_cat_url}/health")
             if r.status_code == 200:
                 d = r.json()
-                pro  = d.get("pro_cli_available", False)
-                down = d.get("cli_down_flag", True)
+                # inspiring-cat uses claude_available; super-agent uses pro_cli_available
+                pro  = d.get("pro_cli_available") or d.get("claude_available", False)
+                # inspiring-cat has no cli_down_flag — infer from claude_available
+                down = d.get("cli_down_flag", not pro)
                 result["layer4"].update({
                     "status":        "healthy" if pro else ("degraded" if not down else "down"),
                     "pro_available": pro,
                     "cli_down":      down,
                 })
-                if "token_ttl_seconds" in d:
-                    result["token_ttl_seconds"] = d["token_ttl_seconds"]
+                # inspiring-cat uses claude_token_expires_in_s; super-agent uses token_ttl_seconds
+                ttl = d.get("token_ttl_seconds") or d.get("claude_token_expires_in_s")
+                if ttl is not None:
+                    result["token_ttl_seconds"] = ttl
                 if "token_expires_at" in d:
                     result["token_expires_at"] = d["token_expires_at"]
                 # Layer 1 inferred: if Layer 4 is healthy the volume backup exists
