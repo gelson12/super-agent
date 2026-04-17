@@ -1111,6 +1111,43 @@
       opacity: 0.8;
     }
 
+    /* ── CLI Pro recovery info panel ─────────────────────────── */
+    .cli-recovery-panel {
+      margin-top: 5px;
+      padding: 4px 5px;
+      background: #0d0b08;
+      border: 1px solid #2a1f0e;
+      border-radius: 3px;
+      font-size: 0.24rem;
+      line-height: 1.5;
+      width: 100%;
+      box-sizing: border-box;
+    }
+    .cli-recovery-panel .rp-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 4px;
+      padding: 1px 0;
+      border-bottom: 1px solid #1a1208;
+    }
+    .cli-recovery-panel .rp-row:last-child { border-bottom: none; }
+    .cli-recovery-panel .rp-label {
+      color: #5a4430;
+      flex-shrink: 0;
+    }
+    .cli-recovery-panel .rp-val {
+      color: #c9a96e;
+      text-align: right;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .cli-recovery-panel .rp-ok   { color: #4ade80; }
+    .cli-recovery-panel .rp-warn { color: #fb923c; }
+    .cli-recovery-panel .rp-bad  { color: #f87171; }
+    .cli-recovery-panel .rp-na   { color: #4b5563; }
+
     /* ── Recovery count badge ────────────────────────────────── */
     .recovery-count-badge {
       display: inline-flex;
@@ -1728,6 +1765,79 @@ function esc(str) {
   return d.innerHTML;
 }
 
+// ── CLI Pro recovery info panel ────────────────────────────────────────────
+
+function _renderCliRecoveryPanel(w) {
+  function row(label, val, cls) {
+    return `<div class="rp-row"><span class="rp-label">${label}</span><span class="rp-val ${cls||''}">${val}</span></div>`;
+  }
+  function bool(v, trueLabel, falseLabel, unknownLabel) {
+    if (v === true)  return `<span class="rp-ok">${trueLabel||'✓'}</span>`;
+    if (v === false) return `<span class="rp-bad">${falseLabel||'✗'}</span>`;
+    return `<span class="rp-na">${unknownLabel||'—'}</span>`;
+  }
+
+  // Token TTL
+  const ttl = w.token_expires_in_s;
+  let ttlStr = '—', ttlCls = 'rp-na';
+  if (ttl != null) {
+    const h = Math.floor(ttl / 3600), m = Math.floor((ttl % 3600) / 60);
+    ttlStr = ttl > 0 ? `${h}h ${m}m remaining` : 'EXPIRED';
+    ttlCls = ttl > 7200 ? 'rp-ok' : ttl > 1800 ? 'rp-warn' : 'rp-bad';
+  }
+
+  // Last recovery
+  let recovStr = '—', recovCls = 'rp-na';
+  if (w.last_recovery_at) {
+    try {
+      const d = new Date(w.last_recovery_at);
+      const agoS = Math.round((Date.now() - d.getTime()) / 1000);
+      const agoStr = agoS < 3600 ? `${Math.round(agoS/60)}m ago` : `${Math.round(agoS/3600)}h ago`;
+      recovStr = `${esc(w.last_recovery_layer || '?')} · ${agoStr}`;
+      recovCls = 'rp-ok';
+    } catch(_) { recovStr = esc(w.last_recovery_at); }
+  }
+
+  // Layer 1 backup
+  let l1Str = '—', l1Cls = 'rp-na';
+  if (w.layer1_backup_valid === true) {
+    const bh = w.layer1_backup_expires_in_s != null ? Math.floor(w.layer1_backup_expires_in_s/3600) : null;
+    l1Str = bh != null ? `valid · ${bh}h left` : 'valid';
+    l1Cls = 'rp-ok';
+  } else if (w.layer1_backup_valid === false) {
+    l1Str = 'EXPIRED'; l1Cls = 'rp-bad';
+  }
+
+  // n8n
+  let n8nStr = '—', n8nCls = 'rp-na';
+  if (w.n8n_reachable === true) {
+    const wfActive = w.n8n_verification_workflow_active;
+    n8nStr = wfActive === true ? 'reachable · monitor ACTIVE'
+           : wfActive === false ? 'reachable · monitor INACTIVE'
+           : 'reachable';
+    n8nCls = wfActive === true ? 'rp-ok' : wfActive === false ? 'rp-warn' : 'rp-ok';
+  } else if (w.n8n_reachable === false) {
+    n8nStr = 'unreachable'; n8nCls = 'rp-bad';
+  }
+
+  // Playwright + camoufox
+  const pwStr  = bool(w.playwright_ok, 'OK', 'FAILED');
+  const cfxStr = bool(w.camoufox_ok,   'OK', 'FAILED');
+  const attStr = (w.playwright_attempts_last_1h || 0) > 0
+    ? `<span class="rp-warn">${w.playwright_attempts_last_1h} attempt${w.playwright_attempts_last_1h !== 1 ? 's' : ''} /1h</span>`
+    : `<span class="rp-ok">0 attempts /1h</span>`;
+
+  return `<div class="cli-recovery-panel">
+    ${row('🔑 token', `<span class="${ttlCls}">${ttlStr}</span>`)}
+    ${row('♻ last recovery', `<span class="${recovCls}">${recovStr}</span>`)}
+    ${row('💾 vol backup', `<span class="${l1Cls}">${l1Str}</span>`)}
+    ${row('🔗 n8n', `<span class="${n8nCls}">${n8nStr}</span>`)}
+    ${row('🎭 playwright', pwStr)}
+    ${row('🦊 camoufox', cfxStr)}
+    ${row('🔄 pw attempts', attStr)}
+  </div>`;
+}
+
 // ── Desk rendering ─────────────────────────────────────────────────────────
 
 function renderDesk(worker) {
@@ -1841,6 +1951,7 @@ function renderDesk(worker) {
       </div>
       ${timeAgo ? `<div class="last-worked">${timeAgo}${dateStr ? " (" + dateStr + ")" : ""}</div>` : ""}
       ${worker.id === "Claude CLI Pro" ? `<div class="token-expiry fresh"></div>` : ""}
+      ${worker.id === "Claude CLI Pro" ? _renderCliRecoveryPanel(worker) : ""}
       ${extras}
     </div>
   `;

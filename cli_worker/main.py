@@ -613,6 +613,70 @@ def health_detailed():
     except Exception:
         pass
 
+    # Layer 4 infra: n8n reachability + verification workflow status (cached 60s)
+    n8n_reachable = None
+    n8n_verification_workflow_active = None
+    n8n_verification_workflow_name = None
+    _N8N_CACHE_TTL = 60
+    _n8n_cache_key = "health_detailed_n8n"
+    _n8n_cached = getattr(app.state, _n8n_cache_key, None) if hasattr(app, "state") else None
+    _n8n_cache_ts = getattr(app.state, _n8n_cache_key + "_ts", 0) if hasattr(app, "state") else 0
+    if _n8n_cached is not None and (_time.time() - _n8n_cache_ts) < _N8N_CACHE_TTL:
+        n8n_reachable = _n8n_cached.get("reachable")
+        n8n_verification_workflow_active = _n8n_cached.get("active")
+        n8n_verification_workflow_name = _n8n_cached.get("name")
+    else:
+        try:
+            import urllib.request as _ur, json as _jn
+            _n8n_url = os.environ.get("N8N_BASE_URL", "").rstrip("/")
+            _n8n_key = os.environ.get("N8N_API_KEY", "")
+            _WF_ID = "jun8CaMnNhux1iEY"
+            if _n8n_url:
+                _req = _ur.Request(f"{_n8n_url}/api/v1/workflows/{_WF_ID}",
+                                   headers={"X-N8N-API-KEY": _n8n_key})
+                with _ur.urlopen(_req, timeout=4) as _r:
+                    _wf = _jn.loads(_r.read())
+                n8n_reachable = True
+                n8n_verification_workflow_active = _wf.get("active", False)
+                n8n_verification_workflow_name = _wf.get("name", _WF_ID)
+            else:
+                n8n_reachable = False
+        except Exception:
+            n8n_reachable = False
+        if hasattr(app, "state"):
+            setattr(app.state, _n8n_cache_key, {
+                "reachable": n8n_reachable,
+                "active": n8n_verification_workflow_active,
+                "name": n8n_verification_workflow_name,
+            })
+            setattr(app.state, _n8n_cache_key + "_ts", _time.time())
+
+    # Playwright + camoufox availability (cached 300s — only changes on redeploy)
+    playwright_ok = None
+    camoufox_ok = None
+    _PW_CACHE_TTL = 300
+    _pw_cache_ts = getattr(app.state, "pw_check_ts", 0) if hasattr(app, "state") else 0
+    if (_time.time() - _pw_cache_ts) < _PW_CACHE_TTL:
+        playwright_ok = getattr(app.state, "pw_ok", None)
+        camoufox_ok = getattr(app.state, "camoufox_ok", None)
+    else:
+        try:
+            from playwright.sync_api import sync_playwright as _spw
+            with _spw() as _pw:
+                _b = _pw.chromium.launch(headless=True); _b.close()
+            playwright_ok = True
+        except Exception:
+            playwright_ok = False
+        try:
+            import camoufox as _cfx  # noqa: F401
+            camoufox_ok = True
+        except Exception:
+            camoufox_ok = False
+        if hasattr(app, "state"):
+            setattr(app.state, "pw_ok", playwright_ok)
+            setattr(app.state, "camoufox_ok", camoufox_ok)
+            setattr(app.state, "pw_check_ts", _time.time())
+
     return {
         "token_expires_in_s": expiry["expires_in_s"],
         "token_expires_at_ms": expiry["expires_at_ms"],
@@ -625,6 +689,11 @@ def health_detailed():
         "last_recovery_layer": last_recovery_layer,
         "recovery_count_today": recovery_count_today,
         "playwright_attempts_last_1h": playwright_attempts_last_1h,
+        "n8n_reachable": n8n_reachable,
+        "n8n_verification_workflow_active": n8n_verification_workflow_active,
+        "n8n_verification_workflow_name": n8n_verification_workflow_name,
+        "playwright_ok": playwright_ok,
+        "camoufox_ok": camoufox_ok,
     }
 
 

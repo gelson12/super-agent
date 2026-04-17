@@ -825,6 +825,10 @@ _cli_health_cache: dict = {}
 _cli_health_cache_ts: float = 0.0
 _CLI_HEALTH_CACHE_TTL = 15  # seconds
 
+_cli_detailed_cache: dict = {}
+_cli_detailed_cache_ts: float = 0.0
+_CLI_DETAILED_CACHE_TTL = 30  # seconds
+
 
 def _fetch_cli_worker_health() -> dict:
     """
@@ -862,6 +866,26 @@ def _fetch_cli_worker_health() -> dict:
     _cli_health_cache = result
     _cli_health_cache_ts = _t.time()
     return result
+
+
+def _fetch_cli_worker_detailed() -> dict:
+    """
+    Fetch inspiring-cat /health/detailed with a 30s cache.
+    Returns the full layer-by-layer status including n8n, Playwright, recovery history.
+    """
+    global _cli_detailed_cache, _cli_detailed_cache_ts
+    import time as _t
+    import urllib.request, json as _j
+    if _t.time() - _cli_detailed_cache_ts < _CLI_DETAILED_CACHE_TTL:
+        return _cli_detailed_cache
+    cli_url = os.environ.get("CLI_WORKER_URL", "https://inspiring-cat-production.up.railway.app").rstrip("/")
+    try:
+        with urllib.request.urlopen(f"{cli_url}/health/detailed", timeout=5) as _r:
+            _cli_detailed_cache = _j.loads(_r.read().decode())
+            _cli_detailed_cache_ts = _t.time()
+    except Exception:
+        pass
+    return _cli_detailed_cache
 
 
 @app.get("/dashboard/agents/status", tags=["meta"])
@@ -971,6 +995,30 @@ def agents_status():
             for w in workers:
                 if w["id"] == "Claude CLI Pro":
                     w["token_expires_in_s"] = int(_ttl)
+                    break
+    except Exception:
+        pass
+
+    # Inject Layer 1/4 detailed recovery info from inspiring-cat /health/detailed
+    try:
+        _det = _fetch_cli_worker_detailed()
+        if _det:
+            for w in workers:
+                if w["id"] == "Claude CLI Pro":
+                    # Layer 1 volume backup
+                    w["layer1_backup_valid"]       = _det.get("layer1_backup_valid")
+                    w["layer1_backup_expires_in_s"] = _det.get("layer1_backup_expires_in_s")
+                    # Recovery history
+                    w["last_recovery_at"]    = _det.get("last_recovery_at") or w.get("last_recovery_at")
+                    w["last_recovery_layer"] = _det.get("last_recovery_layer") or w.get("last_recovery_layer")
+                    w["recovery_count_today"] = _det.get("recovery_count_today", w.get("recovery_count_today", 0))
+                    # Layer 4 infra
+                    w["n8n_reachable"]                    = _det.get("n8n_reachable")
+                    w["n8n_verification_workflow_active"] = _det.get("n8n_verification_workflow_active")
+                    w["n8n_verification_workflow_name"]   = _det.get("n8n_verification_workflow_name")
+                    w["playwright_ok"]                    = _det.get("playwright_ok")
+                    w["camoufox_ok"]                      = _det.get("camoufox_ok")
+                    w["playwright_attempts_last_1h"]      = _det.get("playwright_attempts_last_1h", 0)
                     break
     except Exception:
         pass
