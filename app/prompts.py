@@ -71,10 +71,14 @@ _AGENT_PATTERNS_FILES = {
     "github":       "GitHub/patterns.md",
     "self_improve": "KnowledgeBase/SelfImprove/outcomes.md",
 }
-_PATTERNS_TTL = 1800  # 30 min per-agent-type patterns cache
-_patterns_cache: dict = {}   # agent_type → (content_str, timestamp_float)
-_briefing_cache: dict = {}   # date_str → content_str
+_PATTERNS_TTL = 14400  # 4 hours per-agent-type patterns cache (patterns change rarely)
+_patterns_cache: dict = {}    # agent_type → (content_str, timestamp_float)
+_briefing_cache: dict = {}    # date_str → content_str
+_no_briefing_until: dict = {} # date_str → epoch_float (negative cache, 10-min TTL)
+_NO_BRIEFING_TTL = 600        # 10 min — retry after this before hitting MCP again
 _ERROR_HINT_WORDS = {"error", "fail", "broken", "crash", "refused", "timeout", "down", "fix"}
+_BUILD_HINT_WORDS = {"flutter", "apk", "build", "android", "dart"}
+_INFRA_HINT_WORDS = {"deploy", "railway", "docker", "service", "container", "supervisorctl"}
 
 
 def _fetch_vault_global() -> str:
@@ -165,29 +169,33 @@ def get_vault_context_block(topic_hint: str = "", agent_type: str = "", include_
             _URL = "http://obsidian-vault.railway.internal:22360/sse"
 
             async def _fetch_all():
-                _data: dict = {}
+                import asyncio as _aio_inner
                 async with _sse(url=_URL) as (_r, _w):
                     async with _CS(_r, _w) as _s:
                         await _s.initialize()
+
+                        async def _safe_call(tool, args):
+                            try:
+                                _res = await _s.call_tool(tool, args)
+                                return _res.content[0].text if _res.content else ""
+                            except Exception:
+                                return ""
+
+                        # Build list of coroutines to gather in parallel
+                        _coros = {}
                         if _do_patterns_fetch:
-                            try:
-                                _res = await _s.call_tool("read_file", {"path": _patterns_path})
-                                _data["patterns"] = _res.content[0].text if _res.content else ""
-                            except Exception:
-                                _data["patterns"] = ""
+                            _coros["patterns"] = _safe_call("read_file", {"path": _patterns_path})
                         if topic_hint:
-                            try:
-                                _res = await _s.call_tool("search_files", {"query": topic_hint})
-                                _data["search"] = _res.content[0].text if _res.content else ""
-                            except Exception:
-                                _data["search"] = ""
+                            _coros["search"] = _safe_call("search_files", {"query": topic_hint})
                         if _include_errors:
-                            try:
-                                _res = await _s.call_tool("read_file", {"path": "KnowledgeBase/errors.md"})
-                                _data["errors"] = _res.content[0].text if _res.content else ""
-                            except Exception:
-                                _data["errors"] = ""
-                return _data
+                            _coros["errors"] = _safe_call("read_file", {"path": "KnowledgeBase/errors.md"})
+
+                        if not _coros:
+                            return {}
+
+                        _keys = list(_coros.keys())
+                        _results = await _aio_inner.gather(*[_coros[k] for k in _keys])
+                        return dict(zip(_keys, _results))
 
             _fetched = _asyncio.run(_fetch_all())
             if _do_patterns_fetch:
@@ -198,6 +206,12 @@ def get_vault_context_block(topic_hint: str = "", agent_type: str = "", include_
                     patterns_text = ""
             search_text = _fetched.get("search", "")
             errors_text = _fetched.get("errors", "")
+            # Successful vault fetch — clear any open vault circuit breaker
+            try:
+                from .routing.dispatcher import _cb_clear_failures as _clear_vault_cb
+                _clear_vault_cb("vault")
+            except Exception:
+                pass
         except Exception:
             pass
 
@@ -208,17 +222,30 @@ def get_vault_context_block(topic_hint: str = "", agent_type: str = "", include_
     }.get(agent_type, "")
     _header = f"[VAULT CONTEXT — {_agent_label}]" if _agent_label else "[VAULT CONTEXT]"
 
-    _sections = []
-    if patterns_text and "not found" not in patterns_text.lower():
-        _sections.append(f"### Agent Patterns\n{patterns_text[:800]}")
-    if search_text and "no matches" not in search_text.lower() and len(search_text) > 10:
-        _lbl = topic_hint[:40] if topic_hint else "vault"
-        _sections.append(f"### Query Match: {_lbl}\n{search_text[:500]}")
-    if errors_text and "not found" not in errors_text.lower():
-        _sections.append(f"### Error Reference\n{errors_text[:500]}")
-    if _vault_global_cache:
-        _sections.append(f"### Recent Activity\n{_vault_global_cache[:300]}")
+    _hint_lower_b = topic_hint.lower()
+    _is_error_task = any(w in _hint_lower_b for w in _ERROR_HINT_WORDS)
+    _is_build_task = any(w in _hint_lower_b for w in _BUILD_HINT_WORDS)
+    _is_infra_task = any(w in _hint_lower_b for w in _INFRA_HINT_WORDS)
 
+    _sec_patterns = (f"### Agent Patterns\n{patterns_text[:800]}"
+                     if patterns_text and "not found" not in patterns_text.lower() else None)
+    _lbl = topic_hint[:40] if topic_hint else "vault"
+    _sec_search = (f"### Query Match: {_lbl}\n{search_text[:500]}"
+                   if search_text and "no matches" not in search_text.lower() and len(search_text) > 10 else None)
+    _sec_errors = (f"### Error Reference\n{errors_text[:500]}"
+                   if errors_text and "not found" not in errors_text.lower() else None)
+    _sec_recent = (f"### Recent Activity\n{_vault_global_cache[:300]}"
+                   if _vault_global_cache else None)
+
+    # Task-type section ordering: surface the most useful section first
+    if _is_error_task:
+        _order = [_sec_errors, _sec_search, _sec_patterns, _sec_recent]
+    elif _is_build_task or _is_infra_task:
+        _order = [_sec_patterns, _sec_search, _sec_errors, _sec_recent]
+    else:
+        _order = [_sec_patterns, _sec_search, _sec_errors, _sec_recent]
+
+    _sections = [s for s in _order if s]
     if not _sections:
         return ""
 
@@ -229,12 +256,22 @@ def get_todays_briefing() -> str:
     """
     Return today's cross-agent briefing note from Daily/YYYY-MM-DD-briefing.md.
     Cached per calendar day — one MCP call maximum per day per process.
-    Returns empty string if briefing doesn't exist yet (self_improve writes it async).
+    Negative cache: if briefing doesn't exist, wait 10 min before retrying
+    (avoids hammering the vault on every request before self_improve writes it).
+    Returns empty string if briefing doesn't exist yet.
     """
     import datetime as _dt
+    import time as _t
     _today = _dt.date.today().isoformat()
+
     if _today in _briefing_cache:
         return _briefing_cache[_today]
+
+    # Negative cache check — avoid retrying MCP within 10 min of a "not found"
+    _neg_until = _no_briefing_until.get(_today, 0.0)
+    if _t.time() < _neg_until:
+        return ""
+
     try:
         import asyncio as _asyncio
         from mcp.client.sse import sse_client as _sse
@@ -249,11 +286,14 @@ def get_todays_briefing() -> str:
                     return _res.content[0].text if _res.content else ""
 
         _text = _asyncio.run(_fetch())
-        _content = _text if (_text and "not found" not in _text.lower()) else ""
-        _briefing_cache[_today] = _content
-        return _content
+        if _text and "not found" not in _text.lower():
+            _briefing_cache[_today] = _text
+            return _text
+        # Briefing doesn't exist yet — set negative cache for 10 min
+        _no_briefing_until[_today] = _t.time() + _NO_BRIEFING_TTL
+        return ""
     except Exception:
-        _briefing_cache[_today] = ""
+        _no_briefing_until[_today] = _t.time() + _NO_BRIEFING_TTL
         return ""
 
 

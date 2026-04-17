@@ -67,48 +67,48 @@ from ..prompts import (
 )
 from ..config import settings as _settings
 
-# ── Active task tracker ───────────────────────────────────────────────────────
+# ── Active task tracker (per-session, in-memory) ─────────────────────────────
 # Written before any long-running agent call so follow-up queries always know
 # what was being worked on, even before append_exchange fires (which only
 # happens after the agent COMPLETES — potentially 10+ minutes later).
+# In-memory dict is faster, session-safe, and survives no disk permission issues.
 
-_ACTIVE_TASK_FILE = _Path("/workspace/.active_task.txt") if _os.access("/workspace", _os.W_OK) else _Path("./.active_task.txt")
+import threading as _thr_active
 _ACTIVE_TASK_TIMEOUT = 1200  # 20 minutes
+_active_tasks: dict[str, tuple[float, str]] = {}  # session_id → (timestamp, task)
+_active_tasks_lock = _thr_active.Lock()
 
 
 def _write_active_task(session_id: str, task: str) -> None:
-    try:
-        _ACTIVE_TASK_FILE.write_text(
-            f"{_time.time()}\n{session_id}\n{task[:500]}",
-            encoding="utf-8",
-        )
-    except Exception:
-        pass
+    with _active_tasks_lock:
+        _active_tasks[session_id] = (_time.time(), task[:500])
 
 
-def _read_active_task() -> tuple[bool, str, str]:
+def _read_active_task(session_id: str = "") -> tuple[bool, str, str]:
     """Returns (is_active, session_id, task_description)."""
-    try:
-        if not _ACTIVE_TASK_FILE.exists():
+    with _active_tasks_lock:
+        if session_id:
+            entry = _active_tasks.get(session_id)
+            if entry:
+                ts, task = entry
+                if _time.time() - ts <= _ACTIVE_TASK_TIMEOUT:
+                    return True, session_id, task
+                del _active_tasks[session_id]
             return False, "", ""
-        parts = _ACTIVE_TASK_FILE.read_text(encoding="utf-8").split("\n", 2)
-        if len(parts) < 3:
-            return False, "", ""
-        ts, sid, task = float(parts[0]), parts[1], parts[2]
-        if _time.time() - ts > _ACTIVE_TASK_TIMEOUT:
-            _clear_active_task()
-            return False, "", ""
-        return True, sid, task
-    except Exception:
+        # No session_id: return any active task not yet expired
+        for sid, (ts, task) in list(_active_tasks.items()):
+            if _time.time() - ts <= _ACTIVE_TASK_TIMEOUT:
+                return True, sid, task
+            del _active_tasks[sid]
         return False, "", ""
 
 
-def _clear_active_task() -> None:
-    try:
-        if _ACTIVE_TASK_FILE.exists():
-            _ACTIVE_TASK_FILE.unlink()
-    except Exception:
-        pass
+def _clear_active_task(session_id: str = "") -> None:
+    with _active_tasks_lock:
+        if session_id:
+            _active_tasks.pop(session_id, None)
+        else:
+            _active_tasks.clear()
 
 _HANDLERS = {
     "GEMINI":   ask_gemini,
@@ -139,6 +139,11 @@ def _cb_is_open(service: str) -> bool:
     now = _time.time()
     recent = [t for t in _CB_FAILURES.get(service, []) if now - t < _CB_WINDOW]
     return len(recent) >= _CB_THRESHOLD
+
+
+def _cb_clear_failures(service: str) -> None:
+    """Clear the circuit breaker failure window — called after a successful call."""
+    _CB_FAILURES.pop(service, None)
 
 
 # ── Per-session last-agent memory (in-process, best-effort) ──────────────────
@@ -271,6 +276,9 @@ _GITHUB_KEYWORDS = {
     "github", "repo", "repository", "repositories", "commit", "pull request",
     "open pr", "create pr", "branch", "list files in", "read file", "create file",
     "update file", "delete file", "push to repo", "merge branch",
+    # Issue management
+    "issue", "open issue", "close issue", "create issue", "comment on issue",
+    "list issues", "github issue", "file an issue", "report bug",
     # Website / HTML modification triggers
     "website", "modify website", "update website", "change website", "edit website",
     "html", "index.html", "modify the", "change the link", "update the link",
@@ -316,6 +324,11 @@ _N8N_KEYWORDS = {
     "create workflow", "update workflow", "activate workflow",
     "deactivate workflow", "run workflow", "debug workflow",
     "list workflows", "get workflow",
+    # Scheduling / cron language
+    "cron", "cron job", "cron expression", "scheduled task", "scheduled job",
+    "run at", "run every", "every minute", "every hour", "every day", "every week",
+    "every monday", "every night", "nightly", "daily job", "recurring task",
+    "schedule this", "schedule it", "run on a schedule",
     # Natural language workflow building
     "make a workflow", "make me a workflow", "build a workflow",
     "build an automation", "create an automation", "create a automation",
@@ -382,11 +395,52 @@ _route_conf_history: dict[str, _collections.deque] = _collections.defaultdict(
 )
 
 
+_conf_persist_counter = 0
+_CONF_PERSIST_EVERY = 50  # snapshot to vault every N calls
+
+
 def _record_routing_confidence(route: str, confidence: float) -> None:
     """Append one confidence observation for a route. Never raises."""
+    global _conf_persist_counter
     try:
         if confidence > 0:
             _route_conf_history[route].append(round(confidence, 3))
+        _conf_persist_counter += 1
+        if _conf_persist_counter % _CONF_PERSIST_EVERY == 0:
+            import threading as _thr_conf
+            _thr_conf.Thread(target=_persist_routing_confidence_snapshot, daemon=True).start()
+    except Exception:
+        pass
+
+
+def _persist_routing_confidence_snapshot() -> None:
+    """Write a routing confidence snapshot to the vault. Daemon thread — never raises."""
+    try:
+        import datetime as _dt2
+        _now = _dt2.datetime.utcnow().strftime("%Y-%m-%d %H:%M")
+        _stats = get_routing_confidence_stats()
+        if not _stats:
+            return
+        _lines = [f"\n## {_now} — routing confidence snapshot\n"]
+        for r, s in _stats.items():
+            _lines.append(
+                f"- **{r}**: avg={s['avg_confidence']}, n={s['count']}, trend={s['trend']}\n"
+            )
+        _note = "".join(_lines)
+        import asyncio as _aio2
+        from mcp.client.sse import sse_client as _sse2
+        from mcp import ClientSession as _CS2
+        _URL2 = "http://obsidian-vault.railway.internal:22360/sse"
+
+        async def _write():
+            async with _sse2(url=_URL2) as (_r, _w):
+                async with _CS2(_r, _w) as _s:
+                    await _s.initialize()
+                    await _s.call_tool("append_to_file",
+                                       {"path": "KnowledgeBase/routing_confidence.md",
+                                        "content": _note})
+
+        _aio2.run(_write())
     except Exception:
         pass
 
@@ -468,7 +522,13 @@ def _is_n8n_request(message: str) -> bool:
     return any(k in lower for k in _N8N_KEYWORDS)
 
 
-_AGENT_TIMEOUT_SECONDS = 180  # 3 min hard timeout per agent call
+_AGENT_TIMEOUTS: dict[str, int] = {
+    "n8n_agent":          90,   # n8n API calls are fast; 90s is generous
+    "github_agent":      300,   # GitHub API + potential file reads
+    "shell_agent":       600,   # Flutter builds can take 5-8 min
+    "self_improve_agent": 300,  # investigation + fix cycles
+    "agent":             180,   # default fallback
+}
 
 
 def _vault_log_outcome(agent_type: str, message: str, response: str, session_id: str) -> None:
@@ -481,19 +541,20 @@ def _vault_log_outcome(agent_type: str, message: str, response: str, session_id:
 
 
 def _safe_agent_call(agent_fn, *args, agent_name: str = "agent", **kwargs) -> str:
-    """Call an agent function with a timeout, catching any exception."""
+    """Call an agent function with a per-agent timeout, catching any exception."""
     import concurrent.futures as _cf
+    _timeout = _AGENT_TIMEOUTS.get(agent_name, _AGENT_TIMEOUTS["agent"])
     try:
         with _cf.ThreadPoolExecutor(max_workers=1) as _pool:
             _fut = _pool.submit(agent_fn, *args, **kwargs)
-            return _fut.result(timeout=_AGENT_TIMEOUT_SECONDS)
+            return _fut.result(timeout=_timeout)
     except _cf.TimeoutError:
         try:
             from ..activity_log import bg_log
-            bg_log(f"{agent_name} timed out after {_AGENT_TIMEOUT_SECONDS}s", source="dispatcher")
+            bg_log(f"{agent_name} timed out after {_timeout}s", source="dispatcher")
         except Exception:
             pass
-        return f"[{agent_name} timed out — the operation took too long. Please try again or break the task into smaller steps.]"
+        return f"[{agent_name} timed out after {_timeout}s — the operation took too long. Please try again or break the task into smaller steps.]"
     except Exception as e:
         err_msg = str(e)[:300].replace("\n", " ")
         try:
@@ -557,8 +618,12 @@ def _classify_route_with_confidence(message: str) -> tuple[str, float]:
             category, confidence = _parse_classify_result(result)
             if category != "GENERAL" or confidence > 0.0:
                 return category, confidence
-    except Exception:
-        pass
+    except Exception as _e1:
+        try:
+            from ..activity_log import bg_log as _bg_cl1
+            _bg_cl1(f"Classifier Tier 1 (Claude CLI) error: {str(_e1)[:120]}", "classifier")
+        except Exception:
+            pass
 
     # ── Tier 2: Gemini CLI ────────────────────────────────────────────────────
     try:
@@ -568,14 +633,23 @@ def _classify_route_with_confidence(message: str) -> tuple[str, float]:
             category, confidence = _parse_classify_result(result)
             if category != "GENERAL" or confidence > 0.0:
                 return category, confidence
-    except Exception:
-        pass
+    except Exception as _e2:
+        try:
+            from ..activity_log import bg_log as _bg_cl2
+            _bg_cl2(f"Classifier Tier 2 (Gemini CLI) error: {str(_e2)[:120]}", "classifier")
+        except Exception:
+            pass
 
     # ── Tier 3: Haiku API (last resort) ──────────────────────────────────────
     try:
         result = ask_claude_haiku(prompt)
         return _parse_classify_result(result)
-    except Exception:
+    except Exception as _e3:
+        try:
+            from ..activity_log import bg_log as _bg_cl3
+            _bg_cl3(f"Classifier Tier 3 (Haiku API) error: {str(_e3)[:120]}", "classifier")
+        except Exception:
+            pass
         return "GENERAL", 0.0
 
 
@@ -815,17 +889,28 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
     else:
         try:
             from ..prompts import get_vault_context_block as _get_vault
-            # Build agent-type-specific search hint
+            # Build smarter search hint — extract key nouns rather than raw message prefix
+            _stop_words = {
+                "can", "you", "please", "the", "a", "an", "i", "me", "my", "is", "are",
+                "was", "were", "be", "been", "being", "have", "has", "had", "do", "does",
+                "did", "will", "would", "could", "should", "may", "might", "to", "of",
+                "in", "on", "at", "for", "with", "this", "that", "it", "its", "and",
+                "or", "but", "so", "if", "not", "no", "yes", "how", "what", "why",
+                "when", "where", "who", "which", "there", "then", "just", "also",
+            }
+            _words = [w.strip(".,!?:;'\"") for w in message.split() if len(w) > 3]
+            _key_words = [w for w in _words if w.lower() not in _stop_words][:6]
+            _key_phrase = " ".join(_key_words) if _key_words else message[:60]
             if _is_n8n_request(message):
-                _vault_hint = f"n8n workflow pattern {message[:50]}"
+                _vault_hint = f"n8n workflow {_key_phrase}"
             elif _is_shell_request(message):
-                _vault_hint = f"shell command railway {message[:50]}"
+                _vault_hint = f"shell railway {_key_phrase}"
             elif _is_github_request(message):
-                _vault_hint = f"github repository {message[:50]}"
+                _vault_hint = f"github {_key_phrase}"
             elif _is_self_improve_request(message):
-                _vault_hint = f"infrastructure fix {message[:50]}"
+                _vault_hint = f"infrastructure fix {_key_phrase}"
             else:
-                _vault_hint = message[:60] if len(message) > 20 else ""
+                _vault_hint = _key_phrase if len(message) > 20 else ""
             _vault_ctx = _get_vault(
                 topic_hint=_vault_hint,
                 agent_type=_agent_type_key,
@@ -925,7 +1010,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
     # Only decompose if exactly one separator present (prevents runaway fan-out on
     # messages like "do A and also B and also C and also D")
     _split_on = next(
-        (s for s in _COMPOUND_SPLITS if _msg_norm.count(s) == 1 and len(message.split()) > 15),
+        (s for s in _COMPOUND_SPLITS if 1 <= _msg_norm.count(s) <= 2 and len(message.split()) > 15),
         None,
     )
     if _split_on and not force_model:
@@ -1260,7 +1345,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
         from ..agents.n8n_agent import run_n8n_agent
         _write_active_task(session_id, message)
         response = _safe_agent_call(run_n8n_agent, _agent_message, agent_name="n8n_agent")
-        _clear_active_task()
+        _clear_active_task(session_id)
         # Record CB failure inline (can't call _agent_response_is_error — defined later in scope)
         if response and response.startswith("[") and any(
             k in response.lower() for k in ("error", "failed", "timeout", "unreachable", "refused")
@@ -1285,7 +1370,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
         _mark_working("Self-Improve Agent", message[:100])
         response = run_self_improve_agent(_agent_message, authorized=authorized)
         _mark_done("Self-Improve Agent")
-        _clear_active_task()
+        _clear_active_task(session_id)
         insight_log.record(message, "SELF_IMPROVE", response, "self_improve", complexity, session_id)
         adapter.tick()
         _vault_log_outcome("SELF_IMPROVE", message, response, session_id)
@@ -1299,7 +1384,9 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
         }, routing_explanation=f"Self-improve agent selected — infrastructure query detected (complexity={complexity}).")
 
     # ── 4d. Isolation debug routing ───────────────────────────────────────────
-    if _is_debug_request(message):
+    # Guard: skip debug routing for N8N requests — "workflow isn't working" should
+    # go to the n8n agent, not shell debug, even though it contains "not working".
+    if _is_debug_request(message) and not _is_n8n_request(message):
         _write_active_task(session_id, message)
         response = run_shell_agent(message, authorized=authorized, debug_mode=True)
         # If shell debug itself errors, escalate straight to self-improve agent
@@ -1310,7 +1397,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
                 f"Investigate railway logs, service status, and DB health autonomously.",
                 authorized=False,
             )
-        _clear_active_task()
+        _clear_active_task(session_id)
         insight_log.record(message, "SHELL", response, "isolation_debug", complexity, session_id)
         adapter.tick()
         store_memory(session_id, f"Q: {message[:300]} A: {response[:300]}")
@@ -1335,7 +1422,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
     #   This prevents "n8n" keyword false-positives from hijacking SHELL requests
     #   that happen to mention "workflow" but are really about code/shell work.
 
-    def _classify_with_timeout(msg: str, timeout_s: float = 10.0) -> tuple[str, float, bool]:
+    def _classify_with_timeout(msg: str, timeout_s: float = 5.0) -> tuple[str, float, bool]:
         """
         Run _classify_route_with_confidence with a hard timeout.
         Returns (route, confidence, timed_out). Returns GENERAL/0.0/True on timeout.
@@ -1348,8 +1435,11 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
                 route, conf = fut.result(timeout=timeout_s)
                 return route, conf, False
             except _cf2.TimeoutError:
-                from ..activity_log import bg_log as _bg_cl
-                _bg_cl("Classifier timed out after 10s — falling back to keyword/GENERAL", "dispatcher")
+                try:
+                    from ..activity_log import bg_log as _bg_cl
+                    _bg_cl(f"Classifier timed out after {timeout_s}s — falling back to keyword/GENERAL", "dispatcher")
+                except Exception:
+                    pass
                 return "GENERAL", 0.0, True
             except Exception:
                 return "GENERAL", 0.0, True
@@ -1487,6 +1577,14 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
         return investigate_result
 
     if _kw_route == "SHELL":
+        if _cb_is_open("shell"):
+            return _build_extended_result({
+                "model_used": "SHELL",
+                "response": "[Shell circuit breaker open — service appears down, skipping to avoid timeout. Try again in 2 minutes.]",
+                "routed_by": "circuit_breaker",
+                "complexity": 1,
+                "cache_hit": False,
+            }, routing_explanation="Shell circuit breaker is open — service appears down, request short-circuited.")
         # For build requests, send the raw message only — not the augmented version.
         # Session history in augmented_message confuses the agent into inspecting
         # previous state and asking clarifying questions instead of just building.
@@ -1501,10 +1599,13 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
         _mark_working("Shell Agent", message[:100])
         response = _safe_agent_call(run_shell_agent, _shell_payload, authorized=authorized, agent_name="shell_agent")
         _mark_done("Shell Agent")
-        _clear_active_task()
+        _clear_active_task(session_id)
         if _agent_response_is_error(response):
+            _cb_record_failure("shell")
             _mark_error("Shell Agent", response[:200])
             response = _auto_investigate("SHELL", message, response, full_ctx=_agent_message)
+        else:
+            _cb_clear_failures("shell")
         store_memory(session_id, f"Q: {message[:300]} A: {response[:300]}")
         _sav = _detect_saveable_content(message, response)
         if _sav:
@@ -1524,16 +1625,27 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
         }, routing_explanation=f"Shell/CLI agent selected (complexity={complexity}, keywords matched).")
 
     if _kw_route == "GITHUB":
+        if _cb_is_open("github"):
+            return _build_extended_result({
+                "model_used": "GITHUB",
+                "response": "[GitHub circuit breaker open — service appears down, skipping to avoid timeout. Try again in 2 minutes.]",
+                "routed_by": "circuit_breaker",
+                "complexity": 1,
+                "cache_hit": False,
+            }, routing_explanation="GitHub circuit breaker is open — service appears down, request short-circuited.")
         _write_active_task(session_id, message)
         _mark_working("GitHub Agent", message[:100])
         _mark_talking("Claude CLI Pro", "GitHub Agent")
         response = _safe_agent_call(run_github_agent, _agent_message, agent_name="github_agent")
         _clear_talking("Claude CLI Pro", "GitHub Agent")
         _mark_done("GitHub Agent")
-        _clear_active_task()
+        _clear_active_task(session_id)
         if _agent_response_is_error(response):
+            _cb_record_failure("github")
             _mark_error("GitHub Agent", response[:200])
             response = _auto_investigate("GITHUB", message, response, full_ctx=_agent_message)
+        else:
+            _cb_clear_failures("github")
         store_memory(session_id, f"Q: {message[:300]} A: {response[:300]}")
         _sav = _detect_saveable_content(message, response)
         if _sav:
@@ -1567,11 +1679,13 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
         response = _safe_agent_call(run_n8n_agent, _agent_message, agent_name="n8n_agent")
         _clear_talking("Claude CLI Pro", "N8N Agent")
         _mark_done("N8N Agent")
-        _clear_active_task()
+        _clear_active_task(session_id)
         if _agent_response_is_error(response):
             _cb_record_failure("n8n")
             _mark_error("N8N Agent", response[:200])
             response = _auto_investigate("N8N", message, response, full_ctx=_agent_message)
+        else:
+            _cb_clear_failures("n8n")
         store_memory(session_id, f"Q: {message[:300]} A: {response[:300]}")
         _sav = _detect_saveable_content(message, response)
         if _sav:
