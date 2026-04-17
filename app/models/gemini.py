@@ -67,10 +67,12 @@ def ask_gemini(prompt: str, system: str = SYSTEM_PROMPT_GEMINI) -> str:
         return "[Gemini error: no available model found — check your API key and billing]"
 
     try:
+        from google.api_core import retry as _gretry
         full_prompt = f"{system}\n\n{prompt}" if system else prompt
         resp = _get_client().models.generate_content(
             model=model,
             contents=full_prompt,
+            config={"timeout": 120},
         )
         return (resp.text or "").strip()
     except genai_errors.APIError as e:

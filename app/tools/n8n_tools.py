@@ -158,7 +158,10 @@ def n8n_list_workflows() -> str:
 @cached_tool(ttl=120)
 def n8n_get_workflow(workflow_id: str) -> str:
     """Get the full JSON definition of an n8n workflow by its ID."""
-    result = _get(f"/api/v1/workflows/{workflow_id}")
+    # Validate: n8n workflow IDs are numeric strings
+    if not workflow_id or not str(workflow_id).strip().isdigit():
+        return f"[n8n error: invalid workflow ID '{workflow_id}' — must be a numeric ID]"
+    result = _get(f"/api/v1/workflows/{workflow_id.strip()}")
     if isinstance(result, str):
         return result
     return json.dumps(result, indent=2)

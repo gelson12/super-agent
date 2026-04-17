@@ -1205,6 +1205,21 @@ def chat(req: ChatRequest, request: Request):
     except Exception as _sw_e:
         bg_log(f"Safe word check error: {_sw_e}", source="chat_endpoint")
 
+    # ── Budget hard-stop ──────────────────────────────────────────────────────
+    try:
+        from .learning.cost_ledger import is_over_budget as _is_over_budget
+        if _is_over_budget():
+            result = {
+                "model_used": "BUDGET",
+                "response": "Daily API budget exhausted. New requests are paused until midnight UTC. Existing sessions and Claude CLI Pro remain available.",
+                "routed_by": "budget_guard",
+                "complexity": 0,
+                "cache_hit": False,
+            }
+            return _chat_response_from_result(result, req.session_id)
+    except Exception:
+        pass
+
     try:
         result = dispatch(req.message, session_id=req.session_id)
     except Exception as _e:
@@ -1256,6 +1271,19 @@ def chat_stream(req: ChatRequest, request: Request):
         "Cache-Control": "no-cache",
         "X-Accel-Buffering": "no",
     }
+
+    # ── Safe word guard (stream endpoint) ────────────────────────────────────
+    try:
+        from .security.safe_word import check_authorization as _sw_check
+        _sw_ok, _sw_reason = _sw_check(req.message)
+        if not _sw_ok:
+            def _blocked_stream():
+                import json as _json
+                yield f"data: {_json.dumps({'text': _sw_reason})}\n\n"
+                yield "data: [DONE]\n\n"
+            return StreamingResponse(_blocked_stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"})
+    except Exception as _sw_e:
+        bg_log(f"Safe word check error (stream): {_sw_e}", source="chat_stream")
 
     # Detect whether this message needs tool routing
     msg = req.message
@@ -1805,6 +1833,17 @@ def submit_feedback(req: FeedbackRequest):
         try:
             from .learning.adapter import adapter as _adapt
             _adapt.record_preference(model, req.rating)
+        except Exception:
+            pass
+
+        # Feedback loop: mark the matching insight_log entry as error/win
+        # so adapter._analyse() sees user ratings, not just API error flags.
+        try:
+            insight_log.record_feedback(
+                session_id=req.session_id,
+                message=req.message,
+                is_error=is_error,
+            )
         except Exception:
             pass
 

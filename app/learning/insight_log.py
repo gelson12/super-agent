@@ -248,6 +248,36 @@ class InsightLog:
         all_entries = self._load_all()
         return list(reversed(all_entries[-n:]))
 
+    def record_feedback(self, session_id: str, message: str, is_error: bool) -> bool:
+        """
+        Retroactively mark the most recent insight log entry for this
+        session+message as error or win based on user feedback.
+        Returns True if a matching entry was found and updated.
+        """
+        try:
+            all_entries = self._load_all()
+            msg_prefix = message[:80].lower()
+            # Walk backwards to find the most recent matching entry
+            for entry in reversed(all_entries):
+                if (
+                    entry.get("session_id") == session_id
+                    and entry.get("message", "")[:80].lower() == msg_prefix
+                ):
+                    entry["error"] = is_error
+                    entry["feedback_applied"] = True
+                    if is_error and not entry.get("error_category"):
+                        entry["error_category"] = "user_rated_bad"
+                    try:
+                        with open(LOG_PATH, "w", encoding="utf-8") as f:
+                            import json as _json
+                            _json.dump(all_entries, f)
+                        return True
+                    except Exception:
+                        return False
+        except Exception:
+            pass
+        return False
+
 
 def _normalize_model(raw: str) -> str:
     """Normalize composite model names to base model for aggregation."""

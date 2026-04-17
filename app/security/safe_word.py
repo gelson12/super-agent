@@ -10,6 +10,7 @@ Default: alpha0  (change via Railway env var — do NOT commit the real word).
 """
 import re
 import logging
+import unicodedata
 
 from ..config import settings
 
@@ -69,12 +70,18 @@ def is_critical_request(message: str) -> bool:
     return any(k in lower for k in _EXACT_WRITE_KEYWORDS)
 
 
+def _normalize(text: str) -> str:
+    """NFKC-normalize to collapse Unicode homoglyphs (Cyrillic 'а' → Latin 'a', etc.)."""
+    return unicodedata.normalize("NFKC", text).lower()
+
+
 def has_safe_word(message: str) -> bool:
-    """Return True if the owner's safe word appears in the message (case-insensitive)."""
+    """Return True if the owner's safe word appears in the message.
+    Uses NFKC normalization to defeat Unicode homoglyph bypass attempts."""
     word = settings.owner_safe_word
     if not word:
         return True  # No safe word configured — open (dev/local mode only)
-    return word.lower() in message.lower()  # Case-insensitive match
+    return _normalize(word) in _normalize(message)
 
 
 def _detect_operation_type(message: str) -> str:

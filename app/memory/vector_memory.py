@@ -894,3 +894,73 @@ def extract_and_store_insights(
 
     t = _thr.Thread(target=_run, daemon=True)
     t.start()
+
+
+def backfill_embeddings(batch_size: int = 20) -> dict:
+    """
+    Nightly job: pick agent_memories rows where embedding IS NULL and generate embeddings.
+    Processes up to batch_size rows per call to respect Gemini rate limits.
+    Ordered by importance DESC so high-priority memories get vectors first.
+    Returns {"processed": N, "success": M, "skipped": K}.
+    """
+    if not _pg_enabled or not _conn_str:
+        return {"processed": 0, "success": 0, "skipped": 0, "error": "pg unavailable"}
+    try:
+        import psycopg2
+        conn = psycopg2.connect(_conn_str)
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT id, content FROM agent_memories
+            WHERE embedding IS NULL
+            ORDER BY importance DESC, created_at DESC
+            LIMIT %s
+        """, (batch_size,))
+        rows = cur.fetchall()
+        success = 0
+        skipped = 0
+        for row_id, content in rows:
+            emb = _embed(content)
+            if emb is None:
+                skipped += 1
+                continue
+            cur.execute(
+                "UPDATE agent_memories SET embedding = %s WHERE id = %s",
+                (json.dumps(emb), row_id),
+            )
+            success += 1
+        conn.commit()
+        cur.close()
+        conn.close()
+        return {"processed": len(rows), "success": success, "skipped": skipped}
+    except Exception as e:
+        return {"processed": 0, "success": 0, "skipped": 0, "error": str(e)}
+
+
+def apply_importance_decay() -> int:
+    """
+    Apply time-based importance decay to memories that become stale:
+    - 'fact', 'goal', 'general' memories older than 30 days lose 1 importance point
+    - 'preference' and 'decision' memories NEVER decay (user choices are persistent)
+    - Importance floor is 1 (memories are never deleted by decay alone)
+    Returns number of rows updated.
+    """
+    if not _pg_enabled or not _conn_str:
+        return 0
+    try:
+        import psycopg2
+        conn = psycopg2.connect(_conn_str)
+        conn.autocommit = True
+        cur = conn.cursor()
+        cur.execute("""
+            UPDATE agent_memories
+            SET importance = GREATEST(importance - 1, 1)
+            WHERE memory_type IN ('fact', 'goal', 'general')
+              AND importance > 1
+              AND created_at < NOW() - INTERVAL '30 days'
+        """)
+        updated = cur.rowcount
+        cur.close()
+        conn.close()
+        return updated
+    except Exception:
+        return 0

@@ -191,6 +191,30 @@
     .bubble th, .bubble td { border: 1px solid #333; padding: 6px 10px; }
     .bubble th { background: #1a1a1a; }
 
+    /* ── Message timestamp + copy ──────────────────────────────────────────── */
+    .msg-footer {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 4px;
+    }
+    .msg-ts {
+      font-size: 10px;
+      color: #444;
+    }
+    .copy-btn {
+      background: none;
+      border: none;
+      color: #444;
+      font-size: 12px;
+      cursor: pointer;
+      padding: 0 2px;
+      transition: color 0.15s;
+      line-height: 1;
+    }
+    .copy-btn:hover { color: #c9a227; }
+    .copy-btn.copied { color: #4ade80; }
+
     .message.user .bubble {
       background: linear-gradient(135deg, #7a5e10, #c9a227);
       color: #000;
@@ -1546,20 +1570,48 @@
     }
     div.appendChild(bubble);
 
+    // ── Footer: timestamp + copy (agent) + meta + TTS ───────────────────────
+    const footer = document.createElement('div');
+    footer.className = 'msg-footer';
+
+    const ts = document.createElement('span');
+    ts.className = 'msg-ts';
+    ts.textContent = new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+    footer.appendChild(ts);
+
+    if (role === 'agent') {
+      const copyBtn = document.createElement('button');
+      copyBtn.className = 'copy-btn';
+      copyBtn.title = 'Copy response';
+      copyBtn.textContent = '⧉';
+      copyBtn.onclick = () => {
+        navigator.clipboard.writeText(text).then(() => {
+          copyBtn.textContent = '✓';
+          copyBtn.classList.add('copied');
+          setTimeout(() => { copyBtn.textContent = '⧉'; copyBtn.classList.remove('copied'); }, 1500);
+        }).catch(() => {});
+      };
+      footer.appendChild(copyBtn);
+    }
+
     if (meta) {
-      const m = document.createElement('div');
+      const m = document.createElement('span');
       m.className = 'meta';
+      m.style.fontSize = '10px';
+      m.style.color = '#444';
       m.textContent = meta;
+      footer.appendChild(m);
       if (role === 'agent') {
         const sp = document.createElement('button');
         sp.className = 'speak-btn';
         sp.title = 'Read aloud';
         sp.textContent = '🔊';
         sp.onclick = () => speakText(text, sp);
-        m.appendChild(sp);
+        footer.appendChild(sp);
       }
-      div.appendChild(m);
     }
+
+    div.appendChild(footer);
     chat.appendChild(div);
     chat.scrollTop = chat.scrollHeight;
     return div;

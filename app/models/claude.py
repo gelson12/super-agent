@@ -24,7 +24,7 @@ def clear_api_fallback_flag() -> None:
 def _get_client() -> Anthropic:
     global _client
     if _client is None:
-        _client = Anthropic(api_key=settings.anthropic_api_key)
+        _client = Anthropic(api_key=settings.anthropic_api_key, timeout=120.0)
     return _client
 
 
@@ -55,17 +55,24 @@ def ask_claude(prompt: str, system: str = SYSTEM_PROMPT_CLAUDE) -> str:
     # 3. Both CLI and Gemini unavailable — fall back to Anthropic API as last resort
     if not settings.anthropic_api_key:
         return "[Claude unavailable: CLI and Gemini both unreachable, no API key configured]"
-    try:
-        _tls.api_used = True
-        resp = _get_client().messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=settings.max_tokens_claude,
-            system=system,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        return resp.content[0].text
-    except Exception as e:
-        return f"[Claude API fallback error: {e}]"
+    for _attempt in range(3):
+        try:
+            _tls.api_used = True
+            resp = _get_client().messages.create(
+                model="claude-sonnet-4-6",
+                max_tokens=settings.max_tokens_claude,
+                system=system,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            return resp.content[0].text
+        except RateLimitError:
+            if _attempt < 2:
+                import time as _t; _t.sleep(2 ** _attempt * 3)
+            else:
+                return "[Claude API error: rate limit — try again shortly]"
+        except Exception as e:
+            return f"[Claude API fallback error: {e}]"
+    return "[Claude API error: max retries exceeded]"
 
 
 def ask_claude_haiku(prompt: str, system: str = SYSTEM_PROMPT_CLAUDE) -> str:
@@ -92,17 +99,24 @@ def ask_claude_haiku(prompt: str, system: str = SYSTEM_PROMPT_CLAUDE) -> str:
     # 3. Both CLI and Gemini unavailable — fall back to Anthropic API as last resort
     if not settings.anthropic_api_key:
         return "[Claude unavailable: CLI and Gemini both unreachable, no API key configured]"
-    try:
-        _tls.api_used = True
-        resp = _get_client().messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=settings.max_tokens_claude,
-            system=system,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        return resp.content[0].text
-    except Exception as e:
-        return f"[Claude API fallback error: {e}]"
+    for _attempt in range(3):
+        try:
+            _tls.api_used = True
+            resp = _get_client().messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=settings.max_tokens_claude,
+                system=system,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            return resp.content[0].text
+        except RateLimitError:
+            if _attempt < 2:
+                import time as _t; _t.sleep(2 ** _attempt * 3)
+            else:
+                return "[Claude API error: rate limit — try again shortly]"
+        except Exception as e:
+            return f"[Claude API fallback error: {e}]"
+    return "[Claude API error: max retries exceeded]"
 
 
 def ask_claude_vision(image_bytes: bytes, media_type: str, text: str = "") -> str:

@@ -468,10 +468,23 @@ def _is_n8n_request(message: str) -> bool:
     return any(k in lower for k in _N8N_KEYWORDS)
 
 
+_AGENT_TIMEOUT_SECONDS = 180  # 3 min hard timeout per agent call
+
+
 def _safe_agent_call(agent_fn, *args, agent_name: str = "agent", **kwargs) -> str:
-    """Call an agent function, catching any exception and returning a friendly error."""
+    """Call an agent function with a timeout, catching any exception."""
+    import concurrent.futures as _cf
     try:
-        return agent_fn(*args, **kwargs)
+        with _cf.ThreadPoolExecutor(max_workers=1) as _pool:
+            _fut = _pool.submit(agent_fn, *args, **kwargs)
+            return _fut.result(timeout=_AGENT_TIMEOUT_SECONDS)
+    except _cf.TimeoutError:
+        try:
+            from ..activity_log import bg_log
+            bg_log(f"{agent_name} timed out after {_AGENT_TIMEOUT_SECONDS}s", source="dispatcher")
+        except Exception:
+            pass
+        return f"[{agent_name} timed out — the operation took too long. Please try again or break the task into smaller steps.]"
     except Exception as e:
         err_msg = str(e)[:300].replace("\n", " ")
         try:
@@ -583,11 +596,15 @@ def _build_extended_result(base: dict, **kwargs) -> dict:
         "confidence_score": _score_confidence(base.get("response", "")),
         "cloudinary_url": None,
         "memory_count": 0,
+        "routing_explanation": "",
         **kwargs,
     }
 
 
 # ── Main dispatch function ────────────────────────────────────────────────────
+
+_MAX_MESSAGE_LEN = 12_000
+
 
 def dispatch(message: str, force_model: str | None = None, session_id: str = "default") -> dict:
     """
@@ -614,6 +631,16 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
     red_team_ran, escalated, confidence_score, cloudinary_url, and more.
     """
 
+    # ── Message length guard ──────────────────────────────────────────────────
+    if len(message) > _MAX_MESSAGE_LEN:
+        return _build_extended_result({
+            "model_used": "GUARD",
+            "response": f"[Message too long — maximum {_MAX_MESSAGE_LEN:,} characters. Please shorten your request.]",
+            "routed_by": "length_guard",
+            "complexity": 0,
+            "cache_hit": False,
+        })
+
     # ── APP_CONTEXT: mobile app metadata routing (runs before everything else) ──
     # The mobile app may inject a [APP_CONTEXT]...[/APP_CONTEXT] block into the
     # message. If REQUEST_CATEGORY=LOCATION and ROUTE_TO=GEMINI_ONLY, the request
@@ -637,7 +664,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
                 "routed_by": "app_context:LOCATION:GEMINI_ONLY",
                 "complexity": 3,
                 "session_id": session_id,
-            })
+            }, routing_explanation="Location request detected via APP_CONTEXT — routed directly to Gemini CLI.")
         # APP_CONTEXT present but not a location request — strip block, continue normally
         if _app_ctx:
             message = _clean_msg
@@ -841,6 +868,8 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
     # maps to two DIFFERENT agents. Falls through silently on any failure.
     _COMPOUND_SPLITS = (" and also ", " and then ", " then ", " also ", " plus ")
     _msg_norm = " " + message.lower() + " "
+    # Only decompose if exactly one separator present (prevents runaway fan-out on
+    # messages like "do A and also B and also C and also D")
     _split_on = next(
         (s for s in _COMPOUND_SPLITS if _msg_norm.count(s) == 1 and len(message.split()) > 15),
         None,
@@ -892,7 +921,8 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
                                 _sub_responses["b"].get("complexity", 2),
                             ),
                             "cache_hit": False,
-                        }, memory_count=_memory_count)
+                        }, memory_count=_memory_count,
+                        routing_explanation=f"Compound query decomposed into two sub-tasks ({_r1} + {_r2}) and executed in parallel.")
         except Exception:
             pass  # Fall through to normal routing on any failure
 
@@ -905,7 +935,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
             "routed_by": "safe_word_guard",
             "complexity": 0,
             "cache_hit": False,
-        })
+        }, routing_explanation="Request blocked by safe-word guard — write operation requires owner authorization.")
 
     # ── 2. Forced model override ──────────────────────────────────────────────
     if force_model:
@@ -922,7 +952,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
                 "routed_by": "forced",
                 "complexity": 3,
                 "cache_hit": False,
-            })
+            }, routing_explanation="Shell agent forced by caller via force_model override.")
         if model not in _HANDLERS:
             return _build_extended_result({
                 "model_used": None,
@@ -933,7 +963,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
                 "routed_by": "forced",
                 "complexity": 0,
                 "cache_hit": False,
-            })
+            }, routing_explanation=f"Invalid force_model value '{force_model}' — request rejected.")
         complexity = score_complexity(message)
         cached = cache.get(message, model) if model in _CACHEABLE_MODELS else None
         if cached:
@@ -945,7 +975,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
                 "routed_by": "forced_cache",
                 "complexity": complexity,
                 "cache_hit": True,
-            })
+            }, routing_explanation="Cache hit on forced-model request — served from response cache.")
         response = _HANDLERS[model](message)
         if model in _CACHEABLE_MODELS:
             cache.set(message, model, response)
@@ -958,7 +988,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
             "routed_by": "forced",
             "complexity": complexity,
             "cache_hit": False,
-        })
+        }, routing_explanation=f"Model {model} forced by caller via force_model override (complexity={complexity}).")
 
     # ── 3. Trivial bypass ─────────────────────────────────────────────────────
     if detect_trivial(message):
@@ -972,7 +1002,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
                 "routed_by": "trivial_cache",
                 "complexity": 1,
                 "cache_hit": True,
-            })
+            }, routing_explanation="Trivial query — cache hit, served from Haiku response cache.")
         response = ask_claude_haiku(message, system=_system_haiku)
         cache.set(message, "HAIKU", response)
         insight_log.record(message, "HAIKU", response, "trivial", 1, session_id)
@@ -1172,7 +1202,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
                 "routed_by": "circuit_breaker",
                 "complexity": 1,
                 "cache_hit": False,
-            })
+            }, routing_explanation="n8n circuit breaker is open — service appears down, request short-circuited.")
         from ..agents.n8n_agent import run_n8n_agent
         _write_active_task(session_id, message)
         response = _safe_agent_call(run_n8n_agent, _agent_message, agent_name="n8n_agent")
@@ -1192,7 +1222,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
             "routed_by": "n8n_early",
             "complexity": complexity,
             "cache_hit": False,
-        })
+        }, routing_explanation=f"n8n workflow agent selected — automation keywords matched (complexity={complexity}).")
 
     # ── 4c. Self-improvement routing ─────────────────────────────────────────
     if _is_self_improve_request(message):
@@ -1210,7 +1240,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
             "routed_by": "self_improve",
             "complexity": complexity,
             "cache_hit": False,
-        })
+        }, routing_explanation=f"Self-improve agent selected — infrastructure query detected (complexity={complexity}).")
 
     # ── 4d. Isolation debug routing ───────────────────────────────────────────
     if _is_debug_request(message):
@@ -1234,7 +1264,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
             "routed_by": "isolation_debug",
             "complexity": complexity,
             "cache_hit": False,
-        })
+        }, routing_explanation=f"Shell agent selected in isolation-debug mode — systematic Isolate→Identify→Fix→Integrate stance (complexity={complexity}).")
 
     # ── 5. Routing: AI classifier (with timeout) + keyword arbitration ───────
     #
@@ -1423,7 +1453,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
             "routed_by": "shell_keywords",
             "complexity": complexity,
             "cache_hit": False,
-        })
+        }, routing_explanation=f"Shell/CLI agent selected (complexity={complexity}, keywords matched).")
 
     if _kw_route == "GITHUB":
         _write_active_task(session_id, message)
@@ -1451,7 +1481,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
             "routed_by": "github_keywords",
             "complexity": complexity,
             "cache_hit": False,
-        })
+        }, routing_explanation=f"GitHub agent selected — repository operation detected (complexity={complexity}).")
 
     if _kw_route == "N8N":
         if _cb_is_open("n8n"):
@@ -1461,7 +1491,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
                 "routed_by": "circuit_breaker",
                 "complexity": 1,
                 "cache_hit": False,
-            })
+            }, routing_explanation="n8n circuit breaker is open — service appears down, request short-circuited.")
         _write_active_task(session_id, message)
         _mark_working("N8N Agent", message[:100])
         _mark_talking("Claude CLI Pro", "N8N Agent")
@@ -1488,7 +1518,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
             "routed_by": "n8n_keywords",
             "complexity": complexity,
             "cache_hit": False,
-        })
+        }, routing_explanation=f"n8n workflow agent selected — automation keywords matched (complexity={complexity}).")
 
     # ── 6. Adaptive model selection ───────────────────────────────────────────
     haiku_ceiling = adapter.get_haiku_ceiling()
@@ -1577,7 +1607,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
                 "routed_by": f"{routed_by}_cache",
                 "complexity": complexity,
                 "cache_hit": True,
-            })
+            }, routing_explanation="Cache hit — served from response cache.")
 
     # ── 8a. Ensemble (complexity == 5) ────────────────────────────────────────
     # BUG 9 FIX: skip ensemble when a keyword agent route is set.
@@ -1613,6 +1643,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
                 models_used=ensemble_result["models_used"],
                 disagreement_detected=ensemble_result["disagreement_detected"],
                 cloudinary_url=ensemble_result["cloudinary_url"],
+                routing_explanation=f"Ensemble voting used (complexity={complexity}) — three models synthesized into one answer.",
             )
 
     # ── 8b. Single model call ─────────────────────────────────────────────────
@@ -1782,4 +1813,5 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
         escalated=rt_result["escalated"],
         red_verdict=rt_result.get("red_verdict"),
         memory_count=_memory_count,
+        routing_explanation=f"Routed to {model} (complexity={complexity}, classifier confidence={_routing_confidence:.0%}).",
     )

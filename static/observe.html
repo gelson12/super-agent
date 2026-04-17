@@ -765,8 +765,19 @@ async function loadAll() {
     'Last updated ' + now.toLocaleTimeString();
 }
 
-// ── Auto-refresh every 60s ───────────────────────────────────────────────────
+// ── Auto-refresh every 60s (pause when tab is hidden, resume + reload on focus) ──
 let _autoTimer = setInterval(loadAll, 60_000);
+
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    clearInterval(_autoTimer);
+    _autoTimer = null;
+  } else {
+    // Tab regained focus — reload immediately then restart timer
+    loadAll();
+    _autoTimer = setInterval(loadAll, 60_000);
+  }
+});
 
 // ── Grab token from parent page if available ──────────────────────────────────
 function _initAuth() {
