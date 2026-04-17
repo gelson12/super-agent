@@ -1719,6 +1719,8 @@ function renderDesk(worker) {
   const needsAttention = worker.state === "strike" || worker.state === "sick" || worker.state === "error";
   const scanLine = worker.state === "working" ? '<div class="screen-scan-line"></div>' : "";
 
+  const _WORKER_LABELS    = { "Claude CLI Pro": "Claude — Principal Engineer" };
+  const displayName = _WORKER_LABELS[worker.id] || worker.id;
   const _WORKER_SUBTITLES = { "Daphney": "Secretary" };
   const subtitle = _WORKER_SUBTITLES[worker.id]
     ? `<div class="worker-subtitle">${esc(_WORKER_SUBTITLES[worker.id])}</div>` : "";
@@ -1728,7 +1730,7 @@ function renderDesk(worker) {
          title="${esc(tooltip)}" onclick="openLog(this.dataset.worker)">
       ${needsAttention ? '<div class="attention-badge">!</div>' : ''}
       <div class="name">
-        ${esc(worker.id)}
+        ${esc(displayName)}
         ${(worker.recovery_count_today||0) > 0 ? `<span class="recovery-count-badge ${(worker.recovery_count_today||0) >= 3 ? 'high' : ''}" title="${worker.recovery_count_today} auto-recoveries today">↺${worker.recovery_count_today}${(worker.recovery_count_today||0) >= 3 ? ' 🔥' : ''}</span>` : ''}
       </div>
       ${subtitle}
