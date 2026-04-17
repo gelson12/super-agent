@@ -242,14 +242,36 @@ async def lifespan(app: FastAPI):
         _sys_creds.path.insert(0, "/app")
         from app.learning.cli_auto_login import _restore_credentials_from_db
         _vol_backup = __import__("pathlib").Path("/workspace/.claude_credentials_backup.json")
-        if not _vol_backup.exists():
-            _bg_log("Boot: volume backup absent — attempting DB restore (Layer 2b)", "boot")
+        # Attempt DB restore if volume backup is absent OR if it's expired.
+        # An expired backup on disk should not block a fresher DB record from restoring.
+        _vol_expired = False
+        if _vol_backup.exists():
+            try:
+                import json as _jv, time as _tv
+                _vd = _jv.loads(_vol_backup.read_text())
+                _vm = None
+                for _vk in ("expiresAt", "expires_at"):
+                    if _vk in _vd: _vm = _vd[_vk]; break
+                if _vm is None:
+                    for _vnk in ("claudeAiOauth", "claudeAiOAuth", "oauth", "session"):
+                        _vn = _vd.get(_vnk, {})
+                        if isinstance(_vn, dict):
+                            _vm = _vn.get("expiresAt") or _vn.get("expires_at")
+                        if _vm: break
+                if _vm and (_tv.time() * 1000) > float(_vm) + 300_000:
+                    _vol_expired = True
+            except Exception:
+                pass
+
+        if not _vol_backup.exists() or _vol_expired:
+            _reason = "absent" if not _vol_backup.exists() else "EXPIRED"
+            _bg_log(f"Boot: volume backup {_reason} — attempting DB restore (Layer 2b)", "boot")
             if _restore_credentials_from_db():
                 _bg_log("Boot: credentials restored from PostgreSQL ✓", "boot")
             else:
                 _bg_log("Boot: DB restore returned nothing — will rely on env var / watchdog", "boot")
         else:
-            _bg_log("Boot: volume backup present — DB restore not needed", "boot")
+            _bg_log("Boot: volume backup present and valid — DB restore not needed", "boot")
     except Exception as _e:
         _bg_log(f"Boot: DB credential restore skipped — {_e}", "boot")
 
@@ -282,7 +304,16 @@ async def lifespan(app: FastAPI):
                     _bg_log(f"Boot: Layer 1 backup valid — expires in {_remaining // 3600}h {(_remaining % 3600) // 60}m", "boot")
                 else:
                     _bg_log(f"Boot: Layer 1 backup EXPIRED ({abs(_remaining) // 60}m ago) — scheduling immediate recovery", "boot")
-                    asyncio.get_event_loop().run_in_executor(None, lambda: __import__("sys") or __import__("sys").path.insert(0, "/app") or __import__("app.learning.cli_auto_login", fromlist=["full_recovery_chain"]).full_recovery_chain())
+                    def _boot_recover():
+                        try:
+                            import sys as _s; _s.path.insert(0, "/app")
+                            from app.learning.cli_auto_login import full_recovery_chain as _frc
+                            _bg_log("Boot: immediate recovery chain started", "boot")
+                            ok = _frc()
+                            _bg_log(f"Boot: immediate recovery chain {'SUCCEEDED ✓' if ok else 'FAILED — watchdog will retry'}", "boot")
+                        except Exception as _re:
+                            _bg_log(f"Boot: immediate recovery error — {_re}", "boot")
+                    asyncio.get_event_loop().run_in_executor(None, _boot_recover)
             else:
                 _bg_log("Boot: Layer 1 backup present but no expiresAt found — watchdog will verify", "boot")
         else:
