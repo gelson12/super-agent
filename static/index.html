@@ -400,9 +400,10 @@
     }
     @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
 
-    ::-webkit-scrollbar { width: 6px; }
-    ::-webkit-scrollbar-track { background: transparent; }
-    ::-webkit-scrollbar-thumb { background: #2a2a2a; border-radius: 3px; }
+    ::-webkit-scrollbar { width: 10px; }
+    ::-webkit-scrollbar-track { background: #111; border-left: 1px solid #222; }
+    ::-webkit-scrollbar-thumb { background: #333; border-radius: 5px; border: 2px solid #111; min-height: 36px; }
+    ::-webkit-scrollbar-thumb:hover { background: #555; }
 
     /* ── Status bar ───────────────────────────────────────────────────────── */
     #status-bar {
@@ -461,14 +462,13 @@
       flex: 1;
       overflow-y: auto;
       min-height: 0;
-      /* Firefox */
-      scrollbar-width: thin;
-      scrollbar-color: #6b5337 #1a1208;
+      scrollbar-width: auto;
+      scrollbar-color: #c9a96e #1a1208;
     }
-    #office-desk-scroll::-webkit-scrollbar        { width: 5px; }
-    #office-desk-scroll::-webkit-scrollbar-track  { background: #1a1208; }
-    #office-desk-scroll::-webkit-scrollbar-thumb  { background: #6b5337; border-radius: 3px; }
-    #office-desk-scroll::-webkit-scrollbar-thumb:hover { background: #c9a96e; }
+    #office-desk-scroll::-webkit-scrollbar        { width: 10px; }
+    #office-desk-scroll::-webkit-scrollbar-track  { background: #1a1208; border-left: 1px solid #3d2b16; }
+    #office-desk-scroll::-webkit-scrollbar-thumb  { background: linear-gradient(180deg, #6b5337, #c9a96e); border-radius: 5px; border: 2px solid #1a1208; min-height: 36px; }
+    #office-desk-scroll::-webkit-scrollbar-thumb:hover { background: linear-gradient(180deg, #c9a96e, #e8d5a0); }
 
     .office-header {
       display: flex;
@@ -747,14 +747,13 @@
       box-shadow: 0 6px 20px rgba(0,0,0,0.7);
       max-height: calc(100vh - 80px);
       overflow-y: auto;
-      /* Firefox */
-      scrollbar-width: thin;
-      scrollbar-color: #6b5337 #111;
+      scrollbar-width: auto;
+      scrollbar-color: #c9a96e #111;
     }
-    .o-history-modal::-webkit-scrollbar        { width: 5px; }
-    .o-history-modal::-webkit-scrollbar-track  { background: #111; }
-    .o-history-modal::-webkit-scrollbar-thumb  { background: #6b5337; border-radius: 3px; }
-    .o-history-modal::-webkit-scrollbar-thumb:hover { background: #c9a96e; }
+    .o-history-modal::-webkit-scrollbar        { width: 10px; }
+    .o-history-modal::-webkit-scrollbar-track  { background: #111; border-left: 1px solid #3d2b16; }
+    .o-history-modal::-webkit-scrollbar-thumb  { background: linear-gradient(180deg, #6b5337, #c9a96e); border-radius: 5px; border: 2px solid #111; min-height: 36px; }
+    .o-history-modal::-webkit-scrollbar-thumb:hover { background: linear-gradient(180deg, #c9a96e, #e8d5a0); }
 
     .o-hist-header {
       display: flex;
@@ -940,15 +939,14 @@
       overflow-y: auto;
       flex: 1;
       padding: 8px 12px 16px;
-      /* Firefox */
-      scrollbar-width: thin;
-      scrollbar-color: #6b5337 #1a1208;
+      scrollbar-width: auto;
+      scrollbar-color: #c9a96e #1a1208;
     }
     #office-stats-panel.visible { display: block; }
-    #office-stats-panel::-webkit-scrollbar        { width: 5px; }
-    #office-stats-panel::-webkit-scrollbar-track  { background: #1a1208; }
-    #office-stats-panel::-webkit-scrollbar-thumb  { background: #6b5337; border-radius: 3px; }
-    #office-stats-panel::-webkit-scrollbar-thumb:hover { background: #c9a96e; }
+    #office-stats-panel::-webkit-scrollbar        { width: 10px; }
+    #office-stats-panel::-webkit-scrollbar-track  { background: #1a1208; border-left: 1px solid #3d2b16; }
+    #office-stats-panel::-webkit-scrollbar-thumb  { background: linear-gradient(180deg, #6b5337, #c9a96e); border-radius: 5px; border: 2px solid #1a1208; min-height: 36px; }
+    #office-stats-panel::-webkit-scrollbar-thumb:hover { background: linear-gradient(180deg, #c9a96e, #e8d5a0); }
 
     .os-section {
       margin-bottom: 14px;
