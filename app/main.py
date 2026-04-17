@@ -115,6 +115,23 @@ def _scheduled_health_check() -> None:
                     )
             except Exception:
                 pass
+            # Proactive DeepSeek balance check — marks strike/done on dashboard
+            try:
+                from .models.deepseek import check_deepseek_balance
+                _ds = check_deepseek_balance()
+                if _ds.get("available") is False:
+                    bg_log(
+                        f"Health check: DeepSeek balance insufficient — widget set to STRIKE "
+                        f"(balance: {_ds.get('balance_usd')})",
+                        source="health_check",
+                    )
+                elif _ds.get("available") is True:
+                    bg_log(
+                        f"Health check: DeepSeek balance OK — ${_ds.get('balance_usd', '?')} available",
+                        source="health_check",
+                    )
+            except Exception:
+                pass
             # Refresh CLI worker statuses — clears stale sick/strike states
             try:
                 from .learning.agent_status_tracker import seed_live_status
@@ -4117,6 +4134,15 @@ def credits_pro_status():
                 status[f"{_key}_recovery_count_today"] = _w.get("recovery_count_today", 0)
         except Exception:
             pass
+
+        # DeepSeek strike state from tracker (free, no API call)
+        try:
+            _ds_worker = next((w for w in workers if w["id"] == "DeepSeek"), None)
+            status["deepseek_available"] = (_ds_worker is None or _ds_worker.get("state") != "strike")
+            status["deepseek_state"] = _ds_worker.get("state", "idle") if _ds_worker else "idle"
+        except Exception:
+            status["deepseek_available"] = True
+            status["deepseek_state"] = "unknown"
 
         # Expose login rate-limit state so dashboard can show cooldown countdown
         try:
