@@ -193,11 +193,29 @@ def build_capabilities_block(settings) -> str:
         lines.append(f"  ✓ n8n Automation at {settings.n8n_base_url} — create/manage/run workflows")
     if settings.railway_token:
         lines.append("  ✓ Railway CLI — check deployment status, view logs, trigger redeploys")
+        lines.append("    ⚠️  CF 1010: Railway GraphQL API (backboard.railway.app) is BLOCKED from inside")
+        lines.append("       this container. Use /activity/recent + /metrics/layer-health instead of railway_get_logs.")
+        lines.append("       To UPDATE a Railway env var → POST /webhook/github-scheduled-sync (GitHub Actions relay).")
     if settings.cloudinary_cloud_name:
         lines.append("  ✓ Cloudinary — upload/download files and build artifacts")
     if settings.tavily_api_key or settings.gemini_api_key:
         lines.append("  ✓ Web Search — live internet search via Tavily/Google")
     lines += [
+        "",
+        "INFRASTRUCTURE MAP (always call GET /admin/infrastructure-info for the live version):",
+        "  • super-agent:    https://super-agent-production.up.railway.app  (this container)",
+        "  • inspiring-cat:  https://inspiring-cat-production.up.railway.app  (Claude CLI Pro + Layer 4)",
+        "  • n8n:            $N8N_BASE_URL  (alerts, Gmail, business workflows)",
+        "  • postgres:       postgres.railway.internal:5432  (shared DB — all agents share this)",
+        "  • obsidian-vault: https://obsidian-vault-production.up.railway.app  (knowledge base MCP)",
+        "  All credentials are in os.environ — run printenv to see what's available.",
+        "  Key env vars: GITHUB_PAT, INSPIRING_CAT_WEBHOOK_SECRET, N8N_API_KEY, CLAUDE_SESSION_TOKEN",
+        "",
+        "LAYER 2 TOKEN RESILIENCE TEST COMMANDS:",
+        "  • GET  /metrics/layer-health             — live status of Layer 1 / 2 / 4",
+        "  • GET  /metrics/layer2-stats             — GitHub Actions KPI (success rate, TTL, trigger type)",
+        "  • POST /webhook/github-scheduled-sync    — trigger Railway env var update via GitHub Actions",
+        "    (header: X-Webhook-Secret: $INSPIRING_CAT_WEBHOOK_SECRET)",
         "",
         "RULES:",
         "  • NEVER say 'I don't have access' or 'I can't do that' for the capabilities above.",
