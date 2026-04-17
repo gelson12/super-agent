@@ -269,6 +269,34 @@
     /* loading overlay */
     .spinner { color: #444; font-size: 11px; padding: 20px 0; text-align: center; }
 
+    /* ── Layer 2 KPI panel ──────────────────────────────────────────────── */
+    .l2-kpi-row {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .l2-kpi-card {
+      background: #0f0f0f;
+      border: 1px solid #2a2a2a;
+      border-radius: 10px;
+      padding: 14px 16px;
+      text-align: center;
+    }
+    .l2-kpi-card .kv  { font-size: 1.7rem; font-weight: 700; color: #fff; line-height: 1; }
+    .l2-kpi-card .kl  { font-size: 10px; color: #555; margin-top: 5px; text-transform: uppercase; letter-spacing: 0.5px; }
+    .l2-kpi-card.green .kv  { color: #4ade80; }
+    .l2-kpi-card.yellow .kv { color: #facc15; }
+    .l2-kpi-card.red .kv    { color: #f87171; }
+    .l2-kpi-card.blue .kv   { color: #60a5fa; }
+
+    .l2-recent-table { width: 100%; border-collapse: collapse; font-size: 11px; margin-top: 12px; }
+    .l2-recent-table th { text-align: left; padding: 5px 8px; color: #444; border-bottom: 1px solid #1a1a1a; }
+    .l2-recent-table td { padding: 6px 8px; border-bottom: 1px solid #1a1a1a; color: #aaa; }
+    .l2-recent-table tr:last-child td { border-bottom: none; }
+    .l2-ok   { color: #4ade80; font-weight: 700; }
+    .l2-fail { color: #f87171; font-weight: 700; }
+
     /* ── Auth modal ─────────────────────────────────────────────────────── */
     .modal-overlay {
       display: none;
@@ -513,6 +541,12 @@
     <div id="conf-list" class="conf-list">
       <div class="spinner">Loading…</div>
     </div>
+  </div>
+
+  <!-- ── Layer 2 GitHub Actions KPI ───────────────────────────────────── -->
+  <div class="chart-card" style="margin-bottom:20px;" id="layer2-kpi-card">
+    <h3>⚙️ Layer 2 — GitHub Actions Token Persist (last 7 days)</h3>
+    <div id="layer2-kpi-content"><div class="spinner">Loading…</div></div>
   </div>
 
   <!-- ── Session Layer Health ──────────────────────────────────────────── -->
@@ -893,6 +927,7 @@ async function loadAll() {
     loadConfidence(),
     loadMemory(),
     loadAlerts(),
+    loadLayer2Stats(),
     loadLayerHealth(),
   ]);
 
@@ -942,6 +977,119 @@ function _dismissAuthModal() {
   document.getElementById('auth-modal').classList.remove('active');
   _showAuthError();
   loadAll();
+}
+
+// ── Layer 2 KPI panel ─────────────────────────────────────────────────────────
+async function loadLayer2Stats() {
+  const el = document.getElementById('layer2-kpi-content');
+  const data = await _get('/metrics/layer2-stats');
+
+  if (!data || !data.available) {
+    el.innerHTML = `<span class="spinner">${data?.reason || 'No data yet — stats will appear after the first GitHub Action run.'}</span>`;
+    return;
+  }
+
+  const rateCls = data.success_rate_pct == null ? '' :
+    data.success_rate_pct >= 95 ? 'green' : data.success_rate_pct >= 75 ? 'yellow' : 'red';
+
+  const avgTtlH = data.avg_ttl_seconds != null ? (data.avg_ttl_seconds / 3600).toFixed(1) + 'h' : '—';
+  const lastOk  = data.last_success_at
+    ? Math.round((Date.now() - new Date(data.last_success_at)) / 60000) + 'm ago'
+    : '—';
+
+  // KPI cards
+  let html = `<div class="l2-kpi-row">
+    <div class="l2-kpi-card ${rateCls}">
+      <div class="kv">${data.success_rate_pct != null ? data.success_rate_pct + '%' : '—'}</div>
+      <div class="kl">Success Rate</div>
+    </div>
+    <div class="l2-kpi-card blue">
+      <div class="kv">${data.total}</div>
+      <div class="kl">Total Pushes</div>
+    </div>
+    <div class="l2-kpi-card ${data.failures > 0 ? 'red' : 'green'}">
+      <div class="kv">${data.failures}</div>
+      <div class="kl">Failures</div>
+    </div>
+    <div class="l2-kpi-card">
+      <div class="kv">${data.avg_attempts != null ? data.avg_attempts : '—'}</div>
+      <div class="kl">Avg Attempts</div>
+    </div>
+    <div class="l2-kpi-card">
+      <div class="kv">${avgTtlH}</div>
+      <div class="kl">Avg TTL at Push</div>
+    </div>
+    <div class="l2-kpi-card green">
+      <div class="kv" style="font-size:1rem">${lastOk}</div>
+      <div class="kl">Last Success</div>
+    </div>
+  </div>`;
+
+  // Daily bar chart
+  if (data.daily && data.daily.length > 0) {
+    html += `<div class="chart-wrap medium" style="margin-bottom:14px;">
+      <canvas id="chart-layer2-daily"></canvas>
+    </div>`;
+  }
+
+  // Trigger breakdown badges
+  if (data.by_trigger && Object.keys(data.by_trigger).length > 0) {
+    html += `<div style="margin-bottom:14px;display:flex;gap:10px;flex-wrap:wrap;">`;
+    for (const [t, n] of Object.entries(data.by_trigger)) {
+      html += `<span style="background:#1a1a1a;border:1px solid #333;border-radius:6px;
+        padding:4px 10px;font-size:11px;color:#888;">
+        <span style="color:#c9a227;font-weight:700">${esc(t)}</span> × ${n}
+      </span>`;
+    }
+    html += `</div>`;
+  }
+
+  // Recent events table
+  if (data.recent && data.recent.length > 0) {
+    html += `<table class="l2-recent-table">
+      <thead><tr><th>Time</th><th>Trigger</th><th>Result</th><th>Attempts</th><th>TTL</th></tr></thead>
+      <tbody>`;
+    for (const r of data.recent) {
+      const ago = r.at ? Math.round((Date.now() - new Date(r.at)) / 60000) + 'm ago' : '—';
+      const ttl = r.ttl_seconds != null ? (r.ttl_seconds / 3600).toFixed(1) + 'h' : '—';
+      html += `<tr>
+        <td style="white-space:nowrap">${esc(ago)}</td>
+        <td>${esc(r.trigger || '—')}</td>
+        <td class="${r.success ? 'l2-ok' : 'l2-fail'}">${r.success ? '✓ OK' : '✗ FAIL'}</td>
+        <td>${r.attempts ?? '—'}</td>
+        <td>${ttl}</td>
+      </tr>`;
+    }
+    html += `</tbody></table>`;
+  }
+
+  el.innerHTML = html;
+
+  // Render daily chart after HTML is injected
+  if (data.daily && data.daily.length > 0) {
+    _destroyChart('layer2-daily');
+    const ctx = document.getElementById('chart-layer2-daily');
+    if (ctx) {
+      _charts['layer2-daily'] = new Chart(ctx.getContext('2d'), {
+        type: 'bar',
+        data: {
+          labels: data.daily.map(d => d.day.slice(5)),  // MM-DD
+          datasets: [
+            { label: 'Success', data: data.daily.map(d => d.ok),   backgroundColor: '#4ade8066', borderColor: '#4ade80', borderWidth: 1 },
+            { label: 'Failure', data: data.daily.map(d => d.fail), backgroundColor: '#f8717166', borderColor: '#f87171', borderWidth: 1 },
+          ],
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: { legend: { labels: { color: '#888', font: { size: 11 } } } },
+          scales: {
+            x: { stacked: true, grid: { color: '#1a1a1a' }, ticks: { color: '#555' } },
+            y: { stacked: true, grid: { color: '#1a1a1a' }, ticks: { color: '#555', stepSize: 1 } },
+          },
+        },
+      });
+    }
+  }
 }
 
 // ── Layer Health panel ────────────────────────────────────────────────────────

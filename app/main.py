@@ -3178,13 +3178,32 @@ async def github_layer2_result(request: Request):
     if expected and not _secrets.compare_digest(provided, expected):
         raise HTTPException(status_code=403, detail="Bad secret")
 
-    success  = payload.get("success", False)
-    attempts = payload.get("attempts", 0)
-    nonce    = payload.get("nonce", "")
+    success       = payload.get("success", False)
+    attempts      = payload.get("attempts", 0)
+    nonce         = payload.get("nonce", "")
+    trigger_type  = payload.get("trigger_type", "unknown")
+    ttl_seconds   = payload.get("ttl_seconds")
+    error_message = payload.get("error_message")
+
     bg_log(
-        f"Layer 2 GitHub result: success={success}, attempts={attempts}, nonce={nonce}",
+        f"Layer 2 GitHub result: success={success}, attempts={attempts}, "
+        f"trigger={trigger_type}, ttl={ttl_seconds}s, nonce={nonce}",
         source="layer2",
     )
+
+    # Persist to PostgreSQL for KPI dashboard
+    try:
+        _persist_layer2_event(
+            trigger_type=trigger_type,
+            success=success,
+            attempts=int(attempts),
+            ttl_at_trigger=int(ttl_seconds) if ttl_seconds is not None else None,
+            nonce=nonce,
+            error_message=error_message,
+        )
+    except Exception:
+        pass
+
     return {"ok": True}
 
 
@@ -3276,6 +3295,52 @@ def _get_db_conn():
     return psycopg2.connect(url)
 
 
+def _ensure_layer2_table():
+    """Create layer2_events table for Layer 2 GitHub Actions KPI tracking."""
+    conn = _get_db_conn()
+    if conn is None:
+        return
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS layer2_events (
+                        id              SERIAL PRIMARY KEY,
+                        triggered_at    TIMESTAMPTZ DEFAULT NOW(),
+                        trigger_type    TEXT,
+                        success         BOOLEAN,
+                        attempts        INTEGER,
+                        ttl_at_trigger  INTEGER,
+                        nonce           TEXT,
+                        error_message   TEXT
+                    )
+                """)
+    except Exception:
+        pass
+    finally:
+        conn.close()
+
+
+def _persist_layer2_event(trigger_type: str, success: bool, attempts: int,
+                           ttl_at_trigger: int | None, nonce: str,
+                           error_message: str | None = None):
+    conn = _get_db_conn()
+    if conn is None:
+        return
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO layer2_events
+                        (trigger_type, success, attempts, ttl_at_trigger, nonce, error_message)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                """, (trigger_type, success, attempts, ttl_at_trigger, nonce, error_message))
+    except Exception:
+        pass
+    finally:
+        conn.close()
+
+
 def _ensure_bridge_tables():
     """Create bridge_leads and bridge_newsletter tables if they don't exist."""
     conn = _get_db_conn()
@@ -3344,6 +3409,7 @@ def _send_email(subject: str, body: str) -> None:
 # Run once at startup
 try:
     _ensure_bridge_tables()
+    _ensure_layer2_table()
 except Exception:
     pass  # DB not yet available — Railway provisions it async
 
@@ -3768,6 +3834,92 @@ async def metrics_layer_health():
         result["layer2"]["detail"] = "GITHUB_TOKEN not set — add to Railway env vars"
 
     return result
+
+
+@app.get("/metrics/layer2-stats", tags=["metrics"])
+def metrics_layer2_stats(days: int = 7):
+    """Layer 2 GitHub Actions KPI stats for the observability dashboard."""
+    conn = _get_db_conn()
+    if conn is None:
+        return {"available": False, "reason": "no database"}
+    try:
+        with conn.cursor() as cur:
+            # KPI summary for the requested window
+            cur.execute("""
+                SELECT
+                    COUNT(*)                                          AS total,
+                    SUM(CASE WHEN success THEN 1 ELSE 0 END)         AS successes,
+                    ROUND(AVG(attempts)::numeric, 1)                 AS avg_attempts,
+                    MAX(triggered_at) FILTER (WHERE success)         AS last_success_at,
+                    MIN(ttl_at_trigger) FILTER (WHERE success)       AS min_ttl_on_success,
+                    AVG(ttl_at_trigger) FILTER (WHERE ttl_at_trigger IS NOT NULL) AS avg_ttl
+                FROM layer2_events
+                WHERE triggered_at > NOW() - (%s || ' days')::INTERVAL
+            """, (days,))
+            row = cur.fetchone()
+            total, successes, avg_attempts, last_success_at, min_ttl, avg_ttl = row
+            total     = total     or 0
+            successes = successes or 0
+            success_rate = round((successes / total * 100), 1) if total > 0 else None
+
+            # Daily breakdown for chart (success + failure per day)
+            cur.execute("""
+                SELECT
+                    DATE(triggered_at AT TIME ZONE 'UTC')            AS day,
+                    SUM(CASE WHEN success THEN 1 ELSE 0 END)         AS ok,
+                    SUM(CASE WHEN NOT success THEN 1 ELSE 0 END)     AS fail
+                FROM layer2_events
+                WHERE triggered_at > NOW() - (%s || ' days')::INTERVAL
+                GROUP BY day ORDER BY day
+            """, (days,))
+            daily = [{"day": str(r[0]), "ok": r[1], "fail": r[2]} for r in cur.fetchall()]
+
+            # Trigger type breakdown
+            cur.execute("""
+                SELECT trigger_type, COUNT(*) AS n
+                FROM layer2_events
+                WHERE triggered_at > NOW() - (%s || ' days')::INTERVAL
+                GROUP BY trigger_type ORDER BY n DESC
+            """, (days,))
+            by_trigger = {r[0]: r[1] for r in cur.fetchall()}
+
+            # Last 10 events
+            cur.execute("""
+                SELECT triggered_at, trigger_type, success, attempts, ttl_at_trigger, error_message
+                FROM layer2_events
+                ORDER BY triggered_at DESC LIMIT 10
+            """)
+            recent = [
+                {
+                    "at":          r[0].isoformat() if r[0] else None,
+                    "trigger":     r[1],
+                    "success":     r[2],
+                    "attempts":    r[3],
+                    "ttl_seconds": r[4],
+                    "error":       r[5],
+                }
+                for r in cur.fetchall()
+            ]
+
+        return {
+            "available":       True,
+            "window_days":     days,
+            "total":           total,
+            "successes":       successes,
+            "failures":        total - successes,
+            "success_rate_pct": success_rate,
+            "avg_attempts":    float(avg_attempts) if avg_attempts else None,
+            "last_success_at": last_success_at.isoformat() if last_success_at else None,
+            "min_ttl_on_success": min_ttl,
+            "avg_ttl_seconds": float(avg_ttl) if avg_ttl else None,
+            "by_trigger":      by_trigger,
+            "daily":           daily,
+            "recent":          recent,
+        }
+    except Exception as exc:
+        return {"available": False, "reason": str(exc)}
+    finally:
+        conn.close()
 
 
 @app.get("/metrics/routing-confidence", tags=["metrics"])
