@@ -1,7 +1,7 @@
 # Claude CLI Pro Session Token Recovery — Audit Findings
 
 > **Purpose:** Shared findings between Claude sessions. Each session appends its findings.
-> **Status:** 🔴 TOKEN EXPIRED — Recovery in progress
+> **Status:** ✅ FULLY RECOVERED — All 3 layers confirmed healthy (2026-04-17 ~14:00 UTC)
 
 ---
 
@@ -142,4 +142,249 @@ Results written to `/workspace/RECOVERY_TEST_RESULTS.md`.
 
 ---
 
-*Last updated: 2026-04-17 by Session 2*
+---
+
+## Session 2 Findings (2026-04-17 ~14:00 UTC)
+
+### Bug 3 — Stale sick state never cleared when CLI_DOWN flag is not set
+
+**File:** `app/learning/pro_cli_watchdog.py` — `maybe_recover()`  
+**Symptom:** After a successful token recovery, `cli_down: false` was set correctly, but the in-memory `agent_status_tracker` still showed Claude CLI Pro as `sick` (TOKEN ERR). The dashboard would never self-heal back to idle because:
+
+```python
+# BROKEN: early return kills the only path that calls mark_done()
+if not is_cli_down():
+    return False   ← mark_done("Claude CLI Pro") is NEVER called from here
+```
+
+`mark_done()` is only called deep inside `maybe_recover()` after a full recovery run. If `is_cli_down()` is already False (flag was cleared by a different path, e.g., container restart), the watchdog skips everything — including the status clear.
+
+**Fix applied (this session):**
+```python
+if not is_cli_down():
+    # Clear stale sick state if CLI is actually healthy
+    try:
+        from .agent_status_tracker import get_worker_status, mark_done as _md_stale
+        _ws = get_worker_status("Claude CLI Pro")
+        if _ws.get("state") in ("sick", "recovering"):
+            if probe_cli():  # confirms inspiring-cat reports claude_available=true
+                _md_stale("Claude CLI Pro")
+                bg_log("cleared stale sick/recovering state — CLI healthy, CLI_DOWN not set", ...)
+    except Exception:
+        pass
+    return False
+```
+
+---
+
+### Bug 4 — GitHub Actions relay can burn the refresh_token (known risk, not yet mitigated)
+
+**File:** `app/learning/cli_auto_login.py:2455-2563`, `oauth_refresh.yml`  
+**Risk class:** Data loss (refresh_token consumed server-side, credentials file not updated)
+
+OAuth refresh tokens are **single-use**. When `_try_direct_refresh()` dispatches to GitHub Actions:
+1. GH runner calls `claude.com/cai/oauth/token` → server issues new `access_token` + `refresh_token`, invalidates old one
+2. If `_evt.wait(90)` times out (network blip, inspiring-cat busy) → credentials file NOT updated
+3. Old `refresh_token` is permanently burned → all subsequent Layer 3 attempts return 401/400
+
+**Confirmed today:** The GitHub Actions relay DID run at 13:21:38 UTC and succeeded (conclusion: success). The DB row was updated at 13:42 UTC. Token is valid.
+
+**Mitigation needed (future):** Before the runner POSTs the result back, it should write the new tokens to an environment variable via the Railway API (from Azure IP, which is not blocked). Or: add retry logic in the callback endpoint.
+
+---
+
+### Nginx Fix — `/health/detailed` was unreachable (401)
+
+**File:** `nginx.cli.conf.template`  
+**Root cause:** `/health/detailed` matched `location /` (catch-all) → proxied to VS Code on port 3001 → 401 auth challenge.  
+**Fix:** Added explicit `location = /health/detailed` block pointing to `http://127.0.0.1:8003` (cli_worker FastAPI).
+
+---
+
+## E2E Layer Tests — Live Proof (2026-04-17 ~14:00 UTC)
+
+All shell tasks run on the inspiring-cat Railway container via `/tasks` endpoint.
+
+### Layer 1 — Volume Backup
+
+**Shell task ID:** `d5eb90cf-b0b6-4577-97f1-e733d3c8ae9f`  
+**Command:**
+```python
+python3 -c "
+import json,time,pathlib
+p=pathlib.Path('/workspace/.claude_credentials_backup.json')
+d=json.loads(p.read_text())
+ms=d.get('claudeAiOauth',{}).get('expiresAt') or d.get('expiresAt')
+remaining=int((ms - time.time()*1000)/1000) if ms else None
+print('L1_EXISTS=',p.exists(),'L1_EXPIRES_IN_S=',remaining,'L1_VALID=',remaining is not None and remaining>0,'L1_SIZE_BYTES=',p.stat().st_size)
+"
+```
+
+**Raw result:**
+```
+L1_EXISTS= True  L1_EXPIRES_IN_S= 27697  L1_VALID= True  L1_SIZE_BYTES= 470
+```
+
+| Metric | Value | Pass? |
+|--------|-------|-------|
+| File exists | True | ✅ |
+| Expires in | 27,697s (7.7h) | ✅ |
+| Valid | True | ✅ |
+| File size | 470 bytes | ✅ |
+
+**LAYER 1 STATUS: ✅ HEALTHY**
+
+---
+
+### Layer 2b — PostgreSQL Credential Store
+
+**Shell task ID:** `ac7867d8-057e-408d-b5ef-7bf494f55eec`  
+**Command:**
+```python
+python3 -c "
+import os,psycopg2
+db=os.environ.get('DATABASE_URL','').replace('postgres://','postgresql://')
+conn=psycopg2.connect(db); cur=conn.cursor()
+cur.execute('SELECT id, expires_at, subscription_type, updated_at, length(credentials_b64) FROM claude_credentials WHERE id=\\'primary\\'')
+row=cur.fetchone(); print('L2_ROW=',row); conn.close()
+"
+```
+
+**Raw result:**
+```
+L2_ROW= ('primary', 1776462156807, 'max', datetime.datetime(2026, 4, 17, 13, 42, 41, 167231, tzinfo=UTC), 628)
+```
+
+| Metric | Value | Pass? |
+|--------|-------|-------|
+| Row exists | id='primary' | ✅ |
+| Subscription | 'max' (Claude Max) | ✅ |
+| Expires at (ms) | 1776462156807 → 2026-04-17 21:22 UTC | ✅ |
+| Last updated | 2026-04-17 13:42:41 UTC | ✅ |
+| Credential blob | 628 bytes | ✅ |
+
+**LAYER 2b STATUS: ✅ HEALTHY**
+
+---
+
+### Layer 2 GitHub Actions — Railway Token Persist
+
+**Evidence from `/metrics/layer-health` (super-agent):**
+```json
+{
+  "layer2": {
+    "status": "healthy",
+    "detail": "github actions railway persist",
+    "last_run_at": "2026-04-17T13:21:38Z",
+    "last_conclusion": "success",
+    "last_run_url": "https://github.com/gelson12/super-agent/actions/runs/24567283580"
+  }
+}
+```
+
+| Metric | Value | Pass? |
+|--------|-------|-------|
+| Status | healthy | ✅ |
+| Last run | 2026-04-17T13:21:38Z | ✅ |
+| Conclusion | success | ✅ |
+
+**LAYER 2 GH ACTIONS STATUS: ✅ HEALTHY**
+
+---
+
+### Layer 4 — Playwright Browser + Cookie Keepalive
+
+**Shell task ID:** `b326cf1a-2bd6-4f4e-b687-ebe7e8a01597`  
+**Command:**
+```python
+python3 -c "
+import pathlib,time
+cp=pathlib.Path('/workspace/.claude_browser_cookies.json')
+ap=pathlib.Path('/workspace/.playwright_attempts.json')
+cred=pathlib.Path('/root/.claude/.credentials.json')
+print('L4_COOKIES_EXIST=',cp.exists(),
+      'L4_COOKIES_AGE_HOURS=',round((time.time()-cp.stat().st_mtime)/3600,1) if cp.exists() else None,
+      'PLAYWRIGHT_LOG=',__import__('json').loads(ap.read_text()) if ap.exists() else [],
+      'CREDS_EXIST=',cred.exists(),'CREDS_SIZE=',cred.stat().st_size if cred.exists() else 0)
+"
+```
+
+**Raw result:**
+```
+L4_COOKIES_EXIST= True  L4_COOKIES_AGE_HOURS= 0.3  PLAYWRIGHT_LOG= [1776433285.524887]  CREDS_EXIST= True  CREDS_SIZE= 470
+```
+
+| Metric | Value | Pass? |
+|--------|-------|-------|
+| Browser cookies exist | True | ✅ |
+| Cookie age | 0.3h (18 min — freshly refreshed by keepalive) | ✅ |
+| Playwright runs today | 1 (at Unix ts 1776433285 ≈ 05:41 UTC) | ✅ |
+| Credentials file | EXISTS, 470 bytes | ✅ |
+
+**LAYER 4 STATUS: ✅ HEALTHY**
+
+---
+
+## Full System Snapshot — 2026-04-17 ~14:00 UTC
+
+### `GET /health` (inspiring-cat)
+```json
+{
+  "status": "ok",
+  "claude_available": true,
+  "gemini_available": true,
+  "db_connected": true,
+  "claude_token_expires_in_s": 28244
+}
+```
+
+### `GET /metrics/layer-health` (super-agent)
+```json
+{
+  "layer1": { "status": "healthy", "detail": "volume backup" },
+  "layer2": {
+    "status": "healthy",
+    "detail": "github actions railway persist",
+    "last_run_at": "2026-04-17T13:21:38Z",
+    "last_conclusion": "success",
+    "last_run_url": "https://github.com/gelson12/super-agent/actions/runs/24567283580"
+  },
+  "layer4": { "status": "healthy", "detail": "playwright browser", "pro_available": true, "cli_down": false },
+  "token_ttl_seconds": 28168,
+  "token_expires_at": "2026-04-17T21:42:36Z"
+}
+```
+
+### `GET /credits/pro-status` (super-agent)
+```json
+{
+  "mode": "pro_primary",
+  "pro_available": true,
+  "flags": { "daily_limit_active": false, "burst_throttled": false, "cli_down": false }
+}
+```
+
+---
+
+## Permanent Architectural Constraints
+
+| Attempt | Target | Result from Railway IPs | Why |
+|---------|--------|------------------------|-----|
+| Layer 2 (Railway API) | `backboard.railway.app/graphql/v2` | ❌ HTTP 403, error 1010 | Cloudflare anti-SSRF blocks all Railway container IPs |
+| Layer 3 (OAuth direct) | `claude.com/cai/oauth/token` | ❌ HTTP 405 | Same Cloudflare WAF rule on Railway NL datacenter IPs |
+
+These are **permanent** — do not attempt to fix them from inside Railway containers.
+
+---
+
+## Token Expiry Schedule
+
+- **Recovered:** 2026-04-16 ~17:31 UTC via Layer 4 (Playwright)
+- **Expires:** 2026-04-17 ~21:42 UTC (72h access token)
+- **Proactive refresh window:** 6h before expiry = triggers at ~15:42 UTC today
+- **Expected next recovery:** ~15:42 UTC today via Layer 4 if direct refresh fails
+
+---
+
+*Last updated: 2026-04-17 by Session 1 (bjj_video_analysis context)*
+

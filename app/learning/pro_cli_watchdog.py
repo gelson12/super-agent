@@ -113,6 +113,26 @@ def maybe_recover() -> bool:
         from ..activity_log import bg_log
 
         if not is_cli_down():
+            # ── Stale-sick guard ────────────────────────────────────────────────
+            # CLI_DOWN is not set, but the agent_status_tracker may still show
+            # the worker as sick/recovering from a previous incident where the flag
+            # was cleared without calling mark_done (e.g. container restart cleared
+            # the file-based flag but the in-memory tracker was not updated).
+            # Fix: if health probe confirms the CLI is up, clear the stale state.
+            try:
+                from .agent_status_tracker import get_worker_status, mark_done as _md_stale
+                _ws = get_worker_status("Claude CLI Pro")
+                if _ws.get("state") in ("sick", "recovering"):
+                    _p = probe_cli()
+                    if _p:
+                        _md_stale("Claude CLI Pro")
+                        bg_log(
+                            "Pro CLI watchdog: cleared stale sick/recovering state — "
+                            "CLI is healthy and CLI_DOWN flag is not set.",
+                            source="pro_cli_watchdog",
+                        )
+            except Exception:
+                pass
             return False  # nothing to recover
 
         # Quick binary check first (cheap) — skip full auth if CLI not even present.
