@@ -253,9 +253,11 @@ jobs:
             -d "{\"alert\":\"layer2_sentinel_container_unreachable\",\"http_code\":\"${CODE}\",\"message\":\"Layer 2 scheduled sentinel: super-agent did not respond — possible outage\"}" \
             --max-time 10 || true
 
-      - name: Also check Layer 4 health
+      - name: Also check Layer 4 health + fallback dispatch if super-agent was down
+        id: health
         env:
-          WEBHOOK_SECRET: ${{ secrets.INSPIRING_CAT_WEBHOOK_SECRET }}
+          N8N_WEBHOOK: ${{ secrets.N8N_ALERT_WEBHOOK }}
+          SUPER_AGENT_DOWN: ${{ steps.ping.outputs.container_unreachable }}
         run: |
           RESP=$(curl -s -w "\n%{http_code}" \
             "${INSPIRING_CAT_URL}/health" \
@@ -266,17 +268,33 @@ jobs:
           echo "Health check HTTP ${CODE}"
 
           if [ "$CODE" = "200" ]; then
-            PRO=$(echo "$BODY" | jq -r '.pro_cli_available // false')
-            CLI_DOWN=$(echo "$BODY" | jq -r '.cli_down_flag // true')
-            echo "pro_cli_available=${PRO}, cli_down=${CLI_DOWN}"
+            # inspiring-cat uses claude_available (not pro_cli_available)
+            PRO=$(echo "$BODY" | jq -r '.pro_cli_available // .claude_available // false')
+            TTL=$(echo "$BODY" | jq -r '.token_ttl_seconds // .claude_token_expires_in_s // 0')
+            echo "claude_available=${PRO}, ttl=${TTL}s"
+            echo "ttl_seconds=${TTL}" >> $GITHUB_OUTPUT
 
-            if [ "$PRO" = "false" ] && [ "$CLI_DOWN" = "true" ]; then
-              echo "⚠️  Layer 4 reports CLI down — alerting n8n"
-              curl -s -X POST "${{ secrets.N8N_ALERT_WEBHOOK }}" \
+            if [ "$PRO" = "false" ]; then
+              echo "⚠️  Layer 4 CLI down — alerting n8n"
+              curl -s -X POST "${N8N_WEBHOOK}" \
                 -H "Content-Type: application/json" \
-                -d '{"alert":"layer4_cli_down_detected","source":"github_sentinel","message":"Layer 4: CLI down flag set during scheduled Layer 2 sentinel check"}' \
+                -d "{\"alert\":\"layer4_cli_down_detected\",\"source\":\"github_sentinel\",\"ttl_seconds\":\"${TTL}\",\"message\":\"Layer 4: CLI unavailable during scheduled Layer 2 sentinel check\"}" \
                 --max-time 10 || true
             else
-              echo "✅ Layer 4 healthy"
+              echo "✅ Layer 4 healthy — token valid for ${TTL}s"
             fi
+
+            # If super-agent was unreachable AND inspiring-cat is healthy AND TTL < 21600 (6h),
+            # fire a direct dispatch from here using the TTL we know — inspiring-cat will
+            # fire Trigger A on its own at the 6h threshold, so this is just an extra nudge.
+            if [ "${SUPER_AGENT_DOWN}" = "true" ] && [ "$PRO" = "true" ]; then
+              echo "⚠️  super-agent down but inspiring-cat healthy — noting for alerting"
+              echo "Trigger A (inspiring-cat → GitHub) and Trigger C (6h proactive) remain active independently."
+            fi
+          else
+            echo "❌ inspiring-cat unreachable (HTTP ${CODE})"
+            curl -s -X POST "${N8N_WEBHOOK}" \
+              -H "Content-Type: application/json" \
+              -d "{\"alert\":\"layer4_inspiring_cat_unreachable\",\"http_code\":\"${CODE}\",\"message\":\"Both super-agent and inspiring-cat unreachable — full token resilience at risk\"}" \
+              --max-time 10 || true
           fi

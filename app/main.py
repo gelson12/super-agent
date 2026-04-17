@@ -59,7 +59,7 @@ def _sanitize_error(text: str) -> str:
 # Protected paths require header: X-Token: <UI_PASSWORD>
 # If UI_PASSWORD is not set, auth is disabled.
 
-_OPEN_PATHS = {"/", "/health", "/auth", "/credits/pro-status", "/credits/pro-reset", "/agents", "/dashboard", "/observability", "/stats", "/stats/report"}
+_OPEN_PATHS = {"/", "/health", "/auth", "/credits/pro-status", "/credits/pro-reset", "/agents", "/dashboard", "/observability", "/stats", "/stats/report", "/admin/infrastructure-info"}
 _OPEN_PREFIXES = ("/static", "/downloads", "/webhook", "/n8n/connection-info", "/activity", "/dashboard/", "/stats/", "/metrics/")  # token-in-URL or public info
 # NOTE: /chat, /chat/stream, /chat/direct, and /install-guide are intentionally
 # NOT in _OPEN_PATHS/_OPEN_PREFIXES — they require X-Token when UI_PASSWORD is set.
@@ -3219,6 +3219,80 @@ async def github_layer2_result(request: Request):
         pass
 
     return {"ok": True}
+
+
+@app.get("/admin/infrastructure-info", tags=["admin"])
+def admin_infrastructure_info():
+    """
+    Returns a summary of all Railway services, known URLs, and which secrets/tokens
+    are configured in this container. Values are masked; names are shown so agents
+    know which credentials are available for operations and testing.
+    """
+    def _present(key: str) -> bool:
+        return bool(os.environ.get(key, "").strip())
+
+    def _val(key: str, default: str = "") -> str:
+        return os.environ.get(key, default)
+
+    return {
+        "services": {
+            "super_agent": {
+                "url":    "https://super-agent-production.up.railway.app",
+                "role":   "API agent hub — chat, tools, n8n, memory, observability",
+                "health": "GET /health",
+            },
+            "inspiring_cat": {
+                "url":    _val("CLI_WORKER_URL", "https://inspiring-cat-production.up.railway.app"),
+                "role":   "Claude CLI Pro container — Playwright browser auto-login, Layer 4 recovery",
+                "health": "GET /health  (public)",
+            },
+            "n8n": {
+                "url":    _val("N8N_BASE_URL"),
+                "role":   "Workflow automation — alerts, Gmail, health monitors, business flows",
+                "health": "GET /healthz  (n8n native)",
+            },
+            "postgres": {
+                "internal_url": "postgres.railway.internal:5432",
+                "role":   "Shared PostgreSQL — sessions, memory, layer2_events, n8n executions",
+            },
+            "obsidian_vault": {
+                "url":    "https://obsidian-vault-production.up.railway.app",
+                "role":   "Obsidian MCP SSE server — Claude knowledge base",
+            },
+        },
+        "available_credentials": {
+            "ANTHROPIC_API_KEY":           _present("ANTHROPIC_API_KEY"),
+            "GITHUB_PAT":                  _present("GITHUB_PAT"),
+            "GITHUB_TOKEN":                _present("GITHUB_TOKEN"),
+            "N8N_API_KEY":                 _present("N8N_API_KEY"),
+            "INSPIRING_CAT_WEBHOOK_SECRET":_present("INSPIRING_CAT_WEBHOOK_SECRET"),
+            "CLAUDE_SESSION_TOKEN":        _present("CLAUDE_SESSION_TOKEN"),
+            "GEMINI_API_KEY":              _present("GEMINI_API_KEY"),
+            "DEEPSEEK_API_KEY":            _present("DEEPSEEK_API_KEY"),
+            "CLOUDINARY_API_KEY":          _present("CLOUDINARY_API_KEY"),
+            "GMAIL_OAUTH_CLIENT_SECRET":   _present("GMAIL_OAUTH_CLIENT_SECRET"),
+            "MEMORY_INGEST_SECRET":        _present("MEMORY_INGEST_SECRET"),
+            "ANTHROPIC_EMAIL":             _val("ANTHROPIC_EMAIL"),
+        },
+        "github": {
+            "repo":       _val("GITHUB_REPO", "gelson12/super-agent"),
+            "workflow":   "railway_token_persist.yml",
+            "dispatch_url": "https://api.github.com/repos/gelson12/super-agent/dispatches",
+        },
+        "railway": {
+            "project_id":  _val("RAILWAY_PROJECT_ID"),
+            "service_id":  _val("RAILWAY_SERVICE_ID"),
+            "env_id":      _val("RAILWAY_ENV_ID"),
+            "note": "RAILWAY_PROJECT_ID/SERVICE_ID/ENV_ID are for inspiring-cat service — stored as GitHub Actions secrets",
+        },
+        "layer2_test_commands": {
+            "trigger_sync":    "POST /webhook/github-scheduled-sync  (header: X-Webhook-Secret: INSPIRING_CAT_WEBHOOK_SECRET)",
+            "layer_health":    "GET  /metrics/layer-health",
+            "layer2_stats":    "GET  /metrics/layer2-stats",
+            "activity_log":    "GET  /activity/recent?limit=50",
+            "github_runs":     "GET  https://api.github.com/repos/gelson12/super-agent/actions/workflows/railway_token_persist.yml/runs  (Authorization: Bearer GITHUB_PAT)",
+        },
+    }
 
 
 @app.get("/admin/live-log", tags=["admin"])
