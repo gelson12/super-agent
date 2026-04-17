@@ -2580,8 +2580,8 @@ def maybe_proactive_refresh() -> bool:
 
     Strategy:
       - Read expiresAt from credentials (milliseconds epoch, as stored by Claude CLI)
-      - If more than 2 hours remain → do nothing (still fresh)
-      - If < 2 hours remain → call _try_direct_refresh() to get a new token
+      - If more than 6 hours remain → do nothing (still fresh)
+      - If < 6 hours remain → call _try_direct_refresh() to get a new token
       - If no expiresAt → attempt refresh anyway (credentials format unknown,
         better safe than sorry)
     """
@@ -2615,7 +2615,7 @@ def maybe_proactive_refresh() -> bool:
 
         if expires_at_ms is not None:
             remaining_s = (expires_at_ms - now_ms) / 1000
-            if remaining_s > 7200:  # more than 2 hours — nothing to do
+            if remaining_s > 21600:  # more than 6 hours — nothing to do
                 _log(f"Proactive refresh: token still fresh ({int(remaining_s // 3600)}h "
                      f"{int((remaining_s % 3600) // 60)}m remaining) — skipping.")
                 return True
@@ -2633,9 +2633,9 @@ def maybe_proactive_refresh() -> bool:
         if _refresh_ok:
             return True
         # Direct refresh failed (Cloudflare blocks datacenter IPs for the OAuth endpoint).
-        # If the token is within 2 hours of expiry, escalate to full_recovery_chain()
+        # If the token is within 6 hours of expiry, escalate to full_recovery_chain()
         # so a fresh token is obtained before any request fails.
-        if expires_at_ms is not None and remaining_s < 7200:
+        if expires_at_ms is not None and remaining_s < 21600:
             _log(
                 f"Proactive refresh: direct refresh failed, token expires in "
                 f"{int(remaining_s // 60)}m — escalating to full_recovery_chain()"
