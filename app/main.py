@@ -1912,6 +1912,54 @@ def chat_ensemble(req: EnsembleRequest, request: Request):
     }
 
 
+@app.get("/intelligence", include_in_schema=False)
+def intelligence_dashboard():
+    """Gamified intelligence dashboard — XP, levels, achievements, behavioral heatmap."""
+    from fastapi.responses import FileResponse
+    return FileResponse("static/intelligence.html")
+
+
+@app.get("/metrics/intelligence", tags=["meta"])
+def intelligence_metrics_api():
+    """Full intelligence score: XP, level, achievements, prediction accuracy, patterns."""
+    result: dict = {}
+    try:
+        from .learning.intelligence_score import get_stats
+        result["score"] = get_stats()
+    except Exception as e:
+        result["score_error"] = str(e)
+    try:
+        from .learning.trajectory_predictor import _sequence_store, _session_seqs
+        result["trajectory"] = {
+            "pattern_count": len(_sequence_store),
+            "active_sessions": len(_session_seqs),
+        }
+    except Exception as e:
+        result["trajectory_error"] = str(e)
+    try:
+        from .learning.behavior_patterns import (
+            _time_counts, _transitions, get_top_transitions, get_time_summary
+        )
+        heatmap: dict = {}
+        agent_totals: dict = {}
+        for (weekday, hour), counts in _time_counts.items():
+            heatmap[f"{weekday},{hour}"] = sum(counts.values())
+            for agent, cnt in counts.items():
+                agent_totals[agent] = agent_totals.get(agent, 0) + cnt
+        result["behavior"] = {
+            "heatmap": heatmap,
+            "transitions": {
+                k: {"next": v[0], "confidence": v[1]}
+                for k, v in get_top_transitions().items()
+            },
+            "agent_totals": agent_totals,
+            "time_summary": get_time_summary(),
+        }
+    except Exception as e:
+        result["behavior_error"] = str(e)
+    return result
+
+
 @app.get("/metrics/predictions", tags=["meta"])
 def prediction_metrics():
     """

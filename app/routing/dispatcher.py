@@ -93,6 +93,24 @@ try:
 except Exception:
     def _prewarm(a): pass
 
+try:
+    from ..learning.prediction_tracker import (
+        store_prediction as _store_pred,
+        evaluate_prediction as _eval_pred,
+    )
+except Exception:
+    def _store_pred(s, a): pass
+    def _eval_pred(s, a): pass
+
+try:
+    from ..learning.intelligence_score import (
+        record_agent_call as _iq_agent_call,
+        record_new_pattern as _iq_new_pattern,
+    )
+except Exception:
+    def _iq_agent_call(s): pass
+    def _iq_new_pattern(): pass
+
 # ── Active task tracker (per-session, in-memory) ─────────────────────────────
 # Written before any long-running agent call so follow-up queries always know
 # what was being worked on, even before append_exchange fires (which only
@@ -605,14 +623,32 @@ def _maybe_add_next_step(response: str, session_id: str, current_agent: str) -> 
 
 
 def _record_and_prewarm(session_id: str, agent_type: str) -> None:
-    """Record turn for all predictors and pre-warm vault for predicted next agent."""
+    """Record turn for all predictors, award XP, store next prediction, pre-warm vault."""
     try:
+        prev_store_size = 0
+        try:
+            from ..learning.trajectory_predictor import _sequence_store
+            prev_store_size = len(_sequence_store)
+        except Exception:
+            pass
+
         _traj_record(session_id, agent_type)
         _bp_record(agent_type)
+        _iq_agent_call(session_id)
+
+        # Award XP for newly discovered patterns
+        try:
+            from ..learning.trajectory_predictor import _sequence_store as _ss2
+            if len(_ss2) > prev_store_size:
+                _iq_new_pattern()
+        except Exception:
+            pass
+
         next_agent, conf = _traj_predict(session_id)
         if not next_agent or conf < 0.55:
             next_agent, _ = _bp_predict_after(agent_type)
         if next_agent:
+            _store_pred(session_id, next_agent)   # store for accuracy evaluation
             _prewarm(next_agent.lower())
     except Exception:
         pass
@@ -791,6 +827,13 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
     plus collective intelligence fields: was_reviewed, is_ensemble, cot_used,
     red_team_ran, escalated, confidence_score, cloudinary_url, and more.
     """
+
+    # ── Evaluate last prediction accuracy before routing ─────────────────────
+    # We know the actual agent only after routing — but we can evaluate the
+    # prediction made in the PREVIOUS turn right here, at the top of this turn.
+    # The actual route will be known once we hit a keyword/classifier block below.
+    # We defer evaluation to the first point where we know the actual agent.
+    # _eval_pred is called explicitly at each agent dispatch site.
 
     # ── Daily briefing + weekly pattern promotion (fire-and-forget) ──────────
     try:
@@ -1288,6 +1331,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
 
         if _last_op_agent == "N8N":
             from ..agents.n8n_agent import run_n8n_agent
+            _eval_pred(session_id, "N8N")
             _write_active_task(session_id, message)
             response = _safe_agent_call(run_n8n_agent, _followup_aug, agent_name="n8n_agent")
             _clear_active_task()
@@ -1432,6 +1476,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
                 "cache_hit": False,
             }, routing_explanation="n8n circuit breaker is open — service appears down, request short-circuited.")
         from ..agents.n8n_agent import run_n8n_agent
+        _eval_pred(session_id, "N8N")
         _write_active_task(session_id, message)
         response = _safe_agent_call(run_n8n_agent, _agent_message, agent_name="n8n_agent")
         _clear_active_task(session_id)
@@ -1457,6 +1502,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
 
     # ── 4c. Self-improvement routing ─────────────────────────────────────────
     if _is_self_improve_request(message):
+        _eval_pred(session_id, "SELF_IMPROVE")
         _write_active_task(session_id, message)
         _mark_working("Self-Improve Agent", message[:100])
         response = run_self_improve_agent(_agent_message, authorized=authorized)
@@ -1689,6 +1735,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
             message if any(w in _msg_lower for w in _BUILD_TRIGGER_WORDS)
             else _agent_message
         )
+        _eval_pred(session_id, "SHELL")
         _write_active_task(session_id, message)
         _mark_working("Shell Agent", message[:100])
         response = _safe_agent_call(run_shell_agent, _shell_payload, authorized=authorized, agent_name="shell_agent")
@@ -1729,6 +1776,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
                 "complexity": 1,
                 "cache_hit": False,
             }, routing_explanation="GitHub circuit breaker is open — service appears down, request short-circuited.")
+        _eval_pred(session_id, "GITHUB")
         _write_active_task(session_id, message)
         _mark_working("GitHub Agent", message[:100])
         _mark_talking("Claude CLI Pro", "GitHub Agent")
