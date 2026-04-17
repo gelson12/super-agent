@@ -1,0 +1,297 @@
+name: Railway Token Persist — Layer 2
+
+# Three independent trigger paths for maximum resilience:
+#
+#   A) repository_dispatch: railway_token_persist
+#      Container fires this immediately after every Layer 4 token refresh.
+#      Payload carries the fresh token → runner updates Railway env var.
+#
+#   B) schedule every 4 hours (proactive independent sentinel)
+#      Pings inspiring-cat to request a sync regardless of container state.
+#      Container fires a new dispatch → a fresh job picks it up.
+#      Detects and alerts if container is unreachable.
+#
+#   C) workflow_dispatch (manual / dry-run testing)
+#
+# Security:
+#   - Token travels only in dispatch payload (HTTPS-encrypted by GitHub).
+#   - Token is placed in $GITHUB_ENV, never in step outputs or logs.
+#   - RAILWAY_TOKEN stored as GitHub secret — never echoed.
+#   - Callback authenticated with INSPIRING_CAT_WEBHOOK_SECRET.
+
+on:
+  repository_dispatch:
+    types: [railway_token_persist]
+  schedule:
+    - cron: '0 */4 * * *'   # Every 4 hours — proactive independent check
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run — skip Railway update (for testing)'
+        type: boolean
+        default: false
+
+env:
+  INSPIRING_CAT_URL: https://inspiring-cat-production.up.railway.app
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Job A/C — Dispatch or manual: update Railway env var with fresh token
+# ─────────────────────────────────────────────────────────────────────────────
+jobs:
+  update-railway-env:
+    if: github.event_name == 'repository_dispatch' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Extract payload
+        id: payload
+        run: |
+          VARIABLE="${{ github.event.client_payload.variable_name }}"
+          EXPIRES="${{ github.event.client_payload.expires_at }}"
+          TTL="${{ github.event.client_payload.ttl_seconds }}"
+          TRIGGER="${{ github.event.client_payload.trigger }}"
+          NONCE="${{ github.event.client_payload.nonce }}"
+          CALLBACK="${{ github.event.client_payload.callback_url }}"
+
+          # Defaults for manual dispatch
+          VARIABLE="${VARIABLE:-CLAUDE_SESSION_TOKEN}"
+          TRIGGER="${TRIGGER:-manual}"
+
+          echo "variable=${VARIABLE}"      >> $GITHUB_OUTPUT
+          echo "expires_at=${EXPIRES}"     >> $GITHUB_OUTPUT
+          echo "ttl_seconds=${TTL}"        >> $GITHUB_OUTPUT
+          echo "trigger_type=${TRIGGER}"   >> $GITHUB_OUTPUT
+          echo "nonce=${NONCE}"            >> $GITHUB_OUTPUT
+          echo "callback_url=${CALLBACK}"  >> $GITHUB_OUTPUT
+
+          # Store token in env only — never in step outputs (keeps it out of logs)
+          echo "RAILWAY_TOKEN_VALUE=${{ github.event.client_payload.token }}" >> $GITHUB_ENV
+
+          echo "Trigger: ${TRIGGER} | Variable: ${VARIABLE} | TTL: ${TTL}s"
+          if [ -n "$TTL" ] && [ "$TTL" -lt 7200 ] 2>/dev/null; then
+            echo "⚠️  TTL below 2h — escalation trigger"
+          fi
+
+      - name: Abort if no token (manual dry-run only)
+        if: env.RAILWAY_TOKEN_VALUE == '' && github.event_name == 'repository_dispatch'
+        run: |
+          echo "ERROR: dispatch payload missing token field"
+          exit 1
+
+      - name: Discover Railway service IDs
+        id: ids
+        env:
+          RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: |
+          echo "Querying Railway GraphQL API for inspiring-cat service…"
+
+          RESPONSE=$(curl -s \
+            -X POST "https://backboard.railway.app/graphql/v2" \
+            -H "Authorization: Bearer ${RAILWAY_API_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d '{"query":"{ me { projects { edges { node { id name services { edges { node { id name } } } environments { edges { node { id name } } } } } } } }"}' \
+            --max-time 20)
+
+          # Find project that contains an inspiring-cat service
+          PROJECT_ID=$(echo "$RESPONSE" | jq -r '
+            .data.me.projects.edges[].node
+            | select(.services.edges[].node.name | ascii_downcase | contains("inspiring"))
+            | .id' 2>/dev/null | head -1)
+
+          SERVICE_ID=$(echo "$RESPONSE" | jq -r '
+            [.data.me.projects.edges[].node.services.edges[].node
+             | select(.name | ascii_downcase | contains("inspiring"))][0].id' 2>/dev/null)
+
+          ENV_ID=$(echo "$RESPONSE" | jq -r '
+            [.data.me.projects.edges[].node.environments.edges[].node
+             | select(.name | ascii_downcase | test("prod|main|production"))][0].id' 2>/dev/null)
+
+          echo "project_id=${PROJECT_ID}" >> $GITHUB_OUTPUT
+          echo "service_id=${SERVICE_ID}" >> $GITHUB_OUTPUT
+          echo "env_id=${ENV_ID}"         >> $GITHUB_OUTPUT
+
+          if [ -z "$SERVICE_ID" ] || [ "$SERVICE_ID" = "null" ]; then
+            echo "ERROR: inspiring-cat service not found in Railway"
+            echo "API response preview: $(echo "$RESPONSE" | head -c 600)"
+            exit 1
+          fi
+
+          echo "✅ service=${SERVICE_ID} project=${PROJECT_ID} env=${ENV_ID}"
+
+      - name: Update Railway env var (3 attempts with backoff)
+        id: update
+        env:
+          RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          PROJECT_ID:        ${{ steps.ids.outputs.project_id }}
+          SERVICE_ID:        ${{ steps.ids.outputs.service_id }}
+          ENV_ID:            ${{ steps.ids.outputs.env_id }}
+          VARIABLE_NAME:     ${{ steps.payload.outputs.variable }}
+          DRY_RUN:           ${{ github.event.inputs.dry_run }}
+        run: |
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "DRY RUN — Railway update skipped"
+            echo "success=true" >> $GITHUB_OUTPUT
+            echo "attempts=0"  >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          _do_update() {
+            MUTATION='mutation($i: VariableUpsertInput!) { variableUpsert(input: $i) }'
+            VARS=$(jq -nc \
+              --arg p "$PROJECT_ID" --arg s "$SERVICE_ID" \
+              --arg e "$ENV_ID"     --arg n "$VARIABLE_NAME" \
+              --arg v "$RAILWAY_TOKEN_VALUE" \
+              '{"i":{"projectId":$p,"serviceId":$s,"environmentId":$e,"name":$n,"value":$v}}')
+
+            curl -s -w "\n%{http_code}" \
+              -X POST "https://backboard.railway.app/graphql/v2" \
+              -H "Authorization: Bearer ${RAILWAY_API_TOKEN}" \
+              -H "Content-Type: application/json" \
+              -d "{\"query\":\"${MUTATION}\",\"variables\":${VARS}}" \
+              --max-time 20
+          }
+
+          for attempt in 1 2 3; do
+            echo "Attempt ${attempt}/3…"
+            RESP=$(_do_update)
+            CODE=$(echo "$RESP" | tail -n1)
+            BODY=$(echo "$RESP" | head -n -1)
+
+            echo "HTTP ${CODE}"
+
+            if [ "$CODE" = "200" ]; then
+              ERRS=$(echo "$BODY" | jq -r '.errors // empty' 2>/dev/null)
+              if [ -z "$ERRS" ]; then
+                echo "✅ CLAUDE_SESSION_TOKEN updated in Railway (attempt ${attempt})"
+                echo "success=true"         >> $GITHUB_OUTPUT
+                echo "attempts=${attempt}"  >> $GITHUB_OUTPUT
+                exit 0
+              fi
+              echo "GraphQL errors: ${ERRS}"
+            fi
+
+            [ $attempt -lt 3 ] && sleep $((attempt * 12))
+          done
+
+          echo "❌ All 3 attempts failed"
+          echo "success=false" >> $GITHUB_OUTPUT
+          echo "attempts=3"    >> $GITHUB_OUTPUT
+          exit 1
+
+      - name: Alert n8n on failure
+        if: failure()
+        env:
+          N8N_WEBHOOK: ${{ secrets.N8N_ALERT_WEBHOOK }}
+          TRIGGER:     ${{ steps.payload.outputs.trigger_type }}
+          TTL:         ${{ steps.payload.outputs.ttl_seconds }}
+        run: |
+          curl -s -X POST "${N8N_WEBHOOK}" \
+            -H "Content-Type: application/json" \
+            -d "{\"alert\":\"layer2_railway_update_failed\",\"trigger\":\"${TRIGGER}\",\"ttl_seconds\":\"${TTL}\",\"message\":\"Layer 2: GitHub Actions failed to update CLAUDE_SESSION_TOKEN after 3 attempts\"}" \
+            --max-time 10 || true
+
+      - name: Post result back to inspiring-cat
+        if: always() && steps.payload.outputs.callback_url != ''
+        env:
+          CALLBACK_URL:    ${{ steps.payload.outputs.callback_url }}
+          CALLBACK_SECRET: ${{ secrets.INSPIRING_CAT_WEBHOOK_SECRET }}
+          NONCE:           ${{ steps.payload.outputs.nonce }}
+          SUCCESS:         ${{ steps.update.outputs.success }}
+          ATTEMPTS:        ${{ steps.update.outputs.attempts }}
+        run: |
+          SUCCESS_BOOL=$([ "$SUCCESS" = "true" ] && echo "true" || echo "false")
+          PAYLOAD=$(jq -nc \
+            --arg   nonce    "$NONCE" \
+            --argjson success "$SUCCESS_BOOL" \
+            --arg   secret   "$CALLBACK_SECRET" \
+            --arg   attempts "${ATTEMPTS:-0}" \
+            --arg   ts       "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '{nonce:$nonce, success:$success, secret:$secret,
+              attempts:($attempts|tonumber), completed_at:$ts,
+              layer:"2_github_actions"}')
+
+          curl -s -o /dev/null -w "Callback HTTP: %{http_code}\n" \
+            -X POST "$CALLBACK_URL" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD" \
+            --max-time 15 || echo "Callback unreachable (non-critical)"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Job B — Scheduled sentinel: ping inspiring-cat every 4h
+# ─────────────────────────────────────────────────────────────────────────────
+  scheduled-sentinel:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+
+    steps:
+      - name: Request token sync from inspiring-cat
+        id: ping
+        env:
+          WEBHOOK_SECRET: ${{ secrets.INSPIRING_CAT_WEBHOOK_SECRET }}
+        run: |
+          echo "Scheduled sentinel — requesting railway sync from inspiring-cat…"
+
+          RESP=$(curl -s -w "\n%{http_code}" \
+            -X POST "${INSPIRING_CAT_URL}/webhook/github-scheduled-sync" \
+            -H "Content-Type: application/json" \
+            -H "X-Webhook-Secret: ${WEBHOOK_SECRET}" \
+            -d "{\"source\":\"github_scheduled_sentinel\",\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
+            --max-time 15)
+
+          CODE=$(echo "$RESP" | tail -n1)
+          BODY=$(echo "$RESP" | head -n -1)
+
+          echo "HTTP ${CODE}"
+          echo "container_http=${CODE}" >> $GITHUB_OUTPUT
+
+          if [ "$CODE" = "200" ]; then
+            echo "✅ Sync requested — inspiring-cat will fire a dispatch with current token"
+          elif [ "$CODE" = "404" ]; then
+            echo "⚠️  /webhook/github-scheduled-sync not yet deployed on inspiring-cat"
+            echo "container_unreachable=false" >> $GITHUB_OUTPUT
+          else
+            echo "❌ Container unreachable or error"
+            echo "container_unreachable=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Alert if container unreachable
+        if: steps.ping.outputs.container_unreachable == 'true'
+        env:
+          N8N_WEBHOOK: ${{ secrets.N8N_ALERT_WEBHOOK }}
+          CODE:        ${{ steps.ping.outputs.container_http }}
+        run: |
+          curl -s -X POST "${N8N_WEBHOOK}" \
+            -H "Content-Type: application/json" \
+            -d "{\"alert\":\"layer2_sentinel_container_unreachable\",\"http_code\":\"${CODE}\",\"message\":\"Layer 2 scheduled sentinel: inspiring-cat did not respond — possible outage\"}" \
+            --max-time 10 || true
+
+      - name: Also check Layer 4 health
+        env:
+          WEBHOOK_SECRET: ${{ secrets.INSPIRING_CAT_WEBHOOK_SECRET }}
+        run: |
+          RESP=$(curl -s -w "\n%{http_code}" \
+            "${INSPIRING_CAT_URL}/health" \
+            --max-time 10)
+          CODE=$(echo "$RESP" | tail -n1)
+          BODY=$(echo "$RESP" | head -n -1)
+
+          echo "Health check HTTP ${CODE}"
+
+          if [ "$CODE" = "200" ]; then
+            PRO=$(echo "$BODY" | jq -r '.pro_cli_available // false')
+            CLI_DOWN=$(echo "$BODY" | jq -r '.cli_down_flag // true')
+            echo "pro_cli_available=${PRO}, cli_down=${CLI_DOWN}"
+
+            if [ "$PRO" = "false" ] && [ "$CLI_DOWN" = "true" ]; then
+              echo "⚠️  Layer 4 reports CLI down — alerting n8n"
+              curl -s -X POST "${{ secrets.N8N_ALERT_WEBHOOK }}" \
+                -H "Content-Type: application/json" \
+                -d '{"alert":"layer4_cli_down_detected","source":"github_sentinel","message":"Layer 4: CLI down flag set during scheduled Layer 2 sentinel check"}' \
+                --max-time 10 || true
+            else
+              echo "✅ Layer 4 healthy"
+            fi
+          fi
