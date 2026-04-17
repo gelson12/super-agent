@@ -386,7 +386,7 @@
       50%       { opacity: 0.4; }
     }
 
-    /* ── Worker subtitle (e.g. "Secretary" under Obsidian Vault) ─── */
+    /* ── Worker subtitle (e.g. "Secretary" under Daphney) ─── */
     .worker-subtitle {
       font-size: 0.28rem;
       color: #a78bfa;
@@ -1509,7 +1509,7 @@ const AGENT_WORKERS = [
   "Shell Agent", "GitHub Agent", "N8N Agent", "Self-Improve Agent"
 ];
 const SERVICE_WORKERS = [
-  "Obsidian Vault"
+  "Daphney"
 ];
 
 const AVATARS = {
@@ -1523,7 +1523,7 @@ const AVATARS = {
   "GitHub Agent": "👷🏿‍♀️",
   "N8N Agent": "👷🏽‍♂️",
   "Self-Improve Agent": "🧑🏼‍🏫",
-  "Obsidian Vault": "👩🏿‍💼",
+  "Daphney": "💁🏿‍♀️",
 };
 
 const EVENT_ICONS = {
@@ -1714,7 +1714,7 @@ function renderDesk(worker) {
   const needsAttention = worker.state === "strike" || worker.state === "sick" || worker.state === "error";
   const scanLine = worker.state === "working" ? '<div class="screen-scan-line"></div>' : "";
 
-  const _WORKER_SUBTITLES = { "Obsidian Vault": "Secretary" };
+  const _WORKER_SUBTITLES = { "Daphney": "Secretary" };
   const subtitle = _WORKER_SUBTITLES[worker.id]
     ? `<div class="worker-subtitle">${esc(_WORKER_SUBTITLES[worker.id])}</div>` : "";
 
@@ -1814,7 +1814,7 @@ function drawTalkingLines(workers) {
       line.setAttribute('y1', ra.top  + ra.height / 2);
       line.setAttribute('x2', rb.left + rb.width / 2);
       line.setAttribute('y2', rb.top  + rb.height / 2);
-      const toVault = (w.id === "Obsidian Vault" || w.talking_to === "Obsidian Vault");
+      const toVault = (w.id === "Daphney" || w.talking_to === "Daphney");
       line.setAttribute('stroke', toVault ? '#a78bfa' : '#8b5cf6');
       line.setAttribute('stroke-width', toVault ? '3' : '2');
       line.setAttribute('stroke-dasharray', toVault ? '8,4' : '6,4');

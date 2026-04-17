@@ -1,5 +1,5 @@
 """
-Obsidian Vault Tools — gives LangGraph agents (Haiku, Sonnet, Opus) access to
+Daphney Tools — gives LangGraph agents (Haiku, Sonnet, Opus) access to
 the Obsidian knowledge vault running in the obsidian-vault Railway service.
 
 The obsidian-vault service runs Obsidian headlessly (Xvfb) with the
@@ -47,8 +47,8 @@ def _vault_enter(tool_name: str) -> str:
     caller = _get_calling_agent()
     try:
         from ..learning.agent_status_tracker import mark_working, mark_talking
-        mark_working("Obsidian Vault", tool_name)
-        mark_talking(caller, "Obsidian Vault")
+        mark_working("Daphney", tool_name)
+        mark_talking(caller, "Daphney")
     except Exception:
         pass
     return caller
@@ -58,8 +58,8 @@ def _vault_exit(caller: str) -> None:
     """Mark vault as done and clear talking line."""
     try:
         from ..learning.agent_status_tracker import mark_done, clear_talking
-        clear_talking(caller, "Obsidian Vault")
-        mark_done("Obsidian Vault")
+        clear_talking(caller, "Daphney")
+        mark_done("Daphney")
     except Exception:
         pass
 
