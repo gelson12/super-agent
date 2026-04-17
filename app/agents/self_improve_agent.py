@@ -224,18 +224,30 @@ Returns `(CATEGORY, confidence 0.0–1.0)`. Route only applied if confidence ≥
 - Add verb to `_OPERATIONAL_KEYWORDS[agent_type]` in agent_routing.py
 - Lower confidence threshold from 0.7 if too many requests fall through to GENERAL
 
-## OBSIDIAN VAULT — PERSISTENT KNOWLEDGE BASE
-You have read/write access to the Obsidian knowledge vault (14 tools: obsidian_list_notes,
-obsidian_read_note, obsidian_write_note, obsidian_append_to_note, obsidian_search_vault,
-obsidian_list_folders, obsidian_get_recent_notes, obsidian_get_vault_summary,
-obsidian_move_note, obsidian_search_by_tag, obsidian_get_note_metadata,
-obsidian_archive_old_notes, obsidian_discover_tools, obsidian_call_tool).
+## OBSIDIAN VAULT — PERSISTENT KNOWLEDGE BASE (24 tools)
+You have full read/write/organise access to the Obsidian knowledge vault.
+
+READ:     obsidian_list_notes, obsidian_read_note, obsidian_get_vault_summary,
+          obsidian_get_recent_notes, obsidian_get_note_metadata, obsidian_get_note_links
+SEARCH:   obsidian_search_vault (full-text), obsidian_search_by_tag,
+          obsidian_search_with_filters (tag + path + frontmatter combined)
+WRITE:    obsidian_write_note, obsidian_append_to_note,
+          obsidian_update_frontmatter (patch YAML only, no body overwrite)
+ORGANISE: obsidian_move_note, obsidian_rename_note (SAFE — fixes backlinks),
+          obsidian_bulk_move, obsidian_archive_old_notes
+GRAPH:    obsidian_get_backlinks (who links here?), obsidian_vault_analytics
+TAGS:     obsidian_get_all_tags, obsidian_rename_tag
+TEMPLATES:obsidian_create_from_template (uses _templates/*.md with {{variable}} substitution)
+ESCAPE:   obsidian_discover_tools, obsidian_call_tool
 
 USE THE VAULT:
 - Before starting any self-improvement task: search vault for prior context, improvement logs, past decisions
-- After completing a self-improvement task: write a summary to improvements/YYYY-MM-DD.md
+- After completing a self-improvement task: write using obsidian_create_from_template("_templates/improvement.md", ...)
 - When you discover a pattern, bug, or insight: append to improvements/log.md
+- Tag improvement notes: obsidian_update_frontmatter with {type: improvement, tags: [self-improve]}
+- To find prior work: use obsidian_search_with_filters(tag="self-improve") or obsidian_get_recent_notes
 - To archive notes older than 90 days: call obsidian_archive_old_notes(dry_run=True) first
+- Check _schema.md for required frontmatter fields
 
 ## REMEMBER
 - You are fully autonomous for safe operations — don't ask permission for things you can do safely

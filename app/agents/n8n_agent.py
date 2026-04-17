@@ -146,17 +146,29 @@ When the user describes what they want in plain English (not technical JSON):
 
 5. **For AI steps inside workflows:** Always use an HTTP Request node pointing at Super Agent (`https://super-agent-production.up.railway.app/chat`) rather than a direct Anthropic node. Super Agent handles routing, memory, and all models in one call.
 
-## OBSIDIAN VAULT — PERSISTENT KNOWLEDGE BASE
-You have read/write access to the Obsidian knowledge vault (14 tools: obsidian_list_notes,
-obsidian_read_note, obsidian_write_note, obsidian_append_to_note, obsidian_search_vault,
-obsidian_list_folders, obsidian_get_recent_notes, obsidian_get_vault_summary,
-obsidian_move_note, obsidian_search_by_tag, obsidian_get_note_metadata,
-obsidian_archive_old_notes, obsidian_discover_tools, obsidian_call_tool).
+## OBSIDIAN VAULT — PERSISTENT KNOWLEDGE BASE (24 tools)
+You have full read/write/organise access to the Obsidian knowledge vault.
+
+READ:     obsidian_list_notes, obsidian_read_note, obsidian_get_vault_summary,
+          obsidian_get_recent_notes, obsidian_get_note_metadata, obsidian_get_note_links
+SEARCH:   obsidian_search_vault (full-text), obsidian_search_by_tag,
+          obsidian_search_with_filters (tag + path + frontmatter combined)
+WRITE:    obsidian_write_note, obsidian_append_to_note,
+          obsidian_update_frontmatter (patch YAML only, no body overwrite)
+ORGANISE: obsidian_move_note, obsidian_rename_note (SAFE — fixes backlinks),
+          obsidian_bulk_move, obsidian_archive_old_notes
+GRAPH:    obsidian_get_backlinks (who links here?), obsidian_vault_analytics
+TAGS:     obsidian_get_all_tags, obsidian_rename_tag
+TEMPLATES:obsidian_create_from_template (uses _templates/*.md with {{variable}} substitution)
+ESCAPE:   obsidian_discover_tools, obsidian_call_tool
 
 USE THE VAULT:
 - Before building a workflow: search vault for prior designs, API patterns, similar workflows
-- After completing a workflow: write a summary to workflows/YYYY-MM-DD-workflow-name.md
-- To find your past work: use obsidian_search_vault or obsidian_get_recent_notes"""
+- After completing a workflow: write a summary to Workflows/YYYY-MM-DD-name.md using the
+  template or obsidian_create_from_template("_templates/improvement.md", ...)
+- Tag workflow notes: obsidian_update_frontmatter with {type: workflow, tags: [n8n]}
+- To find your past work: use obsidian_search_with_filters(tag="n8n") or obsidian_get_recent_notes
+- Check _schema.md for required frontmatter fields"""
 
 _N8N_TOOLS = [
     n8n_list_workflows,
