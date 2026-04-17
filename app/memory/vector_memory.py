@@ -249,6 +249,34 @@ def _pg_store(session_id: str, content: str,
         return False
 
 
+# Minimum cosine similarity for a memory to be injected into context.
+# Below this the memory is considered too unrelated and is dropped.
+# Hit/miss counts are logged to _RETRIEVAL_STATS_PATH for weekly tuning.
+_SIMILARITY_THRESHOLD = 0.72
+
+
+def _retrieval_stats_path() -> str:
+    if os.access("/workspace", os.W_OK):
+        return "/workspace/memory_retrieval_stats.jsonl"
+    return "./memory_retrieval_stats.jsonl"
+
+
+def _log_retrieval_stats(hits: int, misses: int, session_id: str | None) -> None:
+    """Append one retrieval batch summary to the stats log. Never raises."""
+    try:
+        record = {
+            "ts": round(time.time(), 2),
+            "hits": hits,
+            "misses": misses,
+            "threshold": _SIMILARITY_THRESHOLD,
+            "session": session_id or "default",
+        }
+        with open(_retrieval_stats_path(), "a", encoding="utf-8") as f:
+            f.write(json.dumps(record) + "\n")
+    except Exception:
+        pass
+
+
 def _pg_retrieve(query: str, top_k: int = 5, session_id: str | None = None) -> list[str]:
     """
     Retrieve memories ranked by combined vector similarity × importance score.
@@ -257,6 +285,10 @@ def _pg_retrieve(query: str, top_k: int = 5, session_id: str | None = None) -> l
       importance=5 → divisor 2.5  (strong boost)
       importance=3 → divisor 1.9  (default)
       importance=1 → divisor 1.3  (slight penalty)
+
+    Rows with cosine similarity below _SIMILARITY_THRESHOLD are dropped before
+    being returned — the hit/miss counts are appended to the retrieval stats log
+    so the weekly review can tune the threshold.
 
     If session_id is provided, only returns memories for that session.
     """
@@ -267,27 +299,43 @@ def _pg_retrieve(query: str, top_k: int = 5, session_id: str | None = None) -> l
         import psycopg2
         conn = psycopg2.connect(_conn_str)
         cur = conn.cursor()
+        # Over-fetch so threshold filtering still yields up to top_k results.
+        fetch_k = max(top_k * 3, top_k + 5)
         if session_id:
             cur.execute(
-                """SELECT content
+                """SELECT content, (embedding <=> %s::vector) AS distance
                    FROM agent_memories
-                   WHERE session_id = %s
+                   WHERE session_id = %s AND embedding IS NOT NULL
                    ORDER BY (embedding <=> %s::vector) / (1.0 + COALESCE(importance, 3) * 0.3)
                    LIMIT %s""",
-                (session_id, json.dumps(embedding), top_k),
+                (json.dumps(embedding), session_id, json.dumps(embedding), fetch_k),
             )
         else:
             cur.execute(
-                """SELECT content
+                """SELECT content, (embedding <=> %s::vector) AS distance
                    FROM agent_memories
+                   WHERE embedding IS NOT NULL
                    ORDER BY (embedding <=> %s::vector) / (1.0 + COALESCE(importance, 3) * 0.3)
                    LIMIT %s""",
-                (json.dumps(embedding), top_k),
+                (json.dumps(embedding), json.dumps(embedding), fetch_k),
             )
         rows = cur.fetchall()
         cur.close()
         conn.close()
-        return [row[0] for row in rows]
+
+        # pgvector cosine distance = 1 − cosine_similarity
+        hits, misses, results = 0, 0, []
+        for content, distance in rows:
+            similarity = 1.0 - float(distance) if distance is not None else 0.0
+            if similarity >= _SIMILARITY_THRESHOLD:
+                results.append(content)
+                hits += 1
+                if len(results) >= top_k:
+                    break
+            else:
+                misses += 1
+        _log_retrieval_stats(hits, misses, session_id)
+        return results
     except Exception:
         return []
 
