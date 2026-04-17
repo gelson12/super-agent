@@ -640,10 +640,14 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
     red_team_ran, escalated, confidence_score, cloudinary_url, and more.
     """
 
-    # ── Daily briefing trigger (fire-and-forget, max once/hour) ──────────────
+    # ── Daily briefing + weekly pattern promotion (fire-and-forget) ──────────
     try:
-        from ..learning.daily_briefing import trigger_daily_briefing_if_needed as _tbriefing
+        from ..learning.daily_briefing import (
+            trigger_daily_briefing_if_needed as _tbriefing,
+            promote_patterns_if_needed as _tpromote,
+        )
         _tbriefing()
+        _tpromote()
     except Exception:
         pass
 
@@ -784,22 +788,34 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
     _system_haiku  = _raw_haiku.replace("{capabilities}", _caps).replace("{learned_context}", _learned)
 
     # ── 0d. Vault context injection ───────────────────────────────────────────
-    # Share Obsidian vault knowledge with ALL API models (Haiku, Sonnet) AND
-    # all 4 operational agents (N8N, SHELL, GITHUB, SELF_IMPROVE) via message prefix.
-    # Fast-path: if the message clearly maps to a keyword agent route, return the
-    # pre-warmed global cache directly (no topic search) — avoids MCP round-trip.
+    # Multi-source structured injection for all 4 agents and API models.
+    # Sources: agent patterns file (cached 30 min) + query search + errors.md (if error
+    # keywords) + recent activity. Returns a [VAULT CONTEXT] block with ### sections.
+    # Session-aware dedup: on follow-up turns (_session_ctx non-empty) the patterns file
+    # is already in session history — skip re-fetching, only do query search.
     _vault_ctx = ""
     _is_clear_agent_route = (
         _is_n8n_request(message) or _is_shell_request(message)
         or _is_github_request(message) or _is_self_improve_request(message)
     )
+    # Determine agent type label for patterns file lookup
+    if _is_n8n_request(message):            _agent_type_key = "n8n"
+    elif _is_shell_request(message):        _agent_type_key = "shell"
+    elif _is_github_request(message):       _agent_type_key = "github"
+    elif _is_self_improve_request(message): _agent_type_key = "self_improve"
+    else:                                   _agent_type_key = ""
+
+    # Session dedup: patterns already in context on follow-up turns
+    _is_first_session_turn = not bool(_session_ctx)
+    _include_patterns = _is_first_session_turn  # re-inject only on turn 1
+
     if _cb_is_open("vault"):
         _system_claude = _system_claude.replace("{vault_context}", "")
         _system_haiku  = _system_haiku.replace("{vault_context}",  "")
     else:
         try:
             from ..prompts import get_vault_context_block as _get_vault
-            # Agent-type-specific hint: inject patterns most relevant to the route
+            # Build agent-type-specific search hint
             if _is_n8n_request(message):
                 _vault_hint = f"n8n workflow pattern {message[:50]}"
             elif _is_shell_request(message):
@@ -810,7 +826,11 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
                 _vault_hint = f"infrastructure fix {message[:50]}"
             else:
                 _vault_hint = message[:60] if len(message) > 20 else ""
-            _vault_ctx = _get_vault(topic_hint=_vault_hint)
+            _vault_ctx = _get_vault(
+                topic_hint=_vault_hint,
+                agent_type=_agent_type_key,
+                include_patterns=_include_patterns,
+            )
             _system_claude = _system_claude.replace("{vault_context}", _vault_ctx)
             _system_haiku  = _system_haiku.replace("{vault_context}",  _vault_ctx)
         except Exception:
@@ -818,15 +838,26 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
             _system_claude = _system_claude.replace("{vault_context}", "")
             _system_haiku  = _system_haiku.replace("{vault_context}",  "")
 
-    # Build agent-augmented message: vault knowledge prepended once for all 4 agents.
-    # Agents run LangGraph create_react_agent — they receive the user turn only (no
-    # separate system prompt injection), so vault context must travel in the message.
-    # Higher cap for agent routes — complex tasks benefit from more vault context.
+    # Build agent-augmented message. Higher cap for agent routes.
     _vault_prefix_cap = 2500 if _is_clear_agent_route else 1500
     _vault_prefix = _vault_ctx[:_vault_prefix_cap] if _vault_ctx else ""
     _agent_message = (
         f"{_vault_prefix}\n{augmented_message}" if _vault_prefix else augmented_message
     )
+
+    # ── 0d-extra. Today's briefing injection (first session turn only) ────────
+    # If self_improve wrote today's briefing, prepend it so agents start with
+    # shared situational awareness about what happened earlier today.
+    if _is_first_session_turn and _is_clear_agent_route:
+        try:
+            from ..prompts import get_todays_briefing as _get_briefing
+            _briefing = _get_briefing()
+            if _briefing:
+                _agent_message = (
+                    f"[TODAY'S AGENT BRIEFING]\n{_briefing[:600]}\n\n{_agent_message}"
+                )
+        except Exception:
+            pass
 
     # ── 0e-extra. Session goal injection ─────────────────────────────────────
     # On the first turn of a new session, extract the user's likely goal via Haiku

@@ -65,6 +65,17 @@ _vault_global_cache: str = ""
 _vault_global_ts: float = 0.0
 _VAULT_GLOBAL_TTL = 7200  # 2 hours — balance freshness vs vault MCP latency
 
+_AGENT_PATTERNS_FILES = {
+    "n8n":          "n8n/patterns.md",
+    "shell":        "Shell/patterns.md",
+    "github":       "GitHub/patterns.md",
+    "self_improve": "KnowledgeBase/SelfImprove/outcomes.md",
+}
+_PATTERNS_TTL = 1800  # 30 min per-agent-type patterns cache
+_patterns_cache: dict = {}   # agent_type → (content_str, timestamp_float)
+_briefing_cache: dict = {}   # date_str → content_str
+_ERROR_HINT_WORDS = {"error", "fail", "broken", "crash", "refused", "timeout", "down", "fix"}
+
 
 def _fetch_vault_global() -> str:
     """
@@ -108,54 +119,142 @@ def _fetch_vault_global() -> str:
         return ""
 
 
-def get_vault_context_block(topic_hint: str = "") -> str:
+def get_vault_context_block(topic_hint: str = "", agent_type: str = "", include_patterns: bool = True) -> str:
     """
-    Return vault context for injection into model system prompts and agent messages.
+    Return a structured [VAULT CONTEXT] block for injection into agent messages.
 
-    Strategy:
-    - Global base block (Welcome + daily review + 3 recent notes) is cached 2 hours.
-      Returned from cache immediately if warm — zero MCP latency on most calls.
-    - If topic_hint is provided, a search_files() call is appended on top of the
-      global block (not separately cached — keeps the cache simple).
-    - On cold start, fetches synchronously. On vault MCP failure, returns stale cache.
-    Never raises.
+    Sources (best-effort, never raises):
+    1. Agent patterns file (n8n/patterns.md etc.) — cached 30 min per agent type.
+       Skipped when include_patterns=False (follow-up session turns already have it).
+    2. Query-matched vault search — targeted to this specific request via topic_hint.
+    3. KnowledgeBase/errors.md — only when topic_hint contains error-related words.
+    4. Recent activity — from global 2-hour cache (Welcome + daily review + recent notes).
+
+    All sources fetched in one MCP session to minimise connection overhead.
+    Returns a structured block with clearly labelled sections.
     """
     global _vault_global_cache, _vault_global_ts
     import time as _time
 
-    # Refresh global cache if stale or cold
-    _cache_stale = (_time.time() - _vault_global_ts) > _VAULT_GLOBAL_TTL
-    if _cache_stale:
+    # Refresh global cache if stale
+    if (_time.time() - _vault_global_ts) > _VAULT_GLOBAL_TTL:
         _fresh = _fetch_vault_global()
         if _fresh:
             _vault_global_cache = _fresh
             _vault_global_ts = _time.time()
-        # If fetch failed and we have stale cache, keep using it
 
-    _block = _vault_global_cache  # may be empty on very first call if vault is unreachable
+    _hint_lower = topic_hint.lower()
+    _include_errors = any(w in _hint_lower for w in _ERROR_HINT_WORDS)
+    _patterns_path = _AGENT_PATTERNS_FILES.get(agent_type, "") if include_patterns and agent_type else ""
 
-    # Append topic-specific search results on top (not cached — per-request)
-    if topic_hint and _block:
+    # Check patterns cache before opening MCP connection
+    _cached_pat, _cached_pat_ts = _patterns_cache.get(agent_type, ("", 0.0))
+    _use_cached_patterns = bool(_cached_pat) and (_time.time() - _cached_pat_ts < _PATTERNS_TTL)
+    _do_patterns_fetch = bool(_patterns_path) and not _use_cached_patterns
+
+    # Skip MCP entirely if nothing to fetch
+    _needs_mcp = _do_patterns_fetch or bool(topic_hint) or _include_errors
+    patterns_text = _cached_pat if _use_cached_patterns and _patterns_path else ""
+    search_text = errors_text = ""
+
+    if _needs_mcp:
         try:
             import asyncio as _asyncio
             from mcp.client.sse import sse_client as _sse
             from mcp import ClientSession as _CS
             _URL = "http://obsidian-vault.railway.internal:22360/sse"
 
-            async def _search():
-                async with _sse(url=_URL) as (r, w):
-                    async with _CS(r, w) as s:
-                        await s.initialize()
-                        _s = await s.call_tool("search_files", {"query": topic_hint})
-                        return _s.content[0].text if _s.content else ""
+            async def _fetch_all():
+                _data: dict = {}
+                async with _sse(url=_URL) as (_r, _w):
+                    async with _CS(_r, _w) as _s:
+                        await _s.initialize()
+                        if _do_patterns_fetch:
+                            try:
+                                _res = await _s.call_tool("read_file", {"path": _patterns_path})
+                                _data["patterns"] = _res.content[0].text if _res.content else ""
+                            except Exception:
+                                _data["patterns"] = ""
+                        if topic_hint:
+                            try:
+                                _res = await _s.call_tool("search_files", {"query": topic_hint})
+                                _data["search"] = _res.content[0].text if _res.content else ""
+                            except Exception:
+                                _data["search"] = ""
+                        if _include_errors:
+                            try:
+                                _res = await _s.call_tool("read_file", {"path": "KnowledgeBase/errors.md"})
+                                _data["errors"] = _res.content[0].text if _res.content else ""
+                            except Exception:
+                                _data["errors"] = ""
+                return _data
 
-            _search_text = _asyncio.run(_search())
-            if _search_text and "no matches" not in _search_text.lower():
-                _block += f"\n### Relevant Notes (topic: {topic_hint})\n{_search_text[:600]}\n"
+            _fetched = _asyncio.run(_fetch_all())
+            if _do_patterns_fetch:
+                patterns_text = _fetched.get("patterns", "")
+                if patterns_text and "not found" not in patterns_text.lower():
+                    _patterns_cache[agent_type] = (patterns_text, _time.time())
+                else:
+                    patterns_text = ""
+            search_text = _fetched.get("search", "")
+            errors_text = _fetched.get("errors", "")
         except Exception:
-            pass  # topic supplement is best-effort
+            pass
 
-    return _block
+    # Build structured block
+    _agent_label = {
+        "n8n": "n8n Agent", "shell": "Shell Agent",
+        "github": "GitHub Agent", "self_improve": "Self-Improve Agent",
+    }.get(agent_type, "")
+    _header = f"[VAULT CONTEXT — {_agent_label}]" if _agent_label else "[VAULT CONTEXT]"
+
+    _sections = []
+    if patterns_text and "not found" not in patterns_text.lower():
+        _sections.append(f"### Agent Patterns\n{patterns_text[:800]}")
+    if search_text and "no matches" not in search_text.lower() and len(search_text) > 10:
+        _lbl = topic_hint[:40] if topic_hint else "vault"
+        _sections.append(f"### Query Match: {_lbl}\n{search_text[:500]}")
+    if errors_text and "not found" not in errors_text.lower():
+        _sections.append(f"### Error Reference\n{errors_text[:500]}")
+    if _vault_global_cache:
+        _sections.append(f"### Recent Activity\n{_vault_global_cache[:300]}")
+
+    if not _sections:
+        return ""
+
+    return _header + "\n\n" + "\n\n".join(_sections) + "\n"
+
+
+def get_todays_briefing() -> str:
+    """
+    Return today's cross-agent briefing note from Daily/YYYY-MM-DD-briefing.md.
+    Cached per calendar day — one MCP call maximum per day per process.
+    Returns empty string if briefing doesn't exist yet (self_improve writes it async).
+    """
+    import datetime as _dt
+    _today = _dt.date.today().isoformat()
+    if _today in _briefing_cache:
+        return _briefing_cache[_today]
+    try:
+        import asyncio as _asyncio
+        from mcp.client.sse import sse_client as _sse
+        from mcp import ClientSession as _CS
+        _URL = "http://obsidian-vault.railway.internal:22360/sse"
+
+        async def _fetch():
+            async with _sse(url=_URL) as (_r, _w):
+                async with _CS(_r, _w) as _s:
+                    await _s.initialize()
+                    _res = await _s.call_tool("read_file", {"path": f"Daily/{_today}-briefing.md"})
+                    return _res.content[0].text if _res.content else ""
+
+        _text = _asyncio.run(_fetch())
+        _content = _text if (_text and "not found" not in _text.lower()) else ""
+        _briefing_cache[_today] = _content
+        return _content
+    except Exception:
+        _briefing_cache[_today] = ""
+        return ""
 
 
 def get_prompt(name: str) -> str | None:

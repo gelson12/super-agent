@@ -16,6 +16,8 @@ _last_checked_date: str = ""
 _lock = threading.Lock()
 _CHECK_INTERVAL = 3600  # check at most once per hour
 
+_last_promotion_date: str = ""
+
 
 def trigger_daily_briefing_if_needed() -> None:
     """Non-blocking: fire a daemon thread to write today's briefing if missing."""
@@ -30,6 +32,48 @@ def trigger_daily_briefing_if_needed() -> None:
         _last_checked = now
         _last_checked_date = today
     threading.Thread(target=_generate_briefing, args=(today,), daemon=True).start()
+
+
+def promote_patterns_if_needed() -> None:
+    """
+    Weekly (Monday only): scan outcome logs for repeated successful patterns
+    and promote them to the relevant patterns.md file via self_improve_agent.
+    Safe to call on every request — exits immediately on non-Monday days.
+    """
+    global _last_promotion_date
+    today = datetime.date.today()
+    if today.weekday() != 0:  # 0 = Monday
+        return
+    today_str = today.isoformat()
+    with _lock:
+        if _last_promotion_date == today_str:
+            return
+        _last_promotion_date = today_str
+    threading.Thread(target=_run_promotion, args=(today_str,), daemon=True).start()
+
+
+def _run_promotion(today: str) -> None:
+    """Ask self_improve_agent to extract repeated successful patterns from outcome logs."""
+    try:
+        promotion_prompt = (
+            f"[WEEKLY PATTERN PROMOTION — {today}]\n\n"
+            f"Scan last 7 days of agent outcomes and promote repeated success patterns.\n\n"
+            f"Steps:\n"
+            f"1. obsidian_read_note('KnowledgeBase/n8n/outcomes.md')\n"
+            f"2. obsidian_read_note('KnowledgeBase/Shell/outcomes.md')\n"
+            f"3. obsidian_read_note('KnowledgeBase/GitHub/outcomes.md')\n"
+            f"4. For each agent: find tasks with outcome=OK that share the same approach 3+ times\n"
+            f"5. For each identified pattern:\n"
+            f"   - obsidian_append_to_note('<agent>/patterns.md',\n"
+            f"     '\\n## [Promoted {today}] <pattern title>\\n<description>\\n#promoted')\n"
+            f"   Only promote reusable technical patterns (commands, API calls, config steps).\n"
+            f"   Skip one-off or overly specific tasks.\n\n"
+            f"If no patterns qualify for promotion, just log: 'No patterns promoted this week.'"
+        )
+        from ..agents.self_improve_agent import run_self_improve_agent
+        run_self_improve_agent(promotion_prompt, authorized=False)
+    except Exception:
+        pass
 
 
 def _generate_briefing(today: str) -> None:

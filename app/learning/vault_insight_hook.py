@@ -40,6 +40,25 @@ _KEYWORDS = {
                      "apk ready", "download link", "completed", "pushed to",
                      "committed", "merged", "workflow activated"},
 }
+
+# Auto-tag rules: (keyword_set, tag_string)
+_OUTCOME_TAG_RULES: list[tuple[set, str]] = [
+    ({"flutter", "apk", "pubspec", "dart", "build apk"},           "build"),
+    ({"workflow", "n8n", "automation", "webhook", "trigger"},       "automation"),
+    ({"error", "fixed", "resolved", "root cause", "bug", "debug"},  "debug"),
+    ({"deploy", "railway", "redeploy", "supervisorctl", "service"}, "infra"),
+    ({"github", "commit", "push", "pull request", "repo"},          "github"),
+    ({"email", "calendar", "secretary", "outlook"},                 "secretary"),
+    ({"database", "postgres", "db_health", "query"},                "database"),
+    ({"improvement", "self-improve", "fix your", "patch"},          "self-improve"),
+    ({"shell", "bash", "command", "terminal"},                      "shell"),
+]
+
+
+def _detect_outcome_tags(message: str, response: str) -> list[str]:
+    """Return content-based tags for an agent outcome note."""
+    combined = (message + " " + response).lower()
+    return [tag for kws, tag in _OUTCOME_TAG_RULES if any(kw in combined for kw in kws)]
 _MIN_RESPONSE_LEN  = 50   # lowered from 200 — captures build completions, short deploy results
 _MIN_MSG_LEN       = 10
 _SESSION_COOLDOWN  = 900          # 15 minutes between vault writes per session
@@ -136,10 +155,13 @@ def log_agent_outcome(agent_type: str, message: str, response: str, session_id: 
                 k in response.lower() for k in ("error", "failed", "timeout", "unavailable")
             )
             outcome = "ERROR" if is_error else "OK"
+            tags = _detect_outcome_tags(message, response)
+            tags_line = f"**Tags:** {', '.join(f'#{t}' for t in tags)}\n\n" if tags else ""
             note = (
                 f"\n## {now.strftime('%Y-%m-%d %H:%M')} — {outcome}\n\n"
                 f"**Task:** {_summarise(message, 180)}\n\n"
                 f"**Result:** {_summarise(response, 250)}\n\n"
+                f"{tags_line}"
                 f"**Session:** {session_id[:16] if session_id else 'n/a'}\n"
             )
             _append_to_vault(path, note)
