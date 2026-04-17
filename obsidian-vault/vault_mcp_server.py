@@ -7,7 +7,12 @@ MCP endpoint: http://obsidian-vault.railway.internal:22360/sse
 
 Tools: list_directory, read_file, write_file, append_to_file,
        search_files, delete_file, get_vault_info,
-       list_folders, get_recent_notes, get_vault_summary, move_file, search_by_tag
+       list_folders, get_recent_notes, get_vault_summary, move_file, search_by_tag,
+       get_note_metadata, archive_old_notes,
+       update_note_frontmatter, get_backlinks, search_with_filters,
+       rename_note_with_backlink_update, create_note_from_template,
+       get_all_tags, rename_tag_everywhere, bulk_move_files,
+       get_vault_analytics, get_note_links
 """
 
 import json
@@ -59,6 +64,16 @@ async def list_tools() -> list[Tool]:
         Tool(name="search_by_tag",    description="Find notes that contain a YAML frontmatter tag or inline #tag. Case-insensitive.", inputSchema={"type":"object","properties":{"tag":{"type":"string"}},"required":["tag"]}),
         Tool(name="get_note_metadata",description="Read YAML frontmatter only (tags, date, type) without loading full note content. Fast metadata scan.", inputSchema={"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}),
         Tool(name="archive_old_notes",description="Move notes older than N days into Archive/YYYY-MM/ folder. Default days=90. Keeps active vault clean.", inputSchema={"type":"object","properties":{"days":{"type":"integer","default":90},"dry_run":{"type":"boolean","default":False}},"required":[]}),
+        Tool(name="update_note_frontmatter", description="Patch YAML frontmatter fields without touching the note body. Merges new fields into existing frontmatter. Creates frontmatter if note has none.", inputSchema={"type":"object","properties":{"path":{"type":"string"},"fields":{"type":"object"},"merge":{"type":"boolean","default":True}},"required":["path","fields"]}),
+        Tool(name="get_backlinks", description="Find all notes that link to a given note via [[wikilink]] or markdown link syntax. Returns the referencing file paths.", inputSchema={"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}),
+        Tool(name="search_with_filters", description="Advanced search combining body text regex with frontmatter/tag/path filters. All filters are optional — combine as needed.", inputSchema={"type":"object","properties":{"content_query":{"type":"string","default":""},"tag":{"type":"string","default":""},"path_prefix":{"type":"string","default":""},"frontmatter_key":{"type":"string","default":""},"frontmatter_value":{"type":"string","default":""}},"required":[]}),
+        Tool(name="rename_note_with_backlink_update", description="Rename or move a note AND update every [[wikilink]] reference to it across the entire vault. Safe rename that keeps the knowledge graph intact.", inputSchema={"type":"object","properties":{"from_path":{"type":"string"},"to_path":{"type":"string"}},"required":["from_path","to_path"]}),
+        Tool(name="create_note_from_template", description="Create a new note from a template file. Substitutes {{variable}} placeholders with provided values. Template must exist in _templates/ folder.", inputSchema={"type":"object","properties":{"template_path":{"type":"string"},"new_note_path":{"type":"string"},"variables":{"type":"object","default":{}}},"required":["template_path","new_note_path"]}),
+        Tool(name="get_all_tags", description="List every tag used across the vault with note counts. Includes YAML frontmatter tags and inline #hashtags. Returns JSON sorted by frequency.", inputSchema={"type":"object","properties":{},"required":[]}),
+        Tool(name="rename_tag_everywhere", description="Rename a tag across every note in the vault — updates both YAML frontmatter lists and inline #hashtags.", inputSchema={"type":"object","properties":{"old_tag":{"type":"string"},"new_tag":{"type":"string"}},"required":["old_tag","new_tag"]}),
+        Tool(name="bulk_move_files", description="Move all notes matching a glob pattern (e.g. 'Inbox/*.md') to a destination folder. Returns a count and list of moved files.", inputSchema={"type":"object","properties":{"pattern":{"type":"string"},"destination_folder":{"type":"string"}},"required":["pattern","destination_folder"]}),
+        Tool(name="get_vault_analytics", description="Vault health report: orphaned notes (no links in or out), dead links (point to missing notes), link density, and per-folder stats.", inputSchema={"type":"object","properties":{},"required":[]}),
+        Tool(name="get_note_links", description="Extract all outgoing links from a note: wikilinks [[Note]], markdown links [text](./note.md), and external URLs. Returns structured JSON.", inputSchema={"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}),
     ]
 
 
@@ -242,6 +257,309 @@ def _dispatch(name: str, args: dict) -> str:
         return json.dumps({"archived": len(moved), "kept": len(skipped),
                            "note": f"{prefix} {len(moved)} notes older than {days} days to Archive/",
                            "files": moved}, indent=2)
+
+    elif name == "update_note_frontmatter":
+        target = _rel(args["path"])
+        new_fields: dict = args.get("fields", {})
+        merge = bool(args.get("merge", True))
+        if not target.exists():
+            # Create note with just frontmatter
+            fm_lines = ["---"]
+            for k, v in new_fields.items():
+                fm_lines.append(f"{k}: {json.dumps(v) if isinstance(v, (list, dict)) else v}")
+            fm_lines.append("---\n")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("\n".join(fm_lines), encoding="utf-8")
+            return f"Created {args['path']} with frontmatter: {list(new_fields.keys())}"
+        text = target.read_text(encoding="utf-8")
+        fm_match = re.match(r'^---\s*\n(.*?)\n---\s*\n?(.*)', text, re.DOTALL)
+        if fm_match:
+            raw_fm, body = fm_match.group(1), fm_match.group(2)
+            # Parse existing fields
+            existing: dict = {}
+            for line in raw_fm.splitlines():
+                if ":" in line:
+                    k, _, v = line.partition(":")
+                    existing[k.strip()] = v.strip()
+            if merge:
+                existing.update(new_fields)
+            else:
+                existing = new_fields
+        else:
+            existing = new_fields
+            body = text
+        fm_lines = ["---"]
+        for k, v in existing.items():
+            fm_lines.append(f"{k}: {json.dumps(v) if isinstance(v, (list, dict)) else v}")
+        fm_lines.append("---")
+        new_text = "\n".join(fm_lines) + "\n" + body.lstrip("\n")
+        target.write_text(new_text, encoding="utf-8")
+        return json.dumps({"path": args["path"], "updated_fields": list(new_fields.keys()), "merged": merge})
+
+    elif name == "get_backlinks":
+        target_path = args["path"]
+        # Build set of names to match: stem and full relative path
+        target_stem = Path(target_path).stem
+        results = []
+        pat_wiki = re.compile(rf'\[\[{re.escape(target_stem)}(?:\|[^\]]+)?\]\]', re.IGNORECASE)
+        pat_md   = re.compile(rf'\[.*?\]\(\.?/?\s*{re.escape(target_path)}\s*\)', re.IGNORECASE)
+        for md in sorted(VAULT_PATH.rglob("*.md")):
+            if any(p.startswith(".") for p in md.parts):
+                continue
+            rel = str(md.relative_to(VAULT_PATH))
+            if rel == target_path:
+                continue
+            try:
+                text = md.read_text(encoding="utf-8")
+            except Exception:
+                continue
+            if pat_wiki.search(text) or pat_md.search(text):
+                results.append(rel)
+        return json.dumps({"path": target_path, "backlinks": results, "count": len(results)}, indent=2)
+
+    elif name == "search_with_filters":
+        content_query  = args.get("content_query", "").strip()
+        tag_filter     = args.get("tag", "").strip().lstrip("#").lower()
+        path_prefix    = args.get("path_prefix", "").strip()
+        fm_key         = args.get("frontmatter_key", "").strip()
+        fm_val         = args.get("frontmatter_value", "").strip().lower()
+        content_pat    = re.compile(content_query, re.IGNORECASE) if content_query else None
+        results = []
+        for md in sorted(VAULT_PATH.rglob("*.md")):
+            if any(p.startswith(".") for p in md.parts):
+                continue
+            rel = str(md.relative_to(VAULT_PATH))
+            if path_prefix and not rel.lower().startswith(path_prefix.lower()):
+                continue
+            try:
+                text = md.read_text(encoding="utf-8")
+            except Exception:
+                continue
+            # Frontmatter parse
+            fm_data: dict = {}
+            fm_match = re.match(r'^---\s*\n(.*?)\n---', text, re.DOTALL)
+            if fm_match:
+                for line in fm_match.group(1).splitlines():
+                    if ":" in line:
+                        k, _, v = line.partition(":")
+                        fm_data[k.strip().lower()] = v.strip().lower()
+            if tag_filter:
+                tag_in_fm = any(tag_filter in v for v in fm_data.values())
+                tag_inline = bool(re.search(rf'#\b{re.escape(tag_filter)}\b', text, re.IGNORECASE))
+                if not tag_in_fm and not tag_inline:
+                    continue
+            if fm_key and fm_val:
+                if fm_data.get(fm_key.lower(), "") != fm_val:
+                    continue
+            elif fm_key:
+                if fm_key.lower() not in fm_data:
+                    continue
+            if content_pat and not content_pat.search(text):
+                continue
+            hits = []
+            if content_pat:
+                hits = [f"  line {i+1}: {l.strip()}" for i, l in enumerate(text.splitlines()) if content_pat.search(l)]
+            results.append(rel + (":\n" + "\n".join(hits) if hits else ""))
+        return "\n\n".join(results) if results else "No notes match the given filters."
+
+    elif name == "rename_note_with_backlink_update":
+        src = _rel(args["from_path"])
+        dst = _rel(args["to_path"])
+        if not src.exists():
+            return f"Source not found: {args['from_path']}"
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        old_stem = src.stem
+        new_stem = dst.stem
+        # Move the file first
+        src.rename(dst)
+        # Update all backlinks across vault
+        updated_files = []
+        pat = re.compile(rf'\[\[{re.escape(old_stem)}((?:\|[^\]]+)?)\]\]', re.IGNORECASE)
+        for md in VAULT_PATH.rglob("*.md"):
+            if any(p.startswith(".") for p in md.parts):
+                continue
+            try:
+                text = md.read_text(encoding="utf-8")
+            except Exception:
+                continue
+            new_text = pat.sub(rf'[[{new_stem}\1]]', text)
+            if new_text != text:
+                md.write_text(new_text, encoding="utf-8")
+                updated_files.append(str(md.relative_to(VAULT_PATH)))
+        return json.dumps({
+            "moved": f"{args['from_path']} → {args['to_path']}",
+            "backlinks_updated": len(updated_files),
+            "files_updated": updated_files,
+        }, indent=2)
+
+    elif name == "create_note_from_template":
+        tpl_path   = _rel(args["template_path"])
+        note_path  = _rel(args["new_note_path"])
+        variables  = args.get("variables", {})
+        if not tpl_path.exists():
+            return f"Template not found: {args['template_path']}"
+        if note_path.exists():
+            return f"Note already exists: {args['new_note_path']} — use write_file to overwrite"
+        content = tpl_path.read_text(encoding="utf-8")
+        # Standard built-in variables
+        import datetime as _dt
+        variables.setdefault("date",  _dt.date.today().isoformat())
+        variables.setdefault("time",  _dt.datetime.utcnow().strftime("%H:%M UTC"))
+        variables.setdefault("title", Path(args["new_note_path"]).stem)
+        for k, v in variables.items():
+            content = content.replace("{{" + k + "}}", str(v))
+        note_path.parent.mkdir(parents=True, exist_ok=True)
+        note_path.write_text(content, encoding="utf-8")
+        return f"Created {args['new_note_path']} from template {args['template_path']} ({len(content)} chars)"
+
+    elif name == "get_all_tags":
+        tag_counts: dict = {}
+        pat_inline = re.compile(r'#([A-Za-z0-9_/\-]+)')
+        pat_yaml_tag = re.compile(r'^\s*-?\s*([A-Za-z0-9_/\-]+)\s*$')
+        for md in VAULT_PATH.rglob("*.md"):
+            if any(p.startswith(".") for p in md.parts):
+                continue
+            try:
+                text = md.read_text(encoding="utf-8")
+            except Exception:
+                continue
+            # YAML frontmatter tags
+            fm_match = re.match(r'^---\s*\n(.*?)\n---', text, re.DOTALL)
+            if fm_match:
+                in_tags = False
+                for line in fm_match.group(1).splitlines():
+                    if re.match(r'^tags\s*:', line, re.IGNORECASE):
+                        in_tags = True
+                        # inline list: tags: [a, b, c]
+                        inner = re.search(r'\[(.+)\]', line)
+                        if inner:
+                            for t in inner.group(1).split(","):
+                                t = t.strip().strip('"\'')
+                                if t:
+                                    tag_counts[t.lower()] = tag_counts.get(t.lower(), 0) + 1
+                        continue
+                    if in_tags:
+                        m = pat_yaml_tag.match(line)
+                        if m:
+                            tag_counts[m.group(1).lower()] = tag_counts.get(m.group(1).lower(), 0) + 1
+                        elif line.strip() and not line.startswith(" ") and not line.startswith("-"):
+                            in_tags = False
+            # Inline #hashtags (skip frontmatter block)
+            body = text[fm_match.end():] if fm_match else text
+            for m in pat_inline.finditer(body):
+                t = m.group(1).lower()
+                tag_counts[t] = tag_counts.get(t, 0) + 1
+        sorted_tags = sorted(tag_counts.items(), key=lambda x: x[1], reverse=True)
+        return json.dumps({"total_unique_tags": len(sorted_tags), "tags": dict(sorted_tags)}, indent=2)
+
+    elif name == "rename_tag_everywhere":
+        old_tag = args["old_tag"].lstrip("#").strip()
+        new_tag = args["new_tag"].lstrip("#").strip()
+        updated_files = []
+        # Patterns: inline #old_tag and yaml list item
+        pat_inline = re.compile(rf'#\b{re.escape(old_tag)}\b', re.IGNORECASE)
+        pat_yaml   = re.compile(rf'(\s*-\s*){re.escape(old_tag)}(\s*$)', re.IGNORECASE | re.MULTILINE)
+        for md in VAULT_PATH.rglob("*.md"):
+            if any(p.startswith(".") for p in md.parts):
+                continue
+            try:
+                text = md.read_text(encoding="utf-8")
+            except Exception:
+                continue
+            new_text = pat_inline.sub(f"#{new_tag}", text)
+            new_text = pat_yaml.sub(rf'\g<1>{new_tag}\g<2>', new_text)
+            if new_text != text:
+                md.write_text(new_text, encoding="utf-8")
+                updated_files.append(str(md.relative_to(VAULT_PATH)))
+        return json.dumps({"old_tag": old_tag, "new_tag": new_tag,
+                           "notes_updated": len(updated_files), "files": updated_files}, indent=2)
+
+    elif name == "bulk_move_files":
+        pattern = args["pattern"]
+        dest_folder = args["destination_folder"].strip("/")
+        dest_dir = _rel(dest_folder)
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        moved = []
+        skipped = []
+        for md in list(VAULT_PATH.glob(pattern)):
+            if any(p.startswith(".") for p in md.parts):
+                continue
+            if not md.suffix == ".md":
+                continue
+            dest = dest_dir / md.name
+            if dest.exists():
+                skipped.append(str(md.relative_to(VAULT_PATH)))
+                continue
+            md.rename(dest)
+            moved.append(f"{md.relative_to(VAULT_PATH)} → {dest.relative_to(VAULT_PATH)}")
+        return json.dumps({"moved": len(moved), "skipped": len(skipped),
+                           "destination": dest_folder, "files": moved}, indent=2)
+
+    elif name == "get_vault_analytics":
+        all_notes = [
+            md for md in VAULT_PATH.rglob("*.md")
+            if not any(p.startswith(".") for p in md.parts)
+        ]
+        note_rels = {str(md.relative_to(VAULT_PATH)): md for md in all_notes}
+        note_stems = {md.stem.lower() for md in all_notes}
+        # Build outgoing link map and dead link list
+        outgoing: dict[str, list] = {}
+        dead_links: list = []
+        pat_wiki = re.compile(r'\[\[([^\]|]+)(?:\|[^\]]*)?\]\]')
+        for rel, md in note_rels.items():
+            try:
+                text = md.read_text(encoding="utf-8")
+            except Exception:
+                continue
+            links = [m.group(1).strip() for m in pat_wiki.finditer(text)]
+            outgoing[rel] = links
+            for lk in links:
+                if lk.lower() not in note_stems and lk + ".md" not in note_rels:
+                    dead_links.append({"from": rel, "broken_link": lk})
+        # Backlink map
+        has_backlink = set()
+        for rel, links in outgoing.items():
+            for lk in links:
+                for nrel in note_rels:
+                    if Path(nrel).stem.lower() == lk.lower():
+                        has_backlink.add(nrel)
+        # Orphaned: no outgoing links AND no incoming links
+        orphaned = [
+            rel for rel in note_rels
+            if not outgoing.get(rel) and rel not in has_backlink
+        ]
+        # Per-folder stats
+        folder_counts: dict = {}
+        for rel in note_rels:
+            folder = str(Path(rel).parent)
+            folder_counts[folder] = folder_counts.get(folder, 0) + 1
+        avg_links = round(
+            sum(len(v) for v in outgoing.values()) / max(len(outgoing), 1), 2
+        )
+        return json.dumps({
+            "total_notes": len(all_notes),
+            "orphaned_notes": orphaned,
+            "dead_links": dead_links[:50],
+            "avg_outgoing_links_per_note": avg_links,
+            "notes_per_folder": folder_counts,
+        }, indent=2)
+
+    elif name == "get_note_links":
+        target = _rel(args["path"])
+        if not target.exists():
+            return f"Note not found: {args['path']}"
+        text = target.read_text(encoding="utf-8")
+        wikilinks = [m.group(1).strip() for m in re.finditer(r'\[\[([^\]|]+)(?:\|[^\]]*)?\]\]', text)]
+        md_links   = re.findall(r'\[.*?\]\(([^)]+)\)', text)
+        ext_links  = [lk for lk in md_links if lk.startswith("http")]
+        int_links  = [lk for lk in md_links if not lk.startswith("http")]
+        return json.dumps({
+            "path": args["path"],
+            "wikilinks": wikilinks,
+            "internal_markdown_links": int_links,
+            "external_urls": ext_links,
+            "total_outgoing": len(wikilinks) + len(md_links),
+        }, indent=2)
 
     return f"Unknown tool: {name}"
 

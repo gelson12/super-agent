@@ -259,6 +259,155 @@ def obsidian_archive_old_notes(days: int = 90, dry_run: bool = False) -> str:
     return _run_async(_call_mcp("archive_old_notes", {"days": days, "dry_run": dry_run}))
 
 
+@tool
+def obsidian_update_frontmatter(file_path: str, fields_json: str, merge: bool = True) -> str:
+    """
+    Patch YAML frontmatter fields on a vault note without touching the body content.
+    - file_path: relative path to the note
+    - fields_json: JSON string of key/value pairs to set (e.g. '{"type":"decision","status":"approved"}')
+    - merge: if True (default), merges into existing frontmatter; if False, replaces entirely
+    Use this to add tags, set a date, mark a note type, or update any metadata property.
+    Creates frontmatter if the note has none. Creates the note if it doesn't exist.
+    """
+    try:
+        fields = json.loads(fields_json)
+    except Exception as e:
+        return f"[invalid fields_json: {e}]"
+    return _run_async(_call_mcp("update_note_frontmatter", {"path": file_path, "fields": fields, "merge": merge}))
+
+
+@tool
+def obsidian_get_backlinks(file_path: str) -> str:
+    """
+    Find all notes in the vault that link to the given note via [[wikilink]] or markdown link.
+    Returns a JSON object with the list of referencing file paths and a count.
+    Use this to understand the knowledge graph — which notes reference a decision, architecture doc, etc.
+    Essential before renaming or deleting a note to understand its impact.
+    """
+    return _run_async(_call_mcp("get_backlinks", {"path": file_path}))
+
+
+@tool
+def obsidian_search_with_filters(
+    content_query: str = "",
+    tag: str = "",
+    path_prefix: str = "",
+    frontmatter_key: str = "",
+    frontmatter_value: str = "",
+) -> str:
+    """
+    Advanced vault search combining multiple filters. All parameters are optional — combine as needed.
+    - content_query: regex or keyword to match in note body
+    - tag: filter to notes containing this tag (frontmatter or inline #tag)
+    - path_prefix: only search notes under this folder (e.g. "Decisions/")
+    - frontmatter_key: only notes where this YAML key exists
+    - frontmatter_value: combined with frontmatter_key — only notes where key=value
+    Example: find all approved decisions → tag="decision", frontmatter_key="status", frontmatter_value="approved"
+    """
+    return _run_async(_call_mcp("search_with_filters", {
+        "content_query": content_query,
+        "tag": tag,
+        "path_prefix": path_prefix,
+        "frontmatter_key": frontmatter_key,
+        "frontmatter_value": frontmatter_value,
+    }))
+
+
+@tool
+def obsidian_rename_note(from_path: str, to_path: str) -> str:
+    """
+    Rename or move a note AND automatically update every [[wikilink]] reference to it
+    across the entire vault. Unlike obsidian_move_note, this is safe to use on notes
+    that other notes link to — it keeps the knowledge graph intact.
+    - from_path: current relative path (e.g. "Decisions/old-name.md")
+    - to_path:   new relative path   (e.g. "Decisions/new-name.md")
+    Returns a summary of the move and how many files had their backlinks updated.
+    """
+    return _run_async(_call_mcp("rename_note_with_backlink_update", {"from_path": from_path, "to_path": to_path}))
+
+
+@tool
+def obsidian_create_from_template(template_path: str, new_note_path: str, variables_json: str = "{}") -> str:
+    """
+    Create a new note from a template file stored in the vault's _templates/ folder.
+    Substitutes {{variable}} placeholders with provided values.
+    Built-in variables always available: {{date}}, {{time}}, {{title}}
+    - template_path: relative path to template (e.g. "_templates/decision.md")
+    - new_note_path: where to create the new note (e.g. "Decisions/2026-04-17-use-postgresql.md")
+    - variables_json: JSON string of variable substitutions (e.g. '{"author":"Super Agent","status":"proposed"}')
+    Use this to create consistently structured notes for decisions, architecture docs, or improvement logs.
+    """
+    try:
+        variables = json.loads(variables_json)
+    except Exception:
+        variables = {}
+    return _run_async(_call_mcp("create_note_from_template", {
+        "template_path": template_path,
+        "new_note_path": new_note_path,
+        "variables": variables,
+    }))
+
+
+@tool
+def obsidian_get_all_tags() -> str:
+    """
+    List every tag used across the entire vault with note counts, sorted by frequency.
+    Returns JSON with {total_unique_tags, tags: {tag_name: count}}.
+    Use this to understand how the vault is categorised, find related notes by tag cluster,
+    or audit the tag taxonomy before doing bulk operations.
+    """
+    return _run_async(_call_mcp("get_all_tags", {}))
+
+
+@tool
+def obsidian_rename_tag(old_tag: str, new_tag: str) -> str:
+    """
+    Rename a tag across every note in the vault — updates both YAML frontmatter tag lists
+    and inline #hashtags. Pass tag names without the # prefix.
+    Example: rename "infra" to "infrastructure" everywhere.
+    Returns a count of notes updated and their file paths.
+    """
+    return _run_async(_call_mcp("rename_tag_everywhere", {"old_tag": old_tag, "new_tag": new_tag}))
+
+
+@tool
+def obsidian_bulk_move(pattern: str, destination_folder: str) -> str:
+    """
+    Move all notes matching a glob pattern to a destination folder.
+    - pattern: glob relative to vault root (e.g. "Inbox/*.md", "Conversations/2025-*.md")
+    - destination_folder: target folder path (e.g. "Archive/2025", "Processed")
+    Creates the destination folder if it doesn't exist. Skips files that already exist at destination.
+    Returns a count and list of moved files. Use for bulk vault reorganisation.
+    """
+    return _run_async(_call_mcp("bulk_move_files", {"pattern": pattern, "destination_folder": destination_folder}))
+
+
+@tool
+def obsidian_vault_analytics() -> str:
+    """
+    Run a full vault health analysis and return:
+    - orphaned_notes: notes with no incoming OR outgoing links (isolated, easy to lose)
+    - dead_links: [[wikilinks]] pointing to notes that don't exist
+    - avg_outgoing_links_per_note: link density metric
+    - notes_per_folder: breakdown of how many notes are in each folder
+    Use this periodically to keep the vault healthy and discover forgotten notes.
+    """
+    return _run_async(_call_mcp("get_vault_analytics", {}))
+
+
+@tool
+def obsidian_get_note_links(file_path: str) -> str:
+    """
+    Extract all outgoing links from a note:
+    - wikilinks: [[Note Name]] internal references
+    - internal_markdown_links: [text](./relative.md) links
+    - external_urls: [text](https://...) links
+    Returns structured JSON with all link types and a total count.
+    Use this to understand a note's connections before editing or to build a local graph view.
+    """
+    return _run_async(_call_mcp("get_note_links", {"path": file_path}))
+
+
 # ── Convenience list for agent tool registration ──────────────────────────────
 
 OBSIDIAN_TOOLS = [
@@ -276,4 +425,15 @@ OBSIDIAN_TOOLS = [
     obsidian_search_by_tag,
     obsidian_get_note_metadata,
     obsidian_archive_old_notes,
+    # ── New tools ──
+    obsidian_update_frontmatter,
+    obsidian_get_backlinks,
+    obsidian_search_with_filters,
+    obsidian_rename_note,
+    obsidian_create_from_template,
+    obsidian_get_all_tags,
+    obsidian_rename_tag,
+    obsidian_bulk_move,
+    obsidian_vault_analytics,
+    obsidian_get_note_links,
 ]
