@@ -170,7 +170,7 @@ jobs:
             -d "{\"alert\":\"layer2_railway_update_failed\",\"trigger\":\"${TRIGGER}\",\"ttl_seconds\":\"${TTL}\",\"message\":\"Layer 2: GitHub Actions failed to update CLAUDE_SESSION_TOKEN after 3 attempts\"}" \
             --max-time 10 || true
 
-      - name: Post result back to inspiring-cat
+      - name: Post result back to super-agent
         if: always() && steps.payload.outputs.callback_url != ''
         env:
           CALLBACK_URL:    ${{ steps.payload.outputs.callback_url }}
@@ -178,16 +178,22 @@ jobs:
           NONCE:           ${{ steps.payload.outputs.nonce }}
           SUCCESS:         ${{ steps.update.outputs.success }}
           ATTEMPTS:        ${{ steps.update.outputs.attempts }}
+          TRIGGER:         ${{ steps.payload.outputs.trigger_type }}
+          TTL:             ${{ steps.payload.outputs.ttl_seconds }}
         run: |
           SUCCESS_BOOL=$([ "$SUCCESS" = "true" ] && echo "true" || echo "false")
           PAYLOAD=$(jq -nc \
-            --arg   nonce    "$NONCE" \
-            --argjson success "$SUCCESS_BOOL" \
-            --arg   secret   "$CALLBACK_SECRET" \
-            --arg   attempts "${ATTEMPTS:-0}" \
-            --arg   ts       "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --arg   nonce        "$NONCE" \
+            --argjson success    "$SUCCESS_BOOL" \
+            --arg   secret       "$CALLBACK_SECRET" \
+            --arg   attempts     "${ATTEMPTS:-0}" \
+            --arg   ts           "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --arg   trigger_type "${TRIGGER:-unknown}" \
+            --arg   ttl          "${TTL:-0}" \
             '{nonce:$nonce, success:$success, secret:$secret,
               attempts:($attempts|tonumber), completed_at:$ts,
+              trigger_type:$trigger_type,
+              ttl_seconds:($ttl|tonumber),
               layer:"2_github_actions"}')
 
           curl -s -o /dev/null -w "Callback HTTP: %{http_code}\n" \

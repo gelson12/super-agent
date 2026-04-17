@@ -3119,6 +3119,20 @@ async def github_scheduled_sync(request: Request):
     except Exception:
         pass
 
+    # Fallback: read TTL from inspiring-cat /health if creds JSON had no expiry
+    if ttl_seconds is None or ttl_seconds == 0:
+        try:
+            import httpx as _httpx2, time as _t2
+            _ic_url = os.environ.get("CLI_WORKER_URL", "https://inspiring-cat-production.up.railway.app")
+            _r = _httpx2.get(f"{_ic_url}/health", timeout=5)
+            if _r.status_code == 200:
+                _ttl = _r.json().get("token_ttl_seconds") or _r.json().get("claude_token_expires_in_s")
+                if _ttl:
+                    ttl_seconds = int(_ttl)
+                    expires_at = _t2.strftime("%Y-%m-%dT%H:%M:%SZ", _t2.gmtime(_t2.time() + ttl_seconds))
+        except Exception:
+            pass
+
     # ── Fire repository_dispatch to GitHub ────────────────────────────────
     github_token = os.environ.get("GITHUB_PAT", "") or os.environ.get("GITHUB_TOKEN", "")
     github_repo  = os.environ.get("GITHUB_REPO", "gelson12/super-agent")
@@ -3800,7 +3814,11 @@ async def metrics_layer_health():
                 ttl = d.get("token_ttl_seconds") or d.get("claude_token_expires_in_s")
                 if ttl is not None:
                     result["token_ttl_seconds"] = ttl
-                if "token_expires_at" in d:
+                    import time as _time
+                    result["token_expires_at"] = _time.strftime(
+                        "%Y-%m-%dT%H:%M:%SZ", _time.gmtime(_time.time() + int(ttl))
+                    )
+                elif "token_expires_at" in d:
                     result["token_expires_at"] = d["token_expires_at"]
                 # Layer 1 inferred: if Layer 4 is healthy the volume backup exists
                 result["layer1"]["status"] = "healthy" if pro else "unknown"
