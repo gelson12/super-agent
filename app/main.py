@@ -3813,12 +3813,8 @@ async def metrics_layer_health():
                 # inspiring-cat uses claude_token_expires_in_s; super-agent uses token_ttl_seconds
                 ttl = d.get("token_ttl_seconds") or d.get("claude_token_expires_in_s")
                 if ttl is not None:
-                    result["token_ttl_seconds"] = ttl
-                    import time as _time
-                    result["token_expires_at"] = _time.strftime(
-                        "%Y-%m-%dT%H:%M:%SZ", _time.gmtime(_time.time() + int(ttl))
-                    )
-                elif "token_expires_at" in d:
+                    result["token_ttl_seconds"] = int(ttl)
+                if "token_expires_at" in d:
                     result["token_expires_at"] = d["token_expires_at"]
                 # Layer 1 inferred: if Layer 4 is healthy the volume backup exists
                 result["layer1"]["status"] = "healthy" if pro else "unknown"
@@ -3854,6 +3850,14 @@ async def metrics_layer_health():
             pass
     else:
         result["layer2"]["detail"] = "GITHUB_TOKEN not set — add to Railway env vars"
+
+    # Compute token_expires_at from TTL if not already set
+    if result["token_expires_at"] is None and result["token_ttl_seconds"] is not None:
+        import time as _layertime
+        result["token_expires_at"] = _layertime.strftime(
+            "%Y-%m-%dT%H:%M:%SZ",
+            _layertime.gmtime(_layertime.time() + result["token_ttl_seconds"])
+        )
 
     return result
 
