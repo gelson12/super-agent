@@ -1912,6 +1912,38 @@ def chat_ensemble(req: EnsembleRequest, request: Request):
     }
 
 
+@app.get("/metrics/predictions", tags=["meta"])
+def prediction_metrics():
+    """
+    Predictive intelligence state:
+    - trajectory_predictor: per-session sequence patterns
+    - behavior_patterns: time-based and transition-based predictions
+    """
+    result: dict = {}
+    try:
+        from .learning.behavior_patterns import (
+            get_time_summary, get_top_transitions, predict_from_time,
+        )
+        _ta, _tc = predict_from_time()
+        result["time_prediction"] = {
+            "predicted_agent": _ta,
+            "confidence": _tc,
+            "summary": get_time_summary(),
+        }
+        result["top_transitions"] = {
+            k: {"next": v[0], "confidence": v[1]}
+            for k, v in get_top_transitions().items()
+        }
+    except Exception as e:
+        result["behavior_patterns_error"] = str(e)
+    try:
+        from .routing.dispatcher import get_routing_confidence_stats
+        result["routing_confidence"] = get_routing_confidence_stats()
+    except Exception as e:
+        result["routing_confidence_error"] = str(e)
+    return result
+
+
 @app.get("/wisdom/reload", tags=["meta"])
 def wisdom_reload():
     """

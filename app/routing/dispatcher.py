@@ -67,6 +67,32 @@ from ..prompts import (
 )
 from ..config import settings as _settings
 
+# ── Predictive intelligence layer ─────────────────────────────────────────────
+try:
+    from ..learning.trajectory_predictor import (
+        record_turn as _traj_record,
+        predict_next as _traj_predict,
+    )
+except Exception:
+    def _traj_record(s, a): pass
+    def _traj_predict(s): return None, 0.0
+
+try:
+    from ..learning.behavior_patterns import (
+        record_dispatch as _bp_record,
+        predict_after as _bp_predict_after,
+        predict_from_time as _bp_predict_time,
+    )
+except Exception:
+    def _bp_record(a): pass
+    def _bp_predict_after(a): return None, 0.0
+    def _bp_predict_time(): return None, 0.0
+
+try:
+    from ..learning.context_prewarm import prewarm_for_agent as _prewarm
+except Exception:
+    def _prewarm(a): pass
+
 # ── Active task tracker (per-session, in-memory) ─────────────────────────────
 # Written before any long-running agent call so follow-up queries always know
 # what was being worked on, even before append_exchange fires (which only
@@ -540,6 +566,58 @@ def _vault_log_outcome(agent_type: str, message: str, response: str, session_id:
         pass
 
 
+# Next-step suggestion templates — keyed by (current_agent, predicted_next_agent).
+# Zero API cost — pure string lookup.
+_NEXT_STEP_HINTS: dict[tuple[str, str], str] = {
+    ("SHELL",  "GITHUB"):       "Next: push the result to GitHub (`commit` or `create file` in the repo)?",
+    ("SHELL",  "SHELL"):        "Next: grab the download link, or run another command?",
+    ("SHELL",  "N8N"):          "Next: trigger an n8n automation with this output?",
+    ("GITHUB", "SHELL"):        "Next: clone the repo and run it in the shell?",
+    ("GITHUB", "GITHUB"):       "Next: open a PR, create a branch, or update another file?",
+    ("GITHUB", "N8N"):          "Next: set up an n8n webhook to react to repo events?",
+    ("N8N",    "N8N"):          "Next: activate the workflow, or check its execution history?",
+    ("N8N",    "SHELL"):        "Next: run a shell command to verify the workflow's output?",
+    ("N8N",    "GITHUB"):       "Next: commit the workflow JSON to GitHub for backup?",
+    ("SELF_IMPROVE", "SHELL"):  "Next: verify the fix with a shell health check?",
+    ("SELF_IMPROVE", "GITHUB"): "Next: push the fix to GitHub?",
+}
+
+
+def _maybe_add_next_step(response: str, session_id: str, current_agent: str) -> str:
+    """
+    Append a one-line predictive next-step hint to the response when the
+    trajectory or behavioral predictor is confident enough.
+    Zero extra API calls — uses in-memory pattern counters only.
+    """
+    try:
+        # Prefer trajectory prediction (session-specific) over behavioral (global)
+        next_agent, conf = _traj_predict(session_id)
+        if not next_agent or conf < 0.6:
+            next_agent, conf = _bp_predict_after(current_agent)
+        if not next_agent or conf < 0.6:
+            return response
+        hint = _NEXT_STEP_HINTS.get((current_agent, next_agent))
+        if hint:
+            return response.rstrip() + f"\n\n> **Predicted next step** ({int(conf*100)}% likely): {hint}"
+    except Exception:
+        pass
+    return response
+
+
+def _record_and_prewarm(session_id: str, agent_type: str) -> None:
+    """Record turn for all predictors and pre-warm vault for predicted next agent."""
+    try:
+        _traj_record(session_id, agent_type)
+        _bp_record(agent_type)
+        next_agent, conf = _traj_predict(session_id)
+        if not next_agent or conf < 0.55:
+            next_agent, _ = _bp_predict_after(agent_type)
+        if next_agent:
+            _prewarm(next_agent.lower())
+    except Exception:
+        pass
+
+
 def _safe_agent_call(agent_fn, *args, agent_name: str = "agent", **kwargs) -> str:
     """Call an agent function with a per-agent timeout, catching any exception."""
     import concurrent.futures as _cf
@@ -983,6 +1061,17 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
             f"[Session goal: {_session_goal}]\n{augmented_message}"
         )
 
+    # ── 0e-2. Behavioral time prediction — inject as context hint ────────────
+    # If the time-based predictor is confident, prepend a brief hint so the
+    # dispatcher and agents are aware of what Gelson typically needs at this hour.
+    _time_agent_hint, _time_agent_conf = _bp_predict_time()
+    if _time_agent_hint and _time_agent_conf >= 0.65:
+        _time_hint_str = (
+            f"[Behavioral pattern: at this time you typically use the "
+            f"{_time_agent_hint} agent — context pre-loaded]\n"
+        )
+        _agent_message = _time_hint_str + _agent_message
+
     # ── 0f. Proactive anomaly surface ─────────────────────────────────────────
     # If a critical anomaly was detected within the last 5 minutes by the anomaly
     # alerter, prepend a brief notice to the response so the user sees it in-band.
@@ -1356,6 +1445,8 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
         store_memory(session_id, f"Q: {message[:300]} A: {response[:300]}")
         _vault_log_outcome("N8N", message, response, session_id)
         _set_last_agent(session_id, "N8N")
+        response = _maybe_add_next_step(response, session_id, "N8N")
+        _record_and_prewarm(session_id, "N8N")
         return _build_extended_result({
             "model_used": "N8N",
             "response": response,
@@ -1375,6 +1466,8 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
         adapter.tick()
         _vault_log_outcome("SELF_IMPROVE", message, response, session_id)
         _set_last_agent(session_id, "SELF_IMPROVE")
+        response = _maybe_add_next_step(response, session_id, "SELF_IMPROVE")
+        _record_and_prewarm(session_id, "SELF_IMPROVE")
         return _build_extended_result({
             "model_used": "SELF_IMPROVE",
             "response": response,
@@ -1402,6 +1495,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
         adapter.tick()
         store_memory(session_id, f"Q: {message[:300]} A: {response[:300]}")
         _vault_log_outcome("SHELL", message, response, session_id)
+        _record_and_prewarm(session_id, "SHELL")
         return _build_extended_result({
             "model_used": "SHELL",
             "response": response,
@@ -1616,6 +1710,8 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
         adapter.tick()
         _vault_log_outcome("SHELL", message, response, session_id)
         _set_last_agent(session_id, "SHELL")
+        response = _maybe_add_next_step(response, session_id, "SHELL")
+        _record_and_prewarm(session_id, "SHELL")
         return _build_extended_result({
             "model_used": "SHELL",
             "response": response,
@@ -1656,6 +1752,8 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
         adapter.tick()
         _vault_log_outcome("GITHUB", message, response, session_id)
         _set_last_agent(session_id, "GITHUB")
+        response = _maybe_add_next_step(response, session_id, "GITHUB")
+        _record_and_prewarm(session_id, "GITHUB")
         return _build_extended_result({
             "model_used": "GITHUB",
             "response": response,
@@ -1696,6 +1794,8 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
         adapter.tick()
         _vault_log_outcome("N8N", message, response, session_id)
         _set_last_agent(session_id, "N8N")
+        response = _maybe_add_next_step(response, session_id, "N8N")
+        _record_and_prewarm(session_id, "N8N")
         return _build_extended_result({
             "model_used": "N8N",
             "response": response,
