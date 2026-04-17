@@ -153,6 +153,53 @@ def load_cycle_context(n_rejected: int = 5, n_no_safe: int = 3) -> str:
     return "\n".join(lines)
 
 
+def _append_vault_daily_status(review_type: str, date_str: str, vault_entries: list) -> None:
+    """
+    Append a one-line audit status note to Improvement-Logs/YYYY-MM-DD.md
+    so each self-improve run is visible in the vault. Fire-and-forget thread.
+    """
+    try:
+        ts = datetime.datetime.utcnow().strftime("%H:%M UTC")
+        accepts = sum(1 for e in vault_entries if e.get("decision") == "ACCEPT")
+        rejects = sum(1 for e in vault_entries if e.get("decision") == "REJECT")
+        no_safe = sum(1 for e in vault_entries if e.get("decision") == "NO_SAFE_IMPROVEMENT")
+        line = (
+            f"- {ts} — **{review_type}** review ran: {len(vault_entries)} suggestion(s) "
+            f"(accept={accepts}, reject={rejects}, no_safe={no_safe})\n"
+        )
+        path = f"Improvement-Logs/{date_str}.md"
+        line_repr = repr(line)
+        path_repr = repr(path)
+
+        script = (
+            "import asyncio\n"
+            f"CONTENT = {line_repr}\n"
+            f"PATH = {path_repr}\n"
+            "async def main():\n"
+            "    from mcp.client.sse import sse_client\n"
+            "    from mcp import ClientSession\n"
+            "    async with sse_client(url='http://obsidian-vault.railway.internal:22360/sse') as (r, w):\n"
+            "        async with ClientSession(r, w) as s:\n"
+            "            await s.initialize()\n"
+            "            await s.call_tool('append_to_file', {'path': PATH, 'content': CONTENT})\n"
+            "            print('Daily status appended to vault', flush=True)\n"
+            "asyncio.run(main())\n"
+        )
+        import threading
+
+        def _run():
+            try:
+                from ..tools.shell_tools import run_shell_via_cli_worker
+                cmd = "python3 << 'PYEOF'\n" + script + "PYEOF"
+                run_shell_via_cli_worker(cmd)
+            except Exception:
+                pass
+
+        threading.Thread(target=_run, daemon=True).start()
+    except Exception:
+        pass  # never raise from here
+
+
 def _append_vault_cycle_log(entries: list, date_str: str, review_type: str) -> None:
     """
     Append cycle decisions to Engineering/Improvement Cycle Log.md in the vault.
@@ -247,6 +294,7 @@ def parse_and_record_review_cycles(review: dict, review_type: str) -> None:
 
         # Fire-and-forget vault append — never blocks the review
         _append_vault_cycle_log(vault_entries, date_str, review_type)
+        _append_vault_daily_status(review_type, date_str, vault_entries)
 
     except Exception:
         pass  # never raise from here
