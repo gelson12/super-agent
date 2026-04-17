@@ -2121,7 +2121,7 @@
     document.getElementById('office-panel').style.display = _officeOpen ? 'block' : 'none';
     if (_officeOpen) {
       _fetchOffice();
-      _officeTimer = setInterval(_fetchOffice, 5000);
+      _officeTimer = setInterval(_fetchOffice, 2000);  // 2s near-realtime
     } else {
       if (_officeTimer) { clearInterval(_officeTimer); _officeTimer = null; }
     }

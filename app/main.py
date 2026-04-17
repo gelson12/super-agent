@@ -828,8 +828,11 @@ _CLI_HEALTH_CACHE_TTL = 15  # seconds
 
 def _fetch_cli_worker_health() -> dict:
     """
-    Fetch inspiring-cat /health with a 15s cache.
+    Fetch inspiring-cat /health with a 15s cache and enrich with local state.
     Returns {} on any error so callers can treat missing fields as unknown.
+
+    Enriched fields (added here, not from inspiring-cat):
+      api_available — True if super-agent's own API key has credits (from pro_router)
     """
     global _cli_health_cache, _cli_health_cache_ts
     import time as _t
@@ -837,15 +840,28 @@ def _fetch_cli_worker_health() -> dict:
     if _t.time() - _cli_health_cache_ts < _CLI_HEALTH_CACHE_TTL:
         return _cli_health_cache
     cli_url = os.environ.get("CLI_WORKER_URL", "").rstrip("/")
-    if not cli_url:
-        return {}
+    result: dict = {}
+    if cli_url:
+        try:
+            with urllib.request.urlopen(f"{cli_url}/health", timeout=3) as _r:
+                result = _j.loads(_r.read().decode())
+        except Exception:
+            pass
+    # Enrich with local API credit state (no extra I/O — reads flag files)
     try:
-        with urllib.request.urlopen(f"{cli_url}/health", timeout=3) as _r:
-            _cli_health_cache = _j.loads(_r.read().decode())
-            _cli_health_cache_ts = _t.time()
-            return _cli_health_cache
+        from .learning.pro_router import get_status as _gs
+        _ps = _gs()
+        result["api_available"] = not _ps.get("flags", {}).get("all_api_strike", False)
+        # Simpler: check if any API worker is not on strike
+        from .learning.agent_status_tracker import get_worker_status as _gws
+        _api_workers = ("Anthropic Haiku", "Sonnet Anthropic", "Opus Anthropic")
+        _all_strike = all(_gws(w).get("state") == "strike" for w in _api_workers)
+        result["api_available"] = not _all_strike
     except Exception:
-        return {}
+        pass
+    _cli_health_cache = result
+    _cli_health_cache_ts = _t.time()
+    return result
 
 
 @app.get("/dashboard/agents/status", tags=["meta"])
@@ -862,27 +878,49 @@ def agents_status():
     from .learning.agent_status_tracker import get_all_statuses, mark_done as _md
     workers = get_all_statuses()
 
-    # ── Live reconciliation for Claude CLI Pro ────────────────────────────────
-    # The in-memory tracker and the actual CLI state can diverge when recovery
-    # happens via a path that doesn't call mark_done() (e.g. GitHub Actions relay,
-    # cookie keepalive, manual token push, container restart clearing flag files).
-    # Fix: cross-check on every status poll — if sick/recovering but CLI is actually
-    # healthy, clear the stale state immediately so the dashboard is always accurate.
+    # ── Live reconciliation — all workers ────────────────────────────────────
+    # Problem: in-memory tracker and actual backend state diverge when recovery
+    # happens outside the normal request path (Playwright, GH Actions, keepalive,
+    # billing top-up) without calling mark_done(). Dashboard showed stale state.
+    # Fix: on every poll, cross-check each worker's tracker state vs. live source
+    # of truth. When mismatch confirmed → call mark_done() and patch this response
+    # so the caller receives accurate state on this very request.
     try:
         from .learning.pro_router import is_cli_down as _is_cli_down
-        _cli_health = _fetch_cli_worker_health()
-        _cli_actually_up = _cli_health.get("claude_available", False)
-        _flag_down = _is_cli_down()
+        _cli_health = _fetch_cli_worker_health()  # 15s cache, no extra I/O cost
+
+        # Claude CLI Pro — compare tracker vs. inspiring-cat /health
+        _claude_up   = _cli_health.get("claude_available", False)
+        _claude_down = _is_cli_down()
+        # Gemini CLI — same health response, no extra call
+        _gemini_up   = _cli_health.get("gemini_available", False)
+
         for _w in workers:
-            if _w["id"] == "Claude CLI Pro" and _w.get("state") in ("sick", "recovering"):
-                if _cli_actually_up and not _flag_down:
-                    # Confirmed mismatch: tracker says sick, backend says healthy.
-                    # Clear stale state right now so this response is accurate.
+            _wid   = _w["id"]
+            _state = _w.get("state")
+
+            if _wid == "Claude CLI Pro" and _state in ("sick", "recovering"):
+                if _claude_up and not _claude_down:
                     _md("Claude CLI Pro")
                     _w["state"] = "idle"
                     _w["sick_since"] = None
                     _w["error_detail"] = None
-                break
+
+            elif _wid == "Gemini CLI" and _state in ("sick", "recovering"):
+                if _gemini_up:
+                    _md("Gemini CLI")
+                    _w["state"] = "idle"
+                    _w["sick_since"] = None
+                    _w["error_detail"] = None
+
+            elif _wid in ("Anthropic Haiku", "Sonnet Anthropic", "Opus Anthropic") and _state == "strike":
+                # API workers: only clear strike if api_available is explicitly known True.
+                # We avoid making a live Anthropic API call on every poll (too expensive).
+                # Instead we rely on the cached value set by the health-check job (30 min)
+                # and by seed_live_status() which already calls mark_done() when credits
+                # are confirmed. Inject api_available field so UI can show correct reason.
+                _w["api_available"] = _cli_health.get("api_available")  # may be None if unknown
+
     except Exception:
         pass
 

@@ -730,7 +730,16 @@ def seed_live_status() -> None:
                     max_tokens=1,
                     messages=[{"role": "user", "content": "hi"}],
                 )
-                # If we get here, credits are available — leave as idle
+                # Credits available — clear strike state if any API worker is stuck in it.
+                # Without this, workers stay in strike forever even after a billing top-up
+                # because mark_done() is only called on actual task success (too slow for UX).
+                _api_workers = ("Anthropic Haiku", "Sonnet Anthropic", "Opus Anthropic")
+                with _lock:
+                    _stuck = [w for w in _api_workers
+                              if _workers.get(w, {}).get("state") == "strike"]
+                for _wid in _stuck:
+                    mark_done(_wid)
+                    _log_agent_event(_wid, "done", "API credits confirmed — cleared stale strike state")
             except Exception as e:
                 err = str(e).lower()
                 _no_credit = ("credit balance", "insufficient", "payment required", "no credits")

@@ -2040,7 +2040,7 @@ function setPill(el, level, text) {
 }
 
 fetchAndRender();
-setInterval(fetchAndRender, 5000);
+setInterval(fetchAndRender, 2000);  // 2s — near-realtime without flooding
 
 // ── Detailed health (token expiry, layer status) ───────────────────────────
 
@@ -2089,7 +2089,7 @@ function _applyTokenExpiry() {
 }
 
 fetchDetailedHealth();
-setInterval(fetchDetailedHealth, 30000);
+setInterval(fetchDetailedHealth, 10000);  // 10s — token TTL needs fresher updates
 
 // ── Memory panel ──────────────────────────────────────────────────────────
 
