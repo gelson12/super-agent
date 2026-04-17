@@ -15,6 +15,16 @@ import datetime
 import threading
 import time
 
+_AGENT_OUTCOME_PATHS = {
+    "N8N":          "KnowledgeBase/n8n/outcomes.md",
+    "SHELL":        "KnowledgeBase/Shell/outcomes.md",
+    "GITHUB":       "KnowledgeBase/GitHub/outcomes.md",
+    "SELF_IMPROVE": "KnowledgeBase/SelfImprove/outcomes.md",
+}
+_AGENT_COOLDOWN = 300   # 5 min between writes per (agent_type, session_id)
+_agent_last_write: dict = {}
+_agent_lock = threading.Lock()
+
 _KEYWORDS = {
     "decision":     {"decided", "going to", "will use", "chose", "switched to",
                      "plan to", "agreed", "confirmed"},
@@ -84,6 +94,59 @@ def _is_session_throttled(session_id: str) -> bool:
         for k in stale:
             del _session_last_write[k]
         return False
+
+
+def _is_agent_throttled(agent_type: str, session_id: str) -> bool:
+    key = (agent_type, session_id or "__global__")
+    with _agent_lock:
+        last = _agent_last_write.get(key, 0.0)
+        if time.time() - last < _AGENT_COOLDOWN:
+            return True
+        _agent_last_write[key] = time.time()
+        cutoff = time.time() - _AGENT_COOLDOWN * 4
+        for k in [k for k, v in _agent_last_write.items() if v < cutoff]:
+            del _agent_last_write[k]
+        return False
+
+
+def _summarise(text: str, max_len: int = 200) -> str:
+    import re
+    text = re.sub(r'\*+', '', text)
+    text = re.sub(r'#+\s*', '', text)
+    text = text.strip()
+    return text[:max_len].rsplit(' ', 1)[0] + '…' if len(text) > max_len else text
+
+
+def log_agent_outcome(agent_type: str, message: str, response: str, session_id: str = "") -> None:
+    """
+    Write a compact structured outcome note for an agent call to its KnowledgeBase path.
+    Runs in a daemon thread — never blocks the response path. Throttled per (agent, session).
+    """
+    if not response or len(response) < 30:
+        return
+    agent_upper = agent_type.upper()
+    path = _AGENT_OUTCOME_PATHS.get(agent_upper)
+    if not path or _is_agent_throttled(agent_upper, session_id):
+        return
+
+    def _write():
+        try:
+            now = datetime.datetime.utcnow()
+            is_error = response.lstrip().startswith("[") and any(
+                k in response.lower() for k in ("error", "failed", "timeout", "unavailable")
+            )
+            outcome = "ERROR" if is_error else "OK"
+            note = (
+                f"\n## {now.strftime('%Y-%m-%d %H:%M')} — {outcome}\n\n"
+                f"**Task:** {_summarise(message, 180)}\n\n"
+                f"**Result:** {_summarise(response, 250)}\n\n"
+                f"**Session:** {session_id[:16] if session_id else 'n/a'}\n"
+            )
+            _append_to_vault(path, note)
+        except Exception:
+            pass
+
+    threading.Thread(target=_write, daemon=True).start()
 
 
 def maybe_save_insight(

@@ -471,6 +471,15 @@ def _is_n8n_request(message: str) -> bool:
 _AGENT_TIMEOUT_SECONDS = 180  # 3 min hard timeout per agent call
 
 
+def _vault_log_outcome(agent_type: str, message: str, response: str, session_id: str) -> None:
+    """Log agent outcome to Obsidian vault — fire-and-forget, never raises."""
+    try:
+        from ..learning.vault_insight_hook import log_agent_outcome as _vlo
+        _vlo(agent_type, message, response, session_id)
+    except Exception:
+        pass
+
+
 def _safe_agent_call(agent_fn, *args, agent_name: str = "agent", **kwargs) -> str:
     """Call an agent function with a timeout, catching any exception."""
     import concurrent.futures as _cf
@@ -631,6 +640,13 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
     red_team_ran, escalated, confidence_score, cloudinary_url, and more.
     """
 
+    # ── Daily briefing trigger (fire-and-forget, max once/hour) ──────────────
+    try:
+        from ..learning.daily_briefing import trigger_daily_briefing_if_needed as _tbriefing
+        _tbriefing()
+    except Exception:
+        pass
+
     # ── Message length guard ──────────────────────────────────────────────────
     if len(message) > _MAX_MESSAGE_LEN:
         return _build_extended_result({
@@ -783,12 +799,18 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
     else:
         try:
             from ..prompts import get_vault_context_block as _get_vault
-            if _is_clear_agent_route:
-                # Use global cache only — skip per-topic search
-                _vault_ctx = _get_vault(topic_hint="")
+            # Agent-type-specific hint: inject patterns most relevant to the route
+            if _is_n8n_request(message):
+                _vault_hint = f"n8n workflow pattern {message[:50]}"
+            elif _is_shell_request(message):
+                _vault_hint = f"shell command railway {message[:50]}"
+            elif _is_github_request(message):
+                _vault_hint = f"github repository {message[:50]}"
+            elif _is_self_improve_request(message):
+                _vault_hint = f"infrastructure fix {message[:50]}"
             else:
                 _vault_hint = message[:60] if len(message) > 20 else ""
-                _vault_ctx = _get_vault(topic_hint=_vault_hint)
+            _vault_ctx = _get_vault(topic_hint=_vault_hint)
             _system_claude = _system_claude.replace("{vault_context}", _vault_ctx)
             _system_haiku  = _system_haiku.replace("{vault_context}",  _vault_ctx)
         except Exception:
@@ -799,8 +821,9 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
     # Build agent-augmented message: vault knowledge prepended once for all 4 agents.
     # Agents run LangGraph create_react_agent — they receive the user turn only (no
     # separate system prompt injection), so vault context must travel in the message.
-    # Cap vault prefix at 1500 chars to avoid bloating short follow-up calls.
-    _vault_prefix = _vault_ctx[:1500] if _vault_ctx else ""
+    # Higher cap for agent routes — complex tasks benefit from more vault context.
+    _vault_prefix_cap = 2500 if _is_clear_agent_route else 1500
+    _vault_prefix = _vault_ctx[:_vault_prefix_cap] if _vault_ctx else ""
     _agent_message = (
         f"{_vault_prefix}\n{augmented_message}" if _vault_prefix else augmented_message
     )
@@ -1215,6 +1238,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
         insight_log.record(message, "N8N", response, "n8n_early", complexity, session_id)
         adapter.tick()
         store_memory(session_id, f"Q: {message[:300]} A: {response[:300]}")
+        _vault_log_outcome("N8N", message, response, session_id)
         _set_last_agent(session_id, "N8N")
         return _build_extended_result({
             "model_used": "N8N",
@@ -1233,6 +1257,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
         _clear_active_task()
         insight_log.record(message, "SELF_IMPROVE", response, "self_improve", complexity, session_id)
         adapter.tick()
+        _vault_log_outcome("SELF_IMPROVE", message, response, session_id)
         _set_last_agent(session_id, "SELF_IMPROVE")
         return _build_extended_result({
             "model_used": "SELF_IMPROVE",
@@ -1258,6 +1283,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
         insight_log.record(message, "SHELL", response, "isolation_debug", complexity, session_id)
         adapter.tick()
         store_memory(session_id, f"Q: {message[:300]} A: {response[:300]}")
+        _vault_log_outcome("SHELL", message, response, session_id)
         return _build_extended_result({
             "model_used": "SHELL",
             "response": response,
@@ -1381,10 +1407,20 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
             if full_ctx and full_ctx != original_msg
             else ""
         )
+        # Check vault for prior fixes to similar errors — gives the investigating agent a head start
+        _vault_fix_ctx = ""
+        try:
+            from ..tools.obsidian_tools import obsidian_search_vault as _vs
+            _vr = _vs.invoke({"query": f"error fix {failed_agent.lower()} {err_resp[:60]}"})
+            if _vr and "no matches" not in _vr.lower() and len(_vr) > 20:
+                _vault_fix_ctx = f"\nVault — prior fixes for similar errors:\n{_vr[:500]}\n"
+        except Exception:
+            pass
         brief = (
             f"AUTONOMOUS INVESTIGATION REQUIRED — {failed_agent} agent just failed.\n"
             f"User's original request: {original_msg[:300]}\n"
             f"{_ctx_section}"
+            f"{_vault_fix_ctx}"
             f"Error returned: {err_resp[:400]}\n\n"
             f"Immediately investigate using your tools:\n"
             f"1. railway_get_logs + railway_get_deployment_status\n"
@@ -1446,6 +1482,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
                 response = response.rstrip() + "\n\n_Noted for future reference._"
         insight_log.record(message, "SHELL", response, "shell_keywords", complexity, session_id)
         adapter.tick()
+        _vault_log_outcome("SHELL", message, response, session_id)
         _set_last_agent(session_id, "SHELL")
         return _build_extended_result({
             "model_used": "SHELL",
@@ -1474,6 +1511,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
                 response = response.rstrip() + "\n\n_Noted for future reference._"
         insight_log.record(message, "GITHUB", response, "github_keywords", complexity, session_id)
         adapter.tick()
+        _vault_log_outcome("GITHUB", message, response, session_id)
         _set_last_agent(session_id, "GITHUB")
         return _build_extended_result({
             "model_used": "GITHUB",
@@ -1511,6 +1549,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
                 response = response.rstrip() + "\n\n_Noted for future reference._"
         insight_log.record(message, "N8N", response, "n8n_keywords", complexity, session_id)
         adapter.tick()
+        _vault_log_outcome("N8N", message, response, session_id)
         _set_last_agent(session_id, "N8N")
         return _build_extended_result({
             "model_used": "N8N",

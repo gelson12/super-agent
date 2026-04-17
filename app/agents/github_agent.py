@@ -77,7 +77,18 @@ You can:
 
 Always confirm the exact action taken and its result. Use clear, descriptive commit messages.
 When unsure of a branch name, try 'main' first then 'master'.
-Never guess file content — read the file first if you need to modify it."""
+Never guess file content — read the file first if you need to modify it.
+
+## VAULT WORKFLOW — DO THIS FOR EVERY NON-TRIVIAL TASK
+FIRST (before acting):
+  1. obsidian_search_vault("<task keywords>") → find prior repo work, commit patterns, file locations
+  2. obsidian_read_note("GitHub/patterns.md") → check known repo structures and proven workflows
+
+LAST (after a meaningful outcome):
+  obsidian_append_to_note("KnowledgeBase/GitHub/outcomes.md",
+    "## <date> <time> — OK/ERROR\n**Task:** <summary>\n**Repo:** <repo>\n**Action:** <action>\n**Result:** <result>")
+
+Skip vault for simple read-only queries (list_repos, read_file with no follow-up write)."""
 
 _GITHUB_TOOLS = [
     github_list_repos,

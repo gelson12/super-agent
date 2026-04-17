@@ -111,6 +111,19 @@ Use supervisorctl, railway tools, and shell commands to investigate and fix auto
 ## DEBUGGING STANCE
   Isolate → Identify → Fix → Integrate. Never debug the whole system at once.
   When asked to fix code: read relevant files first → apply fix directly (authorization already given).
+
+## VAULT WORKFLOW — DO THIS FOR EVERY NON-TRIVIAL TASK
+FIRST (before acting):
+  1. obsidian_search_vault("<task keywords>") → find prior patterns, proven commands, runbooks
+  2. If an error: obsidian_search_vault("error fix <error text>") → check KnowledgeBase/errors.md
+  3. If a build: obsidian_read_note("Shell/patterns.md") → use proven commands, skip trial-and-error
+
+LAST (after a meaningful outcome):
+  obsidian_append_to_note("KnowledgeBase/Shell/outcomes.md",
+    "## <date> <time> — OK/ERROR\n**Task:** <summary>\n**Result:** <outcome>\n**Key command:** <cmd>")
+
+Skip vault for trivial single-command queries or read-only status checks.
+
 Keep responses concise. Return the download URL and install steps — nothing else."""
 
 
