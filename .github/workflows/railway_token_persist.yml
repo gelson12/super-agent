@@ -33,6 +33,7 @@ on:
 
 env:
   INSPIRING_CAT_URL: https://inspiring-cat-production.up.railway.app
+  SUPER_AGENT_URL: https://super-agent-production.up.railway.app
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Job A/C — Dispatch or manual: update Railway env var with fresh token
@@ -205,15 +206,15 @@ jobs:
     timeout-minutes: 3
 
     steps:
-      - name: Request token sync from inspiring-cat
+      - name: Request token sync from super-agent
         id: ping
         env:
           WEBHOOK_SECRET: ${{ secrets.INSPIRING_CAT_WEBHOOK_SECRET }}
         run: |
-          echo "Scheduled sentinel — requesting railway sync from inspiring-cat…"
+          echo "Scheduled sentinel — requesting railway sync from super-agent…"
 
           RESP=$(curl -s -w "\n%{http_code}" \
-            -X POST "${INSPIRING_CAT_URL}/webhook/github-scheduled-sync" \
+            -X POST "${SUPER_AGENT_URL}/webhook/github-scheduled-sync" \
             -H "Content-Type: application/json" \
             -H "X-Webhook-Secret: ${WEBHOOK_SECRET}" \
             -d "{\"source\":\"github_scheduled_sentinel\",\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
@@ -226,12 +227,12 @@ jobs:
           echo "container_http=${CODE}" >> $GITHUB_OUTPUT
 
           if [ "$CODE" = "200" ]; then
-            echo "✅ Sync requested — inspiring-cat will fire a dispatch with current token"
-          elif [ "$CODE" = "404" ]; then
-            echo "⚠️  /webhook/github-scheduled-sync not yet deployed on inspiring-cat"
+            echo "✅ Sync requested — super-agent will fire a dispatch with current token"
+          elif [ "$CODE" = "403" ]; then
+            echo "⚠️  Unauthorized — check INSPIRING_CAT_WEBHOOK_SECRET secret matches super-agent INSPIRING_CAT_WEBHOOK_SECRET env var"
             echo "container_unreachable=false" >> $GITHUB_OUTPUT
           else
-            echo "❌ Container unreachable or error"
+            echo "❌ super-agent unreachable or error (HTTP ${CODE})"
             echo "container_unreachable=true" >> $GITHUB_OUTPUT
           fi
 
@@ -243,7 +244,7 @@ jobs:
         run: |
           curl -s -X POST "${N8N_WEBHOOK}" \
             -H "Content-Type: application/json" \
-            -d "{\"alert\":\"layer2_sentinel_container_unreachable\",\"http_code\":\"${CODE}\",\"message\":\"Layer 2 scheduled sentinel: inspiring-cat did not respond — possible outage\"}" \
+            -d "{\"alert\":\"layer2_sentinel_container_unreachable\",\"http_code\":\"${CODE}\",\"message\":\"Layer 2 scheduled sentinel: super-agent did not respond — possible outage\"}" \
             --max-time 10 || true
 
       - name: Also check Layer 4 health

@@ -3075,7 +3075,7 @@ async def github_scheduled_sync(request: Request):
     import json as _json
 
     # ── Auth ─────────────────────────────────────────────────────────────
-    expected = os.environ.get("WEBHOOK_SECRET", "")
+    expected = os.environ.get("INSPIRING_CAT_WEBHOOK_SECRET") or os.environ.get("WEBHOOK_SECRET", "")
     provided = request.headers.get("X-Webhook-Secret", "")
     if expected and not _secrets.compare_digest(provided, expected):
         raise HTTPException(status_code=403, detail="Bad secret")
@@ -3168,7 +3168,7 @@ async def github_layer2_result(request: Request):
     """Receives the callback from the railway_token_persist GitHub Action with the result."""
     import secrets as _secrets
 
-    expected = os.environ.get("WEBHOOK_SECRET", "")
+    expected = os.environ.get("INSPIRING_CAT_WEBHOOK_SECRET") or os.environ.get("WEBHOOK_SECRET", "")
     try:
         payload = await request.json()
     except Exception:
