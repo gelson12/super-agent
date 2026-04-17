@@ -268,9 +268,141 @@
 
     /* loading overlay */
     .spinner { color: #444; font-size: 11px; padding: 20px 0; text-align: center; }
+
+    /* ── Auth modal ─────────────────────────────────────────────────────── */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.75);
+      z-index: 9999;
+      align-items: center;
+      justify-content: center;
+    }
+    .modal-overlay.active { display: flex; }
+    .modal-box {
+      background: #1a1a1a;
+      border: 1px solid #333;
+      border-radius: 14px;
+      padding: 28px 32px;
+      width: 360px;
+      max-width: 90vw;
+    }
+    .modal-box h2 {
+      font-size: 15px;
+      font-weight: 700;
+      color: #c9a227;
+      margin-bottom: 6px;
+    }
+    .modal-box p {
+      font-size: 12px;
+      color: #666;
+      margin-bottom: 18px;
+    }
+    .modal-input {
+      width: 100%;
+      background: #0f0f0f;
+      border: 1px solid #333;
+      border-radius: 8px;
+      color: #e8e8e8;
+      font-size: 13px;
+      padding: 10px 12px;
+      outline: none;
+      margin-bottom: 16px;
+    }
+    .modal-input:focus { border-color: #c9a227; }
+    .modal-actions { display: flex; gap: 10px; justify-content: flex-end; }
+    .modal-btn {
+      border: none;
+      border-radius: 8px;
+      padding: 8px 18px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .modal-btn.primary {
+      background: linear-gradient(135deg, #9a7920, #c9a227);
+      color: #000;
+    }
+    .modal-btn.secondary {
+      background: #222;
+      color: #888;
+      border: 1px solid #333;
+    }
+
+    /* ── Layer Health panel ─────────────────────────────────────────────── */
+    .layer-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 14px;
+      margin-bottom: 10px;
+    }
+    .layer-tile {
+      background: #0f0f0f;
+      border: 1px solid #2a2a2a;
+      border-radius: 10px;
+      padding: 14px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .layer-tile .lt-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .layer-dot {
+      width: 9px; height: 9px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .layer-dot.healthy  { background: #4ade80; box-shadow: 0 0 5px #4ade80; }
+    .layer-dot.degraded { background: #facc15; box-shadow: 0 0 5px #facc15; }
+    .layer-dot.down     { background: #f87171; box-shadow: 0 0 5px #f87171; }
+    .layer-dot.unknown  { background: #555; }
+    .layer-tile .lt-name {
+      font-size: 11px;
+      font-weight: 700;
+      color: #ccc;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .layer-tile .lt-detail  { font-size: 11px; color: #555; }
+    .layer-tile .lt-meta    { font-size: 10px; color: #444; margin-top: 2px; }
+    .layer-tile .lt-link    { font-size: 10px; color: #6cb4ff; text-decoration: none; }
+    .layer-tile .lt-link:hover { text-decoration: underline; }
+    .ttl-bar-bg {
+      background: #222;
+      border-radius: 3px;
+      height: 4px;
+      overflow: hidden;
+      margin-top: 4px;
+    }
+    .ttl-bar-fill {
+      height: 100%;
+      border-radius: 3px;
+      transition: width 0.5s;
+    }
+    .ttl-bar-fill.ok      { background: #4ade80; }
+    .ttl-bar-fill.warn    { background: #facc15; }
+    .ttl-bar-fill.critical{ background: #f87171; }
   </style>
 </head>
 <body>
+
+<!-- ── Auth modal ─────────────────────────────────────────────────────────── -->
+<div class="modal-overlay" id="auth-modal">
+  <div class="modal-box">
+    <h2>Access Token Required</h2>
+    <p>Enter your Super Agent access token to view observability data.</p>
+    <input type="password" class="modal-input" id="auth-token-input"
+           placeholder="Paste token here…" autocomplete="current-password" />
+    <div class="modal-actions">
+      <button class="modal-btn secondary" onclick="_dismissAuthModal()">Skip</button>
+      <button class="modal-btn primary" onclick="_submitAuthModal()">Confirm</button>
+    </div>
+  </div>
+</div>
 
 <!-- ── Header ─────────────────────────────────────────────────────────────── -->
 <header>
@@ -381,6 +513,12 @@
     <div id="conf-list" class="conf-list">
       <div class="spinner">Loading…</div>
     </div>
+  </div>
+
+  <!-- ── Session Layer Health ──────────────────────────────────────────── -->
+  <div class="chart-card" style="margin-bottom:20px;" id="layer-health-card">
+    <h3>Session Layer Health</h3>
+    <div id="layer-health-content"><div class="spinner">Loading…</div></div>
   </div>
 
   <!-- ── Recent anomaly alerts ──────────────────────────────────────────── -->
@@ -755,6 +893,7 @@ async function loadAll() {
     loadConfidence(),
     loadMemory(),
     loadAlerts(),
+    loadLayerHealth(),
   ]);
 
   btn.classList.remove('spinning');
@@ -779,24 +918,113 @@ document.addEventListener('visibilitychange', () => {
   }
 });
 
-// ── Grab token from parent page if available ──────────────────────────────────
+// ── Auth modal (replaces browser prompt — hides token behind password field) ──
 function _initAuth() {
   try {
     const t = sessionStorage.getItem('sa_token') || localStorage.getItem('sa_token');
     if (!t) {
-      const entered = prompt('Enter Super Agent access token (leave blank if auth is disabled):');
-      if (entered && entered.trim()) {
-        sessionStorage.setItem('sa_token', entered.trim());
-      } else if (entered === null) {
-        // User pressed Cancel — show auth hint but still try (server may be open)
-        _showAuthError();
-      }
+      document.getElementById('auth-modal').classList.add('active');
+      const inp = document.getElementById('auth-token-input');
+      inp.focus();
+      inp.addEventListener('keydown', e => { if (e.key === 'Enter') _submitAuthModal(); });
     }
   } catch {}
 }
 
+function _submitAuthModal() {
+  const val = (document.getElementById('auth-token-input').value || '').trim();
+  if (val) sessionStorage.setItem('sa_token', val);
+  document.getElementById('auth-modal').classList.remove('active');
+  loadAll();
+}
+
+function _dismissAuthModal() {
+  document.getElementById('auth-modal').classList.remove('active');
+  _showAuthError();
+  loadAll();
+}
+
+// ── Layer Health panel ────────────────────────────────────────────────────────
+async function loadLayerHealth() {
+  const el = document.getElementById('layer-health-content');
+  const data = await _get('/metrics/layer-health');
+  if (!data) {
+    el.innerHTML = '<span class="spinner">Layer health unavailable</span>';
+    return;
+  }
+
+  const layers = [
+    { key: 'layer1', label: 'Layer 1 — Volume Backup',          icon: '💾' },
+    { key: 'layer2', label: 'Layer 2 — GitHub Actions Persist', icon: '⚙️'  },
+    { key: 'layer4', label: 'Layer 4 — Playwright Browser',     icon: '🌐' },
+  ];
+
+  const MAX_TTL = 72 * 3600;
+  const ttl     = data.token_ttl_seconds;
+  const ttlPct  = ttl != null ? Math.min(100, Math.round((ttl / MAX_TTL) * 100)) : null;
+  const ttlCls  = ttl == null ? '' : ttl < 3600 ? 'critical' : ttl < 14400 ? 'warn' : 'ok';
+  const ttlStr  = ttl == null ? '—'
+    : ttl > 3600 ? Math.round(ttl / 3600) + 'h remaining'
+    : Math.round(ttl / 60) + 'm remaining';
+
+  let html = '<div class="layer-grid">';
+
+  for (const { key, label, icon } of layers) {
+    const l      = data[key] || {};
+    const status = l.status || 'unknown';
+    const dotCls = status === 'healthy' ? 'healthy'
+                 : status === 'degraded' ? 'degraded'
+                 : status === 'down' ? 'down' : 'unknown';
+
+    let meta = '';
+    if (key === 'layer2') {
+      if (l.last_run_at) {
+        const ago = Math.round((Date.now() - new Date(l.last_run_at)) / 60000);
+        meta = `Last run ${ago}m ago · ${l.last_conclusion || '—'}`;
+      }
+      if (l.last_run_url) {
+        meta += `<br><a class="lt-link" href="${esc(l.last_run_url)}" target="_blank">View run →</a>`;
+      }
+    } else if (key === 'layer4') {
+      if (l.pro_available != null)
+        meta = `Pro CLI: ${l.pro_available ? '✅' : '❌'} · CLI down flag: ${l.cli_down ? '🔴' : '🟢'}`;
+    } else if (key === 'layer1') {
+      meta = l.detail || 'Backup file on /workspace volume';
+    }
+
+    html += `
+      <div class="layer-tile">
+        <div class="lt-header">
+          <div class="layer-dot ${dotCls}"></div>
+          <span class="lt-name">${icon} ${esc(label)}</span>
+        </div>
+        <div class="lt-detail">${esc(status.toUpperCase())}</div>
+        ${meta ? `<div class="lt-meta">${meta}</div>` : ''}
+      </div>`;
+  }
+
+  // Token TTL tile
+  html += `
+    <div class="layer-tile">
+      <div class="lt-header">
+        <div class="layer-dot ${ttlCls || 'unknown'}"></div>
+        <span class="lt-name">🔑 Claude Token TTL</span>
+      </div>
+      <div class="lt-detail">${esc(ttlStr)}</div>
+      ${ttlPct != null ? `
+        <div class="ttl-bar-bg">
+          <div class="ttl-bar-fill ${ttlCls}" style="width:${ttlPct}%"></div>
+        </div>` : ''}
+      ${data.token_expires_at ? `<div class="lt-meta">Expires ${new Date(data.token_expires_at).toLocaleString()}</div>` : ''}
+    </div>`;
+
+  html += '</div>';
+  el.innerHTML = html;
+}
+
 _initAuth();
-loadAll();
+// loadAll() called by modal submit or dismiss — also called here if token already stored
+if (sessionStorage.getItem('sa_token') || localStorage.getItem('sa_token')) loadAll();
 </script>
 </body>
 </html>

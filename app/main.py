@@ -3061,6 +3061,133 @@ async def railway_webhook(request: Request):
     return {"ok": True, "status_received": status, "service": service}
 
 
+@app.post("/webhook/github-scheduled-sync", tags=["webhook"])
+async def github_scheduled_sync(request: Request):
+    """
+    Called by the GitHub Actions scheduled sentinel every 4h (Layer 2 Trigger B).
+    Authenticates with X-Webhook-Secret, reads the current CLAUDE_SESSION_TOKEN
+    from volume backup or env var, then fires a repository_dispatch to GitHub
+    so the railway_token_persist workflow can update Railway env vars from outside.
+    """
+    import base64 as _b64
+    import httpx as _httpx
+    import secrets as _secrets
+    import json as _json
+
+    # ── Auth ─────────────────────────────────────────────────────────────
+    expected = os.environ.get("WEBHOOK_SECRET", "")
+    provided = request.headers.get("X-Webhook-Secret", "")
+    if expected and not _secrets.compare_digest(provided, expected):
+        raise HTTPException(status_code=403, detail="Bad secret")
+
+    # ── Read freshest token (volume backup first, env var fallback) ───────
+    token_b64: str | None = None
+
+    vol_path = "/workspace/.claude_credentials_backup.json"
+    try:
+        import pathlib as _pl
+        vol = _pl.Path(vol_path)
+        if vol.exists():
+            raw = vol.read_bytes()
+            if raw.startswith(b"{") and b"token" in raw.lower():
+                # Re-encode as base64 — same format Railway expects in CLAUDE_SESSION_TOKEN
+                token_b64 = _b64.b64encode(raw).decode()
+                bg_log("github-scheduled-sync: token read from volume backup", source="layer2")
+    except Exception as _ve:
+        bg_log(f"github-scheduled-sync: volume read failed — {_ve}", source="layer2")
+
+    if not token_b64:
+        token_b64 = os.environ.get("CLAUDE_SESSION_TOKEN", "")
+        if token_b64:
+            bg_log("github-scheduled-sync: token read from CLAUDE_SESSION_TOKEN env var", source="layer2")
+
+    if not token_b64:
+        return {"ok": False, "reason": "no token available — volume backup missing and CLAUDE_SESSION_TOKEN not set"}
+
+    # ── Parse expiry for TTL info in dispatch payload ─────────────────────
+    expires_at: str | None = None
+    ttl_seconds: int | None = None
+    try:
+        cred_json = _json.loads(_b64.b64decode(token_b64 + "=="))
+        oauth = cred_json.get("claudeAiOauth", {})
+        exp_ms = oauth.get("expiresAt") or oauth.get("expires_at")
+        if exp_ms:
+            import time as _t
+            exp_s = float(exp_ms) / 1000.0
+            ttl_seconds = max(0, int(exp_s - _t.time()))
+            expires_at = _t.strftime("%Y-%m-%dT%H:%M:%SZ", _t.gmtime(exp_s))
+    except Exception:
+        pass
+
+    # ── Fire repository_dispatch to GitHub ────────────────────────────────
+    github_token = os.environ.get("GITHUB_PAT", "") or os.environ.get("GITHUB_TOKEN", "")
+    github_repo  = os.environ.get("GITHUB_REPO", "gelson12/super-agent")
+    nonce        = _secrets.token_hex(8)
+    self_url     = os.environ.get("SELF_URL", "").rstrip("/")
+
+    if not github_token:
+        return {"ok": False, "reason": "GITHUB_PAT not set — cannot fire dispatch"}
+
+    dispatch_payload = {
+        "event_type": "railway_token_persist",
+        "client_payload": {
+            "token":         token_b64,
+            "variable_name": "CLAUDE_SESSION_TOKEN",
+            "trigger":       "scheduled_sentinel",
+            "expires_at":    expires_at,
+            "ttl_seconds":   ttl_seconds,
+            "nonce":         nonce,
+            "callback_url":  f"{self_url}/webhook/github-layer2-result" if self_url else "",
+        },
+    }
+
+    try:
+        async with _httpx.AsyncClient(timeout=10) as client:
+            r = await client.post(
+                f"https://api.github.com/repos/{github_repo}/dispatches",
+                headers={
+                    "Authorization": f"Bearer {github_token}",
+                    "Accept": "application/vnd.github+json",
+                },
+                json=dispatch_payload,
+            )
+        ok = r.status_code == 204
+        bg_log(
+            f"github-scheduled-sync: dispatch {'fired' if ok else 'FAILED'} "
+            f"(HTTP {r.status_code}), TTL={ttl_seconds}s, nonce={nonce}",
+            source="layer2",
+        )
+        return {"ok": ok, "github_http": r.status_code, "ttl_seconds": ttl_seconds, "nonce": nonce}
+    except Exception as exc:
+        bg_log(f"github-scheduled-sync: dispatch exception — {exc}", source="layer2")
+        return {"ok": False, "reason": str(exc)}
+
+
+@app.post("/webhook/github-layer2-result", tags=["webhook"])
+async def github_layer2_result(request: Request):
+    """Receives the callback from the railway_token_persist GitHub Action with the result."""
+    import secrets as _secrets
+
+    expected = os.environ.get("WEBHOOK_SECRET", "")
+    try:
+        payload = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+
+    provided = payload.get("secret", "")
+    if expected and not _secrets.compare_digest(provided, expected):
+        raise HTTPException(status_code=403, detail="Bad secret")
+
+    success  = payload.get("success", False)
+    attempts = payload.get("attempts", 0)
+    nonce    = payload.get("nonce", "")
+    bg_log(
+        f"Layer 2 GitHub result: success={success}, attempts={attempts}, nonce={nonce}",
+        source="layer2",
+    )
+    return {"ok": True}
+
+
 @app.get("/admin/live-log", tags=["admin"])
 def admin_live_log(lines: int = 100):
     """
@@ -3567,6 +3694,80 @@ def metrics_tool_cache():
         return _tc_stats()
     except Exception as e:
         return {"error": str(e)}
+
+
+@app.get("/metrics/layer-health", tags=["metrics"])
+async def metrics_layer_health():
+    """Aggregate Layer 1 / 2 / 4 health for the observability dashboard."""
+    import httpx, time
+
+    inspiring_cat_url = os.environ.get(
+        "INSPIRING_CAT_URL", "https://inspiring-cat-production.up.railway.app"
+    )
+    github_token = os.environ.get("GITHUB_TOKEN", "")
+    github_repo  = os.environ.get("GITHUB_REPO", "gelson12/super-agent")
+
+    result: dict = {
+        "layer1": {"status": "unknown", "detail": "volume backup"},
+        "layer2": {"status": "unknown", "detail": "github actions railway persist"},
+        "layer4": {"status": "unknown", "detail": "playwright browser"},
+        "token_ttl_seconds":  None,
+        "token_expires_at":   None,
+    }
+
+    # ── Layer 4 + token TTL — call inspiring-cat /health ─────────────────
+    try:
+        async with httpx.AsyncClient(timeout=8) as client:
+            r = await client.get(f"{inspiring_cat_url}/health")
+            if r.status_code == 200:
+                d = r.json()
+                pro  = d.get("pro_cli_available", False)
+                down = d.get("cli_down_flag", True)
+                result["layer4"].update({
+                    "status":        "healthy" if pro else ("degraded" if not down else "down"),
+                    "pro_available": pro,
+                    "cli_down":      down,
+                })
+                if "token_ttl_seconds" in d:
+                    result["token_ttl_seconds"] = d["token_ttl_seconds"]
+                if "token_expires_at" in d:
+                    result["token_expires_at"] = d["token_expires_at"]
+                # Layer 1 inferred: if Layer 4 is healthy the volume backup exists
+                result["layer1"]["status"] = "healthy" if pro else "unknown"
+            else:
+                result["layer4"]["status"] = "down"
+    except Exception as exc:
+        result["layer4"].update({"status": "unreachable", "error": str(exc)})
+
+    # ── Layer 2 — last GitHub Actions run ────────────────────────────────
+    if github_token:
+        try:
+            async with httpx.AsyncClient(timeout=8) as client:
+                r = await client.get(
+                    f"https://api.github.com/repos/{github_repo}"
+                    "/actions/workflows/railway_token_persist.yml/runs?per_page=1",
+                    headers={
+                        "Authorization": f"Bearer {github_token}",
+                        "Accept": "application/vnd.github+json",
+                    },
+                )
+                if r.status_code == 200:
+                    runs = r.json().get("workflow_runs", [])
+                    if runs:
+                        run = runs[0]
+                        conclusion = run.get("conclusion") or "pending"
+                        result["layer2"].update({
+                            "status":          "healthy" if conclusion == "success" else "degraded",
+                            "last_run_at":     run.get("created_at"),
+                            "last_conclusion": conclusion,
+                            "last_run_url":    run.get("html_url"),
+                        })
+        except Exception:
+            pass
+    else:
+        result["layer2"]["detail"] = "GITHUB_TOKEN not set — add to Railway env vars"
+
+    return result
 
 
 @app.get("/metrics/routing-confidence", tags=["metrics"])
