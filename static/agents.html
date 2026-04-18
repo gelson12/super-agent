@@ -291,6 +291,47 @@
       overflow: visible;
     }
 
+    /* ── Avatar description tooltip ──────────────────────────────── */
+    .avatar[data-tip] { cursor: help; }
+
+    .avatar[data-tip]::after {
+      content: attr(data-tip);
+      position: absolute;
+      bottom: calc(100% + 13px);
+      left: 50%;
+      transform: translateX(-50%);
+      background: #0f0b05;
+      border: 1px solid #c9a96e;
+      color: #e8d5a0;
+      font-size: 0.24rem;
+      padding: 8px 10px;
+      border-radius: 3px;
+      white-space: normal;
+      width: 190px;
+      line-height: 1.8;
+      z-index: 600;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.18s ease;
+      text-align: center;
+      box-shadow: 0 6px 20px rgba(0,0,0,0.8);
+    }
+    .avatar[data-tip]::before {
+      content: "";
+      position: absolute;
+      bottom: calc(100% + 7px);
+      left: 50%;
+      transform: translateX(-50%);
+      border: 6px solid transparent;
+      border-top-color: #c9a96e;
+      z-index: 600;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.18s ease;
+    }
+    .avatar[data-tip]:hover::after,
+    .avatar[data-tip]:hover::before { opacity: 1; }
+
     /* Zzz animation for sleeping */
     .zzz {
       position: absolute;
@@ -1703,6 +1744,20 @@ const AVATARS = {
   "Daphney": "💁🏿‍♀️",
 };
 
+const WORKER_DESCRIPTIONS = {
+  "Claude CLI Pro":     "Senior AI Engineer. Handles complex, long-horizon tasks via Claude Max Pro subscription running inside the inspiring-cat container with full CLI & browser access.",
+  "Gemini CLI":         "AI Research Analyst. Google Gemini CLI — secondary AI model for parallel processing, Gemini-specific tasks and large-context workloads.",
+  "Anthropic Haiku":    "Junior AI Assistant. Fastest & most cost-efficient Claude model. Routes quick, simple requests to keep response times low.",
+  "Sonnet Anthropic":   "Mid-Level AI Specialist. Balanced Claude model via API. Default workhorse handling most standard day-to-day requests.",
+  "Opus Anthropic":     "Principal AI Architect. Most powerful Claude model via API. Reserved for complex reasoning, deep analysis and high-stakes tasks.",
+  "DeepSeek":           "AI Research Scientist. DeepSeek model — alternative provider for specialised reasoning or cost-sensitive workloads.",
+  "Shell Agent":        "DevOps Engineer. Executes shell commands & scripts directly inside the container. Handles system tasks, file ops, deployments and server maintenance.",
+  "GitHub Agent":       "Version Control Specialist. Manages repos, commits, PRs, branch operations and CI/CD pipeline triggers on GitHub.",
+  "N8N Agent":          "Automation Workflow Engineer. Builds, updates and runs n8n workflows. Connects all external services, APIs and third-party integrations.",
+  "Self-Improve Agent": "Quality & Performance Lead. Monitors system performance, analyses logs and autonomously proposes code improvements to the team.",
+  "Daphney":            "Executive Assistant & Receptionist. Routes incoming messages, manages notifications, coordinates the team and keeps office operations running smoothly.",
+};
+
 const EVENT_ICONS = {
   working:      "🔵",
   done:         "✅",
@@ -1988,7 +2043,7 @@ function renderDesk(worker) {
       </div>
       <div class="desk-surface"></div>
       ${errorRateHtml}
-      <div class="avatar">
+      <div class="avatar"${WORKER_DESCRIPTIONS[worker.id] ? ` data-tip="${esc(WORKER_DESCRIPTIONS[worker.id])}"` : ""}>
         ${avatar}
         ${overlay}
         ${worker.state === "idle" ? `<div class="thought-bubble" data-idle-thought></div>` : ""}
