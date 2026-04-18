@@ -220,6 +220,58 @@
     .ach-ts  { font-size: 8px; color: var(--muted); margin-top: 4px; }
     .ach-lock{ font-size: 1rem; margin-top: 6px; color: var(--muted); }
 
+    /* ── Leaderboard ── */
+    .lb-table { width: 100%; border-collapse: collapse; }
+    .lb-table th {
+      font-family: var(--font-game); font-size: 0.28rem; color: var(--muted);
+      text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border);
+      letter-spacing: 1px; white-space: nowrap;
+    }
+    .lb-table th.right { text-align: right; }
+    .lb-table td { padding: 10px 10px; border-bottom: 1px solid #0d1625; font-size: 11px; vertical-align: middle; }
+    .lb-table tr:last-child td { border-bottom: none; }
+    .lb-table tr:hover td { background: rgba(255,255,255,0.02); }
+    .lb-rank {
+      font-family: var(--font-game); font-size: 0.55rem; width: 36px;
+      text-align: center; font-weight: bold;
+    }
+    .lb-rank.r1 { color: var(--gold);   text-shadow: 0 0 12px var(--gold); }
+    .lb-rank.r2 { color: #c0c0c0;       text-shadow: 0 0 8px #c0c0c0; }
+    .lb-rank.r3 { color: #cd7f32;       text-shadow: 0 0 8px #cd7f32; }
+    .lb-rank.r4 { color: var(--muted); }
+    .lb-agent-name {
+      font-family: var(--font-game); font-size: 0.38rem;
+      display: flex; align-items: center; gap: 8px;
+    }
+    .lb-agent-name.cyan   { color: var(--cyan); }
+    .lb-agent-name.green  { color: var(--green); }
+    .lb-agent-name.purple { color: var(--purple); }
+    .lb-agent-name.orange { color: var(--orange); }
+    .lb-score-bar-wrap { width: 90px; }
+    .lb-score-bar { height: 6px; background: #111; border-radius: 3px; overflow: hidden; margin-bottom: 3px; }
+    .lb-score-fill { height: 100%; border-radius: 3px; transition: width 1s ease-out; }
+    .lb-score-fill.cyan   { background: linear-gradient(90deg, #0060cc, var(--cyan)); }
+    .lb-score-fill.green  { background: linear-gradient(90deg, #007733, var(--green)); }
+    .lb-score-fill.purple { background: linear-gradient(90deg, #6600cc, var(--purple)); }
+    .lb-score-fill.orange { background: linear-gradient(90deg, #cc5500, var(--orange)); }
+    .lb-score-val { font-family: var(--font-game); font-size: 0.4rem; }
+    .lb-score-val.cyan   { color: var(--cyan); }
+    .lb-score-val.green  { color: var(--green); }
+    .lb-score-val.purple { color: var(--purple); }
+    .lb-score-val.orange { color: var(--orange); }
+    .lb-pill {
+      display: inline-block; padding: 2px 7px; border-radius: 10px;
+      font-size: 10px; font-weight: bold; white-space: nowrap;
+    }
+    .lb-pill.good { background: rgba(0,255,136,0.12); color: var(--green); }
+    .lb-pill.mid  { background: rgba(255,215,0,0.12);  color: var(--gold);  }
+    .lb-pill.bad  { background: rgba(255,68,68,0.12);  color: var(--red);   }
+    .lb-pill.na   { background: rgba(74,90,114,0.2);   color: var(--muted); }
+    .lb-streak { font-family: var(--font-game); font-size: 0.35rem; color: var(--gold); }
+    .lb-zero   { color: var(--muted); }
+    .lb-crown  { font-size: 0.8rem; margin-right: 2px; }
+    .lb-no-data { color: var(--muted); font-size: 11px; text-align: center; padding: 24px 0; }
+
     /* ── XP Log ── */
     .xp-log { max-height: 280px; overflow-y: auto; }
     .xp-entry { display: flex; align-items: center; gap: 10px; padding: 6px 0;
@@ -396,6 +448,14 @@
     <div class="card">
       <div class="section-title" data-tt="Intelligence XP Log|Live feed of every XP event earned, most recent first.<br><br>Event types:<br>🎯 Correct prediction — the system predicted your next agent correctly (+10 XP)<br>❌ Wrong prediction — prediction was off (+0 XP, used to improve accuracy)<br>🔍 New pattern learned — a new sequence pattern was stored (+5 XP)<br>📚 Vault write — knowledge was saved to the Obsidian vault (+2 XP)<br>⚡ Agent call — an agent completed a task (+1 XP)<br>🏆 Achievement — milestone reached (+25–500 XP)<br><br>Refreshes every 30 seconds.">⚡ Intelligence XP Log</div>
       <div class="xp-log" id="xp-log"></div>
+    </div>
+  </div>
+
+  <!-- ── AGENT LEADERBOARD ── -->
+  <div class="card" style="margin-bottom:24px">
+    <div class="section-title" data-tt="Agent Leaderboard|Competitive ranking of all 4 specialist agents based on real performance data.<br><br>Metrics:<br>• Score — composite rank (0–100)<br>• Speed — average response time (lower is better)<br>• Success — % of calls completed without error/timeout<br>• Prediction — % of times correctly predicted before being called<br>• Sessions — unique work sessions participated in<br>• Streak — best consecutive correct-prediction run<br><br>Score weights: Success 30% + Prediction 25% + Speed 20% + Sessions 15% + Streak 10%">🏅 Agent Leaderboard — Performance Rankings</div>
+    <div id="leaderboard-container">
+      <div class="lb-no-data">Loading leaderboard... (data populates after first agent calls)</div>
     </div>
   </div>
 
@@ -585,6 +645,95 @@ function setMastery(agentTotals) {
   }
 }
 
+/* ── Leaderboard ── */
+function buildLeaderboard(rows) {
+  const el = document.getElementById('leaderboard-container');
+  if (!rows || rows.length === 0) {
+    el.innerHTML = '<div class="lb-no-data">No agent calls recorded yet — use the system to populate the leaderboard.</div>';
+    return;
+  }
+
+  const rankEmoji = ['🥇', '🥈', '🥉', ''];
+  const rankClass = ['r1', 'r2', 'r3', 'r4'];
+
+  const pill = (val, fmt) => {
+    if (val === 0 && fmt !== 'ms') return `<span class="lb-pill na">${fmt === 'ms' ? '—' : '0'}</span>`;
+    if (fmt === 'pct') {
+      const cls = val >= 75 ? 'good' : val >= 50 ? 'mid' : 'bad';
+      return `<span class="lb-pill ${cls}">${val}%</span>`;
+    }
+    if (fmt === 'ms') {
+      const secs = (val / 1000).toFixed(1);
+      const cls  = val < 10000 ? 'good' : val < 30000 ? 'mid' : 'bad';
+      return `<span class="lb-pill ${cls}">${secs}s</span>`;
+    }
+    return `<span class="lb-pill na">${val}</span>`;
+  };
+
+  let html = `
+    <table class="lb-table">
+      <thead>
+        <tr>
+          <th style="width:42px">RANK</th>
+          <th>AGENT</th>
+          <th class="right" style="width:130px">SCORE</th>
+          <th class="right" style="width:80px">SPEED</th>
+          <th class="right" style="width:80px">SUCCESS</th>
+          <th class="right" style="width:80px">PREDICT</th>
+          <th class="right" style="width:70px">SESSIONS</th>
+          <th class="right" style="width:70px">STREAK</th>
+          <th class="right" style="width:60px">CALLS</th>
+        </tr>
+      </thead>
+      <tbody>`;
+
+  rows.forEach((r, i) => {
+    const ri = Math.min(i, 3);
+    const tip = `${r.display} Agent — Rank #${r.rank}|` +
+      `Composite Score: ${r.composite_score}/100\n\n` +
+      `Calls: ${r.calls} total\n` +
+      `Speed: avg ${(r.avg_ms/1000).toFixed(1)}s per response\n` +
+      `Success rate: ${r.success_rate}% (no crashes/timeouts)\n` +
+      `Prediction accuracy: ${r.pred_accuracy}% (${r.pred_total} predictions evaluated)\n` +
+      `Unique sessions: ${r.unique_sessions}\n` +
+      `Best streak: ${r.streak_best} consecutive correct predictions`;
+    const streakHtml = r.streak_best > 0
+      ? `<span class="lb-streak" title="Best: ${r.streak_best} | Current: ${r.streak_current}">🔥${r.streak_best}</span>`
+      : `<span class="lb-zero">—</span>`;
+
+    html += `
+      <tr data-tt="${tip}">
+        <td><div class="lb-rank ${rankClass[ri]}">${rankEmoji[ri] || (i+1)}</div></td>
+        <td><div class="lb-agent-name ${r.color}">${r.icon} ${r.display}</div></td>
+        <td style="text-align:right">
+          <div class="lb-score-bar-wrap">
+            <div class="lb-score-bar">
+              <div class="lb-score-fill ${r.color}" style="width:${r.composite_score}%" id="lb-bar-${r.agent}"></div>
+            </div>
+            <div class="lb-score-val ${r.color}">${r.composite_score}</div>
+          </div>
+        </td>
+        <td style="text-align:right">${r.calls > 0 ? pill(r.avg_ms, 'ms') : '<span class="lb-zero">—</span>'}</td>
+        <td style="text-align:right">${r.calls > 0 ? pill(r.success_rate, 'pct') : '<span class="lb-zero">—</span>'}</td>
+        <td style="text-align:right">${r.pred_total > 0 ? pill(r.pred_accuracy, 'pct') : '<span class="lb-zero">—</span>'}</td>
+        <td style="text-align:right"><span class="${r.unique_sessions > 0 ? '' : 'lb-zero'}">${r.unique_sessions || '—'}</span></td>
+        <td style="text-align:right">${streakHtml}</td>
+        <td style="text-align:right"><span class="${r.calls > 0 ? '' : 'lb-zero'}">${r.calls || '—'}</span></td>
+      </tr>`;
+  });
+
+  html += '</tbody></table>';
+  el.innerHTML = html;
+}
+
+async function loadLeaderboard() {
+  try {
+    const res  = await fetch('/metrics/leaderboard');
+    const data = await res.json();
+    buildLeaderboard(data.leaderboard || []);
+  } catch(e) { console.error('Leaderboard load error:', e); }
+}
+
 /* ── Load all data ── */
 async function loadAll() {
   try {
@@ -636,7 +785,9 @@ async function loadAll() {
 
 initGauge();
 loadAll();
+loadLeaderboard();
 setInterval(loadAll, 30000);
+setInterval(loadLeaderboard, 30000);
 </script>
 </body>
 </html>

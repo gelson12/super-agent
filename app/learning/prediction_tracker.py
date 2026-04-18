@@ -35,3 +35,8 @@ def evaluate_prediction(session_id: str, actual_agent: str) -> None:
         record_prediction(was_correct)
     except Exception:
         pass
+    try:
+        from .agent_leaderboard import record_prediction_result
+        record_prediction_result(predicted, actual_agent)
+    except Exception:
+        pass

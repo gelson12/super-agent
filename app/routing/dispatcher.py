@@ -109,6 +109,15 @@ try:
     )
 except Exception:
     def _iq_agent_call(s): pass
+
+try:
+    from ..learning.agent_leaderboard import (
+        record_call as _lb_record_call,
+        record_prediction_result as _lb_record_pred,
+    )
+except Exception:
+    def _lb_record_call(a, s, ms, ok=True): pass
+    def _lb_record_pred(pred, actual): pass
     def _iq_new_pattern(): pass
 
 # ── Active task tracker (per-session, in-memory) ─────────────────────────────
@@ -654,28 +663,42 @@ def _record_and_prewarm(session_id: str, agent_type: str) -> None:
         pass
 
 
-def _safe_agent_call(agent_fn, *args, agent_name: str = "agent", **kwargs) -> str:
+def _safe_agent_call(agent_fn, *args, agent_name: str = "agent", session_id: str = "", **kwargs) -> str:
     """Call an agent function with a per-agent timeout, catching any exception."""
     import concurrent.futures as _cf
     _timeout = _AGENT_TIMEOUTS.get(agent_name, _AGENT_TIMEOUTS["agent"])
+    _t0 = _time.time()
+    _success = True
     try:
         with _cf.ThreadPoolExecutor(max_workers=1) as _pool:
             _fut = _pool.submit(agent_fn, *args, **kwargs)
-            return _fut.result(timeout=_timeout)
+            result = _fut.result(timeout=_timeout)
+        _elapsed_ms = (_time.time() - _t0) * 1000
+        _agent_key = agent_name.replace("_agent", "").upper()
+        _lb_record_call(_agent_key, session_id, _elapsed_ms, True)
+        return result
     except _cf.TimeoutError:
+        _success = False
         try:
             from ..activity_log import bg_log
             bg_log(f"{agent_name} timed out after {_timeout}s", source="dispatcher")
         except Exception:
             pass
+        _elapsed_ms = (_time.time() - _t0) * 1000
+        _agent_key = agent_name.replace("_agent", "").upper()
+        _lb_record_call(_agent_key, session_id, _elapsed_ms, False)
         return f"[{agent_name} timed out after {_timeout}s — the operation took too long. Please try again or break the task into smaller steps.]"
     except Exception as e:
+        _success = False
         err_msg = str(e)[:300].replace("\n", " ")
         try:
             from ..activity_log import bg_log
             bg_log(f"{agent_name} crashed: {err_msg}", source="dispatcher")
         except Exception:
             pass
+        _elapsed_ms = (_time.time() - _t0) * 1000
+        _agent_key = agent_name.replace("_agent", "").upper()
+        _lb_record_call(_agent_key, session_id, _elapsed_ms, False)
         return f"[{agent_name} error: {err_msg}]"
 
 
@@ -1505,7 +1528,9 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
         _eval_pred(session_id, "SELF_IMPROVE")
         _write_active_task(session_id, message)
         _mark_working("Self-Improve Agent", message[:100])
+        _t0_self = _time.time()
         response = run_self_improve_agent(_agent_message, authorized=authorized)
+        _lb_record_call("SELF_IMPROVE", session_id, (_time.time() - _t0_self) * 1000, not response.startswith("["))
         _mark_done("Self-Improve Agent")
         _clear_active_task(session_id)
         insight_log.record(message, "SELF_IMPROVE", response, "self_improve", complexity, session_id)

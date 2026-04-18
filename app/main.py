@@ -2280,6 +2280,16 @@ def intelligence_metrics_api():
     return result
 
 
+@app.get("/metrics/leaderboard", tags=["meta"])
+def leaderboard_metrics_api():
+    """Per-agent performance leaderboard: speed, success rate, prediction accuracy, streak, composite score."""
+    try:
+        from .learning.agent_leaderboard import get_leaderboard
+        return {"leaderboard": get_leaderboard()}
+    except Exception as e:
+        return {"error": str(e), "leaderboard": []}
+
+
 @app.get("/metrics/predictions", tags=["meta"])
 def prediction_metrics():
     """
