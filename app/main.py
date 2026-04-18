@@ -2277,17 +2277,42 @@ def intelligence_metrics_api():
         }
     except Exception as e:
         result["behavior_error"] = str(e)
+    try:
+        from .learning.agent_leaderboard import get_hot_agent
+        result["hot_agent"] = get_hot_agent()
+    except Exception:
+        result["hot_agent"] = None
     return result
 
 
 @app.get("/metrics/leaderboard", tags=["meta"])
 def leaderboard_metrics_api():
-    """Per-agent performance leaderboard: speed, success rate, prediction accuracy, streak, composite score."""
+    """Per-agent leaderboard with hot-agent flag, composite score, and hourly activity."""
     try:
-        from .learning.agent_leaderboard import get_leaderboard
-        return {"leaderboard": get_leaderboard()}
+        from .learning.agent_leaderboard import get_leaderboard, get_hot_agent
+        return {"leaderboard": get_leaderboard(), "hot_agent": get_hot_agent()}
     except Exception as e:
-        return {"error": str(e), "leaderboard": []}
+        return {"error": str(e), "leaderboard": [], "hot_agent": None}
+
+
+@app.get("/metrics/xp-history", tags=["meta"])
+def xp_history_api():
+    """XP growth history for the line chart (last 120 events)."""
+    try:
+        from .learning.intelligence_persistence import get_xp_history
+        return {"history": get_xp_history(limit=120)}
+    except Exception as e:
+        return {"error": str(e), "history": []}
+
+
+@app.get("/metrics/daily-challenges", tags=["meta"])
+def daily_challenges_api():
+    """Today's daily challenges with current progress."""
+    try:
+        from .learning.daily_challenges import get_challenges
+        return {"challenges": get_challenges()}
+    except Exception as e:
+        return {"error": str(e), "challenges": []}
 
 
 @app.get("/metrics/predictions", tags=["meta"])

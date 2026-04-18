@@ -220,6 +220,61 @@
     .ach-ts  { font-size: 8px; color: var(--muted); margin-top: 4px; }
     .ach-lock{ font-size: 1rem; margin-top: 6px; color: var(--muted); }
 
+    /* ── Combo streak display ── */
+    .combo-display {
+      display: flex; align-items: center; gap: 10px;
+      background: var(--card2); border: 1px solid var(--border);
+      border-radius: 8px; padding: 10px 16px; margin-top: 8px;
+    }
+    .combo-flame { font-size: 1.4rem; animation: combo-flicker 0.6s ease-in-out infinite alternate; }
+    @keyframes combo-flicker {
+      0%   { transform: scale(1)    rotate(-5deg); filter: brightness(1); }
+      100% { transform: scale(1.15) rotate(5deg);  filter: brightness(1.4); }
+    }
+    .combo-x { font-family: var(--font-game); font-size: 0.7rem; color: var(--gold);
+                text-shadow: 0 0 12px var(--gold); }
+    .combo-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; }
+    .combo-multiplier { font-family: var(--font-game); font-size: 0.5rem; color: var(--green);
+                         margin-left: auto; }
+
+    /* ── XP Growth Chart ── */
+    .chart-wrap { position: relative; height: 180px; }
+
+    /* ── Hot Agent badge on mastery rows ── */
+    .hot-badge {
+      font-size: 0.7rem; margin-left: 4px;
+      animation: hot-pulse 1s ease-in-out infinite alternate;
+    }
+    @keyframes hot-pulse { 0%{opacity:.7;transform:scale(1)} 100%{opacity:1;transform:scale(1.2)} }
+
+    /* ── Daily Challenges ── */
+    .challenge-list { display: flex; flex-direction: column; gap: 10px; }
+    .challenge-card {
+      background: var(--card2); border: 1px solid var(--border);
+      border-radius: 10px; padding: 14px 16px; position: relative;
+      transition: border-color 0.2s;
+    }
+    .challenge-card.done { border-color: var(--gold); background: #14120a; }
+    .challenge-card.done::before {
+      content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px;
+      background: var(--gold); box-shadow: 0 0 8px var(--gold);
+    }
+    .ch-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+    .ch-title { font-family: var(--font-game); font-size: 0.38rem; color: var(--text); }
+    .challenge-card.done .ch-title { color: var(--gold); }
+    .ch-xp { font-family: var(--font-game); font-size: 0.32rem; color: var(--green); }
+    .ch-desc { font-size: 10px; color: var(--muted); margin-bottom: 10px; }
+    .ch-bar-track { height: 8px; background: #111; border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
+    .ch-bar-fill {
+      height: 100%; border-radius: 4px; transition: width 1s ease-out;
+      background: linear-gradient(90deg, #00a855, var(--green));
+    }
+    .challenge-card.done .ch-bar-fill { background: linear-gradient(90deg, #aa8800, var(--gold)); }
+    .ch-progress { display: flex; justify-content: space-between; font-size: 10px;
+                   color: var(--muted); margin-top: 4px; }
+    .ch-done-stamp { font-family: var(--font-game); font-size: 0.3rem; color: var(--gold); }
+    .ch-reset { font-size: 9px; color: var(--muted); text-align: right; margin-top: 8px; }
+
     /* ── Leaderboard ── */
     .lb-table { width: 100%; border-collapse: collapse; }
     .lb-table th {
@@ -340,6 +395,15 @@
         </div>
       </div>
       <div id="lvl-time-hint" style="font-size:11px;color:var(--orange);min-height:16px"></div>
+      <div class="combo-display" id="combo-display" style="display:none"
+           data-tt="Combo Multiplier|Consecutive correct predictions multiply your XP reward!<br><br>🔥 3–4 streak: +15 XP (1.5×)<br>🔥🔥 5–7 streak: +20 XP (2.0×)<br>🔥🔥🔥 8–10 streak: +25 XP (2.5×)<br>👑 11+ streak: +30 XP (3.0×)<br><br>One wrong prediction resets the streak to 0. Keep the chain going!">
+        <span class="combo-flame">🔥</span>
+        <div>
+          <div class="combo-x" id="combo-val">×1</div>
+          <div class="combo-label">Combo Streak</div>
+        </div>
+        <div class="combo-multiplier" id="combo-mult">+10 XP</div>
+      </div>
     </div>
   </div>
 
@@ -417,6 +481,26 @@
           <span id="time-pred-text" style="color:var(--muted);font-size:11px">Gathering data...</span>
         </div>
       </div>
+    </div>
+  </div>
+
+  <!-- ── XP GROWTH CHART + DAILY CHALLENGES ── -->
+  <div class="grid-2" style="margin-bottom:24px">
+    <div class="card">
+      <div class="section-title" data-tt="XP Growth Chart|Your total XP over time — persisted across restarts to PostgreSQL.<br><br>Each data point is an XP event: correct predictions, agent calls, vault writes, and achievements.<br><br>Spikes indicate achievement unlocks. Flat sections are idle periods. The chart shows your last 120 XP events.">📈 XP Growth</div>
+      <div class="chart-wrap">
+        <canvas id="xp-chart"></canvas>
+      </div>
+      <div id="xp-chart-empty" style="color:var(--muted);font-size:11px;text-align:center;padding:20px 0;display:none">
+        No XP history yet — start using agents to populate the chart.
+      </div>
+    </div>
+    <div class="card">
+      <div class="section-title" data-tt="Daily Challenges|3 new challenges every UTC day, chosen from a pool of 13.<br><br>Complete them to earn bonus XP on top of your normal rewards.<br><br>Challenge types rotate daily — calls, prediction accuracy, agent diversity, speed, and combo streaks.<br><br>Progress is saved to PostgreSQL and survives restarts.">🎯 Daily Challenges</div>
+      <div class="challenge-list" id="challenge-list">
+        <div style="color:var(--muted);font-size:11px">Loading challenges...</div>
+      </div>
+      <div class="ch-reset" id="ch-reset-hint"></div>
     </div>
   </div>
 
@@ -645,6 +729,150 @@ function setMastery(agentTotals) {
   }
 }
 
+/* ── XP Growth Chart ── */
+let xpChart = null;
+function initXpChart() {
+  const ctx = document.getElementById('xp-chart').getContext('2d');
+  xpChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: [],
+      datasets: [{
+        label: 'Total XP',
+        data: [],
+        borderColor: '#00ff88',
+        backgroundColor: 'rgba(0,255,136,0.08)',
+        borderWidth: 2,
+        pointRadius: 2,
+        pointHoverRadius: 5,
+        pointBackgroundColor: '#00ff88',
+        tension: 0.3,
+        fill: true,
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: { label: ctx => `${ctx.parsed.y.toLocaleString()} XP` },
+          backgroundColor: '#060e20', borderColor: '#00ff88', borderWidth: 1,
+        }
+      },
+      scales: {
+        x: {
+          display: true,
+          ticks: { color: '#4a5a72', font: { size: 9 }, maxTicksLimit: 8, maxRotation: 0 },
+          grid: { color: '#0d1625' }
+        },
+        y: {
+          display: true,
+          ticks: { color: '#4a5a72', font: { size: 9 },
+                   callback: v => v >= 1000 ? (v/1000).toFixed(1)+'k' : v },
+          grid: { color: '#0d1625' }
+        }
+      },
+      animation: { duration: 800 }
+    }
+  });
+}
+
+async function loadXpChart() {
+  try {
+    const res  = await fetch('/metrics/xp-history');
+    const data = await res.json();
+    const pts  = data.history || [];
+    const empty = document.getElementById('xp-chart-empty');
+    const canvas = document.getElementById('xp-chart');
+    if (pts.length === 0) {
+      if (canvas) canvas.style.display = 'none';
+      if (empty)  empty.style.display  = 'block';
+      return;
+    }
+    if (canvas) canvas.style.display = 'block';
+    if (empty)  empty.style.display  = 'none';
+    const labels = pts.map(p => new Date(p.ts * 1000).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}));
+    const values = pts.map(p => p.xp_total);
+    if (!xpChart) initXpChart();
+    xpChart.data.labels = labels;
+    xpChart.data.datasets[0].data = values;
+    xpChart.update('none');
+  } catch(e) { console.error('XP chart error:', e); }
+}
+
+/* ── Daily Challenges ── */
+function buildChallenges(challenges) {
+  const el   = document.getElementById('challenge-list');
+  const hint = document.getElementById('ch-reset-hint');
+  if (!challenges || challenges.length === 0) {
+    el.innerHTML = '<div style="color:var(--muted);font-size:11px">No challenges loaded yet.</div>';
+    return;
+  }
+  const now    = new Date();
+  const utcMid = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1));
+  const secsLeft = Math.round((utcMid - now) / 1000);
+  const h = Math.floor(secsLeft / 3600), m = Math.floor((secsLeft % 3600) / 60);
+  if (hint) hint.textContent = `Resets in ${h}h ${m}m (UTC midnight)`;
+
+  let html = '';
+  challenges.forEach(ch => {
+    const pct  = Math.min(100, Math.round(ch.current / ch.target * 100));
+    const done = ch.completed;
+    const ts   = ch.completed_at ? new Date(ch.completed_at * 1000).toLocaleTimeString() : '';
+    const tip  = `${ch.title}|${ch.description}<br><br>Progress: ${ch.current} / ${ch.target}<br>Reward: +${ch.xp_reward} XP${done ? `<br>✓ Completed at ${ts}` : ''}`;
+    html += `<div class="challenge-card ${done ? 'done' : ''}" data-tt="${tip}">
+      <div class="ch-header">
+        <span class="ch-title">${ch.title}</span>
+        <span class="ch-xp">${done ? '✓' : '+'} ${ch.xp_reward} XP</span>
+      </div>
+      <div class="ch-desc">${ch.description}</div>
+      <div class="ch-bar-track"><div class="ch-bar-fill" style="width:${pct}%"></div></div>
+      <div class="ch-progress">
+        <span>${ch.current} / ${ch.target}</span>
+        ${done ? `<span class="ch-done-stamp">✓ DONE ${ts}</span>` : `<span>${pct}%</span>`}
+      </div>
+    </div>`;
+  });
+  el.innerHTML = html;
+}
+
+async function loadChallenges() {
+  try {
+    const res  = await fetch('/metrics/daily-challenges');
+    const data = await res.json();
+    buildChallenges(data.challenges || []);
+  } catch(e) { console.error('Challenges error:', e); }
+}
+
+/* ── Combo display ── */
+function updateCombo(combo, multiplier) {
+  const display = document.getElementById('combo-display');
+  const valEl   = document.getElementById('combo-val');
+  const multEl  = document.getElementById('combo-mult');
+  if (!display) return;
+  if (combo < 3) { display.style.display = 'none'; return; }
+  display.style.display = 'flex';
+  valEl.textContent  = `×${combo}`;
+  multEl.textContent = `+${multiplier} XP next`;
+}
+
+/* ── Hot Agent badge ── */
+function setHotAgent(hotAgentKey) {
+  document.querySelectorAll('.hot-badge').forEach(b => b.remove());
+  if (!hotAgentKey) return;
+  const map = { N8N: 'n8n', SHELL: 'shell', GITHUB: 'github', SELF_IMPROVE: 'self' };
+  const alias = map[hotAgentKey];
+  if (!alias) return;
+  const nameEl = document.querySelector(`#mc-${alias}`)?.closest('.mastery-row')?.querySelector('.mastery-name');
+  if (nameEl) {
+    const badge = document.createElement('span');
+    badge.className = 'hot-badge';
+    badge.title = 'Most calls in last 60 minutes';
+    badge.textContent = '🔥';
+    nameEl.appendChild(badge);
+  }
+}
+
 /* ── Leaderboard ── */
 function buildLeaderboard(rows) {
   const el = document.getElementById('leaderboard-container');
@@ -726,14 +954,6 @@ function buildLeaderboard(rows) {
   el.innerHTML = html;
 }
 
-async function loadLeaderboard() {
-  try {
-    const res  = await fetch('/metrics/leaderboard');
-    const data = await res.json();
-    buildLeaderboard(data.leaderboard || []);
-  } catch(e) { console.error('Leaderboard load error:', e); }
-}
-
 /* ── Load all data ── */
 async function loadAll() {
   try {
@@ -780,14 +1000,33 @@ async function loadAll() {
     const hintEl = document.getElementById('lvl-time-hint');
     if (b.time_summary) hintEl.textContent = '⏰ ' + b.time_summary;
 
+    // Combo streak
+    updateCombo(s.combo_streak || 0, s.combo_multiplier || 10);
+
+    // Hot agent badge (also in leaderboard data, use the intelligence endpoint's version)
+    setHotAgent(data.hot_agent || null);
+
   } catch(e) { console.error('Intelligence load error:', e); }
+}
+
+async function loadLeaderboardAndHot() {
+  try {
+    const res  = await fetch('/metrics/leaderboard');
+    const data = await res.json();
+    buildLeaderboard(data.leaderboard || []);
+    if (data.hot_agent) setHotAgent(data.hot_agent);
+  } catch(e) { console.error('Leaderboard load error:', e); }
 }
 
 initGauge();
 loadAll();
-loadLeaderboard();
+loadLeaderboardAndHot();
+loadXpChart();
+loadChallenges();
 setInterval(loadAll, 30000);
-setInterval(loadLeaderboard, 30000);
+setInterval(loadLeaderboardAndHot, 30000);
+setInterval(loadXpChart, 120000);   // chart refreshes every 2 min
+setInterval(loadChallenges, 60000); // challenges refresh every 1 min
 </script>
 </body>
 </html>

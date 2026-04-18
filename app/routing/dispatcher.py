@@ -118,6 +118,7 @@ try:
 except Exception:
     def _lb_record_call(a, s, ms, ok=True): pass
     def _lb_record_pred(pred, actual): pass
+
     def _iq_new_pattern(): pass
 
 # ── Active task tracker (per-session, in-memory) ─────────────────────────────
@@ -1530,7 +1531,8 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
         _mark_working("Self-Improve Agent", message[:100])
         _t0_self = _time.time()
         response = run_self_improve_agent(_agent_message, authorized=authorized)
-        _lb_record_call("SELF_IMPROVE", session_id, (_time.time() - _t0_self) * 1000, not response.startswith("["))
+        _self_elapsed = (_time.time() - _t0_self) * 1000
+        _lb_record_call("SELF_IMPROVE", session_id, _self_elapsed, not response.startswith("["))
         _mark_done("Self-Improve Agent")
         _clear_active_task(session_id)
         insight_log.record(message, "SELF_IMPROVE", response, "self_improve", complexity, session_id)
