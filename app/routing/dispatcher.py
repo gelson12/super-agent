@@ -826,8 +826,13 @@ def _build_extended_result(base: dict, **kwargs) -> dict:
 
 _MAX_MESSAGE_LEN = 12_000
 
+# Module-level counter incremented each time drift-avoidance swaps a model.
+# Exposed at /metrics/drift-swaps for observability.
+_drift_swap_count: int = 0
 
-def dispatch(message: str, force_model: str | None = None, session_id: str = "default") -> dict:
+
+def dispatch(message: str, force_model: str | None = None, session_id: str = "default",
+             _dispatch_depth: int = 0) -> dict:
     """
     Route a message through the full collective intelligence pipeline.
 
@@ -966,6 +971,11 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
         "where is the link", "where's the link", "download link", "what's the url",
         "still building", "still working", "are you done", "did you finish",
         "is it ready", "keep going", "next step", "go on", "proceed",
+        # Semantic pronoun references — clearly refer to something from prior turn
+        "fix it", "redo it", "show it", "run it", "check it", "test it",
+        "do it again", "run it again", "run again", "same thing", "the same one",
+        "same one", "another one", "the other one", "that one", "this one",
+        "explain it", "what is it", "how does it", "what does it",
     )
     _CONTINUATION_LOOSE = (
         # Ambiguous — only count if 2+ match
@@ -980,10 +990,17 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
     _msg_lower_cont = message.lower()
     _precise_match = any(p in _msg_lower_cont for p in _CONTINUATION_PRECISE)
     _loose_count = sum(1 for p in _CONTINUATION_LOOSE if p in _msg_lower_cont)
+    # Semantic signal: bare pronoun message (≤6 words) from a session with prior context
+    _PRONOUN_SOLO = {"it", "that", "this", "them", "those", "these"}
+    _pronoun_short = (
+        len(message.split()) <= 6
+        and _session_ctx
+        and bool(_PRONOUN_SOLO.intersection(message.lower().split()))
+    )
     _is_short_followup = (
         len(message.split()) <= 25
         and (_session_ctx or _active_task_exists)
-        and (_precise_match or _loose_count >= 2)
+        and (_precise_match or _loose_count >= 2 or _pronoun_short)
     )
 
     # If an active task is running but session history isn't stored yet
@@ -1169,7 +1186,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
         (s for s in _COMPOUND_SPLITS if 1 <= _msg_norm.count(s) <= 2 and len(message.split()) > 15),
         None,
     )
-    if _split_on and not force_model:
+    if _split_on and not force_model and _dispatch_depth == 0:
         try:
             _sep = _split_on.strip()
             # Case-insensitive split on first occurrence
@@ -1196,7 +1213,8 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
                     _sub_responses: dict = {}
                     def _run_sub(part, route, key):
                         try:
-                            _sub_responses[key] = dispatch(part, session_id=session_id)
+                            _sub_responses[key] = dispatch(part, session_id=session_id,
+                                                           _dispatch_depth=_dispatch_depth + 1)
                         except Exception as _e:
                             _sub_responses[key] = {"response": f"[Sub-task failed: {_e}]", "model_used": route}
                     _t1 = _thr_c.Thread(target=_run_sub, args=(_p1, _r1, "a"), daemon=True)
@@ -1577,6 +1595,23 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
             "cache_hit": False,
         }, routing_explanation=f"Shell agent selected in isolation-debug mode — systematic Isolate→Identify→Fix→Integrate stance (complexity={complexity}).")
 
+    # ── 4e. Pre-classifier cache fast-path ────────────────────────────────────
+    # If the exact message is already cached for the complexity-predicted model,
+    # return immediately — no need to burn a Haiku classifier API call.
+    _pre_cls_model = model_for_complexity(complexity)
+    if _pre_cls_model in _CACHEABLE_MODELS:
+        _pre_cls_cached = cache.get(message, _pre_cls_model)
+        if _pre_cls_cached:
+            insight_log.record(message, _pre_cls_model, _pre_cls_cached, "pre_classifier_cache", complexity, session_id)
+            adapter.tick()
+            return _build_extended_result({
+                "model_used": _pre_cls_model,
+                "response": _pre_cls_cached,
+                "routed_by": "pre_classifier_cache",
+                "complexity": complexity,
+                "cache_hit": True,
+            }, routing_explanation="Cache hit (pre-classifier) — response served without AI classifier call.")
+
     # ── 5. Routing: AI classifier (with timeout) + keyword arbitration ───────
     #
     # Strategy (fixes priority inversion from pure-keyword approach):
@@ -1615,14 +1650,19 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
     _routing_confidence = _ai_conf
     _record_routing_confidence(_ai_route, _ai_conf)
 
-    # Keyword detection (always instant)
-    _kw_route_raw = None
-    if _is_shell_request(message):
-        _kw_route_raw = "SHELL"
-    elif _is_github_request(message):
-        _kw_route_raw = "GITHUB"
-    elif _is_n8n_request(message):
-        _kw_route_raw = "N8N"
+    # Keyword detection (always instant) — priority-ordered collision resolution.
+    # When multiple keyword sets match, the highest-priority route wins:
+    # N8N > GITHUB > SHELL (prevents SHELL swallowing automation requests that
+    # also mention "script" or "command").
+    _kw_matches_raw = []
+    if _is_n8n_request(message):    _kw_matches_raw.append("N8N")
+    if _is_github_request(message): _kw_matches_raw.append("GITHUB")
+    if _is_shell_request(message):  _kw_matches_raw.append("SHELL")
+    _KW_PRIORITY = {"N8N": 0, "GITHUB": 1, "SHELL": 2}
+    _kw_route_raw = (
+        min(_kw_matches_raw, key=lambda r: _KW_PRIORITY.get(r, 99))
+        if _kw_matches_raw else None
+    )
 
     # Arbitration
     # BUG 6 FIX: high-confidence AI route is trusted UNLESS keywords strongly disagree.
@@ -1905,6 +1945,21 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
         model = suggested
         routed_by = "complexity_score"
 
+    # ── 6a-0. Confidence trend escalation ────────────────────────────────────
+    # When routing confidence for this AI route has been trending downward
+    # (win rate degrading over last 50 dispatches), step down from Claude Pro
+    # to Haiku API — cheaper and avoids burning quota on a degraded route.
+    if model == "CLAUDE":
+        try:
+            _conf_stats = get_routing_confidence_stats()
+            _trend_key = _ai_route if _ai_route and _ai_route not in ("GENERAL",) else model
+            _c_trend = _conf_stats.get(_trend_key, {}).get("trend", "stable")
+            if _c_trend == "degrading":
+                model = "HAIKU"
+                routed_by = f"{routed_by}_conf_degraded"
+        except Exception:
+            pass
+
     # ── 6a. Budget guard — downgrade to cheaper models when over 80% daily budget ─
     # Only applies to non-agent conversational routes (agents need their own models).
     # CLAUDE ($4.50/M) → HAIKU ($0.40/M). DEEPSEEK stays (already cheap).
@@ -1925,10 +1980,12 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
         _primary_cat_for_drift = wisdom_store._detect_category(routed_by, model)
         _drift_safe = adapter.suggest_model_avoiding_drift(_primary_cat_for_drift, model)
         if _drift_safe != model:
+            global _drift_swap_count
+            _drift_swap_count += 1
             from ..activity_log import bg_log as _bg_drift
             _bg_drift(
                 f"Drift-avoidance: swapping {model} → {_drift_safe} "
-                f"(category={_primary_cat_for_drift}, drift detected)",
+                f"(category={_primary_cat_for_drift}, drift detected, total_swaps={_drift_swap_count})",
                 "dispatcher",
             )
             model = _drift_safe
@@ -2006,6 +2063,8 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
             )
 
     # ── 8b. Single model call ─────────────────────────────────────────────────
+    # Evaluate prediction accuracy from prior turn before dispatching this turn
+    _eval_pred(session_id, model)
     # Inject capabilities-aware system prompt for Claude/Haiku
     _worker_id = _resolve_worker(model)
     _mark_working(_worker_id, message[:100])
@@ -2019,6 +2078,14 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
     # If the model returned a structural error, surface it on the avatar immediately
     if _agent_response_is_error(response):
         _mark_error(_worker_id, response[:200])
+
+    # Surface context-loss warning in the user-visible response so they know
+    # the answer was produced without conversation history.
+    if _ctx_injection_failed:
+        response = (
+            "⚠️ *Note: session context was unavailable — this response was made "
+            "without prior conversation history.*\n\n"
+        ) + response
 
     # Layer 1: CoT handoff (complexity >= 4, classifier-routed)
     # Visualise: reasoning model talks to answer model

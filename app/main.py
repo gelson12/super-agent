@@ -4488,6 +4488,17 @@ def routing_confidence_stats():
     return {"routes": get_routing_confidence_stats()}
 
 
+@app.get("/metrics/drift-swaps", tags=["metrics"])
+def drift_swaps_metric():
+    """
+    Counts how many times drift-avoidance logic has swapped the selected model
+    since the last deploy. A rising count indicates one or more models are in
+    sustained drift (win rate < 60% over 100 exchanges).
+    """
+    from .routing.dispatcher import _drift_swap_count
+    return {"drift_swaps": _drift_swap_count}
+
+
 @app.get("/credits/spend", tags=["meta"])
 def credits_spend():
     """
