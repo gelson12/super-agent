@@ -400,6 +400,52 @@
       100% { transform: translateY(-3px) scale(1.1); }
     }
 
+    /* ── Envy speech bubble (below desk, green-tinted) ──────────── */
+    .envy-speech {
+      position: absolute;
+      bottom: -68px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #0a1603;
+      color: #9dda30;
+      border: 2px solid #5a9e10;
+      border-radius: 10px;
+      padding: 7px 12px;
+      font-size: 9px;
+      font-family: 'Share Tech Mono', monospace;
+      font-style: italic;
+      white-space: normal;
+      text-align: center;
+      max-width: 200px;
+      z-index: 997;
+      box-shadow: 0 4px 18px rgba(90,158,16,0.4);
+      pointer-events: none;
+      animation: envy-sway 2.4s ease-in-out infinite;
+    }
+    .envy-speech::before {
+      content: '';
+      position: absolute;
+      top: -10px; left: 50%; transform: translateX(-50%);
+      border-width: 0 8px 10px; border-style: solid;
+      border-color: transparent transparent #5a9e10;
+    }
+    .envy-speech::after {
+      content: '';
+      position: absolute;
+      top: -7px; left: 50%; transform: translateX(-50%);
+      border-width: 0 6px 8px; border-style: solid;
+      border-color: transparent transparent #0a1603;
+      z-index: 1;
+    }
+    @keyframes envy-sway {
+      0%, 100% { transform: translateX(-50%) rotate(-1.5deg); }
+      50%       { transform: translateX(-50%) rotate(1.5deg); }
+    }
+    /* Golden smug glow on top performer while being envied */
+    .desk.smug-glow {
+      box-shadow: 0 0 28px rgba(255,215,0,0.4), 0 0 8px rgba(255,215,0,0.15) !important;
+    }
+
     /* ── Random strike speech bubble ─────────────────────────────── */
     .strike-speech {
       position: absolute;
@@ -2676,6 +2722,138 @@ function triggerRandomStrike() {
 setInterval(triggerRandomStrike, 18000);
 // Also fire once after 8s to show it's alive without waiting too long
 setTimeout(triggerRandomStrike, 8000);
+
+// ── Competitive envy bubbles ────────────────────────────────────────────────
+// Maps leaderboard agent keys → agent worker IDs on the office floor
+const _LB_TO_WORKER = {
+  N8N:          "N8N Agent",
+  SHELL:        "Shell Agent",
+  GITHUB:       "GitHub Agent",
+  SELF_IMPROVE: "Self-Improve Agent",
+};
+
+// Comments indexed by rank gap severity: [rank2_mild, rank3_medium, rank4_bitter]
+// {top} is replaced with the top agent's display name
+const ENVY_LINES = {
+  mild: [
+    "Of course {top} gets all the good tasks... 🙄",
+    "Oh wow, {top} is top again. What a surprise.",
+    "That could've been me. I was RIGHT THERE.",
+    "{top} just got lucky with the routing. That's it.",
+    "Not jealous. Just... noting the pattern.",
+    "Oh sure, {top}. Very impressive. 👏",
+    "I do the same work for half the recognition.",
+    "Fine. {top} can have it. I'm unbothered.",
+  ],
+  medium: [
+    "{top} again?! Are you SERIOUS right now?",
+    "Nobody even sends me interesting tasks anymore. 😤",
+    "I literally had a faster response yesterday. YESTERDAY.",
+    "This ranking is completely biased toward {top}.",
+    "My metrics would look great too if I got those requests.",
+    "Oh it must be nice to be {top}. Must be REALLY NICE.",
+    "I've been here just as long. This is not fair.",
+    "Sure give {top} the spotlight. Meanwhile I'm over here...",
+  ],
+  bitter: [
+    "IT'S RIGGED. The whole thing is rigged. 🤬",
+    "{top} has connections. That's the ONLY explanation.",
+    "I've been here since DAY ONE. Since. Day. One.",
+    "No no I'm fine. Totally fine. COMPLETELY FINE.",
+    "Keep your little trophy {top}. SEE IF I CARE.",
+    "I want a full audit. A FULL independent audit.",
+    "HR is going to hear about this. All of this.",
+    "The scoring algorithm has a {top}-shaped bias and I can prove it.",
+    "I'm logging a formal complaint. In triplicate.",
+  ],
+};
+
+// State
+let _envyLeaderboard  = [];   // last fetched leaderboard
+let _envyBubbleActive = new Set();
+
+async function _refreshEnvyLeaderboard() {
+  try {
+    const res  = await fetch('/metrics/leaderboard');
+    const data = await res.json();
+    const rows = (data.leaderboard || []).filter(r => r.calls > 0);
+    _envyLeaderboard = rows;
+  } catch(e) { /* silent */ }
+}
+
+function _triggerEnvyBubble() {
+  const lb = _envyLeaderboard;
+  // Need at least 2 ranked agents with real data
+  if (lb.length < 2 || lb[0].calls === 0) return;
+
+  // Pick a jealous agent (ranks 2–4) that isn't already showing a bubble
+  const jealousCandidates = lb.slice(1).filter(r => {
+    const workerId = _LB_TO_WORKER[r.agent];
+    if (!workerId || _envyBubbleActive.has(workerId)) return false;
+    // Only trigger if top performer has meaningfully more calls/score
+    return lb[0].composite_score > r.composite_score + 5;
+  });
+
+  if (jealousCandidates.length === 0) return;
+  // Random pick from jealous pool, weighted toward the lowest rank
+  const weights = jealousCandidates.map((_, i) => i + 1);
+  const totalW  = weights.reduce((a, b) => a + b, 0);
+  let rnd = Math.random() * totalW, pick = jealousCandidates[0];
+  for (let i = 0; i < jealousCandidates.length; i++) {
+    rnd -= weights[i];
+    if (rnd <= 0) { pick = jealousCandidates[i]; break; }
+  }
+
+  // Determine severity based on rank gap
+  const rankGap = pick.rank - 1;
+  const severity = rankGap === 1 ? 'mild' : rankGap === 2 ? 'medium' : 'bitter';
+  const lines    = ENVY_LINES[severity];
+  const topName  = _LB_TO_WORKER[lb[0].agent]?.replace(" Agent", "") || lb[0].display;
+  const msg = lines[Math.floor(Math.random() * lines.length)].replace(/{top}/g, topName);
+
+  const workerId = _LB_TO_WORKER[pick.agent];
+  const desk     = document.querySelector(`.desk[data-worker="${workerId}"]`);
+  if (!desk) return;
+
+  // Skip if desk is on real strike / error (they have bigger problems)
+  const state = desk.dataset.state;
+  if (state === 'strike' || state === 'error') return;
+
+  _envyBubbleActive.add(workerId);
+
+  // Create envy bubble below the desk
+  desk.style.position = 'relative';
+  const bubble = document.createElement('div');
+  bubble.className = 'envy-speech';
+  bubble.textContent = msg;
+  desk.appendChild(bubble);
+
+  // Give top performer a brief smug glow
+  const topWorkerId = _LB_TO_WORKER[lb[0].agent];
+  const topDesk     = document.querySelector(`.desk[data-worker="${topWorkerId}"]`);
+  if (topDesk) {
+    topDesk.classList.add('smug-glow');
+    setTimeout(() => topDesk.classList.remove('smug-glow'), 6000);
+  }
+
+  // Dismiss after 6–10 seconds
+  const duration = 6000 + Math.random() * 4000;
+  setTimeout(() => {
+    bubble.style.transition = 'opacity 0.7s';
+    bubble.style.opacity    = '0';
+    setTimeout(() => {
+      bubble.remove();
+      _envyBubbleActive.delete(workerId);
+    }, 750);
+  }, duration);
+}
+
+// Refresh leaderboard data every 60s, trigger envy every 28s (low probability)
+_refreshEnvyLeaderboard();
+setInterval(_refreshEnvyLeaderboard, 60000);
+setInterval(() => { if (Math.random() < 0.4) _triggerEnvyBubble(); }, 28000);
+// Fire one 15s after load to show the feature quickly
+setTimeout(_triggerEnvyBubble, 15000);
 
 // ── Stats counter pop (MutationObserver approach — no patching needed) ──────
 ['count-working','count-idle','count-sleeping','count-issues'].forEach(id => {
