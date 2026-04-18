@@ -1,0 +1,145 @@
+﻿{
+    "updatedAt":  "2026-04-13T09:07:14.350Z",
+    "createdAt":  "2026-04-13T09:07:14.350Z",
+    "id":  "C8WfeQJPt7qNJDFV",
+    "name":  "Claude Verification Code Monitor",
+    "description":  null,
+    "active":  false,
+    "isArchived":  false,
+    "nodes":  [
+                  {
+                      "parameters":  {
+                                         "pollTimes":  {
+                                                           "item":  [
+                                                                        {
+                                                                            "mode":  "everyMinute"
+                                                                        }
+                                                                    ]
+                                                       },
+                                         "filters":  {
+                                                         "sender":  "noreply@anthropic.com",
+                                                         "readStatus":  "unread"
+                                                     },
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "outlook-trigger",
+                      "name":  "Watch Outlook for Anthropic Emails",
+                      "type":  "n8n-nodes-base.microsoftOutlookTrigger",
+                      "typeVersion":  1,
+                      "position":  [
+                                       240,
+                                       400
+                                   ],
+                      "credentials":  {
+                                          "microsoftOutlookOAuth2Api":  {
+                                                                            "id":  "9paQ8IJLgiLbjEYI",
+                                                                            "name":  "Microsoft Outlook account"
+                                                                        }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "mode":  "runOnceForAllItems",
+                                         "language":  "javaScript",
+                                         "jsCode":  "const items = $input.all();\nconst results = [];\nfor (const item of items) {\n  const subject = (item.json.subject || \u0027\u0027).toLowerCase();\n  const body = item.json.bodyPreview || item.json.body?.content || \u0027\u0027;\n\n  // Only process Anthropic verification emails\n  if (!subject.includes(\u0027verification\u0027) \u0026\u0026 !subject.includes(\u0027code\u0027) \u0026\u0026 !subject.includes(\u0027anthropic\u0027) \u0026\u0026 !subject.includes(\u0027claude\u0027)) {\n    continue;\n  }\n\n  // Extract 6-digit code from email body\n  const codeMatch = body.match(/\\b(\\d{6})\\b/);\n  if (codeMatch) {\n    results.push({\n      json: {\n        code: codeMatch[1],\n        subject: item.json.subject,\n        from: item.json.from?.emailAddress?.address || \u0027\u0027,\n        timestamp: new Date().toISOString()\n      }\n    });\n  }\n}\n\nif (results.length === 0) {\n  return [];\n}\nreturn results;"
+                                     },
+                      "id":  "extract-code",
+                      "name":  "Extract Verification Code",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       480,
+                                       400
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "method":  "POST",
+                                         "url":  "https://inspiring-cat-production.up.railway.app/webhook/verification-code",
+                                         "authentication":  "none",
+                                         "sendBody":  true,
+                                         "contentType":  "json",
+                                         "specifyBody":  "json",
+                                         "jsonBody":  "={{ JSON.stringify({ code: $json.code }) }}",
+                                         "options":  {
+                                                         "timeout":  10000
+                                                     }
+                                     },
+                      "id":  "post-code",
+                      "name":  "POST Code to CLI Worker",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.4,
+                      "position":  [
+                                       720,
+                                       400
+                                   ]
+                  }
+              ],
+    "connections":  {
+                        "Watch Outlook for Anthropic Emails":  {
+                                                                   "main":  [
+                                                                                [
+                                                                                    {
+                                                                                        "node":  "Extract Verification Code",
+                                                                                        "type":  "main",
+                                                                                        "index":  0
+                                                                                    }
+                                                                                ]
+                                                                            ]
+                                                               },
+                        "Extract Verification Code":  {
+                                                          "main":  [
+                                                                       [
+                                                                           {
+                                                                               "node":  "POST Code to CLI Worker",
+                                                                               "type":  "main",
+                                                                               "index":  0
+                                                                           }
+                                                                       ]
+                                                                   ]
+                                                      }
+                    },
+    "settings":  {
+                     "executionOrder":  "v1",
+                     "saveManualExecutions":  true,
+                     "callerPolicy":  "workflowsFromSameOwner",
+                     "errorWorkflow":  "",
+                     "availableInMCP":  false
+                 },
+    "staticData":  {
+                       "node:Watch Outlook for Anthropic Emails":  {
+                                                                       "lastTimeChecked":  "2026-04-13T10:07:14.452+01:00"
+                                                                   }
+                   },
+    "meta":  null,
+    "pinData":  null,
+    "versionId":  "f543759f-1554-44aa-b764-843ffff6b5c4",
+    "activeVersionId":  null,
+    "versionCounter":  5,
+    "triggerCount":  1,
+    "shared":  [
+                   {
+                       "updatedAt":  "2026-04-13T09:07:14.350Z",
+                       "createdAt":  "2026-04-13T09:07:14.350Z",
+                       "role":  "workflow:owner",
+                       "workflowId":  "C8WfeQJPt7qNJDFV",
+                       "projectId":  "Lrgt6JR85OZiVLcX",
+                       "project":  {
+                                       "updatedAt":  "2026-03-31T09:07:31.366Z",
+                                       "createdAt":  "2026-03-31T08:57:43.789Z",
+                                       "id":  "Lrgt6JR85OZiVLcX",
+                                       "name":  "gelson mascarenhas \u003cgelson_m@hotmail.com\u003e",
+                                       "type":  "personal",
+                                       "icon":  null,
+                                       "description":  null,
+                                       "creatorId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                   }
+                   }
+               ],
+    "tags":  [
+
+             ],
+    "activeVersion":  null
+}

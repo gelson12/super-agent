@@ -1,0 +1,215 @@
+﻿{
+    "updatedAt":  "2026-04-12T11:23:23.246Z",
+    "createdAt":  "2026-04-12T11:23:23.246Z",
+    "id":  "sCHZhoyRgEZUaxtT",
+    "name":  "Universal Catch-All",
+    "description":  null,
+    "active":  true,
+    "isArchived":  false,
+    "nodes":  [
+                  {
+                      "parameters":  {
+                                         "httpMethod":  "GET",
+                                         "path":  "{{$json.path || \u0027\u0027}}",
+                                         "responseMode":  "lastNode",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "webhook-catch-all",
+                      "name":  "Webhook",
+                      "type":  "n8n-nodes-base.webhook",
+                      "typeVersion":  2,
+                      "position":  [
+                                       250,
+                                       300
+                                   ],
+                      "webhookId":  "universal-catch-all"
+                  },
+                  {
+                      "parameters":  {
+                                         "respondWith":  "json",
+                                         "responseBody":  "={{\"status\": \"ok\", \"message\": \"Request received\", \"path\": $node[\u0027Webhook\u0027].json.path, \"method\": $node[\u0027Webhook\u0027].json.method, \"timestamp\": new Date().toISOString(), \"note\": \"This is a universal catch-all endpoint\"}}",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "respond",
+                      "name":  "Respond",
+                      "type":  "n8n-nodes-base.respondToWebhook",
+                      "typeVersion":  1.1,
+                      "position":  [
+                                       450,
+                                       300
+                                   ]
+                  }
+              ],
+    "connections":  {
+                        "Webhook":  {
+                                        "main":  [
+                                                     [
+                                                         {
+                                                             "node":  "Respond",
+                                                             "type":  "main",
+                                                             "index":  0
+                                                         }
+                                                     ]
+                                                 ]
+                                    }
+                    },
+    "settings":  {
+                     "executionOrder":  "v1",
+                     "saveManualExecutions":  true,
+                     "callerPolicy":  "workflowsFromSameOwner",
+                     "errorWorkflow":  "",
+                     "availableInMCP":  false
+                 },
+    "staticData":  null,
+    "meta":  null,
+    "pinData":  null,
+    "versionId":  "b1c46c99-0997-4c7d-a31d-54cdd97d70e1",
+    "activeVersionId":  "b1c46c99-0997-4c7d-a31d-54cdd97d70e1",
+    "versionCounter":  19,
+    "triggerCount":  1,
+    "shared":  [
+                   {
+                       "updatedAt":  "2026-04-12T11:23:23.246Z",
+                       "createdAt":  "2026-04-12T11:23:23.246Z",
+                       "role":  "workflow:owner",
+                       "workflowId":  "sCHZhoyRgEZUaxtT",
+                       "projectId":  "Lrgt6JR85OZiVLcX",
+                       "project":  {
+                                       "updatedAt":  "2026-03-31T09:07:31.366Z",
+                                       "createdAt":  "2026-03-31T08:57:43.789Z",
+                                       "id":  "Lrgt6JR85OZiVLcX",
+                                       "name":  "gelson mascarenhas \u003cgelson_m@hotmail.com\u003e",
+                                       "type":  "personal",
+                                       "icon":  null,
+                                       "description":  null,
+                                       "creatorId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                   }
+                   }
+               ],
+    "tags":  [
+
+             ],
+    "activeVersion":  {
+                          "updatedAt":  "2026-04-12T11:23:23.291Z",
+                          "createdAt":  "2026-04-12T11:23:23.291Z",
+                          "versionId":  "b1c46c99-0997-4c7d-a31d-54cdd97d70e1",
+                          "workflowId":  "sCHZhoyRgEZUaxtT",
+                          "nodes":  [
+                                        {
+                                            "parameters":  {
+                                                               "httpMethod":  "GET",
+                                                               "path":  "{{$json.path || \u0027\u0027}}",
+                                                               "responseMode":  "lastNode",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "webhook-catch-all",
+                                            "name":  "Webhook",
+                                            "type":  "n8n-nodes-base.webhook",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             250,
+                                                             300
+                                                         ],
+                                            "webhookId":  "universal-catch-all"
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "respondWith":  "json",
+                                                               "responseBody":  "={{\"status\": \"ok\", \"message\": \"Request received\", \"path\": $node[\u0027Webhook\u0027].json.path, \"method\": $node[\u0027Webhook\u0027].json.method, \"timestamp\": new Date().toISOString(), \"note\": \"This is a universal catch-all endpoint\"}}",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "respond",
+                                            "name":  "Respond",
+                                            "type":  "n8n-nodes-base.respondToWebhook",
+                                            "typeVersion":  1.1,
+                                            "position":  [
+                                                             450,
+                                                             300
+                                                         ]
+                                        }
+                                    ],
+                          "connections":  {
+                                              "Webhook":  {
+                                                              "main":  [
+                                                                           [
+                                                                               {
+                                                                                   "node":  "Respond",
+                                                                                   "type":  "main",
+                                                                                   "index":  0
+                                                                               }
+                                                                           ]
+                                                                       ]
+                                                          }
+                                          },
+                          "authors":  "gelson mascarenhas",
+                          "name":  null,
+                          "description":  null,
+                          "autosaved":  false,
+                          "workflowPublishHistory":  [
+                                                         {
+                                                             "createdAt":  "2026-04-12T11:23:23.600Z",
+                                                             "id":  142,
+                                                             "workflowId":  "sCHZhoyRgEZUaxtT",
+                                                             "versionId":  "b1c46c99-0997-4c7d-a31d-54cdd97d70e1",
+                                                             "event":  "activated",
+                                                             "userId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                                         },
+                                                         {
+                                                             "createdAt":  "2026-04-12T11:23:27.108Z",
+                                                             "id":  143,
+                                                             "workflowId":  "sCHZhoyRgEZUaxtT",
+                                                             "versionId":  "b1c46c99-0997-4c7d-a31d-54cdd97d70e1",
+                                                             "event":  "deactivated",
+                                                             "userId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                                         },
+                                                         {
+                                                             "createdAt":  "2026-04-12T11:23:27.203Z",
+                                                             "id":  144,
+                                                             "workflowId":  "sCHZhoyRgEZUaxtT",
+                                                             "versionId":  "b1c46c99-0997-4c7d-a31d-54cdd97d70e1",
+                                                             "event":  "activated",
+                                                             "userId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                                         },
+                                                         {
+                                                             "createdAt":  "2026-04-12T11:32:13.842Z",
+                                                             "id":  149,
+                                                             "workflowId":  "sCHZhoyRgEZUaxtT",
+                                                             "versionId":  "b1c46c99-0997-4c7d-a31d-54cdd97d70e1",
+                                                             "event":  "deactivated",
+                                                             "userId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                                         },
+                                                         {
+                                                             "createdAt":  "2026-04-12T11:32:17.366Z",
+                                                             "id":  150,
+                                                             "workflowId":  "sCHZhoyRgEZUaxtT",
+                                                             "versionId":  "b1c46c99-0997-4c7d-a31d-54cdd97d70e1",
+                                                             "event":  "activated",
+                                                             "userId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                                         },
+                                                         {
+                                                             "createdAt":  "2026-04-12T11:47:45.995Z",
+                                                             "id":  156,
+                                                             "workflowId":  "sCHZhoyRgEZUaxtT",
+                                                             "versionId":  "b1c46c99-0997-4c7d-a31d-54cdd97d70e1",
+                                                             "event":  "deactivated",
+                                                             "userId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                                         },
+                                                         {
+                                                             "createdAt":  "2026-04-12T12:00:51.099Z",
+                                                             "id":  158,
+                                                             "workflowId":  "sCHZhoyRgEZUaxtT",
+                                                             "versionId":  "b1c46c99-0997-4c7d-a31d-54cdd97d70e1",
+                                                             "event":  "activated",
+                                                             "userId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                                         }
+                                                     ]
+                      }
+}

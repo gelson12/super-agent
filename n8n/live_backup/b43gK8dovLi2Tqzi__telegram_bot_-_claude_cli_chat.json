@@ -1,0 +1,389 @@
+﻿{
+    "updatedAt":  "2026-04-18T15:43:38.175Z",
+    "createdAt":  "2026-04-18T12:00:13.464Z",
+    "id":  "b43gK8dovLi2Tqzi",
+    "name":  "Telegram Bot - Claude CLI Chat",
+    "description":  null,
+    "active":  true,
+    "isArchived":  false,
+    "nodes":  [
+                  {
+                      "id":  "tg01",
+                      "name":  "Telegram Trigger",
+                      "type":  "n8n-nodes-base.telegramTrigger",
+                      "typeVersion":  1.2,
+                      "position":  [
+                                       0,
+                                       300
+                                   ],
+                      "credentials":  {
+                                          "telegramApi":  {
+                                                              "id":  "vaWr2cxS1Q9HsYd4",
+                                                              "name":  "Telegram account"
+                                                          }
+                                      },
+                      "parameters":  {
+                                         "updates":  [
+                                                         "message"
+                                                     ],
+                                         "additionalFields":  {
+
+                                                              }
+                                     },
+                      "webhookId":  "d99e7618-3352-4a96-a7e2-5dec78ba2b2a"
+                  },
+                  {
+                      "id":  "tg02",
+                      "name":  "Extract Message",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       200,
+                                       300
+                                   ],
+                      "parameters":  {
+                                         "jsCode":  "const msg = $json.message || $json;\nconst text = msg.text || msg.caption || \u0027(no text)\u0027;\nconst chatId = String(msg.chat \u0026\u0026 msg.chat.id ? msg.chat.id : \u00276275020593\u0027);\nconst username = msg.from \u0026\u0026 msg.from.username ? msg.from.username : (msg.from \u0026\u0026 msg.from.first_name ? msg.from.first_name : \u0027User\u0027);\nconst msgId = msg.message_id;\nconst prompt = \u0027You are Claude, an AI assistant powered by Claude CLI Pro. Reply to \u0027 + username + \u0027: \u0027 + text + \u0027\\n\\nBe helpful and concise. Max 400 words unless it is a technical question.\u0027;\nreturn [{ json: { chatId, username, msgId, type: \u0027claude_pro\u0027, payload: { prompt } } }];"
+                                     }
+                  },
+                  {
+                      "id":  "tg03",
+                      "name":  "Submit to Claude CLI",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.2,
+                      "position":  [
+                                       400,
+                                       300
+                                   ],
+                      "onError":  "continueRegularOutput",
+                      "parameters":  {
+                                         "method":  "POST",
+                                         "url":  "https://inspiring-cat-production.up.railway.app/tasks",
+                                         "sendHeaders":  true,
+                                         "headerParameters":  {
+                                                                  "parameters":  [
+                                                                                     {
+                                                                                         "name":  "Content-Type",
+                                                                                         "value":  "application/json"
+                                                                                     }
+                                                                                 ]
+                                                              },
+                                         "sendBody":  true,
+                                         "contentType":  "raw",
+                                         "rawContentType":  "application/json",
+                                         "body":  "={{ JSON.stringify({type: $json.type, payload: $json.payload}) }}",
+                                         "options":  {
+                                                         "response":  {
+                                                                          "response":  {
+                                                                                           "neverError":  true
+                                                                                       }
+                                                                      },
+                                                         "timeout":  15000
+                                                     }
+                                     }
+                  },
+                  {
+                      "id":  "tg04",
+                      "name":  "Poll Claude Result",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       600,
+                                       300
+                                   ],
+                      "parameters":  {
+                                         "jsCode":  "const https = require(\u0027https\u0027);\nconst sub = $(\u0027Submit to Claude CLI\u0027).first().json;\nconst taskId = sub.task_id;\nconst chatId = $(\u0027Extract Message\u0027).first().json.chatId;\nconst userText = $(\u0027Extract Message\u0027).first().json.text;\n\nif (!taskId) {\n  return [{json:{chatId, reply:\u0027Sorry, I had trouble connecting to Claude right now. Please try again!\u0027}}];\n}\n\nfor (let i=0;i\u003c40;i++) {\n  await new Promise(r=\u003esetTimeout(r,3000));\n  const poll = await new Promise((resolve,reject)=\u003e{\n    https.get(\u0027https://inspiring-cat-production.up.railway.app/tasks/\u0027+taskId,res=\u003e{\n      let body=\u0027\u0027;\n      res.on(\u0027data\u0027,c=\u003ebody+=c);\n      res.on(\u0027end\u0027,()=\u003e{try{resolve(JSON.parse(body));}catch(e){resolve({status:\u0027error\u0027,result:body});}});\n    }).on(\u0027error\u0027,reject);\n  });\n  if (poll.status===\u0027done\u0027) {\n    const reply = (poll.result||\u0027No response\u0027).slice(0,4000);\n    return [{json:{chatId, reply}}];\n  }\n  if (poll.status===\u0027failed\u0027) {\n    return [{json:{chatId, reply:\u0027Claude encountered an error: \u0027+(poll.error||\u0027unknown\u0027)}}];\n  }\n}\nreturn [{json:{chatId, reply:\u0027Claude took too long to respond. Please try again!\u0027}}];"
+                                     }
+                  },
+                  {
+                      "id":  "tg05",
+                      "name":  "Send Reply",
+                      "type":  "n8n-nodes-base.telegram",
+                      "typeVersion":  1.2,
+                      "position":  [
+                                       800,
+                                       300
+                                   ],
+                      "credentials":  {
+                                          "telegramApi":  {
+                                                              "id":  "vaWr2cxS1Q9HsYd4",
+                                                              "name":  "Telegram account"
+                                                          }
+                                      },
+                      "parameters":  {
+                                         "chatId":  "={{ $json.chatId }}",
+                                         "text":  "={{ $json.reply }}",
+                                         "additionalFields":  {
+
+                                                              }
+                                     },
+                      "webhookId":  "6645ccd4-6e1a-4573-881d-f23528fe0833"
+                  }
+              ],
+    "connections":  {
+                        "Telegram Trigger":  {
+                                                 "main":  [
+                                                              [
+                                                                  {
+                                                                      "node":  "Extract Message",
+                                                                      "type":  "main",
+                                                                      "index":  0
+                                                                  }
+                                                              ]
+                                                          ]
+                                             },
+                        "Extract Message":  {
+                                                "main":  [
+                                                             [
+                                                                 {
+                                                                     "node":  "Submit to Claude CLI",
+                                                                     "type":  "main",
+                                                                     "index":  0
+                                                                 }
+                                                             ]
+                                                         ]
+                                            },
+                        "Submit to Claude CLI":  {
+                                                     "main":  [
+                                                                  [
+                                                                      {
+                                                                          "node":  "Poll Claude Result",
+                                                                          "type":  "main",
+                                                                          "index":  0
+                                                                      }
+                                                                  ]
+                                                              ]
+                                                 },
+                        "Poll Claude Result":  {
+                                                   "main":  [
+                                                                [
+                                                                    {
+                                                                        "node":  "Send Reply",
+                                                                        "type":  "main",
+                                                                        "index":  0
+                                                                    }
+                                                                ]
+                                                            ]
+                                               }
+                    },
+    "settings":  {
+                     "executionOrder":  "v1",
+                     "callerPolicy":  "workflowsFromSameOwner",
+                     "availableInMCP":  false
+                 },
+    "staticData":  null,
+    "meta":  null,
+    "pinData":  null,
+    "versionId":  "d6b61a56-b01a-4508-8abd-914bc1c5269d",
+    "activeVersionId":  "d6b61a56-b01a-4508-8abd-914bc1c5269d",
+    "versionCounter":  8,
+    "triggerCount":  1,
+    "shared":  [
+                   {
+                       "updatedAt":  "2026-04-18T12:00:13.464Z",
+                       "createdAt":  "2026-04-18T12:00:13.464Z",
+                       "role":  "workflow:owner",
+                       "workflowId":  "b43gK8dovLi2Tqzi",
+                       "projectId":  "Lrgt6JR85OZiVLcX",
+                       "project":  {
+                                       "updatedAt":  "2026-03-31T09:07:31.366Z",
+                                       "createdAt":  "2026-03-31T08:57:43.789Z",
+                                       "id":  "Lrgt6JR85OZiVLcX",
+                                       "name":  "gelson mascarenhas \u003cgelson_m@hotmail.com\u003e",
+                                       "type":  "personal",
+                                       "icon":  null,
+                                       "description":  null,
+                                       "creatorId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                   }
+                   }
+               ],
+    "tags":  [
+
+             ],
+    "activeVersion":  {
+                          "updatedAt":  "2026-04-18T15:43:38.179Z",
+                          "createdAt":  "2026-04-18T15:43:38.179Z",
+                          "versionId":  "d6b61a56-b01a-4508-8abd-914bc1c5269d",
+                          "workflowId":  "b43gK8dovLi2Tqzi",
+                          "nodes":  [
+                                        {
+                                            "id":  "tg01",
+                                            "name":  "Telegram Trigger",
+                                            "type":  "n8n-nodes-base.telegramTrigger",
+                                            "typeVersion":  1.2,
+                                            "position":  [
+                                                             0,
+                                                             300
+                                                         ],
+                                            "credentials":  {
+                                                                "telegramApi":  {
+                                                                                    "id":  "vaWr2cxS1Q9HsYd4",
+                                                                                    "name":  "Telegram account"
+                                                                                }
+                                                            },
+                                            "parameters":  {
+                                                               "updates":  [
+                                                                               "message"
+                                                                           ],
+                                                               "additionalFields":  {
+
+                                                                                    }
+                                                           },
+                                            "webhookId":  "d99e7618-3352-4a96-a7e2-5dec78ba2b2a"
+                                        },
+                                        {
+                                            "id":  "tg02",
+                                            "name":  "Extract Message",
+                                            "type":  "n8n-nodes-base.code",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             200,
+                                                             300
+                                                         ],
+                                            "parameters":  {
+                                                               "jsCode":  "const msg = $json.message || $json;\nconst text = msg.text || msg.caption || \u0027(no text)\u0027;\nconst chatId = String(msg.chat \u0026\u0026 msg.chat.id ? msg.chat.id : \u00276275020593\u0027);\nconst username = msg.from \u0026\u0026 msg.from.username ? msg.from.username : (msg.from \u0026\u0026 msg.from.first_name ? msg.from.first_name : \u0027User\u0027);\nconst msgId = msg.message_id;\nconst prompt = \u0027You are Claude, an AI assistant powered by Claude CLI Pro. Reply to \u0027 + username + \u0027: \u0027 + text + \u0027\\n\\nBe helpful and concise. Max 400 words unless it is a technical question.\u0027;\nreturn [{ json: { chatId, username, msgId, type: \u0027claude_pro\u0027, payload: { prompt } } }];"
+                                                           }
+                                        },
+                                        {
+                                            "id":  "tg03",
+                                            "name":  "Submit to Claude CLI",
+                                            "type":  "n8n-nodes-base.httpRequest",
+                                            "typeVersion":  4.2,
+                                            "position":  [
+                                                             400,
+                                                             300
+                                                         ],
+                                            "onError":  "continueRegularOutput",
+                                            "parameters":  {
+                                                               "method":  "POST",
+                                                               "url":  "https://inspiring-cat-production.up.railway.app/tasks",
+                                                               "sendHeaders":  true,
+                                                               "headerParameters":  {
+                                                                                        "parameters":  [
+                                                                                                           {
+                                                                                                               "name":  "Content-Type",
+                                                                                                               "value":  "application/json"
+                                                                                                           }
+                                                                                                       ]
+                                                                                    },
+                                                               "sendBody":  true,
+                                                               "contentType":  "raw",
+                                                               "rawContentType":  "application/json",
+                                                               "body":  "={{ JSON.stringify({type: $json.type, payload: $json.payload}) }}",
+                                                               "options":  {
+                                                                               "response":  {
+                                                                                                "response":  {
+                                                                                                                 "neverError":  true
+                                                                                                             }
+                                                                                            },
+                                                                               "timeout":  15000
+                                                                           }
+                                                           }
+                                        },
+                                        {
+                                            "id":  "tg04",
+                                            "name":  "Poll Claude Result",
+                                            "type":  "n8n-nodes-base.code",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             600,
+                                                             300
+                                                         ],
+                                            "parameters":  {
+                                                               "jsCode":  "const https = require(\u0027https\u0027);\nconst sub = $(\u0027Submit to Claude CLI\u0027).first().json;\nconst taskId = sub.task_id;\nconst chatId = $(\u0027Extract Message\u0027).first().json.chatId;\nconst userText = $(\u0027Extract Message\u0027).first().json.text;\n\nif (!taskId) {\n  return [{json:{chatId, reply:\u0027Sorry, I had trouble connecting to Claude right now. Please try again!\u0027}}];\n}\n\nfor (let i=0;i\u003c40;i++) {\n  await new Promise(r=\u003esetTimeout(r,3000));\n  const poll = await new Promise((resolve,reject)=\u003e{\n    https.get(\u0027https://inspiring-cat-production.up.railway.app/tasks/\u0027+taskId,res=\u003e{\n      let body=\u0027\u0027;\n      res.on(\u0027data\u0027,c=\u003ebody+=c);\n      res.on(\u0027end\u0027,()=\u003e{try{resolve(JSON.parse(body));}catch(e){resolve({status:\u0027error\u0027,result:body});}});\n    }).on(\u0027error\u0027,reject);\n  });\n  if (poll.status===\u0027done\u0027) {\n    const reply = (poll.result||\u0027No response\u0027).slice(0,4000);\n    return [{json:{chatId, reply}}];\n  }\n  if (poll.status===\u0027failed\u0027) {\n    return [{json:{chatId, reply:\u0027Claude encountered an error: \u0027+(poll.error||\u0027unknown\u0027)}}];\n  }\n}\nreturn [{json:{chatId, reply:\u0027Claude took too long to respond. Please try again!\u0027}}];"
+                                                           }
+                                        },
+                                        {
+                                            "id":  "tg05",
+                                            "name":  "Send Reply",
+                                            "type":  "n8n-nodes-base.telegram",
+                                            "typeVersion":  1.2,
+                                            "position":  [
+                                                             800,
+                                                             300
+                                                         ],
+                                            "credentials":  {
+                                                                "telegramApi":  {
+                                                                                    "id":  "vaWr2cxS1Q9HsYd4",
+                                                                                    "name":  "Telegram account"
+                                                                                }
+                                                            },
+                                            "parameters":  {
+                                                               "chatId":  "={{ $json.chatId }}",
+                                                               "text":  "={{ $json.reply }}",
+                                                               "additionalFields":  {
+
+                                                                                    }
+                                                           },
+                                            "webhookId":  "6645ccd4-6e1a-4573-881d-f23528fe0833"
+                                        }
+                                    ],
+                          "connections":  {
+                                              "Telegram Trigger":  {
+                                                                       "main":  [
+                                                                                    [
+                                                                                        {
+                                                                                            "node":  "Extract Message",
+                                                                                            "type":  "main",
+                                                                                            "index":  0
+                                                                                        }
+                                                                                    ]
+                                                                                ]
+                                                                   },
+                                              "Extract Message":  {
+                                                                      "main":  [
+                                                                                   [
+                                                                                       {
+                                                                                           "node":  "Submit to Claude CLI",
+                                                                                           "type":  "main",
+                                                                                           "index":  0
+                                                                                       }
+                                                                                   ]
+                                                                               ]
+                                                                  },
+                                              "Submit to Claude CLI":  {
+                                                                           "main":  [
+                                                                                        [
+                                                                                            {
+                                                                                                "node":  "Poll Claude Result",
+                                                                                                "type":  "main",
+                                                                                                "index":  0
+                                                                                            }
+                                                                                        ]
+                                                                                    ]
+                                                                       },
+                                              "Poll Claude Result":  {
+                                                                         "main":  [
+                                                                                      [
+                                                                                          {
+                                                                                              "node":  "Send Reply",
+                                                                                              "type":  "main",
+                                                                                              "index":  0
+                                                                                          }
+                                                                                      ]
+                                                                                  ]
+                                                                     }
+                                          },
+                          "authors":  "gelson mascarenhas",
+                          "name":  null,
+                          "description":  null,
+                          "autosaved":  false,
+                          "workflowPublishHistory":  [
+                                                         {
+                                                             "createdAt":  "2026-04-18T15:43:38.276Z",
+                                                             "id":  394,
+                                                             "workflowId":  "b43gK8dovLi2Tqzi",
+                                                             "versionId":  "d6b61a56-b01a-4508-8abd-914bc1c5269d",
+                                                             "event":  "deactivated",
+                                                             "userId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                                         },
+                                                         {
+                                                             "createdAt":  "2026-04-18T15:43:38.351Z",
+                                                             "id":  395,
+                                                             "workflowId":  "b43gK8dovLi2Tqzi",
+                                                             "versionId":  "d6b61a56-b01a-4508-8abd-914bc1c5269d",
+                                                             "event":  "activated",
+                                                             "userId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                                         }
+                                                     ]
+                      }
+}

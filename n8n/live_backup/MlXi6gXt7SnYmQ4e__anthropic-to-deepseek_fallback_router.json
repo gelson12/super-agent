@@ -1,0 +1,269 @@
+﻿{
+    "updatedAt":  "2026-04-13T09:34:41.617Z",
+    "createdAt":  "2026-04-13T09:34:41.617Z",
+    "id":  "MlXi6gXt7SnYmQ4e",
+    "name":  "Anthropic-to-DeepSeek Fallback Router",
+    "description":  null,
+    "active":  false,
+    "isArchived":  false,
+    "nodes":  [
+                  {
+                      "parameters":  {
+                                         "path":  "/anthropic-fallback",
+                                         "responseMode":  "responseNode",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "webhook",
+                      "name":  "Anthropic Fallback Webhook",
+                      "type":  "n8n-nodes-base.webhook",
+                      "typeVersion":  1.2,
+                      "position":  [
+                                       240,
+                                       300
+                                   ],
+                      "webhookId":  "anthropic-fallback"
+                  },
+                  {
+                      "parameters":  {
+                                         "conditions":  {
+                                                            "string":  [
+                                                                           {
+                                                                               "value1":  "={{ $json.body.model }}",
+                                                                               "operation":  "contains",
+                                                                               "value2":  "claude"
+                                                                           }
+                                                                       ]
+                                                        }
+                                     },
+                      "id":  "check-if-anthropic",
+                      "name":  "Is Anthropic Request?",
+                      "type":  "n8n-nodes-base.if",
+                      "typeVersion":  2,
+                      "position":  [
+                                       460,
+                                       300
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "mode":  "runOnceForAllItems",
+                                         "language":  "javaScript",
+                                         "jsCode":  "const body = $json.body;\nconst message = body.messages || body.prompt || body.input || \u0027\u0027;\nconst model = body.model || \u0027claude-3-haiku-20240307\u0027;\n\n// Map Anthropic models to DeepSeek equivalents\nconst modelMap = {\n  \u0027claude-3-haiku\u0027: \u0027deepseek-chat\u0027,\n  \u0027claude-3-sonnet\u0027: \u0027deepseek-chat\u0027,\n  \u0027claude-3-opus\u0027: \u0027deepseek-chat\u0027,\n  \u0027claude-3-5-haiku\u0027: \u0027deepseek-chat\u0027,\n  \u0027claude-3-5-sonnet\u0027: \u0027deepseek-chat\u0027,\n  \u0027claude-3-5-opus\u0027: \u0027deepseek-chat\u0027\n};\n\nconst deepseekModel = modelMap[model] || \u0027deepseek-chat\u0027;\n\n// Format for DeepSeek API\nconst deepseekBody = {\n  model: deepseekModel,\n  messages: Array.isArray(message) ? message : [{ role: \u0027user\u0027, content: String(message) }],\n  max_tokens: body.max_tokens || 1000,\n  temperature: body.temperature || 0.7,\n  stream: false\n};\n\nreturn [{\n  json: {\n    originalRequest: body,\n    deepseekRequest: deepseekBody,\n    modelMapping: `${model} → ${deepseekModel}`,\n    isFallback: true\n  }\n}];"
+                                     },
+                      "id":  "convert-to-deepseek",
+                      "name":  "Convert to DeepSeek Format",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       700,
+                                       200
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "method":  "POST",
+                                         "url":  "https://api.deepseek.com/chat/completions",
+                                         "sendHeaders":  true,
+                                         "headerParameters":  {
+                                                                  "parameters":  [
+                                                                                     {
+                                                                                         "name":  "Authorization",
+                                                                                         "value":  "Bearer {{$env.DEEPSEEK_API_KEY}}"
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "Content-Type",
+                                                                                         "value":  "application/json"
+                                                                                     }
+                                                                                 ]
+                                                              },
+                                         "sendBody":  true,
+                                         "contentType":  "json",
+                                         "specifyBody":  "json",
+                                         "jsonBody":  "={{ JSON.stringify($json.deepseekRequest) }}",
+                                         "options":  {
+                                                         "timeout":  30000
+                                                     }
+                                     },
+                      "id":  "call-deepseek-api",
+                      "name":  "Call DeepSeek API",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.4,
+                      "position":  [
+                                       940,
+                                       200
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "mode":  "runOnceForAllItems",
+                                         "language":  "javaScript",
+                                         "jsCode":  "const deepseekResponse = $(\u0027Call DeepSeek API\u0027).first().json;\nconst originalRequest = $json.originalRequest;\nconst modelMapping = $json.modelMapping;\n\n// Format response similar to Anthropic\nconst anthropicStyleResponse = {\n  id: deepseekResponse.id || \u0027msg_\u0027 + Date.now(),\n  type: \u0027message\u0027,\n  role: \u0027assistant\u0027,\n  content: deepseekResponse.choices?.[0]?.message?.content || \u0027No response from DeepSeek\u0027,\n  model: originalRequest.model || \u0027claude-3-haiku\u0027,\n  stop_reason: deepseekResponse.choices?.[0]?.finish_reason || \u0027stop\u0027,\n  usage: deepseekResponse.usage || { input_tokens: 0, output_tokens: 0 },\n  _metadata: {\n    fallback_used: true,\n    original_model: originalRequest.model,\n    fallback_model: \u0027deepseek-chat\u0027,\n    timestamp: new Date().toISOString()\n  }\n};\n\nreturn [{\n  json: anthropicStyleResponse\n}];"
+                                     },
+                      "id":  "format-anthropic-response",
+                      "name":  "Format Anthropic Response",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       1180,
+                                       200
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "mode":  "runOnceForAllItems",
+                                         "language":  "javaScript",
+                                         "jsCode":  "const originalRequest = $json.body;\nconst errorResponse = {\n  error: {\n    type: \u0027authentication_error\u0027,\n    message: \u0027Anthropic API key has no credits. Please add credits to your Anthropic account at https://console.anthropic.com/.\u0027,\n    code: \u0027insufficient_credits\u0027,\n    param: \u0027api_key\u0027,\n    type: \u0027invalid_request_error\u0027\n  },\n  _metadata: {\n    timestamp: new Date().toISOString(),\n    suggestion: \u0027Update ANTHROPIC_API_KEY in Railway environment variables with a valid key with credits.\u0027\n  }\n};\n\nreturn [{\n  json: errorResponse\n}];"
+                                     },
+                      "id":  "format-error-response",
+                      "name":  "Format Error Response",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       700,
+                                       400
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "responseCode":  "={{ $json.statusCode || 200 }}",
+                                         "responseBody":  "={{ JSON.stringify($json) }}",
+                                         "options":  {
+                                                         "responseHeaders":  {
+                                                                                 "parameters":  [
+                                                                                                    {
+                                                                                                        "name":  "Content-Type",
+                                                                                                        "value":  "application/json"
+                                                                                                    },
+                                                                                                    {
+                                                                                                        "name":  "X-Fallback-Used",
+                                                                                                        "value":  "={{ $json._metadata?.fallback_used ? \u0027true\u0027 : \u0027false\u0027 }}"
+                                                                                                    }
+                                                                                                ]
+                                                                             }
+                                                     }
+                                     },
+                      "id":  "webhook-response",
+                      "name":  "Webhook Response",
+                      "type":  "n8n-nodes-base.respondToWebhook",
+                      "typeVersion":  1.2,
+                      "position":  [
+                                       1420,
+                                       200
+                                   ]
+                  }
+              ],
+    "connections":  {
+                        "Anthropic Fallback Webhook":  {
+                                                           "main":  [
+                                                                        [
+                                                                            {
+                                                                                "node":  "Is Anthropic Request?",
+                                                                                "type":  "main",
+                                                                                "index":  0
+                                                                            }
+                                                                        ]
+                                                                    ]
+                                                       },
+                        "Is Anthropic Request?":  {
+                                                      "main":  [
+                                                                   [
+                                                                       {
+                                                                           "node":  "Convert to DeepSeek Format",
+                                                                           "type":  "main",
+                                                                           "index":  0
+                                                                       }
+                                                                   ],
+                                                                   [
+                                                                       {
+                                                                           "node":  "Format Error Response",
+                                                                           "type":  "main",
+                                                                           "index":  0
+                                                                       }
+                                                                   ]
+                                                               ]
+                                                  },
+                        "Convert to DeepSeek Format":  {
+                                                           "main":  [
+                                                                        [
+                                                                            {
+                                                                                "node":  "Call DeepSeek API",
+                                                                                "type":  "main",
+                                                                                "index":  0
+                                                                            }
+                                                                        ]
+                                                                    ]
+                                                       },
+                        "Call DeepSeek API":  {
+                                                  "main":  [
+                                                               [
+                                                                   {
+                                                                       "node":  "Format Anthropic Response",
+                                                                       "type":  "main",
+                                                                       "index":  0
+                                                                   }
+                                                               ]
+                                                           ]
+                                              },
+                        "Format Anthropic Response":  {
+                                                          "main":  [
+                                                                       [
+                                                                           {
+                                                                               "node":  "Webhook Response",
+                                                                               "type":  "main",
+                                                                               "index":  0
+                                                                           }
+                                                                       ]
+                                                                   ]
+                                                      },
+                        "Format Error Response":  {
+                                                      "main":  [
+                                                                   [
+                                                                       {
+                                                                           "node":  "Webhook Response",
+                                                                           "type":  "main",
+                                                                           "index":  0
+                                                                       }
+                                                                   ]
+                                                               ]
+                                                  }
+                    },
+    "settings":  {
+                     "executionOrder":  "v1",
+                     "saveManualExecutions":  true,
+                     "callerPolicy":  "workflowsFromSameOwner",
+                     "errorWorkflow":  "",
+                     "availableInMCP":  false
+                 },
+    "staticData":  null,
+    "meta":  null,
+    "pinData":  null,
+    "versionId":  "c506c2e8-61c0-45ee-b0d9-a84cccbb76d2",
+    "activeVersionId":  null,
+    "versionCounter":  1,
+    "triggerCount":  0,
+    "shared":  [
+                   {
+                       "updatedAt":  "2026-04-13T09:34:41.617Z",
+                       "createdAt":  "2026-04-13T09:34:41.617Z",
+                       "role":  "workflow:owner",
+                       "workflowId":  "MlXi6gXt7SnYmQ4e",
+                       "projectId":  "Lrgt6JR85OZiVLcX",
+                       "project":  {
+                                       "updatedAt":  "2026-03-31T09:07:31.366Z",
+                                       "createdAt":  "2026-03-31T08:57:43.789Z",
+                                       "id":  "Lrgt6JR85OZiVLcX",
+                                       "name":  "gelson mascarenhas \u003cgelson_m@hotmail.com\u003e",
+                                       "type":  "personal",
+                                       "icon":  null,
+                                       "description":  null,
+                                       "creatorId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                   }
+                   }
+               ],
+    "tags":  [
+
+             ],
+    "activeVersion":  null
+}

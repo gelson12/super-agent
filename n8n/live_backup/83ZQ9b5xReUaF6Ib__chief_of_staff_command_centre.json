@@ -1,0 +1,649 @@
+﻿{
+    "updatedAt":  "2026-04-18T12:01:08.726Z",
+    "createdAt":  "2026-04-18T11:32:42.471Z",
+    "id":  "83ZQ9b5xReUaF6Ib",
+    "name":  "Chief of Staff — Command Centre",
+    "description":  null,
+    "active":  true,
+    "isArchived":  false,
+    "nodes":  [
+                  {
+                      "id":  "c1",
+                      "name":  "Telegram — Commands",
+                      "type":  "n8n-nodes-base.telegramTrigger",
+                      "typeVersion":  1.1,
+                      "position":  [
+                                       240,
+                                       200
+                                   ],
+                      "credentials":  {
+                                          "telegramApi":  {
+                                                              "id":  "SYXQZLJBjTuMbspG",
+                                                              "name":  "Telegram Content Analyst Bot"
+                                                          }
+                                      },
+                      "parameters":  {
+                                         "updates":  [
+                                                         "message",
+                                                         "callback_query"
+                                                     ]
+                                     },
+                      "webhookId":  "50bc5699-4701-47de-bdd5-ce2616abfd55"
+                  },
+                  {
+                      "id":  "c2",
+                      "name":  "Gmail — Bridge",
+                      "type":  "n8n-nodes-base.gmailTrigger",
+                      "typeVersion":  1,
+                      "position":  [
+                                       240,
+                                       380
+                                   ],
+                      "credentials":  {
+                                          "gmailOAuth2":  {
+                                                              "id":  "DL39Lr8wENjvFtij",
+                                                              "name":  "Gmail account"
+                                                          }
+                                      },
+                      "parameters":  {
+                                         "pollTimes":  {
+                                                           "item":  [
+                                                                        {
+                                                                            "mode":  "everyMinute"
+                                                                        }
+                                                                    ]
+                                                       },
+                                         "filters":  {
+                                                         "readStatus":  "unread",
+                                                         "q":  "subject:(APPROVE OR REJECT OR cos-)"
+                                                     }
+                                     }
+                  },
+                  {
+                      "id":  "c3",
+                      "name":  "Gmail — Gelson",
+                      "type":  "n8n-nodes-base.gmailTrigger",
+                      "typeVersion":  1,
+                      "position":  [
+                                       240,
+                                       540
+                                   ],
+                      "credentials":  {
+                                          "gmailOAuth2":  {
+                                                              "id":  "T55BDHntJ3i1NFYw",
+                                                              "name":  "Gmail account 2"
+                                                          }
+                                      },
+                      "parameters":  {
+                                         "pollTimes":  {
+                                                           "item":  [
+                                                                        {
+                                                                            "mode":  "everyMinute"
+                                                                        }
+                                                                    ]
+                                                       },
+                                         "filters":  {
+                                                         "readStatus":  "unread",
+                                                         "q":  "subject:(APPROVE OR REJECT OR cos-)"
+                                                     }
+                                     }
+                  },
+                  {
+                      "id":  "c4",
+                      "name":  "Outlook — Hotmail",
+                      "type":  "n8n-nodes-base.microsoftOutlookTrigger",
+                      "typeVersion":  1,
+                      "position":  [
+                                       240,
+                                       700
+                                   ],
+                      "credentials":  {
+                                          "microsoftOutlookOAuth2Api":  {
+                                                                            "id":  "9paQ8IJLgiLbjEYI",
+                                                                            "name":  "Microsoft Outlook account"
+                                                                        }
+                                      },
+                      "parameters":  {
+                                         "pollTimes":  {
+                                                           "item":  [
+                                                                        {
+                                                                            "mode":  "everyMinute"
+                                                                        }
+                                                                    ]
+                                                       },
+                                         "filters":  {
+                                                         "readStatus":  "unread"
+                                                     }
+                                     }
+                  },
+                  {
+                      "id":  "c5",
+                      "name":  "WhatsApp Receive",
+                      "type":  "n8n-nodes-base.webhook",
+                      "typeVersion":  1.1,
+                      "position":  [
+                                       240,
+                                       860
+                                   ],
+                      "parameters":  {
+                                         "httpMethod":  "POST",
+                                         "path":  "cos-command",
+                                         "responseMode":  "lastNode",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "webhookId":  "113b8740-47ed-4cb2-885c-0349015d5f88"
+                  },
+                  {
+                      "id":  "c6",
+                      "name":  "Parse \u0026 Verify",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       520,
+                                       520
+                                   ],
+                      "parameters":  {
+                                         "jsCode":  "\nconst d = $input.first().json;\nconst AUTHORIZED = [\u0027bridge.digital.solution@gmail.com\u0027,\u0027gelsonmascarenhas@gmail.com\u0027,\u0027gelson_m@hotmail.com\u0027];\nconst IC  = \"https://inspiring-cat-production.up.railway.app\";\nconst TG  = \"https://api.telegram.org/bot***REDACTED_TELEGRAM_BOT_TOKEN***\";\n\nlet source = \u0027unknown\u0027, decision = null, action_id = null, sender = null, reply_to = null;\n\nif (d.callback_query) {\n  const cb = d.callback_query.data || \u0027\u0027;\n  const m = cb.match(/^COS:(A|R):(cos-[a-f0-9]{8})$/);\n  if (m) { decision = m[1] === \u0027A\u0027 ? \u0027approve\u0027 : \u0027reject\u0027; action_id = m[2]; }\n  sender = String(d.callback_query.from.id);\n  reply_to = { type: \u0027telegram_callback\u0027, query_id: d.callback_query.id, chat_id: String(d.callback_query.message.chat.id) };\n  source = \u0027telegram_button\u0027;\n  try {\n    await fetch(TG + \u0027/answerCallbackQuery\u0027, {\n      method: \u0027POST\u0027, headers: { \u0027Content-Type\u0027: \u0027application/json\u0027 },\n      body: JSON.stringify({ callback_query_id: d.callback_query.id, text: decision === \u0027approve\u0027 ? \u0027✅ Processing...\u0027 : \u0027❌ Processing...\u0027 }),\n      signal: AbortSignal.timeout(5000)\n    });\n  } catch(e) {}\n}\nelse if (d.message \u0026\u0026 d.message.text) {\n  const text = d.message.text.trim();\n  const m = text.match(/^(approve|yes|reject|no)\\s+(cos-[a-f0-9]{8})/i);\n  if (m) {\n    decision  = (m[1].toLowerCase() === \u0027yes\u0027 || m[1].toLowerCase() === \u0027approve\u0027) ? \u0027approve\u0027 : \u0027reject\u0027;\n    action_id = m[2].toLowerCase();\n  }\n  sender   = String(d.message.from.id);\n  reply_to = { type: \u0027telegram_message\u0027, chat_id: String(d.message.chat.id) };\n  source   = \u0027telegram_message\u0027;\n  // Save chat_id to DB\n  const cid = String(d.message.chat.id);\n  const SAVE_PY = `import os,psycopg2\ndb=os.environ[\u0027DATABASE_URL\u0027].replace(\u0027postgres://\u0027,\u0027postgresql://\u0027)\nconn=psycopg2.connect(db);cur=conn.cursor()\ncur.execute(\"CREATE TABLE IF NOT EXISTS cos_config(key TEXT PRIMARY KEY,value TEXT,updated_at TIMESTAMPTZ DEFAULT NOW())\")\ncur.execute(\"INSERT INTO cos_config(key,value)VALUES(\u0027telegram_chat_id\u0027,\u0027` + cid + `\u0027) ON CONFLICT(key)DO UPDATE SET value=EXCLUDED.value,updated_at=NOW()\")\nconn.commit();conn.close();print(\u0027SAVED_CHATID:` + cid + `\u0027)`;\n  try {\n    const sb64 = Buffer.from(SAVE_PY).toString(\u0027base64\u0027);\n    const srep = await fetch(IC + \u0027/tasks\u0027, {\n      method: \u0027POST\u0027, headers: { \u0027Content-Type\u0027: \u0027application/json\u0027 },\n      body: JSON.stringify({ type: \u0027shell\u0027, payload: { command: `python3 -c \"import base64;exec(base64.b64decode(\u0027${sb64}\u0027).decode())\"` } }),\n      signal: AbortSignal.timeout(15000)\n    });\n    await srep.json();\n  } catch(e) {}\n}\nelse if (d.subject !== undefined || d.Subject !== undefined) {\n  const subj = (d.subject || d.Subject || \u0027\u0027).toLowerCase();\n  const body = (d.text || d.bodyPreview || d.snippet || d.body || \u0027\u0027).toLowerCase();\n  const combined = subj + \u0027 \u0027 + body;\n  const mId  = combined.match(/cos-([a-f0-9]{8})/i);\n  const mDec = combined.match(/\\b(approve|yes|reject|no)\\b/i);\n  if (mId) action_id = \u0027cos-\u0027 + mId[1].toLowerCase();\n  if (mDec) { const w = mDec[1].toLowerCase(); decision = (w === \u0027approve\u0027 || w === \u0027yes\u0027) ? \u0027approve\u0027 : \u0027reject\u0027; }\n  sender   = (d.from || d.From || d.senderEmailAddress?.address || \u0027\u0027).toLowerCase().replace(/.*\u003c|\u003e/g, \u0027\u0027).trim();\n  reply_to = { type: \u0027email\u0027, address: sender };\n  source   = \u0027email\u0027;\n}\nelse if (d.entry) {\n  try {\n    const msg = d.entry[0].changes[0].value.messages[0];\n    const text = (msg.text?.body || \u0027\u0027).trim();\n    const m = text.match(/^(approve|yes|reject|no)\\s+(cos-[a-f0-9]{8})/i);\n    if (m) { decision = (m[1].toLowerCase() === \u0027yes\u0027 || m[1].toLowerCase() === \u0027approve\u0027) ? \u0027approve\u0027 : \u0027reject\u0027; action_id = m[2].toLowerCase(); }\n    sender   = msg.from;\n    reply_to = { type: \u0027whatsapp\u0027, phone: msg.from };\n    source   = \u0027whatsapp\u0027;\n  } catch(e) {}\n}\n\nconst authorized = AUTHORIZED.some(a =\u003e a === sender) || source === \u0027telegram_button\u0027 || source === \u0027telegram_message\u0027;\n\nlet action_valid = false, action_data = null;\nif (action_id \u0026\u0026 decision) {\n  const LOOKUP_PY = `import os,psycopg2,json\ndb=os.environ[\u0027DATABASE_URL\u0027].replace(\u0027postgres://\u0027,\u0027postgresql://\u0027)\nconn=psycopg2.connect(db);cur=conn.cursor()\ncur.execute(\"SELECT id,service,severity,description,fix_cmd,status FROM cos_pending_actions WHERE id=%s\",(\u0027` + action_id + `\u0027,))\nrow=cur.fetchone()\nif row: print(json.dumps({\u0027id\u0027:row[0],\u0027service\u0027:row[1],\u0027sev\u0027:row[2],\u0027desc\u0027:row[3],\u0027fix_cmd\u0027:row[4],\u0027status\u0027:row[5]}))\nelse: print(\u0027NOT_FOUND\u0027)\nconn.close()`;\n  const lb64 = Buffer.from(LOOKUP_PY).toString(\u0027base64\u0027);\n  const lrep = await fetch(IC + \u0027/tasks\u0027, {\n    method: \u0027POST\u0027, headers: { \u0027Content-Type\u0027: \u0027application/json\u0027 },\n    body: JSON.stringify({ type: \u0027shell\u0027, payload: { command: `python3 -c \"import base64;exec(base64.b64decode(\u0027${lb64}\u0027).decode())\"` } }),\n    signal: AbortSignal.timeout(20000)\n  });\n  const ltr = await lrep.json();\n  for (let i = 0; i \u003c 10; i++) {\n    await new Promise(r =\u003e setTimeout(r, 2000));\n    const s = await (await fetch(IC + \u0027/tasks/\u0027 + ltr.id, { signal: AbortSignal.timeout(10000) })).json();\n    if (s.status === \u0027done\u0027 || s.status === \u0027error\u0027) {\n      const out = (s.output || \u0027\u0027).trim();\n      if (out \u0026\u0026 out !== \u0027NOT_FOUND\u0027) { try { action_data = JSON.parse(out); action_valid = action_data.status === \u0027pending\u0027; } catch(e) {} }\n      break;\n    }\n  }\n}\n\nconst can_execute = authorized \u0026\u0026 action_valid \u0026\u0026 decision === \u0027approve\u0027;\nreturn [{ json: { source, decision, action_id, sender, authorized, action_valid, can_execute, action_data, reply_to } }];\n"
+                                     }
+                  },
+                  {
+                      "id":  "c7",
+                      "name":  "Can Execute?",
+                      "type":  "n8n-nodes-base.if",
+                      "typeVersion":  2,
+                      "position":  [
+                                       760,
+                                       520
+                                   ],
+                      "parameters":  {
+                                         "conditions":  {
+                                                            "options":  {
+                                                                            "caseSensitive":  true,
+                                                                            "leftValue":  "",
+                                                                            "typeValidation":  "strict"
+                                                                        },
+                                                            "conditions":  [
+                                                                               {
+                                                                                   "id":  "e1",
+                                                                                   "leftValue":  "={{ $json.can_execute }}",
+                                                                                   "rightValue":  true,
+                                                                                   "operator":  {
+                                                                                                    "type":  "boolean",
+                                                                                                    "operation":  "true"
+                                                                                                }
+                                                                               }
+                                                                           ],
+                                                            "combinator":  "and"
+                                                        }
+                                     }
+                  },
+                  {
+                      "id":  "c8",
+                      "name":  "Execute Fix",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       1000,
+                                       400
+                                   ],
+                      "parameters":  {
+                                         "jsCode":  "\nconst { action_id, action_data, reply_to, sender, source } = $input.first().json;\nconst IC  = \"https://inspiring-cat-production.up.railway.app\";\nconst TG  = \"https://api.telegram.org/bot***REDACTED_TELEGRAM_BOT_TOKEN***\";\nconst fix_cmd = action_data.fix_cmd || \u0027echo \"No fix command defined\"\u0027;\n\nlet fix_output = \u0027\u0027, fix_status = \u0027error\u0027;\ntry {\n  const fResp = await fetch(IC + \u0027/tasks\u0027, {\n    method: \u0027POST\u0027, headers: { \u0027Content-Type\u0027: \u0027application/json\u0027 },\n    body: JSON.stringify({ type: \u0027shell\u0027, payload: { command: fix_cmd } }),\n    signal: AbortSignal.timeout(30000)\n  });\n  const ftr = await fResp.json();\n  for (let i = 0; i \u003c 20; i++) {\n    await new Promise(r =\u003e setTimeout(r, 3000));\n    const s = await (await fetch(IC + \u0027/tasks/\u0027 + ftr.id, { signal: AbortSignal.timeout(10000) })).json();\n    if (s.status === \u0027done\u0027 || s.status === \u0027error\u0027) { fix_output = (s.output || \u0027\u0027).slice(0, 500); fix_status = s.status; break; }\n  }\n} catch(e) { fix_output = \u0027Task failed: \u0027 + e.message; }\n\nconst UPDATE_PY = `import os,psycopg2,json\ndb=os.environ[\u0027DATABASE_URL\u0027].replace(\u0027postgres://\u0027,\u0027postgresql://\u0027)\nconn=psycopg2.connect(db);cur=conn.cursor()\ncur.execute(\"UPDATE cos_pending_actions SET status=\u0027executed\u0027,approved_at=NOW(),executed_at=NOW(),response_channel=%s,response_from=%s,result=%s WHERE id=%s\",\n    (\u0027` + (reply_to?.type || source) + `\u0027,\u0027` + (sender || \u0027\u0027) + `\u0027,` + JSON.stringify(fix_output) + `,\u0027` + action_id + `\u0027))\nconn.commit();conn.close();print(\u0027UPDATED\u0027)`;\nconst ub64 = Buffer.from(UPDATE_PY).toString(\u0027base64\u0027);\nconst uResp = await fetch(IC + \u0027/tasks\u0027, {\n  method: \u0027POST\u0027, headers: { \u0027Content-Type\u0027: \u0027application/json\u0027 },\n  body: JSON.stringify({ type: \u0027shell\u0027, payload: { command: `python3 -c \"import base64;exec(base64.b64decode(\u0027${ub64}\u0027).decode())\"` } }),\n  signal: AbortSignal.timeout(15000)\n});\nconst utr = await uResp.json();\nfor (let i = 0; i \u003c 6; i++) {\n  await new Promise(r =\u003e setTimeout(r, 2000));\n  const s = await (await fetch(IC + \u0027/tasks/\u0027 + utr.id, { signal: AbortSignal.timeout(10000) })).json();\n  if (s.status === \u0027done\u0027 || s.status === \u0027error\u0027) break;\n}\n\nconst resultMsg = fix_status === \u0027done\u0027\n  ? \u0027✅ \u003cb\u003eFix executed successfully\u003c/b\u003e\\n\\n\u003ccode\u003e\u0027 + action_data.service + \u0027\u003c/code\u003e\\n\u003ccode\u003e\u0027 + action_id + \u0027\u003c/code\u003e\\n\\nOutput:\\n\u003cpre\u003e\u0027 + (fix_output || \u0027(no output)\u0027).replace(/\u003c/g,\u0027\u0026lt;\u0027) + \u0027\u003c/pre\u003e\u0027\n  : \u0027⚠️ \u003cb\u003eFix ran with possible errors\u003c/b\u003e\\n\\n\u003ccode\u003e\u0027 + action_id + \u0027\u003c/code\u003e\\n\\n\u003cpre\u003e\u0027 + (fix_output || \u0027(no output)\u0027).replace(/\u003c/g,\u0027\u0026lt;\u0027) + \u0027\u003c/pre\u003e\u0027;\n\nconst chat_id = reply_to?.chat_id;\nif (chat_id) {\n  await fetch(TG + \u0027/sendMessage\u0027, {\n    method: \u0027POST\u0027, headers: { \u0027Content-Type\u0027: \u0027application/json\u0027 },\n    body: JSON.stringify({ chat_id, text: resultMsg, parse_mode: \u0027HTML\u0027 }),\n    signal: AbortSignal.timeout(10000)\n  });\n}\n\nreturn [{ json: { executed: true, action_id, fix_status, fix_output } }];\n"
+                                     }
+                  },
+                  {
+                      "id":  "c9",
+                      "name":  "Reject \u0026 Log",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       1000,
+                                       640
+                                   ],
+                      "parameters":  {
+                                         "jsCode":  "\nconst { action_id, action_data, reply_to, sender, source, decision } = $input.first().json;\nconst IC  = \"https://inspiring-cat-production.up.railway.app\";\nconst TG  = \"https://api.telegram.org/bot***REDACTED_TELEGRAM_BOT_TOKEN***\";\n\n// Update DB if it\u0027s a known action being rejected\nconst newStatus = (action_id \u0026\u0026 action_data) ? \u0027rejected\u0027 : \u0027invalid_request\u0027;\nif (action_id \u0026\u0026 action_data) {\n  const UPD_PY = `import os,psycopg2\ndb=os.environ[\u0027DATABASE_URL\u0027].replace(\u0027postgres://\u0027,\u0027postgresql://\u0027)\nconn=psycopg2.connect(db);cur=conn.cursor()\ncur.execute(\"UPDATE cos_pending_actions SET status=\u0027rejected\u0027,approved_at=NOW(),response_channel=%s,response_from=%s WHERE id=%s\",\n    (\u0027` + (reply_to?.type || source) + `\u0027,\u0027` + (sender || \u0027\u0027) + `\u0027,\u0027` + action_id + `\u0027))\nconn.commit();conn.close();print(\u0027REJECTED\u0027)`;\n  try {\n    const rb64 = Buffer.from(UPD_PY).toString(\u0027base64\u0027);\n    const rResp = await fetch(IC + \u0027/tasks\u0027, {\n      method: \u0027POST\u0027, headers: { \u0027Content-Type\u0027: \u0027application/json\u0027 },\n      body: JSON.stringify({ type: \u0027shell\u0027, payload: { command: `python3 -c \"import base64;exec(base64.b64decode(\u0027${rb64}\u0027).decode())\"` } }),\n      signal: AbortSignal.timeout(15000)\n    });\n    const rtr = await rResp.json();\n    for (let i = 0; i \u003c 6; i++) {\n      await new Promise(r =\u003e setTimeout(r, 2000));\n      const s = await (await fetch(IC + \u0027/tasks/\u0027 + rtr.id, { signal: AbortSignal.timeout(10000) })).json();\n      if (s.status === \u0027done\u0027 || s.status === \u0027error\u0027) break;\n    }\n  } catch(e) {}\n}\n\n// Send reply via Telegram\nconst chat_id = reply_to?.chat_id;\nif (chat_id) {\n  let txt;\n  if (action_id \u0026\u0026 action_data) {\n    // Valid rejection\n    txt = \u0027❌ \u003cb\u003eAction rejected\u003c/b\u003e\\n\\n\u003ccode\u003e\u0027 + action_id + \u0027\u003c/code\u003e — \u0027 + (action_data.service || \u0027\u0027) + \u0027\\n\\n\u003ci\u003eLogged. No changes made to your systems.\u003c/i\u003e\u0027;\n  } else if (source === \u0027telegram_message\u0027 || source === \u0027telegram_button\u0027) {\n    // Non-COS message — friendly greeting\n    txt = \u0027💼 \u003cb\u003eChief of Staff here.\u003c/b\u003e\\n\\n\u0027 +\n          \u0027I monitor your systems every 5 minutes and alert you when something needs fixing.\\n\\n\u0027 +\n          \u0027To action an alert, reply with:\\n\u0027 +\n          \u0027\u003ccode\u003eAPPROVE cos-xxxxxxxx\u003c/code\u003e\\n\u0027 +\n          \u0027\u003ccode\u003eREJECT cos-xxxxxxxx\u003c/code\u003e\\n\\n\u0027 +\n          \u0027\u003ci\u003eOr use the inline buttons when I send you an alert.\u003c/i\u003e\u0027;\n  } else {\n    txt = \u0027⚠️ \u003cb\u003eCould not process request\u003c/b\u003e\\n\\nAction ID not found or already handled. Check the ID and ensure it has not expired (24h window).\u0027;\n  }\n  try {\n    await fetch(TG + \u0027/sendMessage\u0027, {\n      method: \u0027POST\u0027, headers: { \u0027Content-Type\u0027: \u0027application/json\u0027 },\n      body: JSON.stringify({ chat_id, text: txt, parse_mode: \u0027HTML\u0027 }),\n      signal: AbortSignal.timeout(10000)\n    });\n  } catch(e) {}\n}\n\nreturn [{ json: { rejected: true, action_id, status: newStatus } }];\n"
+                                     }
+                  }
+              ],
+    "connections":  {
+                        "Telegram — Commands":  {
+                                                    "main":  [
+                                                                 [
+                                                                     {
+                                                                         "node":  "Parse \u0026 Verify",
+                                                                         "type":  "main",
+                                                                         "index":  0
+                                                                     }
+                                                                 ]
+                                                             ]
+                                                },
+                        "Gmail — Bridge":  {
+                                               "main":  [
+                                                            [
+                                                                {
+                                                                    "node":  "Parse \u0026 Verify",
+                                                                    "type":  "main",
+                                                                    "index":  0
+                                                                }
+                                                            ]
+                                                        ]
+                                           },
+                        "Gmail — Gelson":  {
+                                               "main":  [
+                                                            [
+                                                                {
+                                                                    "node":  "Parse \u0026 Verify",
+                                                                    "type":  "main",
+                                                                    "index":  0
+                                                                }
+                                                            ]
+                                                        ]
+                                           },
+                        "Outlook — Hotmail":  {
+                                                  "main":  [
+                                                               [
+                                                                   {
+                                                                       "node":  "Parse \u0026 Verify",
+                                                                       "type":  "main",
+                                                                       "index":  0
+                                                                   }
+                                                               ]
+                                                           ]
+                                              },
+                        "WhatsApp Receive":  {
+                                                 "main":  [
+                                                              [
+                                                                  {
+                                                                      "node":  "Parse \u0026 Verify",
+                                                                      "type":  "main",
+                                                                      "index":  0
+                                                                  }
+                                                              ]
+                                                          ]
+                                             },
+                        "Parse \u0026 Verify":  {
+                                                    "main":  [
+                                                                 [
+                                                                     {
+                                                                         "node":  "Can Execute?",
+                                                                         "type":  "main",
+                                                                         "index":  0
+                                                                     }
+                                                                 ]
+                                                             ]
+                                                },
+                        "Can Execute?":  {
+                                             "main":  [
+                                                          [
+                                                              {
+                                                                  "node":  "Execute Fix",
+                                                                  "type":  "main",
+                                                                  "index":  0
+                                                              }
+                                                          ],
+                                                          [
+                                                              {
+                                                                  "node":  "Reject \u0026 Log",
+                                                                  "type":  "main",
+                                                                  "index":  0
+                                                              }
+                                                          ]
+                                                      ]
+                                         }
+                    },
+    "settings":  {
+                     "executionOrder":  "v1",
+                     "callerPolicy":  "workflowsFromSameOwner",
+                     "availableInMCP":  false
+                 },
+    "staticData":  {
+                       "node:Gmail — Bridge":  {
+                                                   "lastTimeChecked":  1776511962
+                                               },
+                       "node:Gmail — Gelson":  {
+                                                   "lastTimeChecked":  1776538613,
+                                                   "possibleDuplicates":  [
+                                                                              "19da1f3f6f2b5d3a",
+                                                                              "19da1d8824f4b1b5"
+                                                                          ]
+                                               },
+                       "node:Outlook — Hotmail":  {
+                                                      "lastTimeChecked":  "2026-04-18T19:56:24.003+01:00"
+                                                  }
+                   },
+    "meta":  null,
+    "pinData":  null,
+    "versionId":  "547feea8-fc9d-4c9d-9491-ebd649181391",
+    "activeVersionId":  "547feea8-fc9d-4c9d-9491-ebd649181391",
+    "versionCounter":  60,
+    "triggerCount":  5,
+    "shared":  [
+                   {
+                       "updatedAt":  "2026-04-18T11:32:42.471Z",
+                       "createdAt":  "2026-04-18T11:32:42.471Z",
+                       "role":  "workflow:owner",
+                       "workflowId":  "83ZQ9b5xReUaF6Ib",
+                       "projectId":  "Lrgt6JR85OZiVLcX",
+                       "project":  {
+                                       "updatedAt":  "2026-03-31T09:07:31.366Z",
+                                       "createdAt":  "2026-03-31T08:57:43.789Z",
+                                       "id":  "Lrgt6JR85OZiVLcX",
+                                       "name":  "gelson mascarenhas \u003cgelson_m@hotmail.com\u003e",
+                                       "type":  "personal",
+                                       "icon":  null,
+                                       "description":  null,
+                                       "creatorId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                   }
+                   }
+               ],
+    "tags":  [
+
+             ],
+    "activeVersion":  {
+                          "updatedAt":  "2026-04-18T12:01:08.728Z",
+                          "createdAt":  "2026-04-18T12:01:08.728Z",
+                          "versionId":  "547feea8-fc9d-4c9d-9491-ebd649181391",
+                          "workflowId":  "83ZQ9b5xReUaF6Ib",
+                          "nodes":  [
+                                        {
+                                            "id":  "c1",
+                                            "name":  "Telegram — Commands",
+                                            "type":  "n8n-nodes-base.telegramTrigger",
+                                            "typeVersion":  1.1,
+                                            "position":  [
+                                                             240,
+                                                             200
+                                                         ],
+                                            "credentials":  {
+                                                                "telegramApi":  {
+                                                                                    "id":  "SYXQZLJBjTuMbspG",
+                                                                                    "name":  "Telegram Content Analyst Bot"
+                                                                                }
+                                                            },
+                                            "parameters":  {
+                                                               "updates":  [
+                                                                               "message",
+                                                                               "callback_query"
+                                                                           ]
+                                                           },
+                                            "webhookId":  "50bc5699-4701-47de-bdd5-ce2616abfd55"
+                                        },
+                                        {
+                                            "id":  "c2",
+                                            "name":  "Gmail — Bridge",
+                                            "type":  "n8n-nodes-base.gmailTrigger",
+                                            "typeVersion":  1,
+                                            "position":  [
+                                                             240,
+                                                             380
+                                                         ],
+                                            "credentials":  {
+                                                                "gmailOAuth2":  {
+                                                                                    "id":  "DL39Lr8wENjvFtij",
+                                                                                    "name":  "Gmail account"
+                                                                                }
+                                                            },
+                                            "parameters":  {
+                                                               "pollTimes":  {
+                                                                                 "item":  [
+                                                                                              {
+                                                                                                  "mode":  "everyMinute"
+                                                                                              }
+                                                                                          ]
+                                                                             },
+                                                               "filters":  {
+                                                                               "readStatus":  "unread",
+                                                                               "q":  "subject:(APPROVE OR REJECT OR cos-)"
+                                                                           }
+                                                           }
+                                        },
+                                        {
+                                            "id":  "c3",
+                                            "name":  "Gmail — Gelson",
+                                            "type":  "n8n-nodes-base.gmailTrigger",
+                                            "typeVersion":  1,
+                                            "position":  [
+                                                             240,
+                                                             540
+                                                         ],
+                                            "credentials":  {
+                                                                "gmailOAuth2":  {
+                                                                                    "id":  "T55BDHntJ3i1NFYw",
+                                                                                    "name":  "Gmail account 2"
+                                                                                }
+                                                            },
+                                            "parameters":  {
+                                                               "pollTimes":  {
+                                                                                 "item":  [
+                                                                                              {
+                                                                                                  "mode":  "everyMinute"
+                                                                                              }
+                                                                                          ]
+                                                                             },
+                                                               "filters":  {
+                                                                               "readStatus":  "unread",
+                                                                               "q":  "subject:(APPROVE OR REJECT OR cos-)"
+                                                                           }
+                                                           }
+                                        },
+                                        {
+                                            "id":  "c4",
+                                            "name":  "Outlook — Hotmail",
+                                            "type":  "n8n-nodes-base.microsoftOutlookTrigger",
+                                            "typeVersion":  1,
+                                            "position":  [
+                                                             240,
+                                                             700
+                                                         ],
+                                            "credentials":  {
+                                                                "microsoftOutlookOAuth2Api":  {
+                                                                                                  "id":  "9paQ8IJLgiLbjEYI",
+                                                                                                  "name":  "Microsoft Outlook account"
+                                                                                              }
+                                                            },
+                                            "parameters":  {
+                                                               "pollTimes":  {
+                                                                                 "item":  [
+                                                                                              {
+                                                                                                  "mode":  "everyMinute"
+                                                                                              }
+                                                                                          ]
+                                                                             },
+                                                               "filters":  {
+                                                                               "readStatus":  "unread"
+                                                                           }
+                                                           }
+                                        },
+                                        {
+                                            "id":  "c5",
+                                            "name":  "WhatsApp Receive",
+                                            "type":  "n8n-nodes-base.webhook",
+                                            "typeVersion":  1.1,
+                                            "position":  [
+                                                             240,
+                                                             860
+                                                         ],
+                                            "parameters":  {
+                                                               "httpMethod":  "POST",
+                                                               "path":  "cos-command",
+                                                               "responseMode":  "lastNode",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "webhookId":  "113b8740-47ed-4cb2-885c-0349015d5f88"
+                                        },
+                                        {
+                                            "id":  "c6",
+                                            "name":  "Parse \u0026 Verify",
+                                            "type":  "n8n-nodes-base.code",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             520,
+                                                             520
+                                                         ],
+                                            "parameters":  {
+                                                               "jsCode":  "\nconst d = $input.first().json;\nconst AUTHORIZED = [\u0027bridge.digital.solution@gmail.com\u0027,\u0027gelsonmascarenhas@gmail.com\u0027,\u0027gelson_m@hotmail.com\u0027];\nconst IC  = \"https://inspiring-cat-production.up.railway.app\";\nconst TG  = \"https://api.telegram.org/bot***REDACTED_TELEGRAM_BOT_TOKEN***\";\n\nlet source = \u0027unknown\u0027, decision = null, action_id = null, sender = null, reply_to = null;\n\nif (d.callback_query) {\n  const cb = d.callback_query.data || \u0027\u0027;\n  const m = cb.match(/^COS:(A|R):(cos-[a-f0-9]{8})$/);\n  if (m) { decision = m[1] === \u0027A\u0027 ? \u0027approve\u0027 : \u0027reject\u0027; action_id = m[2]; }\n  sender = String(d.callback_query.from.id);\n  reply_to = { type: \u0027telegram_callback\u0027, query_id: d.callback_query.id, chat_id: String(d.callback_query.message.chat.id) };\n  source = \u0027telegram_button\u0027;\n  try {\n    await fetch(TG + \u0027/answerCallbackQuery\u0027, {\n      method: \u0027POST\u0027, headers: { \u0027Content-Type\u0027: \u0027application/json\u0027 },\n      body: JSON.stringify({ callback_query_id: d.callback_query.id, text: decision === \u0027approve\u0027 ? \u0027✅ Processing...\u0027 : \u0027❌ Processing...\u0027 }),\n      signal: AbortSignal.timeout(5000)\n    });\n  } catch(e) {}\n}\nelse if (d.message \u0026\u0026 d.message.text) {\n  const text = d.message.text.trim();\n  const m = text.match(/^(approve|yes|reject|no)\\s+(cos-[a-f0-9]{8})/i);\n  if (m) {\n    decision  = (m[1].toLowerCase() === \u0027yes\u0027 || m[1].toLowerCase() === \u0027approve\u0027) ? \u0027approve\u0027 : \u0027reject\u0027;\n    action_id = m[2].toLowerCase();\n  }\n  sender   = String(d.message.from.id);\n  reply_to = { type: \u0027telegram_message\u0027, chat_id: String(d.message.chat.id) };\n  source   = \u0027telegram_message\u0027;\n  // Save chat_id to DB\n  const cid = String(d.message.chat.id);\n  const SAVE_PY = `import os,psycopg2\ndb=os.environ[\u0027DATABASE_URL\u0027].replace(\u0027postgres://\u0027,\u0027postgresql://\u0027)\nconn=psycopg2.connect(db);cur=conn.cursor()\ncur.execute(\"CREATE TABLE IF NOT EXISTS cos_config(key TEXT PRIMARY KEY,value TEXT,updated_at TIMESTAMPTZ DEFAULT NOW())\")\ncur.execute(\"INSERT INTO cos_config(key,value)VALUES(\u0027telegram_chat_id\u0027,\u0027` + cid + `\u0027) ON CONFLICT(key)DO UPDATE SET value=EXCLUDED.value,updated_at=NOW()\")\nconn.commit();conn.close();print(\u0027SAVED_CHATID:` + cid + `\u0027)`;\n  try {\n    const sb64 = Buffer.from(SAVE_PY).toString(\u0027base64\u0027);\n    const srep = await fetch(IC + \u0027/tasks\u0027, {\n      method: \u0027POST\u0027, headers: { \u0027Content-Type\u0027: \u0027application/json\u0027 },\n      body: JSON.stringify({ type: \u0027shell\u0027, payload: { command: `python3 -c \"import base64;exec(base64.b64decode(\u0027${sb64}\u0027).decode())\"` } }),\n      signal: AbortSignal.timeout(15000)\n    });\n    await srep.json();\n  } catch(e) {}\n}\nelse if (d.subject !== undefined || d.Subject !== undefined) {\n  const subj = (d.subject || d.Subject || \u0027\u0027).toLowerCase();\n  const body = (d.text || d.bodyPreview || d.snippet || d.body || \u0027\u0027).toLowerCase();\n  const combined = subj + \u0027 \u0027 + body;\n  const mId  = combined.match(/cos-([a-f0-9]{8})/i);\n  const mDec = combined.match(/\\b(approve|yes|reject|no)\\b/i);\n  if (mId) action_id = \u0027cos-\u0027 + mId[1].toLowerCase();\n  if (mDec) { const w = mDec[1].toLowerCase(); decision = (w === \u0027approve\u0027 || w === \u0027yes\u0027) ? \u0027approve\u0027 : \u0027reject\u0027; }\n  sender   = (d.from || d.From || d.senderEmailAddress?.address || \u0027\u0027).toLowerCase().replace(/.*\u003c|\u003e/g, \u0027\u0027).trim();\n  reply_to = { type: \u0027email\u0027, address: sender };\n  source   = \u0027email\u0027;\n}\nelse if (d.entry) {\n  try {\n    const msg = d.entry[0].changes[0].value.messages[0];\n    const text = (msg.text?.body || \u0027\u0027).trim();\n    const m = text.match(/^(approve|yes|reject|no)\\s+(cos-[a-f0-9]{8})/i);\n    if (m) { decision = (m[1].toLowerCase() === \u0027yes\u0027 || m[1].toLowerCase() === \u0027approve\u0027) ? \u0027approve\u0027 : \u0027reject\u0027; action_id = m[2].toLowerCase(); }\n    sender   = msg.from;\n    reply_to = { type: \u0027whatsapp\u0027, phone: msg.from };\n    source   = \u0027whatsapp\u0027;\n  } catch(e) {}\n}\n\nconst authorized = AUTHORIZED.some(a =\u003e a === sender) || source === \u0027telegram_button\u0027 || source === \u0027telegram_message\u0027;\n\nlet action_valid = false, action_data = null;\nif (action_id \u0026\u0026 decision) {\n  const LOOKUP_PY = `import os,psycopg2,json\ndb=os.environ[\u0027DATABASE_URL\u0027].replace(\u0027postgres://\u0027,\u0027postgresql://\u0027)\nconn=psycopg2.connect(db);cur=conn.cursor()\ncur.execute(\"SELECT id,service,severity,description,fix_cmd,status FROM cos_pending_actions WHERE id=%s\",(\u0027` + action_id + `\u0027,))\nrow=cur.fetchone()\nif row: print(json.dumps({\u0027id\u0027:row[0],\u0027service\u0027:row[1],\u0027sev\u0027:row[2],\u0027desc\u0027:row[3],\u0027fix_cmd\u0027:row[4],\u0027status\u0027:row[5]}))\nelse: print(\u0027NOT_FOUND\u0027)\nconn.close()`;\n  const lb64 = Buffer.from(LOOKUP_PY).toString(\u0027base64\u0027);\n  const lrep = await fetch(IC + \u0027/tasks\u0027, {\n    method: \u0027POST\u0027, headers: { \u0027Content-Type\u0027: \u0027application/json\u0027 },\n    body: JSON.stringify({ type: \u0027shell\u0027, payload: { command: `python3 -c \"import base64;exec(base64.b64decode(\u0027${lb64}\u0027).decode())\"` } }),\n    signal: AbortSignal.timeout(20000)\n  });\n  const ltr = await lrep.json();\n  for (let i = 0; i \u003c 10; i++) {\n    await new Promise(r =\u003e setTimeout(r, 2000));\n    const s = await (await fetch(IC + \u0027/tasks/\u0027 + ltr.id, { signal: AbortSignal.timeout(10000) })).json();\n    if (s.status === \u0027done\u0027 || s.status === \u0027error\u0027) {\n      const out = (s.output || \u0027\u0027).trim();\n      if (out \u0026\u0026 out !== \u0027NOT_FOUND\u0027) { try { action_data = JSON.parse(out); action_valid = action_data.status === \u0027pending\u0027; } catch(e) {} }\n      break;\n    }\n  }\n}\n\nconst can_execute = authorized \u0026\u0026 action_valid \u0026\u0026 decision === \u0027approve\u0027;\nreturn [{ json: { source, decision, action_id, sender, authorized, action_valid, can_execute, action_data, reply_to } }];\n"
+                                                           }
+                                        },
+                                        {
+                                            "id":  "c7",
+                                            "name":  "Can Execute?",
+                                            "type":  "n8n-nodes-base.if",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             760,
+                                                             520
+                                                         ],
+                                            "parameters":  {
+                                                               "conditions":  {
+                                                                                  "options":  {
+                                                                                                  "caseSensitive":  true,
+                                                                                                  "leftValue":  "",
+                                                                                                  "typeValidation":  "strict"
+                                                                                              },
+                                                                                  "conditions":  [
+                                                                                                     {
+                                                                                                         "id":  "e1",
+                                                                                                         "leftValue":  "={{ $json.can_execute }}",
+                                                                                                         "rightValue":  true,
+                                                                                                         "operator":  {
+                                                                                                                          "type":  "boolean",
+                                                                                                                          "operation":  "true"
+                                                                                                                      }
+                                                                                                     }
+                                                                                                 ],
+                                                                                  "combinator":  "and"
+                                                                              }
+                                                           }
+                                        },
+                                        {
+                                            "id":  "c8",
+                                            "name":  "Execute Fix",
+                                            "type":  "n8n-nodes-base.code",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             1000,
+                                                             400
+                                                         ],
+                                            "parameters":  {
+                                                               "jsCode":  "\nconst { action_id, action_data, reply_to, sender, source } = $input.first().json;\nconst IC  = \"https://inspiring-cat-production.up.railway.app\";\nconst TG  = \"https://api.telegram.org/bot***REDACTED_TELEGRAM_BOT_TOKEN***\";\nconst fix_cmd = action_data.fix_cmd || \u0027echo \"No fix command defined\"\u0027;\n\nlet fix_output = \u0027\u0027, fix_status = \u0027error\u0027;\ntry {\n  const fResp = await fetch(IC + \u0027/tasks\u0027, {\n    method: \u0027POST\u0027, headers: { \u0027Content-Type\u0027: \u0027application/json\u0027 },\n    body: JSON.stringify({ type: \u0027shell\u0027, payload: { command: fix_cmd } }),\n    signal: AbortSignal.timeout(30000)\n  });\n  const ftr = await fResp.json();\n  for (let i = 0; i \u003c 20; i++) {\n    await new Promise(r =\u003e setTimeout(r, 3000));\n    const s = await (await fetch(IC + \u0027/tasks/\u0027 + ftr.id, { signal: AbortSignal.timeout(10000) })).json();\n    if (s.status === \u0027done\u0027 || s.status === \u0027error\u0027) { fix_output = (s.output || \u0027\u0027).slice(0, 500); fix_status = s.status; break; }\n  }\n} catch(e) { fix_output = \u0027Task failed: \u0027 + e.message; }\n\nconst UPDATE_PY = `import os,psycopg2,json\ndb=os.environ[\u0027DATABASE_URL\u0027].replace(\u0027postgres://\u0027,\u0027postgresql://\u0027)\nconn=psycopg2.connect(db);cur=conn.cursor()\ncur.execute(\"UPDATE cos_pending_actions SET status=\u0027executed\u0027,approved_at=NOW(),executed_at=NOW(),response_channel=%s,response_from=%s,result=%s WHERE id=%s\",\n    (\u0027` + (reply_to?.type || source) + `\u0027,\u0027` + (sender || \u0027\u0027) + `\u0027,` + JSON.stringify(fix_output) + `,\u0027` + action_id + `\u0027))\nconn.commit();conn.close();print(\u0027UPDATED\u0027)`;\nconst ub64 = Buffer.from(UPDATE_PY).toString(\u0027base64\u0027);\nconst uResp = await fetch(IC + \u0027/tasks\u0027, {\n  method: \u0027POST\u0027, headers: { \u0027Content-Type\u0027: \u0027application/json\u0027 },\n  body: JSON.stringify({ type: \u0027shell\u0027, payload: { command: `python3 -c \"import base64;exec(base64.b64decode(\u0027${ub64}\u0027).decode())\"` } }),\n  signal: AbortSignal.timeout(15000)\n});\nconst utr = await uResp.json();\nfor (let i = 0; i \u003c 6; i++) {\n  await new Promise(r =\u003e setTimeout(r, 2000));\n  const s = await (await fetch(IC + \u0027/tasks/\u0027 + utr.id, { signal: AbortSignal.timeout(10000) })).json();\n  if (s.status === \u0027done\u0027 || s.status === \u0027error\u0027) break;\n}\n\nconst resultMsg = fix_status === \u0027done\u0027\n  ? \u0027✅ \u003cb\u003eFix executed successfully\u003c/b\u003e\\n\\n\u003ccode\u003e\u0027 + action_data.service + \u0027\u003c/code\u003e\\n\u003ccode\u003e\u0027 + action_id + \u0027\u003c/code\u003e\\n\\nOutput:\\n\u003cpre\u003e\u0027 + (fix_output || \u0027(no output)\u0027).replace(/\u003c/g,\u0027\u0026lt;\u0027) + \u0027\u003c/pre\u003e\u0027\n  : \u0027⚠️ \u003cb\u003eFix ran with possible errors\u003c/b\u003e\\n\\n\u003ccode\u003e\u0027 + action_id + \u0027\u003c/code\u003e\\n\\n\u003cpre\u003e\u0027 + (fix_output || \u0027(no output)\u0027).replace(/\u003c/g,\u0027\u0026lt;\u0027) + \u0027\u003c/pre\u003e\u0027;\n\nconst chat_id = reply_to?.chat_id;\nif (chat_id) {\n  await fetch(TG + \u0027/sendMessage\u0027, {\n    method: \u0027POST\u0027, headers: { \u0027Content-Type\u0027: \u0027application/json\u0027 },\n    body: JSON.stringify({ chat_id, text: resultMsg, parse_mode: \u0027HTML\u0027 }),\n    signal: AbortSignal.timeout(10000)\n  });\n}\n\nreturn [{ json: { executed: true, action_id, fix_status, fix_output } }];\n"
+                                                           }
+                                        },
+                                        {
+                                            "id":  "c9",
+                                            "name":  "Reject \u0026 Log",
+                                            "type":  "n8n-nodes-base.code",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             1000,
+                                                             640
+                                                         ],
+                                            "parameters":  {
+                                                               "jsCode":  "\nconst { action_id, action_data, reply_to, sender, source, decision } = $input.first().json;\nconst IC  = \"https://inspiring-cat-production.up.railway.app\";\nconst TG  = \"https://api.telegram.org/bot***REDACTED_TELEGRAM_BOT_TOKEN***\";\n\n// Update DB if it\u0027s a known action being rejected\nconst newStatus = (action_id \u0026\u0026 action_data) ? \u0027rejected\u0027 : \u0027invalid_request\u0027;\nif (action_id \u0026\u0026 action_data) {\n  const UPD_PY = `import os,psycopg2\ndb=os.environ[\u0027DATABASE_URL\u0027].replace(\u0027postgres://\u0027,\u0027postgresql://\u0027)\nconn=psycopg2.connect(db);cur=conn.cursor()\ncur.execute(\"UPDATE cos_pending_actions SET status=\u0027rejected\u0027,approved_at=NOW(),response_channel=%s,response_from=%s WHERE id=%s\",\n    (\u0027` + (reply_to?.type || source) + `\u0027,\u0027` + (sender || \u0027\u0027) + `\u0027,\u0027` + action_id + `\u0027))\nconn.commit();conn.close();print(\u0027REJECTED\u0027)`;\n  try {\n    const rb64 = Buffer.from(UPD_PY).toString(\u0027base64\u0027);\n    const rResp = await fetch(IC + \u0027/tasks\u0027, {\n      method: \u0027POST\u0027, headers: { \u0027Content-Type\u0027: \u0027application/json\u0027 },\n      body: JSON.stringify({ type: \u0027shell\u0027, payload: { command: `python3 -c \"import base64;exec(base64.b64decode(\u0027${rb64}\u0027).decode())\"` } }),\n      signal: AbortSignal.timeout(15000)\n    });\n    const rtr = await rResp.json();\n    for (let i = 0; i \u003c 6; i++) {\n      await new Promise(r =\u003e setTimeout(r, 2000));\n      const s = await (await fetch(IC + \u0027/tasks/\u0027 + rtr.id, { signal: AbortSignal.timeout(10000) })).json();\n      if (s.status === \u0027done\u0027 || s.status === \u0027error\u0027) break;\n    }\n  } catch(e) {}\n}\n\n// Send reply via Telegram\nconst chat_id = reply_to?.chat_id;\nif (chat_id) {\n  let txt;\n  if (action_id \u0026\u0026 action_data) {\n    // Valid rejection\n    txt = \u0027❌ \u003cb\u003eAction rejected\u003c/b\u003e\\n\\n\u003ccode\u003e\u0027 + action_id + \u0027\u003c/code\u003e — \u0027 + (action_data.service || \u0027\u0027) + \u0027\\n\\n\u003ci\u003eLogged. No changes made to your systems.\u003c/i\u003e\u0027;\n  } else if (source === \u0027telegram_message\u0027 || source === \u0027telegram_button\u0027) {\n    // Non-COS message — friendly greeting\n    txt = \u0027💼 \u003cb\u003eChief of Staff here.\u003c/b\u003e\\n\\n\u0027 +\n          \u0027I monitor your systems every 5 minutes and alert you when something needs fixing.\\n\\n\u0027 +\n          \u0027To action an alert, reply with:\\n\u0027 +\n          \u0027\u003ccode\u003eAPPROVE cos-xxxxxxxx\u003c/code\u003e\\n\u0027 +\n          \u0027\u003ccode\u003eREJECT cos-xxxxxxxx\u003c/code\u003e\\n\\n\u0027 +\n          \u0027\u003ci\u003eOr use the inline buttons when I send you an alert.\u003c/i\u003e\u0027;\n  } else {\n    txt = \u0027⚠️ \u003cb\u003eCould not process request\u003c/b\u003e\\n\\nAction ID not found or already handled. Check the ID and ensure it has not expired (24h window).\u0027;\n  }\n  try {\n    await fetch(TG + \u0027/sendMessage\u0027, {\n      method: \u0027POST\u0027, headers: { \u0027Content-Type\u0027: \u0027application/json\u0027 },\n      body: JSON.stringify({ chat_id, text: txt, parse_mode: \u0027HTML\u0027 }),\n      signal: AbortSignal.timeout(10000)\n    });\n  } catch(e) {}\n}\n\nreturn [{ json: { rejected: true, action_id, status: newStatus } }];\n"
+                                                           }
+                                        }
+                                    ],
+                          "connections":  {
+                                              "Telegram — Commands":  {
+                                                                          "main":  [
+                                                                                       [
+                                                                                           {
+                                                                                               "node":  "Parse \u0026 Verify",
+                                                                                               "type":  "main",
+                                                                                               "index":  0
+                                                                                           }
+                                                                                       ]
+                                                                                   ]
+                                                                      },
+                                              "Gmail — Bridge":  {
+                                                                     "main":  [
+                                                                                  [
+                                                                                      {
+                                                                                          "node":  "Parse \u0026 Verify",
+                                                                                          "type":  "main",
+                                                                                          "index":  0
+                                                                                      }
+                                                                                  ]
+                                                                              ]
+                                                                 },
+                                              "Gmail — Gelson":  {
+                                                                     "main":  [
+                                                                                  [
+                                                                                      {
+                                                                                          "node":  "Parse \u0026 Verify",
+                                                                                          "type":  "main",
+                                                                                          "index":  0
+                                                                                      }
+                                                                                  ]
+                                                                              ]
+                                                                 },
+                                              "Outlook — Hotmail":  {
+                                                                        "main":  [
+                                                                                     [
+                                                                                         {
+                                                                                             "node":  "Parse \u0026 Verify",
+                                                                                             "type":  "main",
+                                                                                             "index":  0
+                                                                                         }
+                                                                                     ]
+                                                                                 ]
+                                                                    },
+                                              "WhatsApp Receive":  {
+                                                                       "main":  [
+                                                                                    [
+                                                                                        {
+                                                                                            "node":  "Parse \u0026 Verify",
+                                                                                            "type":  "main",
+                                                                                            "index":  0
+                                                                                        }
+                                                                                    ]
+                                                                                ]
+                                                                   },
+                                              "Parse \u0026 Verify":  {
+                                                                          "main":  [
+                                                                                       [
+                                                                                           {
+                                                                                               "node":  "Can Execute?",
+                                                                                               "type":  "main",
+                                                                                               "index":  0
+                                                                                           }
+                                                                                       ]
+                                                                                   ]
+                                                                      },
+                                              "Can Execute?":  {
+                                                                   "main":  [
+                                                                                [
+                                                                                    {
+                                                                                        "node":  "Execute Fix",
+                                                                                        "type":  "main",
+                                                                                        "index":  0
+                                                                                    }
+                                                                                ],
+                                                                                [
+                                                                                    {
+                                                                                        "node":  "Reject \u0026 Log",
+                                                                                        "type":  "main",
+                                                                                        "index":  0
+                                                                                    }
+                                                                                ]
+                                                                            ]
+                                                               }
+                                          },
+                          "authors":  "gelson mascarenhas",
+                          "name":  null,
+                          "description":  null,
+                          "autosaved":  false,
+                          "workflowPublishHistory":  [
+                                                         {
+                                                             "createdAt":  "2026-04-18T12:01:09.241Z",
+                                                             "id":  392,
+                                                             "workflowId":  "83ZQ9b5xReUaF6Ib",
+                                                             "versionId":  "547feea8-fc9d-4c9d-9491-ebd649181391",
+                                                             "event":  "activated",
+                                                             "userId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                                         }
+                                                     ]
+                      }
+}

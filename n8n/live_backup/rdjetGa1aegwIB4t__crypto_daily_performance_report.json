@@ -1,0 +1,521 @@
+﻿{
+    "updatedAt":  "2026-04-18T18:35:19.661Z",
+    "createdAt":  "2026-04-18T18:35:19.661Z",
+    "id":  "rdjetGa1aegwIB4t",
+    "name":  "Crypto Daily Performance Report",
+    "description":  null,
+    "active":  true,
+    "isArchived":  false,
+    "nodes":  [
+                  {
+                      "id":  "dr01",
+                      "parameters":  {
+                                         "rule":  {
+                                                      "interval":  [
+                                                                       {
+                                                                           "field":  "cronExpression",
+                                                                           "expression":  "0 8 * * *"
+                                                                       }
+                                                                   ]
+                                                  }
+                                     },
+                      "typeVersion":  1.2,
+                      "type":  "n8n-nodes-base.scheduleTrigger",
+                      "name":  "Daily 08:00 UTC",
+                      "position":  [
+                                       0,
+                                       300
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "method":  "GET",
+                                         "url":  "https://api.kraken.com/0/public/Ticker?pair=XBTUSD",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "dr02",
+                      "onError":  "continueRegularOutput",
+                      "typeVersion":  4.2,
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "position":  [
+                                       200,
+                                       200
+                                   ],
+                      "name":  "Fetch Price"
+                  },
+                  {
+                      "typeVersion":  4.2,
+                      "name":  "Read 24H Signals",
+                      "position":  [
+                                       200,
+                                       400
+                                   ],
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "id":  "dr03",
+                      "parameters":  {
+                                         "options":  {
+
+                                                     },
+                                         "headerParameters":  {
+                                                                  "parameters":  [
+                                                                                     {
+                                                                                         "value":  "2dc6c69574c14d615ce146e54640aa13030dade7aa86697c",
+                                                                                         "name":  "X-Vault-Secret"
+                                                                                     }
+                                                                                 ]
+                                                              },
+                                         "sendHeaders":  true,
+                                         "sendQuery":  true,
+                                         "url":  "https://super-agent-production.up.railway.app/memory/export",
+                                         "method":  "GET",
+                                         "queryParameters":  {
+                                                                 "parameters":  [
+                                                                                    {
+                                                                                        "name":  "limit",
+                                                                                        "value":  "288"
+                                                                                    },
+                                                                                    {
+                                                                                        "name":  "tag",
+                                                                                        "value":  "crypto_signal"
+                                                                                    }
+                                                                                ]
+                                                             }
+                                     },
+                      "onError":  "continueRegularOutput"
+                  },
+                  {
+                      "typeVersion":  4.2,
+                      "position":  [
+                                       200,
+                                       600
+                                   ],
+                      "name":  "Read Outcomes",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "parameters":  {
+                                         "method":  "GET",
+                                         "queryParameters":  {
+                                                                 "parameters":  [
+                                                                                    {
+                                                                                        "name":  "limit",
+                                                                                        "value":  "10"
+                                                                                    },
+                                                                                    {
+                                                                                        "value":  "crypto_outcome",
+                                                                                        "name":  "tag"
+                                                                                    }
+                                                                                ]
+                                                             },
+                                         "url":  "https://super-agent-production.up.railway.app/memory/export",
+                                         "sendQuery":  true,
+                                         "headerParameters":  {
+                                                                  "parameters":  [
+                                                                                     {
+                                                                                         "name":  "X-Vault-Secret",
+                                                                                         "value":  "2dc6c69574c14d615ce146e54640aa13030dade7aa86697c"
+                                                                                     }
+                                                                                 ]
+                                                              },
+                                         "sendHeaders":  true,
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "dr04",
+                      "onError":  "continueRegularOutput"
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "const vaultRaw = $(\"Read 24H Signals\").first().json;\nconst outcomeRaw = $(\"Read Outcomes\").first().json;\nconst tickerRaw = $(\"Fetch Price\").first().json;\n\nconst memories = (vaultRaw \u0026\u0026 vaultRaw.memories) ? vaultRaw.memories : [];\nconst outcomes = (outcomeRaw \u0026\u0026 outcomeRaw.memories) ? outcomeRaw.memories : [];\nconst tickerResult = tickerRaw \u0026\u0026 tickerRaw.result ? tickerRaw.result : {};\nconst tickerKey = Object.keys(tickerResult)[0];\nconst ticker = tickerResult[tickerKey] || {};\nconst price = ticker.c ? parseFloat(ticker.c[0]) : 0;\nconst open = ticker.o ? parseFloat(ticker.o[1]) : price;\nconst change24h = open \u003e 0 ? Math.round(((price - open) / open) * 10000) / 100 : 0;\n\n// Count signals from last 24h vault entries\nlet buys = 0, sells = 0, waits = 0;\nconst last24h = new Date(Date.now() - 86400000).toISOString();\nfor (const m of memories) {\n  if (m.created_at \u003c last24h) continue;\n  const c = m.content || \"\";\n  if (c.match(/TRADE SIGNAL.*?BUY/)) buys++;\n  else if (c.match(/TRADE SIGNAL.*?SELL/)) sells++;\n  else if (c.match(/TRADE SIGNAL.*?WAIT/)) waits++;\n}\n\n// Latest outcome report\nlet hitRate = \"N/A\", outcomeSummary = \"No outcome data\";\nfor (const o of outcomes) {\n  const c = o.content || \"\";\n  const hrMatch = c.match(/Hit Rate:\\s*(\\d+)%/);\n  if (hrMatch) {\n    hitRate = hrMatch[1] + \"%\";\n    outcomeSummary = c.split(\"\\n\").slice(0, 4).join(\" | \");\n    break;\n  }\n}\n\nconst totalSignals = buys + sells + waits;\nconst now = new Date();\nconst dateStr = now.toISOString().slice(0, 10);\nconst hour = now.getUTCHours();\n\nconst report = `DAILY CRYPTO REPORT â ${dateStr}\nBTC/USD: $${Math.round(price)} (${change24h \u003e= 0 ? \"+\" : \"\"}${change24h}% 24H)\n\nSIGNALS (last 24h): ${totalSignals} total\nâ¢ BUY: ${buys} | SELL: ${sells} | WAIT: ${waits}\n\nPERFORMANCE:\nHit Rate: ${hitRate}\n${outcomeSummary}\n\nStatus: ${hitRate !== \"N/A\" \u0026\u0026 parseInt(hitRate) \u003e= 55 ? \"â\u0085 ABOVE threshold (55%)\" : hitRate !== \"N/A\" ? \"â ï¸ BELOW threshold â paper trading only\" : \"ð Accumulating data\"}`;\n\nreturn [{ json: { report, price, change24h, buys, sells, waits, hitRate, dateStr } }];"
+                                     },
+                      "id":  "dr05",
+                      "typeVersion":  2,
+                      "type":  "n8n-nodes-base.code",
+                      "position":  [
+                                       400,
+                                       400
+                                   ],
+                      "name":  "Build Daily Report"
+                  },
+                  {
+                      "parameters":  {
+                                         "additionalFields":  {
+                                                                  "parse_mode":  "HTML"
+                                                              },
+                                         "text":  "={{ \u0027\u003cb\u003eð\u0085 \u0027 + $json.report.split(\u0027\\n\u0027)[0] + \u0027\u003c/b\u003e\\n\\n\u0027 + $json.report.split(\u0027\\n\u0027).slice(1).join(\u0027\\n\u0027) }}",
+                                         "chatId":  "6275020593",
+                                         "resource":  "message",
+                                         "operation":  "sendMessage"
+                                     },
+                      "id":  "dr06",
+                      "typeVersion":  1.2,
+                      "credentials":  {
+                                          "telegramApi":  {
+                                                              "id":  "vaWr2cxS1Q9HsYd4",
+                                                              "name":  "Telegram account"
+                                                          }
+                                      },
+                      "type":  "n8n-nodes-base.telegram",
+                      "position":  [
+                                       600,
+                                       400
+                                   ],
+                      "name":  "Send Daily Telegram",
+                      "webhookId":  "de717361-918a-4740-ba0b-7ef7e125af8b"
+                  }
+              ],
+    "connections":  {
+                        "Read Outcomes":  {
+                                              "main":  [
+                                                           [
+                                                               {
+                                                                   "type":  "main",
+                                                                   "index":  0,
+                                                                   "node":  "Build Daily Report"
+                                                               }
+                                                           ]
+                                                       ]
+                                          },
+                        "Fetch Price":  {
+                                            "main":  [
+                                                         [
+                                                             {
+                                                                 "type":  "main",
+                                                                 "index":  0,
+                                                                 "node":  "Build Daily Report"
+                                                             }
+                                                         ]
+                                                     ]
+                                        },
+                        "Daily 08:00 UTC":  {
+                                                "main":  [
+                                                             [
+                                                                 {
+                                                                     "index":  0,
+                                                                     "type":  "main",
+                                                                     "node":  "Fetch Price"
+                                                                 },
+                                                                 {
+                                                                     "node":  "Read 24H Signals",
+                                                                     "type":  "main",
+                                                                     "index":  0
+                                                                 },
+                                                                 {
+                                                                     "node":  "Read Outcomes",
+                                                                     "type":  "main",
+                                                                     "index":  0
+                                                                 }
+                                                             ]
+                                                         ]
+                                            },
+                        "Build Daily Report":  {
+                                                   "main":  [
+                                                                [
+                                                                    {
+                                                                        "node":  "Send Daily Telegram",
+                                                                        "index":  0,
+                                                                        "type":  "main"
+                                                                    }
+                                                                ]
+                                                            ]
+                                               },
+                        "Read 24H Signals":  {
+                                                 "main":  [
+                                                              [
+                                                                  {
+                                                                      "index":  0,
+                                                                      "type":  "main",
+                                                                      "node":  "Build Daily Report"
+                                                                  }
+                                                              ]
+                                                          ]
+                                             }
+                    },
+    "settings":  {
+                     "executionOrder":  "v1",
+                     "callerPolicy":  "workflowsFromSameOwner",
+                     "availableInMCP":  false
+                 },
+    "staticData":  {
+                       "node:Daily 08:00 UTC":  {
+                                                    "recurrenceRules":  [
+
+                                                                        ]
+                                                }
+                   },
+    "meta":  null,
+    "pinData":  null,
+    "versionId":  "ed09e9cb-c4b8-4dc3-bc6d-8343c87c20c9",
+    "activeVersionId":  "ed09e9cb-c4b8-4dc3-bc6d-8343c87c20c9",
+    "versionCounter":  4,
+    "triggerCount":  1,
+    "shared":  [
+                   {
+                       "updatedAt":  "2026-04-18T18:35:19.661Z",
+                       "createdAt":  "2026-04-18T18:35:19.661Z",
+                       "role":  "workflow:owner",
+                       "workflowId":  "rdjetGa1aegwIB4t",
+                       "projectId":  "Lrgt6JR85OZiVLcX",
+                       "project":  {
+                                       "updatedAt":  "2026-03-31T09:07:31.366Z",
+                                       "createdAt":  "2026-03-31T08:57:43.789Z",
+                                       "id":  "Lrgt6JR85OZiVLcX",
+                                       "name":  "gelson mascarenhas \u003cgelson_m@hotmail.com\u003e",
+                                       "type":  "personal",
+                                       "icon":  null,
+                                       "description":  null,
+                                       "creatorId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                   }
+                   }
+               ],
+    "tags":  [
+
+             ],
+    "activeVersion":  {
+                          "updatedAt":  "2026-04-18T18:35:19.669Z",
+                          "createdAt":  "2026-04-18T18:35:19.669Z",
+                          "versionId":  "ed09e9cb-c4b8-4dc3-bc6d-8343c87c20c9",
+                          "workflowId":  "rdjetGa1aegwIB4t",
+                          "nodes":  [
+                                        {
+                                            "id":  "dr01",
+                                            "parameters":  {
+                                                               "rule":  {
+                                                                            "interval":  [
+                                                                                             {
+                                                                                                 "field":  "cronExpression",
+                                                                                                 "expression":  "0 8 * * *"
+                                                                                             }
+                                                                                         ]
+                                                                        }
+                                                           },
+                                            "typeVersion":  1.2,
+                                            "type":  "n8n-nodes-base.scheduleTrigger",
+                                            "name":  "Daily 08:00 UTC",
+                                            "position":  [
+                                                             0,
+                                                             300
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "method":  "GET",
+                                                               "url":  "https://api.kraken.com/0/public/Ticker?pair=XBTUSD",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "dr02",
+                                            "onError":  "continueRegularOutput",
+                                            "typeVersion":  4.2,
+                                            "type":  "n8n-nodes-base.httpRequest",
+                                            "position":  [
+                                                             200,
+                                                             200
+                                                         ],
+                                            "name":  "Fetch Price"
+                                        },
+                                        {
+                                            "typeVersion":  4.2,
+                                            "name":  "Read 24H Signals",
+                                            "position":  [
+                                                             200,
+                                                             400
+                                                         ],
+                                            "type":  "n8n-nodes-base.httpRequest",
+                                            "id":  "dr03",
+                                            "parameters":  {
+                                                               "options":  {
+
+                                                                           },
+                                                               "headerParameters":  {
+                                                                                        "parameters":  [
+                                                                                                           {
+                                                                                                               "value":  "2dc6c69574c14d615ce146e54640aa13030dade7aa86697c",
+                                                                                                               "name":  "X-Vault-Secret"
+                                                                                                           }
+                                                                                                       ]
+                                                                                    },
+                                                               "sendHeaders":  true,
+                                                               "sendQuery":  true,
+                                                               "url":  "https://super-agent-production.up.railway.app/memory/export",
+                                                               "method":  "GET",
+                                                               "queryParameters":  {
+                                                                                       "parameters":  [
+                                                                                                          {
+                                                                                                              "name":  "limit",
+                                                                                                              "value":  "288"
+                                                                                                          },
+                                                                                                          {
+                                                                                                              "name":  "tag",
+                                                                                                              "value":  "crypto_signal"
+                                                                                                          }
+                                                                                                      ]
+                                                                                   }
+                                                           },
+                                            "onError":  "continueRegularOutput"
+                                        },
+                                        {
+                                            "typeVersion":  4.2,
+                                            "position":  [
+                                                             200,
+                                                             600
+                                                         ],
+                                            "name":  "Read Outcomes",
+                                            "type":  "n8n-nodes-base.httpRequest",
+                                            "parameters":  {
+                                                               "method":  "GET",
+                                                               "queryParameters":  {
+                                                                                       "parameters":  [
+                                                                                                          {
+                                                                                                              "name":  "limit",
+                                                                                                              "value":  "10"
+                                                                                                          },
+                                                                                                          {
+                                                                                                              "value":  "crypto_outcome",
+                                                                                                              "name":  "tag"
+                                                                                                          }
+                                                                                                      ]
+                                                                                   },
+                                                               "url":  "https://super-agent-production.up.railway.app/memory/export",
+                                                               "sendQuery":  true,
+                                                               "headerParameters":  {
+                                                                                        "parameters":  [
+                                                                                                           {
+                                                                                                               "name":  "X-Vault-Secret",
+                                                                                                               "value":  "2dc6c69574c14d615ce146e54640aa13030dade7aa86697c"
+                                                                                                           }
+                                                                                                       ]
+                                                                                    },
+                                                               "sendHeaders":  true,
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "dr04",
+                                            "onError":  "continueRegularOutput"
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "jsCode":  "const vaultRaw = $(\"Read 24H Signals\").first().json;\nconst outcomeRaw = $(\"Read Outcomes\").first().json;\nconst tickerRaw = $(\"Fetch Price\").first().json;\n\nconst memories = (vaultRaw \u0026\u0026 vaultRaw.memories) ? vaultRaw.memories : [];\nconst outcomes = (outcomeRaw \u0026\u0026 outcomeRaw.memories) ? outcomeRaw.memories : [];\nconst tickerResult = tickerRaw \u0026\u0026 tickerRaw.result ? tickerRaw.result : {};\nconst tickerKey = Object.keys(tickerResult)[0];\nconst ticker = tickerResult[tickerKey] || {};\nconst price = ticker.c ? parseFloat(ticker.c[0]) : 0;\nconst open = ticker.o ? parseFloat(ticker.o[1]) : price;\nconst change24h = open \u003e 0 ? Math.round(((price - open) / open) * 10000) / 100 : 0;\n\n// Count signals from last 24h vault entries\nlet buys = 0, sells = 0, waits = 0;\nconst last24h = new Date(Date.now() - 86400000).toISOString();\nfor (const m of memories) {\n  if (m.created_at \u003c last24h) continue;\n  const c = m.content || \"\";\n  if (c.match(/TRADE SIGNAL.*?BUY/)) buys++;\n  else if (c.match(/TRADE SIGNAL.*?SELL/)) sells++;\n  else if (c.match(/TRADE SIGNAL.*?WAIT/)) waits++;\n}\n\n// Latest outcome report\nlet hitRate = \"N/A\", outcomeSummary = \"No outcome data\";\nfor (const o of outcomes) {\n  const c = o.content || \"\";\n  const hrMatch = c.match(/Hit Rate:\\s*(\\d+)%/);\n  if (hrMatch) {\n    hitRate = hrMatch[1] + \"%\";\n    outcomeSummary = c.split(\"\\n\").slice(0, 4).join(\" | \");\n    break;\n  }\n}\n\nconst totalSignals = buys + sells + waits;\nconst now = new Date();\nconst dateStr = now.toISOString().slice(0, 10);\nconst hour = now.getUTCHours();\n\nconst report = `DAILY CRYPTO REPORT â ${dateStr}\nBTC/USD: $${Math.round(price)} (${change24h \u003e= 0 ? \"+\" : \"\"}${change24h}% 24H)\n\nSIGNALS (last 24h): ${totalSignals} total\nâ¢ BUY: ${buys} | SELL: ${sells} | WAIT: ${waits}\n\nPERFORMANCE:\nHit Rate: ${hitRate}\n${outcomeSummary}\n\nStatus: ${hitRate !== \"N/A\" \u0026\u0026 parseInt(hitRate) \u003e= 55 ? \"â\u0085 ABOVE threshold (55%)\" : hitRate !== \"N/A\" ? \"â ï¸ BELOW threshold â paper trading only\" : \"ð Accumulating data\"}`;\n\nreturn [{ json: { report, price, change24h, buys, sells, waits, hitRate, dateStr } }];"
+                                                           },
+                                            "id":  "dr05",
+                                            "typeVersion":  2,
+                                            "type":  "n8n-nodes-base.code",
+                                            "position":  [
+                                                             400,
+                                                             400
+                                                         ],
+                                            "name":  "Build Daily Report"
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "additionalFields":  {
+                                                                                        "parse_mode":  "HTML"
+                                                                                    },
+                                                               "text":  "={{ \u0027\u003cb\u003eð\u0085 \u0027 + $json.report.split(\u0027\\n\u0027)[0] + \u0027\u003c/b\u003e\\n\\n\u0027 + $json.report.split(\u0027\\n\u0027).slice(1).join(\u0027\\n\u0027) }}",
+                                                               "chatId":  "6275020593",
+                                                               "resource":  "message",
+                                                               "operation":  "sendMessage"
+                                                           },
+                                            "id":  "dr06",
+                                            "typeVersion":  1.2,
+                                            "credentials":  {
+                                                                "telegramApi":  {
+                                                                                    "id":  "vaWr2cxS1Q9HsYd4",
+                                                                                    "name":  "Telegram account"
+                                                                                }
+                                                            },
+                                            "type":  "n8n-nodes-base.telegram",
+                                            "position":  [
+                                                             600,
+                                                             400
+                                                         ],
+                                            "name":  "Send Daily Telegram",
+                                            "webhookId":  "de717361-918a-4740-ba0b-7ef7e125af8b"
+                                        }
+                                    ],
+                          "connections":  {
+                                              "Read Outcomes":  {
+                                                                    "main":  [
+                                                                                 [
+                                                                                     {
+                                                                                         "type":  "main",
+                                                                                         "index":  0,
+                                                                                         "node":  "Build Daily Report"
+                                                                                     }
+                                                                                 ]
+                                                                             ]
+                                                                },
+                                              "Fetch Price":  {
+                                                                  "main":  [
+                                                                               [
+                                                                                   {
+                                                                                       "type":  "main",
+                                                                                       "index":  0,
+                                                                                       "node":  "Build Daily Report"
+                                                                                   }
+                                                                               ]
+                                                                           ]
+                                                              },
+                                              "Daily 08:00 UTC":  {
+                                                                      "main":  [
+                                                                                   [
+                                                                                       {
+                                                                                           "index":  0,
+                                                                                           "type":  "main",
+                                                                                           "node":  "Fetch Price"
+                                                                                       },
+                                                                                       {
+                                                                                           "node":  "Read 24H Signals",
+                                                                                           "type":  "main",
+                                                                                           "index":  0
+                                                                                       },
+                                                                                       {
+                                                                                           "node":  "Read Outcomes",
+                                                                                           "type":  "main",
+                                                                                           "index":  0
+                                                                                       }
+                                                                                   ]
+                                                                               ]
+                                                                  },
+                                              "Build Daily Report":  {
+                                                                         "main":  [
+                                                                                      [
+                                                                                          {
+                                                                                              "node":  "Send Daily Telegram",
+                                                                                              "index":  0,
+                                                                                              "type":  "main"
+                                                                                          }
+                                                                                      ]
+                                                                                  ]
+                                                                     },
+                                              "Read 24H Signals":  {
+                                                                       "main":  [
+                                                                                    [
+                                                                                        {
+                                                                                            "index":  0,
+                                                                                            "type":  "main",
+                                                                                            "node":  "Build Daily Report"
+                                                                                        }
+                                                                                    ]
+                                                                                ]
+                                                                   }
+                                          },
+                          "authors":  "gelson mascarenhas",
+                          "name":  null,
+                          "description":  null,
+                          "autosaved":  false,
+                          "workflowPublishHistory":  [
+                                                         {
+                                                             "createdAt":  "2026-04-18T18:35:31.498Z",
+                                                             "id":  416,
+                                                             "workflowId":  "rdjetGa1aegwIB4t",
+                                                             "versionId":  "ed09e9cb-c4b8-4dc3-bc6d-8343c87c20c9",
+                                                             "event":  "activated",
+                                                             "userId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                                         }
+                                                     ]
+                      }
+}

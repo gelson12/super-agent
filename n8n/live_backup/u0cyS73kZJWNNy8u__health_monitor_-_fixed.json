@@ -1,0 +1,118 @@
+﻿{
+    "updatedAt":  "2026-04-12T06:51:13.546Z",
+    "createdAt":  "2026-04-12T06:51:13.546Z",
+    "id":  "u0cyS73kZJWNNy8u",
+    "name":  "Health Monitor - Fixed",
+    "description":  null,
+    "active":  false,
+    "isArchived":  false,
+    "nodes":  [
+                  {
+                      "parameters":  {
+                                         "rule":  {
+                                                      "interval":  [
+                                                                       {
+                                                                           "field":  "hours",
+                                                                           "minutesInterval":  15
+                                                                       }
+                                                                   ]
+                                                  }
+                                     },
+                      "id":  "schedule",
+                      "name":  "Schedule Trigger",
+                      "type":  "n8n-nodes-base.scheduleTrigger",
+                      "typeVersion":  1,
+                      "position":  [
+                                       250,
+                                       300
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "values":  {
+                                                        "string":  [
+                                                                       {
+                                                                           "name":  "status",
+                                                                           "value":  "success"
+                                                                       },
+                                                                       {
+                                                                           "name":  "timestamp",
+                                                                           "value":  "={{new Date().toISOString()}}"
+                                                                       },
+                                                                       {
+                                                                           "name":  "purpose",
+                                                                           "value":  "Health monitor - fixed version"
+                                                                       }
+                                                                   ]
+                                                    },
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "set",
+                      "name":  "Set",
+                      "type":  "n8n-nodes-base.set",
+                      "typeVersion":  3,
+                      "position":  [
+                                       450,
+                                       300
+                                   ]
+                  }
+              ],
+    "connections":  {
+                        "Schedule Trigger":  {
+                                                 "main":  [
+                                                              [
+                                                                  {
+                                                                      "node":  "Set",
+                                                                      "type":  "main",
+                                                                      "index":  0
+                                                                  }
+                                                              ]
+                                                          ]
+                                             }
+                    },
+    "settings":  {
+                     "executionOrder":  "v1",
+                     "saveManualExecutions":  true,
+                     "callerPolicy":  "workflowsFromSameOwner",
+                     "errorWorkflow":  "",
+                     "availableInMCP":  false
+                 },
+    "staticData":  {
+                       "node:Schedule Trigger":  {
+                                                     "recurrenceRules":  [
+
+                                                                         ]
+                                                 }
+                   },
+    "meta":  null,
+    "pinData":  null,
+    "versionId":  "7dfcb5a7-1172-4c8f-b796-dbaef7fef539",
+    "activeVersionId":  null,
+    "versionCounter":  20,
+    "triggerCount":  1,
+    "shared":  [
+                   {
+                       "updatedAt":  "2026-04-12T06:51:13.546Z",
+                       "createdAt":  "2026-04-12T06:51:13.546Z",
+                       "role":  "workflow:owner",
+                       "workflowId":  "u0cyS73kZJWNNy8u",
+                       "projectId":  "Lrgt6JR85OZiVLcX",
+                       "project":  {
+                                       "updatedAt":  "2026-03-31T09:07:31.366Z",
+                                       "createdAt":  "2026-03-31T08:57:43.789Z",
+                                       "id":  "Lrgt6JR85OZiVLcX",
+                                       "name":  "gelson mascarenhas \u003cgelson_m@hotmail.com\u003e",
+                                       "type":  "personal",
+                                       "icon":  null,
+                                       "description":  null,
+                                       "creatorId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                   }
+                   }
+               ],
+    "tags":  [
+
+             ],
+    "activeVersion":  null
+}

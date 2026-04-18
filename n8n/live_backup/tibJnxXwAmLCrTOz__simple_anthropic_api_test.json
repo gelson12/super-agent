@@ -1,0 +1,132 @@
+﻿{
+    "updatedAt":  "2026-04-13T09:36:45.518Z",
+    "createdAt":  "2026-04-13T09:36:45.518Z",
+    "id":  "tibJnxXwAmLCrTOz",
+    "name":  "Simple Anthropic API Test",
+    "description":  null,
+    "active":  false,
+    "isArchived":  false,
+    "nodes":  [
+                  {
+                      "parameters":  {
+                                         "path":  "/test-anthropic",
+                                         "responseMode":  "lastNode"
+                                     },
+                      "id":  "webhook",
+                      "name":  "Test Webhook",
+                      "type":  "n8n-nodes-base.webhook",
+                      "typeVersion":  1.2,
+                      "position":  [
+                                       240,
+                                       300
+                                   ],
+                      "webhookId":  "test-anthropic"
+                  },
+                  {
+                      "parameters":  {
+                                         "method":  "GET",
+                                         "url":  "https://api.anthropic.com/v1/messages",
+                                         "sendHeaders":  true,
+                                         "headerParameters":  {
+                                                                  "parameters":  [
+                                                                                     {
+                                                                                         "name":  "x-api-key",
+                                                                                         "value":  "sk-ant-test-key"
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "anthropic-version",
+                                                                                         "value":  "2023-06-01"
+                                                                                     }
+                                                                                 ]
+                                                              },
+                                         "options":  {
+                                                         "timeout":  10000
+                                                     }
+                                     },
+                      "id":  "test-api",
+                      "name":  "Test Anthropic API",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.4,
+                      "position":  [
+                                       460,
+                                       300
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "mode":  "runOnceForAllItems",
+                                         "language":  "javaScript",
+                                         "jsCode":  "const response = $(\u0027Test Anthropic API\u0027).first();\nconst status = response.statusCode;\n\nlet message = \u0027\u0027;\nif (status === 401 || status === 403) {\n  message = \u0027Anthropic API key invalid or has no credits (HTTP \u0027 + status + \u0027)\u0027;\n} else if (status === 200) {\n  message = \u0027Anthropic API is working\u0027;\n} else {\n  message = \u0027Unexpected response: HTTP \u0027 + status;\n}\n\nreturn [{\n  json: {\n    message: message,\n    statusCode: status,\n    apiWorking: status === 200\n  }\n}];"
+                                     },
+                      "id":  "analyze",
+                      "name":  "Analyze Response",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       700,
+                                       300
+                                   ]
+                  }
+              ],
+    "connections":  {
+                        "Test Webhook":  {
+                                             "main":  [
+                                                          [
+                                                              {
+                                                                  "node":  "Test Anthropic API",
+                                                                  "type":  "main",
+                                                                  "index":  0
+                                                              }
+                                                          ]
+                                                      ]
+                                         },
+                        "Test Anthropic API":  {
+                                                   "main":  [
+                                                                [
+                                                                    {
+                                                                        "node":  "Analyze Response",
+                                                                        "type":  "main",
+                                                                        "index":  0
+                                                                    }
+                                                                ]
+                                                            ]
+                                               }
+                    },
+    "settings":  {
+                     "executionOrder":  "v1",
+                     "saveManualExecutions":  true,
+                     "callerPolicy":  "workflowsFromSameOwner",
+                     "errorWorkflow":  "",
+                     "availableInMCP":  false
+                 },
+    "staticData":  null,
+    "meta":  null,
+    "pinData":  null,
+    "versionId":  "1a53bfac-1f25-446a-b3d6-442394cc6c8c",
+    "activeVersionId":  null,
+    "versionCounter":  4,
+    "triggerCount":  1,
+    "shared":  [
+                   {
+                       "updatedAt":  "2026-04-13T09:36:45.518Z",
+                       "createdAt":  "2026-04-13T09:36:45.518Z",
+                       "role":  "workflow:owner",
+                       "workflowId":  "tibJnxXwAmLCrTOz",
+                       "projectId":  "Lrgt6JR85OZiVLcX",
+                       "project":  {
+                                       "updatedAt":  "2026-03-31T09:07:31.366Z",
+                                       "createdAt":  "2026-03-31T08:57:43.789Z",
+                                       "id":  "Lrgt6JR85OZiVLcX",
+                                       "name":  "gelson mascarenhas \u003cgelson_m@hotmail.com\u003e",
+                                       "type":  "personal",
+                                       "icon":  null,
+                                       "description":  null,
+                                       "creatorId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                   }
+                   }
+               ],
+    "tags":  [
+
+             ],
+    "activeVersion":  null
+}

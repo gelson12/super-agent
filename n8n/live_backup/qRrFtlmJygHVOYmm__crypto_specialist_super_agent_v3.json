@@ -1,0 +1,963 @@
+﻿{
+    "updatedAt":  "2026-04-18T07:19:08.365Z",
+    "createdAt":  "2026-04-18T07:19:08.365Z",
+    "id":  "qRrFtlmJygHVOYmm",
+    "name":  "Crypto Specialist Super Agent v3",
+    "description":  null,
+    "active":  false,
+    "isArchived":  false,
+    "nodes":  [
+                  {
+                      "id":  "n01",
+                      "name":  "Schedule Trigger",
+                      "parameters":  {
+                                         "rule":  {
+                                                      "interval":  [
+                                                                       {
+                                                                           "field":  "minutes",
+                                                                           "minutesInterval":  5
+                                                                       }
+                                                                   ]
+                                                  }
+                                     },
+                      "type":  "n8n-nodes-base.scheduleTrigger",
+                      "position":  [
+                                       0,
+                                       300
+                                   ],
+                      "typeVersion":  1.2
+                  },
+                  {
+                      "id":  "n02",
+                      "name":  "Config",
+                      "parameters":  {
+                                         "jsCode":  "return [{ json: { pair: \u0027XBTUSD\u0027, display: \u0027BTC/USD\u0027, version: \u0027v3-super-agent\u0027, ts: new Date().toISOString() } }];"
+                                     },
+                      "type":  "n8n-nodes-base.code",
+                      "position":  [
+                                       200,
+                                       300
+                                   ],
+                      "typeVersion":  2
+                  },
+                  {
+                      "id":  "n03",
+                      "name":  "Fetch 15M",
+                      "parameters":  {
+                                         "method":  "GET",
+                                         "url":  "https://api.kraken.com/0/public/OHLC?pair=XBTUSD\u0026interval=15",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "position":  [
+                                       400,
+                                       0
+                                   ],
+                      "typeVersion":  4.2
+                  },
+                  {
+                      "id":  "n04",
+                      "name":  "Fetch 1H",
+                      "parameters":  {
+                                         "method":  "GET",
+                                         "url":  "https://api.kraken.com/0/public/OHLC?pair=XBTUSD\u0026interval=60",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "position":  [
+                                       400,
+                                       200
+                                   ],
+                      "typeVersion":  4.2
+                  },
+                  {
+                      "id":  "n05",
+                      "name":  "Fetch 4H",
+                      "parameters":  {
+                                         "method":  "GET",
+                                         "url":  "https://api.kraken.com/0/public/OHLC?pair=XBTUSD\u0026interval=240",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "position":  [
+                                       400,
+                                       400
+                                   ],
+                      "typeVersion":  4.2
+                  },
+                  {
+                      "id":  "n06",
+                      "name":  "Fetch Daily",
+                      "parameters":  {
+                                         "method":  "GET",
+                                         "url":  "https://api.kraken.com/0/public/OHLC?pair=XBTUSD\u0026interval=1440",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "position":  [
+                                       400,
+                                       600
+                                   ],
+                      "typeVersion":  4.2
+                  },
+                  {
+                      "id":  "n07",
+                      "name":  "Fetch Ticker",
+                      "parameters":  {
+                                         "method":  "GET",
+                                         "url":  "https://api.kraken.com/0/public/Ticker?pair=XBTUSD",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "position":  [
+                                       600,
+                                       0
+                                   ],
+                      "typeVersion":  4.2
+                  },
+                  {
+                      "id":  "n08",
+                      "name":  "Fetch OB",
+                      "parameters":  {
+                                         "method":  "GET",
+                                         "url":  "https://api.kraken.com/0/public/Depth?pair=XBTUSD\u0026count=500",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "position":  [
+                                       600,
+                                       200
+                                   ],
+                      "typeVersion":  4.2
+                  },
+                  {
+                      "id":  "n09",
+                      "name":  "Fetch Trades",
+                      "parameters":  {
+                                         "method":  "GET",
+                                         "url":  "https://api.kraken.com/0/public/Trades?pair=XBTUSD",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "position":  [
+                                       600,
+                                       400
+                                   ],
+                      "typeVersion":  4.2
+                  },
+                  {
+                      "id":  "n10",
+                      "name":  "Fetch FnG",
+                      "parameters":  {
+                                         "method":  "GET",
+                                         "url":  "https://api.alternative.me/fng/?limit=10",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "position":  [
+                                       600,
+                                       600
+                                   ],
+                      "typeVersion":  4.2
+                  },
+                  {
+                      "id":  "n11",
+                      "name":  "Fetch CoinGecko",
+                      "parameters":  {
+                                         "method":  "GET",
+                                         "url":  "https://api.coingecko.com/api/v3/global",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "position":  [
+                                       600,
+                                       800
+                                   ],
+                      "typeVersion":  4.2
+                  },
+                  {
+                      "id":  "n12",
+                      "name":  "Fetch News",
+                      "parameters":  {
+                                         "method":  "GET",
+                                         "url":  "https://min-api.cryptocompare.com/data/v2/news/?lang=EN\u0026feeds=coindesk,cointelegraph,bitcoinmagazine\u0026categories=BTC,Regulation,Trading,Market",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "position":  [
+                                       600,
+                                       1000
+                                   ],
+                      "typeVersion":  4.2
+                  },
+                  {
+                      "id":  "n13",
+                      "name":  "Sign HMAC",
+                      "parameters":  {
+                                         "jsCode":  "const crypto = require(\u0027crypto\u0027);\nconst endpoint = \u0027/0/private/Balance\u0027;\nconst nonce = Date.now().toString();\nconst postData = \u0027nonce=\u0027 + nonce;\nconst sha256Hash = crypto.createHash(\u0027sha256\u0027).update(nonce + postData).digest(\u0027binary\u0027);\nconst signature = crypto.createHmac(\u0027sha512\u0027, Buffer.from($env.CRYPT_PRIVATE_KEY, \u0027base64\u0027))\n  .update(endpoint + sha256Hash, \u0027binary\u0027).digest(\u0027base64\u0027);\nreturn [{ json: { nonce, postData, signature, apiKey: $env.CRYPT_API_KEY } }];"
+                                     },
+                      "type":  "n8n-nodes-base.code",
+                      "position":  [
+                                       800,
+                                       300
+                                   ],
+                      "typeVersion":  2
+                  },
+                  {
+                      "id":  "n14",
+                      "name":  "Fetch Balance",
+                      "parameters":  {
+                                         "bodyParameters":  {
+                                                                "parameters":  [
+                                                                                   {
+                                                                                       "value":  "={{ $(`Sign HMAC`).first().json.nonce }}",
+                                                                                       "name":  "nonce"
+                                                                                   }
+                                                                               ]
+                                                            },
+                                         "headerParameters":  {
+                                                                  "parameters":  [
+                                                                                     {
+                                                                                         "value":  "={{ $(`Sign HMAC`).first().json.apiKey }}",
+                                                                                         "name":  "API-Key"
+                                                                                     },
+                                                                                     {
+                                                                                         "value":  "={{ $(`Sign HMAC`).first().json.signature }}",
+                                                                                         "name":  "API-Sign"
+                                                                                     },
+                                                                                     {
+                                                                                         "value":  "application/x-www-form-urlencoded",
+                                                                                         "name":  "Content-Type"
+                                                                                     }
+                                                                                 ]
+                                                              },
+                                         "method":  "POST",
+                                         "contentType":  "form-urlencoded",
+                                         "url":  "https://api.kraken.com/0/private/Balance",
+                                         "sendHeaders":  true,
+                                         "options":  {
+
+                                                     },
+                                         "sendBody":  true
+                                     },
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "position":  [
+                                       1000,
+                                       300
+                                   ],
+                      "typeVersion":  4.2
+                  },
+                  {
+                      "id":  "n15",
+                      "name":  "MTF Analysis",
+                      "parameters":  {
+                                         "jsCode":  "const parseOHLC = (raw) =\u003e {\n  const r = raw \u0026\u0026 raw.result ? raw.result : {};\n  const key = Object.keys(r).find(k =\u003e k !== \u0027last\u0027);\n  if (!key) return [];\n  return (r[key] || []).map(c =\u003e ({ t:+c[0],o:+c[1],h:+c[2],l:+c[3],c:+c[4],vwap:+c[5],v:+c[6],n:+c[7] }));\n};\nconst ema = (arr, p) =\u003e {\n  if (arr.length \u003c p) return [];\n  const k=2/(p+1), res=new Array(arr.length);\n  let e=arr.slice(0,p).reduce((a,b)=\u003ea+b)/p; res[p-1]=e;\n  for(let i=p;i\u003carr.length;i++){e=arr[i]*k+e*(1-k);res[i]=e;}\n  return res;\n};\nconst rsi = (cls, p=14) =\u003e {\n  const g=[],l=[];\n  for(let i=1;i\u003ccls.length;i++){const d=cls[i]-cls[i-1];g.push(d\u003e0?d:0);l.push(d\u003c0?-d:0);}\n  if(g.length\u003cp) return 50;\n  let ag=g.slice(0,p).reduce((a,b)=\u003ea+b)/p,al=l.slice(0,p).reduce((a,b)=\u003ea+b)/p;\n  for(let i=p;i\u003cg.length;i++){ag=(ag*(p-1)+g[i])/p;al=(al*(p-1)+l[i])/p;}\n  return al===0?100:parseFloat((100-(100/(1+ag/al))).toFixed(1));\n};\nconst macdFn = (cls) =\u003e {\n  const ef=ema(cls,12),es=ema(cls,26);\n  const ml=cls.map((_,i)=\u003e(ef[i]!==undefined\u0026\u0026es[i]!==undefined)?ef[i]-es[i]:null).filter(v=\u003ev!==null);\n  const sl=ema(ml,9); const h=ml.map((v,i)=\u003esl[i]!==undefined?v-sl[i]:null);\n  const n=h.length-1;\n  return {line:ml[ml.length-1],sig:sl[sl.length-1],hist:h[n],prev:h[n-1],\n    cross:h[n]\u003e0\u0026\u0026h[n-1]\u003c=0?\u0027GOLDEN\u0027:h[n]\u003c0\u0026\u0026h[n-1]\u003e=0?\u0027DEATH\u0027:\u0027NONE\u0027};\n};\nconst bbFn = (cls,p=20,m=2) =\u003e {\n  if(cls.length\u003cp) return null;\n  const s=cls.slice(-p),mn=s.reduce((a,b)=\u003ea+b)/p;\n  const std=Math.sqrt(s.reduce((a,v)=\u003ea+Math.pow(v-mn,2),0)/p);\n  const last=cls[cls.length-1];\n  return {upper:mn+m*std,mid:mn,lower:mn-m*std,width:parseFloat((2*m*std/mn*100).toFixed(2)),pos:parseFloat(((last-(mn-m*std))/(2*m*std)*100).toFixed(1))};\n};\nconst atrFn = (candles,p=14) =\u003e {\n  const trs=[];\n  for(let i=1;i\u003ccandles.length;i++) trs.push(Math.max(candles[i].h-candles[i].l,Math.abs(candles[i].h-candles[i-1].c),Math.abs(candles[i].l-candles[i-1].c)));\n  if(trs.length\u003cp) return trs[trs.length-1]||0;\n  let v=trs.slice(0,p).reduce((a,b)=\u003ea+b)/p;\n  for(let i=p;i\u003ctrs.length;i++) v=(v*(p-1)+trs[i])/p;\n  return v;\n};\nconst stochRsiFn = (cls,rp=14,sp=14,kp=3) =\u003e {\n  const g=[],l=[];\n  for(let i=1;i\u003ccls.length;i++){const d=cls[i]-cls[i-1];g.push(d\u003e0?d:0);l.push(d\u003c0?-d:0);}\n  if(g.length\u003crp) return {k:50,d:50};\n  const rs=[];\n  let ag=g.slice(0,rp).reduce((a,b)=\u003ea+b)/rp,al=l.slice(0,rp).reduce((a,b)=\u003ea+b)/rp;\n  rs.push(al===0?100:100-(100/(1+ag/al)));\n  for(let i=rp;i\u003cg.length;i++){ag=(ag*(rp-1)+g[i])/rp;al=(al*(rp-1)+l[i])/rp;rs.push(al===0?100:100-(100/(1+ag/al)));}\n  const sk=[];\n  for(let i=sp-1;i\u003crs.length;i++){const sv=rs.slice(i-sp+1,i+1),mn=Math.min(...sv),mx=Math.max(...sv);sk.push(mx===mn?50:(rs[i]-mn)/(mx-mn)*100);}\n  const smk=ema(sk,kp).filter(v=\u003ev!==undefined);\n  const smd=ema(smk,3).filter(v=\u003ev!==undefined);\n  return {k:parseFloat((smk[smk.length-1]||50).toFixed(1)),d:parseFloat((smd[smd.length-1]||50).toFixed(1))};\n};\nconst hurstFn = (arr) =\u003e {\n  if(arr.length\u003c20) return 0.5;\n  const rets=arr.slice(1).map((v,i)=\u003eMath.log(Math.max(v/Math.max(arr[i],0.01),1e-9)));\n  const mu=rets.reduce((a,b)=\u003ea+b)/rets.length,dev=rets.map(r=\u003er-mu);\n  let cum=0; const cd=dev.map(d=\u003e(cum+=d));\n  const R=Math.max(...cd)-Math.min(...cd),S=Math.sqrt(dev.reduce((a,d)=\u003ea+d*d)/dev.length);\n  return parseFloat((S\u003e0?Math.max(0,Math.min(1,Math.log(Math.max(R/S,1e-9))/Math.log(rets.length))):0.5).toFixed(3));\n};\nconst chopFn = (candles,p=14) =\u003e {\n  const s=candles.slice(-p);\n  const atrSum=s.slice(1).reduce((sum,c,i)=\u003esum+Math.max(c.h-c.l,Math.abs(c.h-s[i].c),Math.abs(c.l-s[i].c)),0);\n  const range=Math.max(...s.map(c=\u003ec.h))-Math.min(...s.map(c=\u003ec.l));\n  return parseFloat((range\u003e0?100*Math.log10(atrSum/range)/Math.log10(p):50).toFixed(1));\n};\nconst zScoreFn = (arr,p=20) =\u003e {\n  if(arr.length\u003cp) return 0;\n  const s=arr.slice(-p),mn=s.reduce((a,b)=\u003ea+b)/p;\n  const std=Math.sqrt(s.reduce((a,v)=\u003ea+Math.pow(v-mn,2),0)/p);\n  return parseFloat((std\u003e0?(arr[arr.length-1]-mn)/std:0).toFixed(2));\n};\nconst linregFn = (arr,p=20) =\u003e {\n  if(arr.length\u003cp) return {slope:0,r2:0,val:arr[arr.length-1]||0,upper:arr[arr.length-1]||0,lower:arr[arr.length-1]||0};\n  const s=arr.slice(-p),n=s.length,sx=n*(n-1)/2,sy=s.reduce((a,b)=\u003ea+b);\n  const sxy=s.reduce((a,v,i)=\u003ea+i*v,0),sx2=s.reduce((a,_,i)=\u003ea+i*i,0);\n  const denom=n*sx2-sx*sx; if(denom===0) return {slope:0,r2:0,val:sy/n,upper:sy/n,lower:sy/n};\n  const sl=(n*sxy-sx*sy)/denom,ic=(sy-sl*sx)/n;\n  const pred=s.map((_,i)=\u003esl*i+ic),res=s.map((v,i)=\u003ev-pred[i]);\n  const sst=s.reduce((a,v)=\u003ea+Math.pow(v-sy/n,2),0),ssr=res.reduce((a,r)=\u003ea+r*r,0);\n  const ch=Math.sqrt(ssr/n);\n  return {slope:sl,r2:parseFloat((sst\u003e0?1-ssr/sst:0).toFixed(3)),val:sl*(n-1)+ic,upper:sl*(n-1)+ic+2*ch,lower:sl*(n-1)+ic-2*ch};\n};\nconst fibFn = (candles,p=50) =\u003e {\n  const s=candles.slice(-Math.min(p,candles.length));\n  const hi=Math.max(...s.map(c=\u003ec.h)),lo=Math.min(...s.map(c=\u003ec.l)),rng=hi-lo;\n  return {hi,lo,f236:hi-rng*0.236,f382:hi-rng*0.382,f500:hi-rng*0.5,f618:hi-rng*0.618,f786:hi-rng*0.786,ext127:hi+rng*0.272,ext161:hi+rng*0.618};\n};\nconst vwapFn = (candles) =\u003e {\n  let pv=0,vol=0;\n  for(const c of candles){const tp=(c.h+c.l+c.c)/3;pv+=tp*c.v;vol+=c.v;}\n  return vol\u003e0?pv/vol:candles[candles.length-1].c;\n};\nconst atrPctRank = (candles) =\u003e {\n  const len=Math.min(candles.length-15,100);\n  if(len\u003c1) return 50;\n  const hist=[];\n  for(let i=0;i\u003clen;i++) hist.push(atrFn(candles.slice(i,i+15),14));\n  const cur=atrFn(candles.slice(-15),14);\n  return Math.round(hist.filter(a=\u003ea\u003c=cur).length/hist.length*100);\n};\nconst computeTF = (candles, label) =\u003e {\n  if(candles.length\u003c30) return {label,error:\u0027insufficient_data\u0027,signal:\u0027NEUTRAL\u0027,rsi:50,hurst:0.5,chop:50,atrPct:50,volTrend:\u0027NORMAL\u0027,isChoppy:false};\n  const cls=candles.map(c=\u003ec.c);\n  const e8=ema(cls,Math.min(8,cls.length-1)),e21=ema(cls,Math.min(21,cls.length-1));\n  const e55=ema(cls,Math.min(55,cls.length-1)),e200=ema(cls,Math.min(200,cls.length-1));\n  const last=cls[cls.length-1];\n  const em8=e8[e8.length-1]||last,em21=e21[e21.length-1]||last,em55=e55[e55.length-1]||last,em200=e200[e200.length-1]||last;\n  const md=macdFn(cls),bbD=bbFn(cls);\n  const atr14=atrFn(candles,14),stoch=stochRsiFn(cls),rsi14=rsi(cls,14);\n  const vwapV=vwapFn(candles.slice(-Math.min(48,candles.length)));\n  const h=hurstFn(cls.slice(-Math.min(100,cls.length))),chop=chopFn(candles,Math.min(14,candles.length-1));\n  const zs=zScoreFn(cls,20),lr=linregFn(cls,20),fib=fibFn(candles,50),atrPct=atrPctRank(candles);\n  const bullStack=last\u003eem200\u0026\u0026em8\u003eem21\u0026\u0026em21\u003eem55;\n  const bearStack=last\u003cem200\u0026\u0026em8\u003cem21\u0026\u0026em21\u003cem55;\n  const vols=candles.map(c=\u003ec.v);\n  const avgR=vols.slice(-10).reduce((a,b)=\u003ea+b,0)/10,avgO=vols.slice(-30,-10).length\u003e0?vols.slice(-30,-10).reduce((a,b)=\u003ea+b,0)/20:avgR;\n  const volTrend=avgR\u003eavgO*1.2?\u0027SURGE\u0027:avgR\u003cavgO*0.8?\u0027DRY\u0027:\u0027NORMAL\u0027;\n  const sig=bullStack\u0026\u0026rsi14\u003e45\u0026\u0026rsi14\u003c75\u0026\u0026(md.hist||0)\u003e0\u0026\u0026chop\u003c61.8?\u0027BUY\u0027:bearStack\u0026\u0026rsi14\u003c55\u0026\u0026rsi14\u003e25\u0026\u0026(md.hist||0)\u003c0\u0026\u0026chop\u003c61.8?\u0027SELL\u0027:\u0027NEUTRAL\u0027;\n  return {label,last,ema:{e8:em8,e21:em21,e55:em55,e200:em200,bull:bullStack,bear:bearStack,align:bullStack?\u0027BULL\u0027:bearStack?\u0027BEAR\u0027:\u0027MIXED\u0027},\n    rsi:rsi14,stoch,macd:md,bb:bbD,atr:atr14,atrPct,vwap:vwapV,aboveVwap:last\u003evwapV,\n    hurst:h,hurstR:h\u003e0.55?\u0027TREND\u0027:h\u003c0.45?\u0027MEAN_REV\u0027:\u0027RANDOM\u0027,chop,isChoppy:chop\u003e61.8,\n    zScore:zs,lr,fib,volTrend,signal:sig};\n};\nconst c15=parseOHLC($(\u0027Fetch 15M\u0027).first().json);\nconst c1h=parseOHLC($(\u0027Fetch 1H\u0027).first().json);\nconst c4h=parseOHLC($(\u0027Fetch 4H\u0027).first().json);\nconst cd=parseOHLC($(\u0027Fetch Daily\u0027).first().json);\nconst tf15m=computeTF(c15,\u002715M\u0027),tf1h=computeTF(c1h,\u00271H\u0027),tf4h=computeTF(c4h,\u00274H\u0027),tf1d=computeTF(cd,\u00271D\u0027);\nconst price=c1h.length\u003e0?c1h[c1h.length-1].c:0;\nconst tkr=$(\u0027Fetch Ticker\u0027).first().json; const tkrR=tkr\u0026\u0026tkr.result?tkr.result:{};\nconst tKey=Object.keys(tkrR)[0]; const t=tkrR[tKey]||{};\nreturn [{json:{tf15m,tf1h,tf4h,tf1d,price,change24h:t.p?parseFloat(t.p[1]):0,high24:t.h?parseFloat(t.h[1]):0,low24:t.l?parseFloat(t.l[1]):0,vol24:t.v?parseFloat(t.v[1]):0,candles15m:c15,candles1h:c1h,candles4h:c4h,candlesDaily:cd}}];"
+                                     },
+                      "type":  "n8n-nodes-base.code",
+                      "position":  [
+                                       1200,
+                                       300
+                                   ],
+                      "typeVersion":  2
+                  },
+                  {
+                      "id":  "n16",
+                      "name":  "News Sentiment",
+                      "parameters":  {
+                                         "jsCode":  "const newsRaw = $(\u0027Fetch News\u0027).first().json;\nconst articles = (newsRaw \u0026\u0026 newsRaw.Data) ? newsRaw.Data : [];\nconst BULL = [\u0027surge\u0027,\u0027rally\u0027,\u0027bull\u0027,\u0027breakout\u0027,\u0027adoption\u0027,\u0027institutional\u0027,\u0027etf\u0027,\u0027approved\u0027,\u0027partnership\u0027,\u0027ath\u0027,\u0027pump\u0027,\u0027gain\u0027,\u0027rise\u0027,\u0027soar\u0027,\u0027accumulate\u0027,\u0027bullish\u0027,\u0027growth\u0027,\u0027launch\u0027,\u0027halving\u0027,\u0027upgrade\u0027,\u0027record\u0027,\u0027inflow\u0027,\u0027fund\u0027,\u0027invest\u0027];\nconst BEAR = [\u0027crash\u0027,\u0027dump\u0027,\u0027bear\u0027,\u0027decline\u0027,\u0027sell\u0027,\u0027ban\u0027,\u0027hack\u0027,\u0027regulation\u0027,\u0027lawsuit\u0027,\u0027sec\u0027,\u0027fear\u0027,\u0027drop\u0027,\u0027fall\u0027,\u0027plunge\u0027,\u0027risk\u0027,\u0027loss\u0027,\u0027bearish\u0027,\u0027scam\u0027,\u0027fraud\u0027,\u0027warning\u0027,\u0027concern\u0027,\u0027exploit\u0027,\u0027breach\u0027,\u0027ponzi\u0027,\u0027bankrupt\u0027];\nconst GEO_BULL = [\u0027peace\u0027,\u0027stimulus\u0027,\u0027rate cut\u0027,\u0027fed cut\u0027,\u0027adoption\u0027,\u0027clarity\u0027,\u0027approve\u0027,\u0027partnership\u0027,\u0027deal\u0027];\nconst GEO_BEAR = [\u0027war\u0027,\u0027conflict\u0027,\u0027sanction\u0027,\u0027rate hike\u0027,\u0027fed hike\u0027,\u0027inflation\u0027,\u0027recession\u0027,\u0027ban\u0027,\u0027restrict\u0027,\u0027tariff\u0027,\u0027crisis\u0027,\u0027attack\u0027,\u0027default\u0027];\nlet total=0,items=[];\nfor(const a of articles.slice(0,20)){\n  const txt=((a.title||\u0027\u0027)+(a.body||\u0027\u0027)).toLowerCase();\n  let s=0;\n  for(const w of BULL) if(txt.includes(w)) s+=2;\n  for(const w of BEAR) if(txt.includes(w)) s-=2;\n  for(const w of GEO_BULL) if(txt.includes(w)) s+=4;\n  for(const w of GEO_BEAR) if(txt.includes(w)) s-=5;\n  total+=s;\n  items.push({title:(a.title||\u0027\u0027).slice(0,80),score:s,src:(a.source_info\u0026\u0026a.source_info.name)||\u0027?\u0027});\n}\nconst avg=articles.length\u003e0?total/Math.min(articles.length,20):0;\nconst norm=Math.max(-100,Math.min(100,avg*8));\nconst allTxt=articles.slice(0,15).map(a=\u003e(a.title||\u0027\u0027).toLowerCase()).join(\u0027 \u0027);\nconst themes=[];\nif(allTxt.includes(\u0027etf\u0027)) themes.push(\u0027ETF\u0027);\nif(allTxt.includes(\u0027sec\u0027)||allTxt.includes(\u0027regulat\u0027)) themes.push(\u0027Regulation\u0027);\nif(allTxt.includes(\u0027blackrock\u0027)||allTxt.includes(\u0027institutional\u0027)||allTxt.includes(\u0027fidelity\u0027)) themes.push(\u0027Institutional\u0027);\nif(allTxt.includes(\u0027fed\u0027)||allTxt.includes(\u0027inflation\u0027)||allTxt.includes(\u0027rate\u0027)) themes.push(\u0027Macro/Fed\u0027);\nif(allTxt.includes(\u0027war\u0027)||allTxt.includes(\u0027sanction\u0027)||allTxt.includes(\u0027trump\u0027)||allTxt.includes(\u0027china\u0027)) themes.push(\u0027Geopolitics\u0027);\nif(allTxt.includes(\u0027hack\u0027)||allTxt.includes(\u0027exploit\u0027)) themes.push(\u0027Security\u0027);\nif(allTxt.includes(\u0027halving\u0027)||allTxt.includes(\u0027bitcoin\u0027)) themes.push(\u0027BTC-Narrative\u0027);\nif(allTxt.includes(\u0027defi\u0027)||allTxt.includes(\u0027protocol\u0027)) themes.push(\u0027DeFi\u0027);\nconst signal=norm\u003e20?\u0027BULLISH\u0027:norm\u003c-20?\u0027BEARISH\u0027:\u0027NEUTRAL\u0027;\nreturn [{json:{score:parseFloat(norm.toFixed(1)),signal,themes,topHeadlines:items.slice(0,5),articleCount:articles.length}}];"
+                                     },
+                      "type":  "n8n-nodes-base.code",
+                      "position":  [
+                                       1400,
+                                       300
+                                   ],
+                      "typeVersion":  2
+                  },
+                  {
+                      "id":  "n17",
+                      "name":  "Microstructure",
+                      "parameters":  {
+                                         "jsCode":  "const obRaw=$(\u0027Fetch OB\u0027).first().json; const obR=obRaw\u0026\u0026obRaw.result?obRaw.result:{};\nconst obKey=Object.keys(obR)[0]; const obD=obR[obKey]||{};\nconst bids=(obD.bids||[]).map(b=\u003e({p:+b[0],v:+b[1]}));\nconst asks=(obD.asks||[]).map(a=\u003e({p:+a[0],v:+a[1]}));\nconst bidV=bids.slice(0,20).reduce((s,b)=\u003es+b.v,0);\nconst askV=asks.slice(0,20).reduce((s,a)=\u003es+a.v,0);\nconst imbalance=parseFloat(((bidV-askV)/(bidV+askV+0.001)*100).toFixed(1));\nconst bestBid=bids[0]?bids[0].p:0,bestAsk=asks[0]?asks[0].p:0;\nconst bigBid=bids.filter(b=\u003eb.v\u003ebidV/4).sort((a,b)=\u003eb.v-a.v)[0]||null;\nconst bigAsk=asks.filter(a=\u003ea.v\u003easkV/4).sort((a,b)=\u003eb.v-a.v)[0]||null;\nconst trRaw=$(\u0027Fetch Trades\u0027).first().json; const trR=trRaw\u0026\u0026trRaw.result?trRaw.result:{};\nconst trKey=Object.keys(trR).find(k=\u003ek!==\u0027last\u0027);\nconst trades=(trR[trKey]||[]).map(t=\u003e({p:+t[0],v:+t[1],side:t[3]===\u0027b\u0027?\u0027buy\u0027:\u0027sell\u0027}));\nconst buyV=trades.filter(t=\u003et.side===\u0027buy\u0027).reduce((s,t)=\u003es+t.v,0);\nconst sellV=trades.filter(t=\u003et.side===\u0027sell\u0027).reduce((s,t)=\u003es+t.v,0);\nconst cvdPct=parseFloat((buyV/(buyV+sellV+0.001)*100).toFixed(1));\nconst large=[...trades].sort((a,b)=\u003eb.v-a.v).slice(0,Math.max(1,Math.floor(trades.length*0.05)));\nconst lB=large.filter(t=\u003et.side===\u0027buy\u0027).length,lS=large.filter(t=\u003et.side===\u0027sell\u0027).length;\nconst whale=lB\u003elS?\u0027BUY\u0027:lB\u003clS?\u0027SELL\u0027:\u0027NEUTRAL\u0027;\nconst pressure=parseFloat((imbalance*0.4+(cvdPct-50)*0.4+(lB-lS)/Math.max(large.length,1)*25).toFixed(1));\nreturn [{json:{imbalance,bestBid,bestAsk,spread:parseFloat((bestAsk-bestBid).toFixed(2)),bidWall:bigBid?{p:bigBid.p,v:parseFloat(bigBid.v.toFixed(3))}:null,askWall:bigAsk?{p:bigAsk.p,v:parseFloat(bigAsk.v.toFixed(3))}:null,cvdPct,takerBuyRatio:cvdPct,whale,pressureScore:pressure,signal:pressure\u003e20?\u0027BUY\u0027:pressure\u003c-20?\u0027SELL\u0027:\u0027NEUTRAL\u0027}}];"
+                                     },
+                      "type":  "n8n-nodes-base.code",
+                      "position":  [
+                                       1600,
+                                       300
+                                   ],
+                      "typeVersion":  2
+                  },
+                  {
+                      "id":  "n18",
+                      "name":  "Pattern Recognition",
+                      "parameters":  {
+                                         "jsCode":  "const tf=$(\u0027MTF Analysis\u0027).first().json;\nconst candles=(tf.candles1h||[]);\nconst wyckoff=(cs)=\u003e{\n  if(cs.length\u003c30) return \u0027UNKNOWN\u0027;\n  const half=Math.floor(Math.min(cs.length,80)/2);\n  const fh=cs.slice(-half*2,-half),sh=cs.slice(-half);\n  const fhAC=fh.reduce((a,c)=\u003ea+c.c,0)/fh.length,shAC=sh.reduce((a,c)=\u003ea+c.c,0)/sh.length;\n  const fhAV=fh.reduce((a,c)=\u003ea+c.v,0)/fh.length,shAV=sh.reduce((a,c)=\u003ea+c.v,0)/sh.length;\n  if(shAC\u003efhAC*1.01\u0026\u0026shAV\u003efhAV*1.1) return \u0027MARKUP\u0027;\n  if(shAC\u003efhAC*1.01\u0026\u0026shAV\u003cfhAV*0.9) return \u0027DISTRIBUTION\u0027;\n  if(shAC\u003cfhAC*0.99\u0026\u0026shAV\u003cfhAV*0.9) return \u0027MARKDOWN\u0027;\n  if(shAC\u003cfhAC*0.99\u0026\u0026shAV\u003efhAV*1.1) return \u0027ACCUMULATION\u0027;\n  const last=cs[cs.length-1].c,hi=Math.max(...cs.slice(-50).map(c=\u003ec.h)),lo=Math.min(...cs.slice(-50).map(c=\u003ec.l));\n  return (last-lo)/(hi-lo+0.001)\u003e0.7?\u0027DIST_ZONE\u0027:\u0027ACCUM_ZONE\u0027;\n};\nconst smc=(cs)=\u003e{\n  if(cs.length\u003c30) return {bos:\u0027NONE\u0027,fvgBull:null,fvgBear:null,liqBull:false,liqBear:false};\n  const n=cs.length,lb=20;\n  const pH=Math.max(...cs.slice(-lb*2,-lb).map(c=\u003ec.h)),pL=Math.min(...cs.slice(-lb*2,-lb).map(c=\u003ec.l));\n  const cH=Math.max(...cs.slice(-lb).map(c=\u003ec.h)),cL=Math.min(...cs.slice(-lb).map(c=\u003ec.l));\n  const bos=cH\u003epH\u0026\u0026cL\u003epL?\u0027BULLISH\u0027:cH\u003cpH\u0026\u0026cL\u003cpL?\u0027BEARISH\u0027:\u0027RANGING\u0027;\n  const fvgs=[];\n  for(let i=2;i\u003cn;i++){\n    if(cs[i-2].l\u003ecs[i].h) fvgs.push({type:\u0027bear\u0027,top:cs[i-2].l,bot:cs[i].h});\n    if(cs[i-2].h\u003ccs[i].l) fvgs.push({type:\u0027bull\u0027,top:cs[i].l,bot:cs[i-2].h});\n  }\n  const last=cs[n-1].c;\n  const fb=fvgs.filter(f=\u003ef.type===\u0027bull\u0027\u0026\u0026last\u003ef.bot).slice(-1)[0];\n  const fb2=fvgs.filter(f=\u003ef.type===\u0027bear\u0027\u0026\u0026last\u003cf.top).slice(-1)[0];\n  const h20=Math.max(...cs.slice(-21,-1).map(c=\u003ec.h)),l20=Math.min(...cs.slice(-21,-1).map(c=\u003ec.l));\n  return {bos,fvgBull:fb?`${fb.bot.toFixed(0)}-${fb.top.toFixed(0)}`:null,fvgBear:fb2?`${fb2.top.toFixed(0)}-${fb2.bot.toFixed(0)}`:null,liqBull:cs[n-1].l\u003cl20\u0026\u0026cs[n-1].c\u003el20,liqBear:cs[n-1].h\u003eh20\u0026\u0026cs[n-1].c\u003ch20};\n};\nconst candlePattern=(cs)=\u003e{\n  if(cs.length\u003c3) return \u0027NONE\u0027;\n  const [c1,c2,c3]=cs.slice(-3);\n  const body=c=\u003eMath.abs(c.c-c.o),rng=c=\u003ec.h-c.l||0.001;\n  if(c3.c\u003ec3.o\u0026\u0026c2.c\u003cc2.o\u0026\u0026c3.c\u003ec2.o\u0026\u0026c3.o\u003cc2.c) return \u0027BULL_ENGULF\u0027;\n  if(c3.c\u003cc3.o\u0026\u0026c2.c\u003ec2.o\u0026\u0026c3.c\u003cc2.o\u0026\u0026c3.o\u003ec2.c) return \u0027BEAR_ENGULF\u0027;\n  const b=body(c3),r=rng(c3);\n  if(b/r\u003c0.3\u0026\u0026(c3.c\u003ec3.o?c3.o-c3.l:c3.c-c3.l)/r\u003e0.6) return \u0027HAMMER\u0027;\n  if(b/r\u003c0.3\u0026\u0026(c3.c\u003ec3.o?c3.h-c3.c:c3.h-c3.o)/r\u003e0.6) return \u0027SHOOT_STAR\u0027;\n  if(b/r\u003c0.1) return \u0027DOJI\u0027;\n  if(c3.c\u003ec3.o\u0026\u0026c2.c\u003ec2.o\u0026\u0026c1.c\u003ec1.o) return \u0027THREE_BULLS\u0027;\n  if(c3.c\u003cc3.o\u0026\u0026c2.c\u003cc2.o\u0026\u0026c1.c\u003cc1.o) return \u0027THREE_BEARS\u0027;\n  return \u0027NONE\u0027;\n};\nconst harmonics=(cs)=\u003e{\n  if(cs.length\u003c30) return {pattern:\u0027NONE\u0027};\n  const cls=cs.slice(-30).map(c=\u003ec.c);\n  const sw=[];\n  for(let i=2;i\u003ccls.length-2;i++){\n    if(cls[i]\u003ecls[i-1]\u0026\u0026cls[i]\u003ecls[i+1]\u0026\u0026cls[i]\u003ecls[i-2]\u0026\u0026cls[i]\u003ecls[i+2]) sw.push({v:cls[i],t:\u0027H\u0027});\n    else if(cls[i]\u003ccls[i-1]\u0026\u0026cls[i]\u003ccls[i+1]\u0026\u0026cls[i]\u003ccls[i-2]\u0026\u0026cls[i]\u003ccls[i+2]) sw.push({v:cls[i],t:\u0027L\u0027});\n  }\n  if(sw.length\u003c4) return {pattern:\u0027NONE\u0027};\n  const [X,A,B,C]=sw.slice(-4);\n  const XA=Math.abs(A.v-X.v),AB=Math.abs(B.v-A.v),BC=Math.abs(C.v-B.v);\n  if(XA===0) return {pattern:\u0027NONE\u0027};\n  const ab=AB/XA,bc=BC/(AB||0.001);\n  const bull=C.t===\u0027L\u0027;\n  if(Math.abs(ab-0.618)\u003c0.06\u0026\u0026bc\u003e0.38\u0026\u0026bc\u003c0.89) return {pattern:\u0027GARTLEY\u0027,bullish:bull,d:C.v-(XA*0.786*(bull?1:-1))};\n  if(ab\u003e0.38\u0026\u0026ab\u003c0.51\u0026\u0026bc\u003e0.38\u0026\u0026bc\u003c0.89) return {pattern:\u0027BAT\u0027,bullish:bull,d:C.v-(XA*0.886*(bull?1:-1))};\n  if(Math.abs(ab-0.786)\u003c0.06) return {pattern:\u0027BUTTERFLY\u0027,bullish:bull,d:C.v-(XA*1.27*(bull?1:-1))};\n  return {pattern:\u0027NONE\u0027};\n};\nconst wp=wyckoff(candles),sm=smc(candles),cp=candlePattern(candles),hp=harmonics(candles);\nconst bullSig=[wp===\u0027MARKUP\u0027||wp===\u0027ACCUMULATION\u0027,sm.bos===\u0027BULLISH\u0027,sm.liqBull,cp===\u0027BULL_ENGULF\u0027||cp===\u0027HAMMER\u0027,hp.pattern!==\u0027NONE\u0027\u0026\u0026hp.bullish,cp===\u0027THREE_BULLS\u0027].filter(Boolean).length;\nconst bearSig=[wp===\u0027MARKDOWN\u0027||wp===\u0027DISTRIBUTION\u0027,sm.bos===\u0027BEARISH\u0027,sm.liqBear,cp===\u0027BEAR_ENGULF\u0027||cp===\u0027SHOOT_STAR\u0027,hp.pattern!==\u0027NONE\u0027\u0026\u0026!hp.bullish,cp===\u0027THREE_BEARS\u0027].filter(Boolean).length;\nreturn [{json:{wyckoff:wp,smc:sm,candle:cp,harmonic:hp,bullSignals:bullSig,bearSignals:bearSig}}];"
+                                     },
+                      "type":  "n8n-nodes-base.code",
+                      "position":  [
+                                       1800,
+                                       300
+                                   ],
+                      "typeVersion":  2
+                  },
+                  {
+                      "id":  "n19",
+                      "name":  "Regime Detection",
+                      "parameters":  {
+                                         "jsCode":  "const tf=$(\u0027MTF Analysis\u0027).first().json;\nconst ms=$(\u0027Microstructure\u0027).first().json;\nconst news=$(\u0027News Sentiment\u0027).first().json;\nconst fg=$(\u0027Fetch FnG\u0027).first().json;\nconst cg=$(\u0027Fetch CoinGecko\u0027).first().json;\nconst {tf1h:h,tf4h:f,tf1d:d}=tf;\nconst fngVal=fg\u0026\u0026fg.data\u0026\u0026fg.data[0]?parseInt(fg.data[0].value):50;\nconst btcDom=(cg\u0026\u0026cg.data\u0026\u0026cg.data.market_cap_percentage)?cg.data.market_cap_percentage.btc||50:50;\nconst newsBull=news\u0026\u0026news.signal===\u0027BULLISH\u0027;\nconst newsBear=news\u0026\u0026news.signal===\u0027BEARISH\u0027;\nconst sc={BULL_TREND_STRONG:0,BULL_TREND_WEAK:0,BEAR_TREND_STRONG:0,BEAR_TREND_WEAK:0,RANGE_BOUND:0,BREAKOUT_BULL:0,BREAKOUT_BEAR:0,HIGH_VOL_EXPAND:0,LOW_VOL_COMPRESS:0,RISK_ON:0,RISK_OFF:0,EXTREME_CAUTION:0};\nif(h.ema\u0026\u0026h.ema.bull\u0026\u0026f.ema\u0026\u0026f.ema.bull\u0026\u0026d.ema\u0026\u0026d.ema.bull){sc.BULL_TREND_STRONG+=40;}\nelse if((h.ema\u0026\u0026h.ema.bull)||(f.ema\u0026\u0026f.ema.bull)){sc.BULL_TREND_WEAK+=30;}\nif(h.ema\u0026\u0026h.ema.bear\u0026\u0026f.ema\u0026\u0026f.ema.bear\u0026\u0026d.ema\u0026\u0026d.ema.bear){sc.BEAR_TREND_STRONG+=40;}\nelse if((h.ema\u0026\u0026h.ema.bear)||(f.ema\u0026\u0026f.ema.bear)){sc.BEAR_TREND_WEAK+=30;}\nif(h.isChoppy\u0026\u0026f.isChoppy) sc.RANGE_BOUND+=35;\nif(h.atrPct\u003e75\u0026\u0026f.atrPct\u003e75) sc.HIGH_VOL_EXPAND+=30;\nif(h.atrPct\u003c25\u0026\u0026f.atrPct\u003c25) sc.LOW_VOL_COMPRESS+=30;\nif(h.macd\u0026\u0026h.macd.cross===\u0027GOLDEN\u0027\u0026\u0026!h.isChoppy) sc.BREAKOUT_BULL+=25;\nif(h.macd\u0026\u0026h.macd.cross===\u0027DEATH\u0027\u0026\u0026!h.isChoppy) sc.BREAKOUT_BEAR+=25;\nif(fngVal\u003e70\u0026\u0026btcDom\u003e55) sc.RISK_ON+=20;\nif(fngVal\u003c30||btcDom\u003c40) sc.RISK_OFF+=25;\nif(fngVal\u003e85||fngVal\u003c15||h.rsi\u003e80||h.rsi\u003c20) sc.EXTREME_CAUTION+=40;\nif(ms.pressureScore\u003e20){sc.BULL_TREND_STRONG+=10;sc.BREAKOUT_BULL+=10;}\nif(ms.pressureScore\u003c-20){sc.BEAR_TREND_STRONG+=10;sc.BREAKOUT_BEAR+=10;}\nif(h.hurst\u003e0.6\u0026\u0026f.hurst\u003e0.6){sc.BULL_TREND_STRONG+=5;sc.BEAR_TREND_STRONG+=5;}\nif(newsBull){sc.BULL_TREND_STRONG+=15;sc.BULL_TREND_WEAK+=10;sc.RISK_ON+=10;}\nif(newsBear){sc.BEAR_TREND_STRONG+=15;sc.RISK_OFF+=15;sc.EXTREME_CAUTION+=10;}\nconst geoPanic=(news\u0026\u0026news.themes||[]).includes(\u0027Geopolitics\u0027)\u0026\u0026newsBear;\nif(geoPanic) sc.EXTREME_CAUTION+=20;\nconst regime=Object.entries(sc).sort((a,b)=\u003eb[1]-a[1])[0][0];\nconst bull=[\u0027BULL_TREND_STRONG\u0027,\u0027BULL_TREND_WEAK\u0027,\u0027BREAKOUT_BULL\u0027,\u0027RISK_ON\u0027].includes(regime);\nconst trending=[\u0027BULL_TREND_STRONG\u0027,\u0027BULL_TREND_WEAK\u0027,\u0027BEAR_TREND_STRONG\u0027,\u0027BEAR_TREND_WEAK\u0027,\u0027BREAKOUT_BULL\u0027,\u0027BREAKOUT_BEAR\u0027].includes(regime);\nreturn [{json:{regime,scores:sc,isBullish:bull,isTrending:trending,regimeFavors:bull?\u0027BUY\u0027:regime===\u0027EXTREME_CAUTION\u0027||regime===\u0027RISK_OFF\u0027?\u0027WAIT\u0027:\u0027SELL\u0027,fng:fngVal,btcDom:parseFloat(btcDom.toFixed(1)),newsSignal:news?news.signal:\u0027NEUTRAL\u0027,newsThemes:news?news.themes:[]}}];"
+                                     },
+                      "type":  "n8n-nodes-base.code",
+                      "position":  [
+                                       2000,
+                                       300
+                                   ],
+                      "typeVersion":  2
+                  },
+                  {
+                      "id":  "n20",
+                      "name":  "Prediction Engine",
+                      "parameters":  {
+                                         "jsCode":  "const tf=$(\u0027MTF Analysis\u0027).first().json;\nconst reg=$(\u0027Regime Detection\u0027).first().json;\nconst news=$(\u0027News Sentiment\u0027).first().json;\nconst cls=tf.candles1h.map(c=\u003ec.c);\nconst price=tf.price;\nconst rets=cls.slice(-101).slice(1).map((v,i)=\u003eMath.log(v/Math.max(cls.slice(-101)[i],0.001)));\nconst mu=rets.reduce((a,b)=\u003ea+b,0)/rets.length;\nconst sigma=Math.sqrt(rets.reduce((a,r)=\u003ea+Math.pow(r-mu,2),0)/rets.length)||0.01;\nconst paths=500,steps=24,dt=1;\nconst finals=[];\nfor(let p=0;p\u003cpaths;p++){\n  let S=price;\n  for(let t=0;t\u003csteps;t++){\n    const u1=Math.random()+1e-10,u2=Math.random();\n    const z=Math.sqrt(-2*Math.log(u1))*Math.cos(2*Math.PI*u2);\n    S*=Math.exp((mu-0.5*sigma*sigma)*dt+sigma*Math.sqrt(dt)*z);\n  }\n  finals.push(S);\n}\nfinals.sort((a,b)=\u003ea-b);\nconst newsSentimentAdj=(news\u0026\u0026news.score||0)/100*0.5;\nconst mc={p5:finals[Math.floor(paths*0.05)],p25:finals[Math.floor(paths*0.25)],p50:finals[Math.floor(paths*0.5)],p75:finals[Math.floor(paths*0.75)],p95:finals[Math.floor(paths*0.95)],probUp5:parseFloat((finals.filter(v=\u003ev\u003eprice*1.05).length/paths*100).toFixed(1)),probUp3:parseFloat((finals.filter(v=\u003ev\u003eprice*1.03).length/paths*100).toFixed(1)),probDown5:parseFloat((finals.filter(v=\u003ev\u003cprice*0.95).length/paths*100).toFixed(1)),expRet:parseFloat(((finals.reduce((a,b)=\u003ea+b,0)/paths-price)/price*100+newsSentimentAdj).toFixed(2))};\nconst fData=cls.slice(-128);const fN=fData.length;\nconst fMean=fData.reduce((a,b)=\u003ea+b,0)/fN;\nconst fC=fData.map(v=\u003ev-fMean);\nlet maxP=0,domP=20;\nfor(let per=4;per\u003c=Math.floor(fN/2);per++){const fr=1/per;let re=0,im=0;for(let t=0;t\u003cfN;t++){re+=fC[t]*Math.cos(2*Math.PI*fr*t);im+=fC[t]*Math.sin(2*Math.PI*fr*t);}const pw=re*re+im*im;if(pw\u003emaxP){maxP=pw;domP=per;}}\nconst bayesian={BULL_TREND_STRONG:0.72,BULL_TREND_WEAK:0.60,BEAR_TREND_STRONG:0.28,BEAR_TREND_WEAK:0.40,RANGE_BOUND:0.50,BREAKOUT_BULL:0.68,BREAKOUT_BEAR:0.32,HIGH_VOL_EXPAND:0.50,LOW_VOL_COMPRESS:0.50,RISK_ON:0.65,RISK_OFF:0.38,EXTREME_CAUTION:0.42};\nlet bayesProb=bayesian[reg.regime]||0.5;\nif(news\u0026\u0026news.signal===\u0027BULLISH\u0027) bayesProb=Math.min(0.85,bayesProb+0.06);\nif(news\u0026\u0026news.signal===\u0027BEARISH\u0027) bayesProb=Math.max(0.15,bayesProb-0.08);\nconst rH=tf.candles4h.slice(-20);\nconst r1=rH.map(c=\u003ec.h).sort((a,b)=\u003eb-a).slice(0,3).reduce((a,b)=\u003ea+b,0)/3;\nconst s1=rH.map(c=\u003ec.l).sort((a,b)=\u003ea-b).slice(0,3).reduce((a,b)=\u003ea+b,0)/3;\nreturn [{json:{monteCarlo:mc,fourierCycle:domP,bayesianProb:parseFloat(bayesProb.toFixed(2)),resistance1:parseFloat(r1.toFixed(0)),support1:parseFloat(s1.toFixed(0)),annualVol:parseFloat((sigma*Math.sqrt(365*24)*100).toFixed(1))}}];"
+                                     },
+                      "type":  "n8n-nodes-base.code",
+                      "position":  [
+                                       2200,
+                                       300
+                                   ],
+                      "typeVersion":  2
+                  },
+                  {
+                      "id":  "n21",
+                      "name":  "Strategy Scoring",
+                      "parameters":  {
+                                         "jsCode":  "const tf=$(\u0027MTF Analysis\u0027).first().json;\nconst ms=$(\u0027Microstructure\u0027).first().json;\nconst pat=$(\u0027Pattern Recognition\u0027).first().json;\nconst reg=$(\u0027Regime Detection\u0027).first().json;\nconst pred=$(\u0027Prediction Engine\u0027).first().json;\nconst news=$(\u0027News Sentiment\u0027).first().json;\nconst {tf15m:m15,tf1h:h,tf4h:f,tf1d:d}=tf;\nconst pct=(n,d2)=\u003eMath.round(Math.min(100,Math.max(0,n/d2*100)));\nconst tB=[h.ema\u0026\u0026h.ema.bull,f.ema\u0026\u0026f.ema.bull,h.macd\u0026\u0026h.macd.hist\u003e0,h.hurst\u003e0.55,!h.isChoppy,h.aboveVwap].filter(Boolean).length;\nconst tBr=[h.ema\u0026\u0026h.ema.bear,f.ema\u0026\u0026f.ema.bear,h.macd\u0026\u0026h.macd.hist\u003c0,h.hurst\u003e0.55,!h.isChoppy,!h.aboveVwap].filter(Boolean).length;\nconst trend={bull:pct(tB,6),bear:pct(tBr,6)};\nconst mrB=[h.rsi\u003c35,h.stoch\u0026\u0026h.stoch.k\u003c25,h.bb\u0026\u0026h.bb.pos\u003c15,h.zScore\u003c-1.5,h.hurstR===\u0027MEAN_REV\u0027].filter(Boolean).length;\nconst mrBr=[h.rsi\u003e65,h.stoch\u0026\u0026h.stoch.k\u003e75,h.bb\u0026\u0026h.bb.pos\u003e85,h.zScore\u003e1.5,h.hurstR===\u0027MEAN_REV\u0027].filter(Boolean).length;\nconst meanRev={bull:pct(mrB,5),bear:pct(mrBr,5)};\nconst momB=[h.rsi\u003e50\u0026\u0026h.rsi\u003c75,h.macd\u0026\u0026h.macd.hist\u003e0,m15.macd\u0026\u0026m15.macd.hist\u003e0,h.ema\u0026\u0026h.ema.bull,ms.cvdPct\u003e55].filter(Boolean).length;\nconst momBr=[h.rsi\u003c50\u0026\u0026h.rsi\u003e25,h.macd\u0026\u0026h.macd.hist\u003c0,m15.macd\u0026\u0026m15.macd.hist\u003c0,h.ema\u0026\u0026h.ema.bear,ms.cvdPct\u003c45].filter(Boolean).length;\nconst momentum={bull:pct(momB,5),bear:pct(momBr,5)};\nconst boB=[!h.isChoppy,h.atrPct\u003e60,ms.pressureScore\u003e20,h.macd\u0026\u0026h.macd.cross===\u0027GOLDEN\u0027,h.volTrend===\u0027SURGE\u0027].filter(Boolean).length;\nconst boBr=[!h.isChoppy,h.atrPct\u003e60,ms.pressureScore\u003c-20,h.macd\u0026\u0026h.macd.cross===\u0027DEATH\u0027,h.volTrend===\u0027SURGE\u0027].filter(Boolean).length;\nconst breakout={bull:pct(boB,5),bear:pct(boBr,5)};\nconst smcB=[pat.wyckoff===\u0027MARKUP\u0027||pat.wyckoff===\u0027ACCUMULATION\u0027,pat.smc\u0026\u0026pat.smc.bos===\u0027BULLISH\u0027,pat.smc\u0026\u0026pat.smc.liqBull,pat.candle===\u0027BULL_ENGULF\u0027||pat.candle===\u0027HAMMER\u0027,pat.candle===\u0027THREE_BULLS\u0027].filter(Boolean).length;\nconst smcBr=[pat.wyckoff===\u0027MARKDOWN\u0027||pat.wyckoff===\u0027DISTRIBUTION\u0027,pat.smc\u0026\u0026pat.smc.bos===\u0027BEARISH\u0027,pat.smc\u0026\u0026pat.smc.liqBear,pat.candle===\u0027BEAR_ENGULF\u0027||pat.candle===\u0027SHOOT_STAR\u0027,pat.candle===\u0027THREE_BEARS\u0027].filter(Boolean).length;\nconst smc={bull:pct(smcB,5),bear:pct(smcBr,5)};\nconst mtfB=[m15.signal===\u0027BUY\u0027,h.signal===\u0027BUY\u0027,f.signal===\u0027BUY\u0027,d.signal===\u0027BUY\u0027].filter(Boolean).length;\nconst mtfBr=[m15.signal===\u0027SELL\u0027,h.signal===\u0027SELL\u0027,f.signal===\u0027SELL\u0027,d.signal===\u0027SELL\u0027].filter(Boolean).length;\nconst multiTF={bull:pct(mtfB,4),bear:pct(mtfBr,4)};\nconst fibB=[pat.harmonic\u0026\u0026pat.harmonic.bullish,pat.harmonic\u0026\u0026pat.harmonic.pattern!==\u0027NONE\u0027\u0026\u0026pat.harmonic.bullish,h.fib\u0026\u0026tf.price\u003eh.fib.f618\u0026\u0026tf.price\u003ch.fib.f382].filter(Boolean).length;\nconst fibBr=[pat.harmonic\u0026\u0026!pat.harmonic.bullish,pat.harmonic\u0026\u0026pat.harmonic.pattern!==\u0027NONE\u0027\u0026\u0026!pat.harmonic.bullish].filter(Boolean).length;\nconst fibonacci={bull:pct(fibB,3),bear:pct(fibBr,2)};\nconst macB=[pred.bayesianProb\u003e0.60,reg.fng\u003e50\u0026\u0026reg.fng\u003c80,reg.btcDom\u003e55,reg.isBullish,news\u0026\u0026news.signal===\u0027BULLISH\u0027].filter(Boolean).length;\nconst macBr=[pred.bayesianProb\u003c0.40,reg.fng\u003c30||reg.fng\u003e85,!reg.isBullish,news\u0026\u0026news.signal===\u0027BEARISH\u0027].filter(Boolean).length;\nconst macro={bull:pct(macB,5),bear:pct(macBr,4)};\nconst microB=[ms.imbalance\u003e15,ms.cvdPct\u003e60,ms.whale===\u0027BUY\u0027,ms.pressureScore\u003e15].filter(Boolean).length;\nconst microBr=[ms.imbalance\u003c-15,ms.cvdPct\u003c40,ms.whale===\u0027SELL\u0027,ms.pressureScore\u003c-15].filter(Boolean).length;\nconst micro={bull:pct(microB,4),bear:pct(microBr,4)};\nconst statB=[h.zScore\u003c-1,pred.monteCarlo.expRet\u003e0,pred.bayesianProb\u003e0.55].filter(Boolean).length;\nconst statBr=[h.zScore\u003e1,pred.monteCarlo.expRet\u003c0,pred.bayesianProb\u003c0.45].filter(Boolean).length;\nconst stat={bull:pct(statB,3),bear:pct(statBr,3)};\nconst fams={trend,meanRev,momentum,breakout,smc,multiTF,fibonacci,macro,micro,stat};\nconst wt={trend:1.5,meanRev:1.0,momentum:1.2,breakout:1.1,smc:1.3,multiTF:1.8,fibonacci:0.9,macro:1.3,micro:1.3,stat:0.8};\nconst W=Object.values(wt).reduce((a,b)=\u003ea+b,0);\nconst bullTot=Object.entries(fams).reduce((s,[k,v])=\u003es+v.bull*(wt[k]||1),0)/W;\nconst bearTot=Object.entries(fams).reduce((s,[k,v])=\u003es+v.bear*(wt[k]||1),0)/W;\nconst dir=bullTot\u003ebearTot\u0026\u0026bullTot\u003e35?\u0027BUY\u0027:bearTot\u003ebullTot\u0026\u0026bearTot\u003e35?\u0027SELL\u0027:\u0027WAIT\u0027;\nreturn [{json:{families:fams,bullTotal:parseFloat(bullTot.toFixed(1)),bearTotal:parseFloat(bearTot.toFixed(1)),direction:dir}}];"
+                                     },
+                      "type":  "n8n-nodes-base.code",
+                      "position":  [
+                                       2400,
+                                       300
+                                   ],
+                      "typeVersion":  2
+                  },
+                  {
+                      "id":  "n22",
+                      "name":  "Risk Engine",
+                      "parameters":  {
+                                         "jsCode":  "const tf=$(\u0027MTF Analysis\u0027).first().json;\nconst strat=$(\u0027Strategy Scoring\u0027).first().json;\nconst pred=$(\u0027Prediction Engine\u0027).first().json;\nconst bal=$(\u0027Fetch Balance\u0027).first().json;\nconst price=tf.price;\nconst cls=tf.candles1h.map(c=\u003ec.c);\nconst retArr=cls.slice(-101).slice(1).map((v,i)=\u003e({r:(v-cls.slice(-101)[i])/cls.slice(-101)[i]*100}));\nretArr.sort((a,b)=\u003ea.r-b.r);\nconst n95=Math.max(1,Math.floor(retArr.length*0.05));\nconst var95=parseFloat((-retArr[n95].r).toFixed(2));\nconst var99=parseFloat((-retArr[Math.max(0,Math.floor(retArr.length*0.01))].r).toFixed(2));\nconst cvar=parseFloat((-retArr.slice(0,n95).reduce((s,r)=\u003es+r.r,0)/n95).toFixed(2));\nconst wins=retArr.filter(r=\u003er.r\u003e0),losses=retArr.filter(r=\u003er.r\u003c0);\nconst winRate=wins.length/retArr.length;\nconst avgW=wins.reduce((s,r)=\u003es+r.r,0)/(wins.length||1);\nconst avgL=Math.abs(losses.reduce((s,r)=\u003es+r.r,0))/(losses.length||1);\nconst b=avgW/Math.max(avgL,0.01);\nconst kf=(b*winRate-(1-winRate))/b;\nconst kq=Math.max(0,Math.min(kf*0.25,0.05));\nconst kPct=parseFloat((kq*100).toFixed(2));\nconst atr=(tf.tf1h\u0026\u0026tf.tf1h.atr)||100;\nconst stopLoss=parseFloat((price-1.5*atr).toFixed(0));\nconst tp1=parseFloat((price+2.5*atr).toFixed(0));\nconst tp2=parseFloat((price+4.0*atr).toFixed(0));\nconst rr=parseFloat(((tp1-price)/(price-stopLoss+0.001)).toFixed(2));\nconst ev=parseFloat((winRate*avgW-(1-winRate)*avgL).toFixed(2));\nconst balR=bal\u0026\u0026bal.result?bal.result:{};\nconst usd=parseFloat(balR.ZUSD||balR.USD||0);\nconst btc=parseFloat(balR.XXBT||balR.XBT||0);\nconst equity=parseFloat((usd+btc*price).toFixed(2));\nreturn [{json:{var95,var99,cvar,kellyPct:kPct,winRate:parseFloat((winRate*100).toFixed(1)),avgWin:parseFloat(avgW.toFixed(2)),avgLoss:parseFloat(avgL.toFixed(2)),ev,rr,stopLoss,tp1,tp2,equity,riskAmount:parseFloat((equity*kq).toFixed(2)),atr14:parseFloat(atr.toFixed(0))}}];"
+                                     },
+                      "type":  "n8n-nodes-base.code",
+                      "position":  [
+                                       2600,
+                                       300
+                                   ],
+                      "typeVersion":  2
+                  },
+                  {
+                      "id":  "n23",
+                      "name":  "Decision Gate",
+                      "parameters":  {
+                                         "jsCode":  "const strat=$(\u0027Strategy Scoring\u0027).first().json;\nconst risk=$(\u0027Risk Engine\u0027).first().json;\nconst reg=$(\u0027Regime Detection\u0027).first().json;\nconst pred=$(\u0027Prediction Engine\u0027).first().json;\nconst news=$(\u0027News Sentiment\u0027).first().json;\nconst {direction,bullTotal,bearTotal}=strat;\nconst raw=direction===\u0027BUY\u0027?bullTotal:direction===\u0027SELL\u0027?bearTotal:0;\nconst logistic=(x,c=50,s=0.06)=\u003e1/(1+Math.exp(-s*(x-c)));\nlet conf=parseFloat((logistic(raw)*100).toFixed(1));\nif(reg.regimeFavors===direction) conf=Math.min(95,conf*1.1);\nif(reg.regime===\u0027EXTREME_CAUTION\u0027) conf*=0.45;\nif(risk.rr\u003c1.5\u0026\u0026direction!==\u0027WAIT\u0027) conf*=0.8;\nif(risk.ev\u003c0) conf*=0.75;\nif(news\u0026\u0026news.signal===\u0027BULLISH\u0027\u0026\u0026direction===\u0027BUY\u0027) conf=Math.min(95,conf*1.08);\nif(news\u0026\u0026news.signal===\u0027BEARISH\u0027\u0026\u0026direction===\u0027SELL\u0027) conf=Math.min(95,conf*1.08);\nif((news\u0026\u0026news.themes||[]).includes(\u0027Geopolitics\u0027)\u0026\u0026news\u0026\u0026news.signal===\u0027BEARISH\u0027) conf*=0.7;\nconf=parseFloat(conf.toFixed(1));\nconst minConf=60;\nconst finalDir=conf\u003e=minConf\u0026\u0026direction!==\u0027WAIT\u0027?direction:\u0027WAIT\u0027;\nconst sendAlert=finalDir!==\u0027WAIT\u0027||reg.regime===\u0027EXTREME_CAUTION\u0027;\nreturn [{json:{direction:finalDir,confidence:conf,rawScore:raw,send_alert:sendAlert,regime:reg.regime,bayesianProb:pred.bayesianProb,ev:risk.ev,rr:risk.rr}}];"
+                                     },
+                      "type":  "n8n-nodes-base.code",
+                      "position":  [
+                                       2800,
+                                       300
+                                   ],
+                      "typeVersion":  2
+                  },
+                  {
+                      "id":  "n24",
+                      "name":  "Format Alert",
+                      "parameters":  {
+                                         "jsCode":  "const cl=$(\u0027Claude AI Primary\u0027).first().json;\nconst psy=$(\u0027Psychology Engine\u0027).first().json;\nconst ds=$(\u0027DeepSeek AI Analysis\u0027).first().json;\nconst dec=$(\u0027Decision Gate\u0027).first().json;\nconst tf=$(\u0027MTF Analysis\u0027).first().json;\nconst ms=$(\u0027Microstructure\u0027).first().json;\nconst pat=$(\u0027Pattern Recognition\u0027).first().json;\nconst reg=$(\u0027Regime Detection\u0027).first().json;\nconst pred=$(\u0027Prediction Engine\u0027).first().json;\nconst strat=$(\u0027Strategy Scoring\u0027).first().json;\nconst risk=$(\u0027Risk Engine\u0027).first().json;\nconst news=$(\u0027News Sentiment\u0027).first().json;\nconst {tf15m:m15,tf1h:h,tf4h:f,tf1d:d}=tf;\nconst price=tf.price;\nconst now=new Date().toISOString().replace(\u0027T\u0027,\u0027 \u0027).slice(0,16)+\u0027 UTC\u0027;\nconst bar=(v,w=10)=\u003e{const f2=Math.round(Math.min(Math.max(v||0,0),100)/100*w);return \u0027\\u2588\u0027.repeat(f2)+\u0027\\u2591\u0027.repeat(w-f2);};\nconst fmtNum=n=\u003en?n.toLocaleString(\u0027en-US\u0027,{maximumFractionDigits:0}):\u0027?\u0027;\nconst fmtP=n=\u003en!=null?n.toFixed(1):\u0027?\u0027;\nconst emaI=t=\u003et\u0026\u0026t.ema\u0026\u0026t.ema.bull?\u0027\\uD83D\\uDFE2\u0027:t\u0026\u0026t.ema\u0026\u0026t.ema.bear?\u0027\\uD83D\\uDD34\u0027:\u0027\\uD83D\\uDFE1\u0027;\nconst macdI=t=\u003et\u0026\u0026t.macd\u0026\u0026t.macd.hist\u003e0?\u0027\\u25b2\u0027:t\u0026\u0026t.macd\u0026\u0026t.macd.hist\u003c0?\u0027\\u25bc\u0027:\u0027\\u25ac\u0027;\nconst sigLabel=s=\u003es===\u0027BUY\u0027?\u0027\\uD83D\\uDFE2 BUY\u0027:s===\u0027SELL\u0027?\u0027\\uD83D\\uDD34 SELL\u0027:\u0027\\u26AA WAIT\u0027;\nconst fams=strat.families||{};\nconst dir=dec.direction;\nconst bullOrBear=k=\u003edir===\u0027SELL\u0027?fams[k]\u0026\u0026fams[k].bear:fams[k]\u0026\u0026fams[k].bull;\nconst newsLine=news?`F\u0026amp;G: ${reg.fng} | News: \u003cb\u003e${news.signal}\u003c/b\u003e (${(news.themes||[]).slice(0,3).join(\u0027, \u0027)||\u0027none\u0027})`:\u0027 \u0027;\nconst topHdl=news\u0026\u0026news.topHeadlines?news.topHeadlines.slice(0,2).map(h2=\u003e`ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ ${h2.title} [${h2.score\u003e0?\u0027+\u0027:\u0027\u0027}${h2.score}]`).join(\u0027\\n\u0027):\u0027No recent news\u0027;\nconst lines=[\n`\\uD83E\\uDD16 \u003cb\u003eCRYPTO SPECIALIST \\u00B7 SUPER AGENT v3\u003c/b\u003e`,\n`\\u2501\\u2501\\u2501\\u2501\\u2501\\u2501\\u2501\\u2501\\u2501\\u2501\\u2501\\u2501\\u2501\\u2501\\u2501\\u2501\\u2501\\u2501\\u2501\\u2501`,\n`\\uD83D\\uDCCA \u003cb\u003eBTC/USD\u003c/b\u003e | ${now}`,\n`\\u2501\\u2501\\u2501\\u2501\\u2501\\u2501\\u2501\\u2501\\u2501\\u2501\\u2501\\u2501\\u2501\\u2501\\u2501\\u2501\\u2501\\u2501\\u2501\\u2501`,\n``,\n`\\uD83C\\uDFAF SIGNAL: \u003cb\u003e${sigLabel(dir)}\u003c/b\u003e`,\n`\\uD83C\\uDFDB REGIME: \u003cb\u003e${reg.regime}\u003c/b\u003e`,\n`\\uD83D\\uDCAA CONFIDENCE: \u003cb\u003e${dec.confidence}%\u003c/b\u003e | Bayesian: \u003cb\u003e${Math.round(pred.bayesianProb*100)}%\u003c/b\u003e`,\n``,\n`\u003cb\u003e\\uD83D\\uDCC8 PRICE ACTION\u003c/b\u003e`,\n`\\u2022 Price: \u003cb\u003e$${fmtNum(price)}\u003c/b\u003e | 24H: \u003cb\u003e${tf.change24h\u003e=0?\u0027+\u0027:\u0027\u0027}${fmtP(tf.change24h)}%\u003c/b\u003e`,\n`\\u2022 H: $${fmtNum(tf.high24)} | L: $${fmtNum(tf.low24)} | Vol: ${h.volTrend}`,\n`\\u2022 ATR(14): $${risk.atr14} (${h.atrPct||\u0027?\u0027}th pct)`,\n``,\n`\u003cb\u003e\\uD83D\\uDD2C MULTI-TIMEFRAME MATRIX\u003c/b\u003e`,\n`\u003ccode\u003e`,\n`       15M   1H    4H    1D`,\n`EMA    ${emaI(m15)}    ${emaI(h)}    ${emaI(f)}    ${emaI(d)}`,\n`RSI    ${String(m15.rsi||\u0027?\u0027).padEnd(5)} ${String(h.rsi||\u0027?\u0027).padEnd(5)} ${String(f.rsi||\u0027?\u0027).padEnd(5)} ${d.rsi||\u0027?\u0027}`,\n`MACD   ${macdI(m15)}    ${macdI(h)}    ${macdI(f)}    ${macdI(d)}`,\n`Hurst  ${String(m15.hurst||\u0027?\u0027).padEnd(5)} ${String(h.hurst||\u0027?\u0027).padEnd(5)} ${String(f.hurst||\u0027?\u0027).padEnd(5)} ${d.hurst||\u0027?\u0027}`,\n`Chop   ${String(m15.chop||\u0027?\u0027).padEnd(5)} ${String(h.chop||\u0027?\u0027).padEnd(5)} ${String(f.chop||\u0027?\u0027).padEnd(5)} ${d.chop||\u0027?\u0027}`,\n`\u003c/code\u003e`,\n``,\n`\u003cb\u003e\\uD83E\\uDDE0 STRATEGY CONSENSUS (${dir})\u003c/b\u003e`,\n`\u003ccode\u003e`,\n`Trend       ${bar(bullOrBear(\u0027trend\u0027))} ${bullOrBear(\u0027trend\u0027)}%`,\n`Mean Rev    ${bar(bullOrBear(\u0027meanRev\u0027))} ${bullOrBear(\u0027meanRev\u0027)}%`,\n`Momentum    ${bar(bullOrBear(\u0027momentum\u0027))} ${bullOrBear(\u0027momentum\u0027)}%`,\n`Breakout    ${bar(bullOrBear(\u0027breakout\u0027))} ${bullOrBear(\u0027breakout\u0027)}%`,\n`SMC/Wyckoff ${bar(bullOrBear(\u0027smc\u0027))} ${bullOrBear(\u0027smc\u0027)}%`,\n`Multi-TF    ${bar(bullOrBear(\u0027multiTF\u0027))} ${bullOrBear(\u0027multiTF\u0027)}%`,\n`Fibonacci   ${bar(bullOrBear(\u0027fibonacci\u0027))} ${bullOrBear(\u0027fibonacci\u0027)}%`,\n`Macro/News  ${bar(bullOrBear(\u0027macro\u0027))} ${bullOrBear(\u0027macro\u0027)}%`,\n`Microstr.   ${bar(bullOrBear(\u0027micro\u0027))} ${bullOrBear(\u0027micro\u0027)}%`,\n`Stat Arb    ${bar(bullOrBear(\u0027stat\u0027))} ${bullOrBear(\u0027stat\u0027)}%`,\n`\u003c/code\u003e`,\n``,\n`\u003cb\u003e\\uD83C\\uDFB2 MONTE CARLO\u003c/b\u003e (500 paths, 24H)`,\n`P(+5%): ${pred.monteCarlo.probUp5}% | P(-5%): ${pred.monteCarlo.probDown5}%`,\n`Expected: ${pred.monteCarlo.expRet\u003e=0?\u0027+\u0027:\u0027\u0027}${pred.monteCarlo.expRet}% | \\u03C3: ${pred.annualVol}%/yr`,\n``,\n`\u003cb\u003e\\uD83D\\uDCB0 TRADE SETUP\u003c/b\u003e`,\n`Entry:   \u003cb\u003e$${fmtNum(price)}\u003c/b\u003e`,\n`Stop:    $${fmtNum(risk.stopLoss)} (-${((price-risk.stopLoss)/price*100).toFixed(1)}%) [1.5\\u00D7ATR]`,\n`Target1: $${fmtNum(risk.tp1)} (+${((risk.tp1-price)/price*100).toFixed(1)}%)`,\n`Target2: $${fmtNum(risk.tp2)} (+${((risk.tp2-price)/price*100).toFixed(1)}%)`,\n`R:R: \u003cb\u003e${risk.rr}:1\u003c/b\u003e | Win Rate: ${risk.winRate}% | EV: ${risk.ev\u003e=0?\u0027+\u0027:\u0027\u0027}${risk.ev}%`,\n``,\n`\u003cb\u003e\\uD83D\\uDCB0 POSITION SIZING\u003c/b\u003e`,\n`Kelly(\\u00BC): \u003cb\u003e${risk.kellyPct}%\u003c/b\u003e | VaR(95%): -${risk.var95}% | CVaR: -${risk.cvar}%`,\n``,\n`\u003cb\u003e\\uD83C\\uDF0D MACRO + NEWS INTEL\u003c/b\u003e`,\n`${newsLine}`,\n`OB Imbal: ${ms.imbalance\u003e=0?\u0027+\u0027:\u0027\u0027}${ms.imbalance}% | Whale: ${ms.whale===\u0027BUY\u0027?\u0027\\uD83D\\uDFE2\u0027:\u0027\\uD83D\\uDD34\u0027} ${ms.whale} | CVD: ${ms.cvdPct}% buy`,\n``,\n`\u003cb\u003e\\uD83D\\uDCF0 TOP HEADLINES\u003c/b\u003e`,\n`\u003ci\u003e${topHdl}\u003c/i\u003e`,\n``,\n`\u003cb\u003e\\uD83D\\uDCD6 PATTERN INTEL\u003c/b\u003e`,\n`Wyckoff: \u003cb\u003e${pat.wyckoff}\u003c/b\u003e | Candle: ${pat.candle}`,\n`SMC BOS: ${pat.smc\u0026\u0026pat.smc.bos||\u0027?\u0027} | FVG: ${pat.smc\u0026\u0026pat.smc.fvgBull?pat.smc.fvgBull:\u0027none\u0027}`,\n`Harmonic: ${pat.harmonic\u0026\u0026pat.harmonic.pattern!==\u0027NONE\u0027?`${pat.harmonic.pattern} ${pat.harmonic.bullish?\u0027\\uD83D\\uDFE2\u0027:\u0027\\uD83D\\uDD34\u0027}`:\u0027None\u0027} | Fourier: ${pred.fourierCycle}H cycle`,\n``,\n\n``,`\\n\u003cb\u003e\\uD83E\\uDD16 DEEPSEEK AI ANALYSIS\u003c/b\u003e`,`\u003ci\u003e${ds\u0026\u0026ds.analysis?ds.analysis.replace(/[\u003c\u003e]/g,c=\u003ec===\u0027\u003c\u0027?\u0027\u0026lt;\u0027:\u0027\u003e\u0027===c?\u0027\u0026gt;\u0027:c):\u0027Not configured\u0027}\u003c/i\u003e`,\n`\u003ci\u003e\\\\uD83D\\\\uDD50 Next scan in 5 min | Regime-aware \\u00B7 News-adjusted \\u00B7 v3-super\u003c/i\u003e`\n];\nreturn [{json:{message:lines.join(\u0027\\n\u0027),direction:dir,confidence:dec.confidence,send_alert:dec.send_alert,price}}];"
+                                     },
+                      "type":  "n8n-nodes-base.code",
+                      "position":  [
+                                       3000,
+                                       300
+                                   ],
+                      "typeVersion":  2
+                  },
+                  {
+                      "id":  "n25",
+                      "name":  "Route",
+                      "parameters":  {
+                                         "conditions":  {
+                                                            "options":  {
+                                                                            "typeValidation":  "strict",
+                                                                            "leftValue":  "",
+                                                                            "caseSensitive":  true
+                                                                        },
+                                                            "conditions":  [
+                                                                               {
+                                                                                   "operator":  {
+                                                                                                    "operation":  "true",
+                                                                                                    "type":  "boolean"
+                                                                                                },
+                                                                                   "rightValue":  true,
+                                                                                   "id":  "c1",
+                                                                                   "leftValue":  "={{ $json.send_alert }}"
+                                                                               }
+                                                                           ],
+                                                            "combinator":  "and"
+                                                        }
+                                     },
+                      "type":  "n8n-nodes-base.if",
+                      "position":  [
+                                       3200,
+                                       300
+                                   ],
+                      "typeVersion":  2
+                  },
+                  {
+                      "id":  "n26",
+                      "name":  "Telegram Alert",
+                      "parameters":  {
+                                         "additionalFields":  {
+                                                                  "disable_web_page_preview":  true,
+                                                                  "parse_mode":  "HTML"
+                                                              },
+                                         "operation":  "sendMessage",
+                                         "chatId":  "REPLACE_WITH_YOUR_CHAT_ID",
+                                         "resource":  "message",
+                                         "text":  "={{ $json.message }}"
+                                     },
+                      "credentials":  {
+                                          "telegramApi":  {
+                                                              "id":  "vaWr2cxS1Q9HsYd4",
+                                                              "name":  "Telegram account"
+                                                          }
+                                      },
+                      "type":  "n8n-nodes-base.telegram",
+                      "position":  [
+                                       3400,
+                                       100
+                                   ],
+                      "typeVersion":  1.2,
+                      "webhookId":  "55b9c8fd-cb7f-407c-858f-9ed4db9606ca"
+                  },
+                  {
+                      "id":  "n27",
+                      "name":  "Silent Log",
+                      "parameters":  {
+                                         "jsCode":  "const dec=$(\u0027Decision Gate\u0027).first().json;\nconst tf=$(\u0027MTF Analysis\u0027).first().json;\nconsole.log(JSON.stringify({ts:new Date().toISOString(),sig:dec.direction,conf:dec.confidence,price:tf.price,regime:dec.regime}));\nreturn [{json:{logged:true,ts:new Date().toISOString(),signal:dec.direction}}];"
+                                     },
+                      "type":  "n8n-nodes-base.code",
+                      "position":  [
+                                       3400,
+                                       500
+                                   ],
+                      "typeVersion":  2
+                  },
+                  {
+                      "id":  "s01",
+                      "name":  "Overview",
+                      "parameters":  {
+                                         "color":  4,
+                                         "content":  "# CRYPTO SPECIALIST SUPER AGENT v3\n\n10 Strategy Families | 4 Timeframes | Monte Carlo 500 paths\nFourier Cycles | Wyckoff | SMC | VaR/CVaR | Kelly\nLive News + Geopolitics Sentiment\n\nSchedule: every 5 minutes",
+                                         "width":  520,
+                                         "height":  180
+                                     },
+                      "type":  "n8n-nodes-base.stickyNote",
+                      "position":  [
+                                       0,
+                                       0
+                                   ],
+                      "typeVersion":  1
+                  },
+                  {
+                      "id":  "s02",
+                      "name":  "Analysis",
+                      "parameters":  {
+                                         "color":  3,
+                                         "content":  "## Analysis Chain\nMTF -\u003e News -\u003e Microstructure -\u003e Patterns -\u003e Regime -\u003e Prediction -\u003e Strategy -\u003e Risk -\u003e Decision",
+                                         "width":  700,
+                                         "height":  80
+                                     },
+                      "type":  "n8n-nodes-base.stickyNote",
+                      "position":  [
+                                       1200,
+                                       0
+                                   ],
+                      "typeVersion":  1
+                  },
+                  {
+                      "id":  "s03",
+                      "name":  "Output",
+                      "parameters":  {
+                                         "color":  5,
+                                         "content":  "## Output\nTelegram HTML alert when BUY/SELL confidence \u003e= 60%\nIncludes news headlines + geopolitical themes",
+                                         "width":  380,
+                                         "height":  80
+                                     },
+                      "type":  "n8n-nodes-base.stickyNote",
+                      "position":  [
+                                       3000,
+                                       0
+                                   ],
+                      "typeVersion":  1
+                  },
+                  {
+                      "id":  "n28",
+                      "name":  "DeepSeek AI Analysis",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       2900,
+                                       300
+                                   ],
+                      "parameters":  {
+                                         "jsCode":  "const psy=$(\u0027Psychology Engine\u0027).first().json;\nconst httpsM=require(\"https\");const apiKey=$env.DEEPSEEK_API_KEY;if(!apiKey||apiKey.length\u003c5){return [{json:{analysis:\"Add DEEPSEEK_API_KEY to Railway env to unlock AI analysis\",powered:false}}];}const dec=$(\u0027Decision Gate\u0027).first().json;const tf=$(\u0027MTF Analysis\u0027).first().json;const reg=$(\u0027Regime Detection\u0027).first().json;const news=$(\u0027News Sentiment\u0027).first().json;const risk=$(\u0027Risk Engine\u0027).first().json;const pred=$(\u0027Prediction Engine\u0027).first().json;const h=tf.tf1h||{};const nh=news\u0026\u0026news.topHeadlines\u0026\u0026news.topHeadlines[0];const prompt=`You are a quantitative crypto analyst. Analyze live BTC/USD data and give 3 sharp insights:\\nSIGNAL: ${dec.direction} | Confidence: ${dec.confidence}% | Regime: ${reg.regime}\\nPrice: $${Math.round(tf.price)} | RSI(1H): ${h.rsi} | MACD: ${h.macd\u0026\u0026h.macd.cross} | Hurst: ${h.hurst}(${h.hurstR})\\nBayesian: ${Math.round(pred.bayesianProb*100)}% | MC Expected: ${pred.monteCarlo\u0026\u0026pred.monteCarlo.expRet}% | VaR: -${risk.var95}%\\nNews: ${news\u0026\u0026news.signal} (${(news\u0026\u0026news.themes||[]).join(\",\")}) | Top: ${nh?nh.title:\"none\"}\\nFourier: ${pred.fourierCycle}H cycle | Ann.Vol: ${pred.annualVol}%\\nPsychology Context:\\nCrowd Emotion: ${psy\u0026\u0026psy.emotion} (${psy\u0026\u0026psy.cyclePos}/100) | Phase: ${psy\u0026\u0026psy.cyclePhase}\\nContrarian Signal: ${psy\u0026\u0026psy.contrarian} [${psy\u0026\u0026psy.contrStrength}] | Smart$ vs Retail: ${psy\u0026\u0026psy.divergence}\\nHistorical Analogue: ${psy\u0026\u0026psy.analogue\u0026\u0026psy.analogue.period} â€” ${psy\u0026\u0026psy.analogue\u0026\u0026psy.analogue.lesson}\\nActive Biases: ${psy\u0026\u0026psy.biases\u0026\u0026psy.biases.map(b=\u003eb.b).join(\u0027,\u0027)}\\nPsychology Action: ${psy\u0026\u0026psy.analogue\u0026\u0026psy.analogue.action}\\n\\nDeliver: (1) biggest edge/risk, (2) critical price level, (3) probability verdict. 3 sentences max, numbers only.`;const body=JSON.stringify({model:\"deepseek-chat\",messages:[{role:\"user\",content:prompt}],max_tokens:200,temperature:0.2});const result=await new Promise((resolve)=\u003e{const opts={hostname:\"api.deepseek.com\",path:\"/chat/completions\",method:\"POST\",headers:{\"Content-Type\":\"application/json\",\"Authorization\":`Bearer ${apiKey}`,\"Content-Length\":Buffer.byteLength(body)}};const req=httpsM.request(opts,(res)=\u003e{let d=\"\";res.on(\"data\",c=\u003ed+=c);res.on(\"end\",()=\u003e{try{resolve(JSON.parse(d)?.choices?.[0]?.message?.content||\"No response\");}catch(e){resolve(\"Parse error\");}});});req.on(\"error\",e=\u003eresolve(\"Error: \"+e.message));req.setTimeout(10000,()=\u003e{req.destroy();resolve(\"Timeout\");});req.write(body);req.end();});return [{json:{analysis:result,powered:true}}];"
+                                     }
+                  },
+                  {
+                      "id":  "n29",
+                      "name":  "Psychology Engine",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       2100,
+                                       500
+                                   ],
+                      "parameters":  {
+                                         "jsCode":  "const tf=$(\u0027MTF Analysis\u0027).first().json;\nconst news=$(\u0027News Sentiment\u0027).first().json;\nconst reg=$(\u0027Regime Detection\u0027).first().json;\nconst ms=$(\u0027Microstructure\u0027).first().json;\nconst strat=$(\u0027Strategy Scoring\u0027).first().json;\nconst h=tf.tf1h||{};\nconst fng=reg.fng||50;\nconst rsi=h.rsi||50;\nconst atrPct=h.atrPct||50;\nconst price=tf.price||0;\nconst change24=(tf.change24h)||0;\nconst newsScore=news\u0026\u0026news.score?news.score:0;\nconst newsThemes=news\u0026\u0026news.themes?news.themes:[];\n\n// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Composite Sentiment Position (0=max fear, 100=max greed) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬\nconst sentPos=Math.round(\n  (fng/100)*0.35 +\n  (Math.min(Math.max(rsi,0),100)/100)*0.25 +\n  (atrPct/100)*0.15 +\n  ((newsScore+100)/200)*0.15 +\n  (ms\u0026\u0026ms.cvdPct?ms.cvdPct/100:0.5)*0.10\n)*100;\nconst cyclePos=Math.max(0,Math.min(100,sentPos));\n\n// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Emotional State (Crypto sentiment cycle) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬\nconst emotion=\n  cyclePos\u003e=92?\u0027EUPHORIA\u0027:cyclePos\u003e=82?\u0027EXTREME_GREED\u0027:cyclePos\u003e=70?\u0027GREED\u0027:\n  cyclePos\u003e=60?\u0027OPTIMISM\u0027:cyclePos\u003e=52?\u0027HOPE\u0027:cyclePos\u003e=44?\u0027ANXIETY\u0027:\n  cyclePos\u003e=36?\u0027DENIAL\u0027:cyclePos\u003e=26?\u0027FEAR\u0027:cyclePos\u003e=16?\u0027DESPERATION\u0027:\n  cyclePos\u003e=8?\u0027PANIC\u0027:\u0027CAPITULATION\u0027;\n\nconst emotionEmoji=\n  cyclePos\u003e=82?\u0027Ã°Å¸Â¤â€˜\u0027:cyclePos\u003e=60?\u0027Ã°Å¸ËœÅ \u0027:cyclePos\u003e=44?\u0027Ã°Å¸ËœÂ°\u0027:cyclePos\u003e=26?\u0027Ã°Å¸ËœÂ¨\u0027:\u0027Ã°Å¸ËœÂ±\u0027;\n\n// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Market Cycle Phase Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬\nconst cyclePhase=\n  cyclePos\u003e=78?\u0027LATE_BULL_DISTRIBUTION\u0027:\n  cyclePos\u003e=58?\u0027MID_BULL_MARKUP\u0027:\n  cyclePos\u003e=44?\u0027RECOVERY_RETEST\u0027:\n  cyclePos\u003e=28?\u0027LATE_BEAR_MARKDOWN\u0027:\u0027ACCUMULATION_BOTTOM\u0027;\n\n// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Contrarian Signal Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬\nconst contrarian=cyclePos\u003e=80?\u0027FADE_GREED\u0027:cyclePos\u003c=20?\u0027FADE_FEAR\u0027:\u0027FOLLOW_TREND\u0027;\nconst contrStrength=\n  cyclePos\u003e=88||cyclePos\u003c=12?\u0027VERY_STRONG\u0027:\n  cyclePos\u003e=78||cyclePos\u003c=22?\u0027STRONG\u0027:\n  cyclePos\u003e=68||cyclePos\u003c=32?\u0027MODERATE\u0027:\u0027WEAK\u0027;\nconst contrSignal=\n  contrarian===\u0027FADE_GREED\u0027?\u0027SELL (crowd euphoric Ã¢â‚¬â€ smart money exits)\u0027:\n  contrarian===\u0027FADE_FEAR\u0027?\u0027BUY (crowd panicking Ã¢â‚¬â€ smart money accumulates)\u0027:\n  \u0027No contrarian edge Ã¢â‚¬â€ follow quant signals\u0027;\n\n// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Behavioral Biases Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬\nconst biases=[];\nif(rsi\u003e72\u0026\u0026change24\u003e4\u0026\u0026ms\u0026\u0026ms.cvdPct\u003e65) biases.push({b:\u0027FOMO\u0027,risk:\u0027HIGH\u0027,desc:\u0027Crowd buying into surge Ã¢â‚¬â€ late-stage momentum, high reversal risk\u0027});\nif(rsi\u003c28\u0026\u0026change24\u003c-4\u0026\u0026ms\u0026\u0026ms.cvdPct\u003c35) biases.push({b:\u0027PANIC_SELLING\u0027,risk:\u0027HIGH\u0027,desc:\u0027Fear-driven mass exit Ã¢â‚¬â€ capitulation zone, watch for reversal wick\u0027});\nconst roundLevels=[100000,90000,80000,75000,70000,60000,50000,40000,30000];\nconst nearRound=roundLevels.find(l=\u003eMath.abs(price-l)/l\u003c0.018);\nif(nearRound) biases.push({b:\u0027ANCHORING\u0027,risk:\u0027MED\u0027,desc:`Crowd anchored to $${nearRound.toLocaleString()} Ã¢â‚¬â€ strong S/R level, expect battle here`});\nif(strat\u0026\u0026(strat.bullTotal\u003e78||strat.bearTotal\u003e78)) biases.push({b:\u0027HERDING\u0027,risk:\u0027MED\u0027,desc:\u0027Universal quant consensus Ã¢â‚¬â€ herd risk elevated, contrarian watch\u0027});\nif(Math.abs(h.zScore||0)\u003e2.2) biases.push({b:\u0027RECENCY_BIAS\u0027,risk:\u0027MED\u0027,desc:\u0027Statistically extreme Ã¢â‚¬â€ mean reversion overdue, avoid chasing\u0027});\nif(atrPct\u003c18\u0026\u0026fng\u003e62) biases.push({b:\u0027COMPLACENCY\u0027,risk:\u0027HIGH\u0027,desc:\u0027Low volatility + high greed = calm before storm, vol expansion imminent\u0027});\nif(newsThemes.includes(\u0027Geopolitics\u0027)\u0026\u0026newsScore\u003c-20) biases.push({b:\u0027GEOPOLITICAL_PANIC\u0027,risk:\u0027HIGH\u0027,desc:\u0027Geopolitical shock triggers irrational oversell Ã¢â‚¬â€ historical buy opportunity\u0027});\nif(newsThemes.includes(\u0027ETF\u0027)||newsThemes.includes(\u0027Institutional\u0027)) biases.push({b:\u0027NARRATIVE_FOMO\u0027,risk:\u0027MED\u0027,desc:\u0027Institutional narrative driving hype Ã¢â‚¬â€ watch for sell-the-news\u0027});\nif(newsThemes.includes(\u0027Regulation\u0027)) biases.push({b:\u0027REGULATORY_FEAR\u0027,desc:\u0027Regulatory uncertainty Ã¢â€ â€™ crowd overreacts bearishly. Often fades quickly.\u0027,risk:\u0027LOW\u0027});\n\n// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Smart Money vs Retail Divergence Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬\nconst smartMoney=ms\u0026\u0026ms.whale===\u0027BUY\u0027\u0026\u0026ms.cvdPct\u003e60?\u0027ACCUMULATING\u0027:ms\u0026\u0026ms.whale===\u0027SELL\u0027\u0026\u0026ms.cvdPct\u003c40?\u0027DISTRIBUTING\u0027:\u0027NEUTRAL\u0027;\nconst retail=fng\u003e72?\u0027EUPHORIC\u0027:fng\u003c28?\u0027FEARFUL\u0027:fng\u003e58?\u0027OPTIMISTIC\u0027:\u0027CAUTIOUS\u0027;\nconst divergence=\n  smartMoney===\u0027ACCUMULATING\u0027\u0026\u0026(retail===\u0027FEARFUL\u0027||retail===\u0027CAUTIOUS\u0027)?\u0027BULLISH_SMART_VS_RETAIL\u0027:\n  smartMoney===\u0027DISTRIBUTING\u0027\u0026\u0026(retail===\u0027EUPHORIC\u0027||retail===\u0027OPTIMISTIC\u0027)?\u0027BEARISH_SMART_VS_RETAIL\u0027:\u0027ALIGNED\u0027;\nconst divergenceSignal=\n  divergence===\u0027BULLISH_SMART_VS_RETAIL\u0027?\u0027STRONG BUY Ã¢â‚¬â€ smart money buying while retail fears\u0027:\n  divergence===\u0027BEARISH_SMART_VS_RETAIL\u0027?\u0027STRONG SELL Ã¢â‚¬â€ smart money exiting while retail euphoric\u0027:\n  \u0027Smart money and retail aligned Ã¢â‚¬â€ trend continuation likely\u0027;\n\n// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Historical Behavioural Analogues Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬\nconst analogue=(()=\u003e{\n  if(fng\u003e82\u0026\u0026rsi\u003e72\u0026\u0026h.ema\u0026\u0026h.ema.bull\u0026\u0026change24\u003e5) return {period:\u0027Nov 2021 / Jan 2018\u0027,lesson:\u0027Peak euphoria. Retail FOMO peak = institutional exit. Major correction followed within 2-6 weeks.\u0027,action:\u0027REDUCE_LONG / SHORT_BIAS\u0027,confidence:\u0027HIGH\u0027};\n  if(fng\u003c18\u0026\u0026rsi\u003c28\u0026\u0026h.ema\u0026\u0026h.ema.bear) return {period:\u0027Nov 2022 / Mar 2020 / Dec 2018\u0027,lesson:\u0027Maximum fear = minimum price. Every historical instance reversed +50-200% within 6 months.\u0027,action:\u0027ACCUMULATE_LONG\u0027,confidence:\u0027HIGH\u0027};\n  if(fng\u003e55\u0026\u0026h.ema\u0026\u0026h.ema.bull\u0026\u0026!h.isChoppy\u0026\u0026atrPct\u003e45\u0026\u0026atrPct\u003c70) return {period:\u0027Q1 2024 / Q4 2020\u0027,lesson:\u0027Healthy bull trend. Moderate fear-of-missing-out fuels sustained move.\u0027,action:\u0027HOLD_AND_ADD_DIP\u0027,confidence:\u0027MEDIUM\u0027};\n  if(h.isChoppy\u0026\u0026fng\u003e40\u0026\u0026fng\u003c60) return {period:\u0027Mid-2019 / H2-2023\u0027,lesson:\u0027Neutral sentiment + range = accumulation. Breakout direction determines next major move.\u0027,action:\u0027WAIT_BREAKOUT_CONFIRMATION\u0027,confidence:\u0027MEDIUM\u0027};\n  if(newsThemes.includes(\u0027Geopolitics\u0027)\u0026\u0026newsScore\u003c-25) return {period:\u0027Feb 2022 Ukraine / Sep 2001\u0027,lesson:\u0027Geopolitical panic = sharp emotional sell. Fundamentals unchanged. Historical recovery: 2-8 weeks.\u0027,action:\u0027BUY_THE_PANIC\u0027,confidence:\u0027MEDIUM\u0027};\n  if(newsThemes.includes(\u0027Regulation\u0027)\u0026\u0026newsScore\u003c-15) return {period:\u0027May 2021 China ban / 2022 SEC actions\u0027,lesson:\u0027Regulatory FUD = crowd panic. Usually priced in fast. Smart money uses dip.\u0027,action:\u0027WAIT_THEN_BUY\u0027,confidence:\u0027MEDIUM\u0027};\n  return {period:\u0027No strong analogue\u0027,lesson:\u0027Mixed signals. Standard discipline applies.\u0027,action:\u0027FOLLOW_QUANT_SIGNALS\u0027,confidence:\u0027LOW\u0027};\n})();\n\n// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Crowd Next Move Prediction Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬\nconst crowdNext=\n  emotion===\u0027EUPHORIA\u0027?\u0027Retail piling in. FOMO peak. Distribution imminent. Smart money selling into strength.\u0027:\n  emotion===\u0027EXTREME_GREED\u0027?\u0027Overextension. Profit-taking wave incoming. Bulls become sellers.\u0027:\n  emotion===\u0027GREED\u0027?\u0027Risk appetite high. Dip buyers aggressive. Trend intact but watch for complacency.\u0027:\n  emotion===\u0027OPTIMISM\u0027?\u0027Cautious bulls adding. Healthy sentiment. Trend continuation likely.\u0027:\n  emotion===\u0027HOPE\u0027?\u0027Crowd cautiously positioned. Breakout could trigger squeeze.\u0027:\n  emotion===\u0027ANXIETY\u0027?\u0027Weak hands shaking out. Smart money absorbing. Near-term turbulence.\u0027:\n  emotion===\u0027DENIAL\u0027?\u0027Crowd disbelieving downtrend. Slow capitulation ahead.\u0027:\n  emotion===\u0027FEAR\u0027?\u0027Selling accelerating. Near-term pain continues. Watch for exhaustion candles.\u0027:\n  emotion===\u0027DESPERATION\u0027?\u0027Forced selling. Leveraged longs being liquidated. Flush incoming or complete.\u0027:\n  emotion===\u0027PANIC\u0027?\u0027Mass liquidation. Capitulation spike likely. Best historical entry zone emerging.\u0027:\n  \u0027Maximum pain. Only true believers hold. Next buyer = structural bottom.\u0027;\n\n// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Psychology Score Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬\nconst psyBull=\n  (contrarian===\u0027FADE_FEAR\u0027?40:0)+\n  (divergence===\u0027BULLISH_SMART_VS_RETAIL\u0027?35:0)+\n  ([\u0027PANIC\u0027,\u0027CAPITULATION\u0027,\u0027DESPERATION\u0027].includes(emotion)?25:0)+\n  (analogue.action===\u0027ACCUMULATE_LONG\u0027||analogue.action===\u0027BUY_THE_PANIC\u0027?20:0);\nconst psyBear=\n  (contrarian===\u0027FADE_GREED\u0027?40:0)+\n  (divergence===\u0027BEARISH_SMART_VS_RETAIL\u0027?35:0)+\n  ([\u0027EUPHORIA\u0027,\u0027EXTREME_GREED\u0027].includes(emotion)?25:0)+\n  (analogue.action===\u0027REDUCE_LONG / SHORT_BIAS\u0027?20:0);\nconst psySignal=psyBull\u003epsyBear\u0026\u0026psyBull\u003e30?\u0027CONTRARIAN_BUY\u0027:psyBear\u003epsyBull\u0026\u0026psyBear\u003e30?\u0027CONTRARIAN_SELL\u0027:\u0027FOLLOW_QUANT\u0027;\n\nreturn [{json:{emotion,emotionEmoji,cyclePos,cyclePhase,contrarian,contrStrength,contrSignal,biases,analogue,smartMoney,retail,divergence,divergenceSignal,crowdNext,psyBullScore:psyBull,psyBearScore:psyBear,psySignal}}];"
+                                     }
+                  },
+                  {
+                      "id":  "n30",
+                      "name":  "Read Past Signals",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.2,
+                      "position":  [
+                                       200,
+                                       500
+                                   ],
+                      "parameters":  {
+                                         "method":  "GET",
+                                         "url":  "https://super-agent-production.up.railway.app/memory/export?limit=20\u0026min_importance=3\u0026source=crypto_specialist_v3",
+                                         "options":  {
+
+                                                     }
+                                     }
+                  },
+                  {
+                      "id":  "n31",
+                      "name":  "Claude AI Primary",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       3000,
+                                       500
+                                   ],
+                      "parameters":  {
+                                         "jsCode":  "const https=require(\u0027https\u0027);const apiKey=$env.ANTHROPIC_API_KEY;if(!apiKey||apiKey.length\u003c10){return [{json:{analysis:\u0027Add ANTHROPIC_API_KEY to Railway n8n env vars to enable Claude primary analysis.\u0027,powered:false,model:\u0027none\u0027,vaultSignalsUsed:0}}];}const dec=$(\u0027Decision Gate\u0027).first().json;const tf=$(\u0027MTF Analysis\u0027).first().json;const reg=$(\u0027Regime Detection\u0027).first().json;const risk=$(\u0027Risk Engine\u0027).first().json;const psy=$(\u0027Psychology Engine\u0027).first().json;const pred=$(\u0027Prediction Engine\u0027).first().json;const strat=$(\u0027Strategy Scoring\u0027).first().json;const news=$(\u0027News Sentiment\u0027).first().json;const h=tf.tf1h||{};const pastRaw=$(\u0027Read Past Signals\u0027).first().json;const memories=(pastRaw\u0026\u0026pastRaw.memories)?pastRaw.memories:[];const cryptoMems=memories.filter(m=\u003em.source===\u0027crypto_specialist_v3\u0027||(m.content\u0026\u0026m.content.includes(\u0027TRADE SIGNAL\u0027))).slice(0,8);const histContext=cryptoMems.length\u003e0?`VAULT HISTORICAL RECORD (${cryptoMems.length} past signals):\\n`+cryptoMems.map((m,i)=\u003e`[${i+1}] ${m.content}`).join(\u0027\\n\u0027):\u0027No historical signals in vault yet — this is an early signal.\u0027;const topFam=Object.entries(strat.families||{}).sort((a,b)=\u003e(b[1].bull||0)-(a[1].bull||0)).slice(0,3).map(([k,v])=\u003e`${k}:${v.bull}%`).join(\u0027, \u0027);const activeBiases=(psy\u0026\u0026psy.biases)?psy.biases.map(b=\u003eb.b).join(\u0027, \u0027):\u0027none\u0027;const prompt=`You are the PRIMARY INTELLIGENCE of the Crypto Specialist Super Agent v3 — a self-improving quantitative trading system. Your analysis supersedes all other components.\\n\\n${histContext}\\n\\nCURRENT CYCLE ANALYSIS:\\nSignal: ${dec.direction} | Confidence: ${dec.confidence}% | Raw Score: ${dec.rawScore}\\nPrice: $${Math.round(tf.price||0)} | Regime: ${reg.regime} | Bayesian: ${Math.round((pred.bayesianProb||0.5)*100)}%\\nRSI(1H): ${h.rsi} | MACD: ${h.macd\u0026\u0026h.macd.cross} | Hurst: ${h.hurst}(${h.hurstR}) | Chop: ${h.chop}\\nATR%ile: ${h.atrPct} | Z-Score: ${h.zScore} | Fourier Cycle: ${pred.fourierCycle}H\\nMC Expected(24H): ${pred.monteCarlo\u0026\u0026pred.monteCarlo.expRet}% | P(+5%): ${pred.monteCarlo\u0026\u0026pred.monteCarlo.probUp5}%\\nKelly: ${risk.kellyPct}% | VaR: -${risk.var95}% | R:R: ${risk.rr}:1 | EV: ${risk.ev}%\\nTop Strategies: ${topFam}\\nCrowd Emotion: ${psy\u0026\u0026psy.emotion}(${psy\u0026\u0026psy.cyclePos}/100) | Phase: ${psy\u0026\u0026psy.cyclePhase}\\nSmart$ vs Retail: ${psy\u0026\u0026psy.divergence} | Contrarian: ${psy\u0026\u0026psy.contrarian}[${psy\u0026\u0026psy.contrStrength}]\\nHistorical Analogue: ${psy\u0026\u0026psy.analogue\u0026\u0026psy.analogue.period} — ${psy\u0026\u0026psy.analogue\u0026\u0026psy.analogue.lesson}\\nNews: ${news\u0026\u0026news.signal}(${news\u0026\u0026news.score}) | Themes: ${(news\u0026\u0026news.themes||[]).join(\u0027,\u0027)}\\nActive Biases: ${activeBiases}\\n\\nSynthesise the PRIMARY verdict in exactly 3 sentences:\\n1) Does vault history confirm or contradict this signal? Cite specific data.\\n2) What single factor is most decisive right now (cite a number)?\\n3) Final risk-adjusted recommendation with one specific price level to watch.`;const body=JSON.stringify({model:\u0027claude-sonnet-4-6\u0027,max_tokens:280,temperature:0.2,messages:[{role:\u0027user\u0027,content:prompt}]});const result=await new Promise((resolve)=\u003e{const opts={hostname:\u0027api.anthropic.com\u0027,path:\u0027/v1/messages\u0027,method:\u0027POST\u0027,headers:{\u0027Content-Type\u0027:\u0027application/json\u0027,\u0027x-api-key\u0027:apiKey,\u0027anthropic-version\u0027:\u00272023-06-01\u0027,\u0027Content-Length\u0027:Buffer.byteLength(body)}};const req=https.request(opts,(res)=\u003e{let d=\u0027\u0027;res.on(\u0027data\u0027,c=\u003ed+=c);res.on(\u0027end\u0027,()=\u003e{try{resolve(JSON.parse(d)?.content?.[0]?.text||\u0027No response\u0027);}catch(e){resolve(\u0027Parse error: \u0027+d.slice(0,100));}});});req.on(\u0027error\u0027,e=\u003eresolve(\u0027API error: \u0027+e.message));req.setTimeout(15000,()=\u003e{req.destroy();resolve(\u0027Claude timeout — add ANTHROPIC_API_KEY to Railway\u0027);});req.write(body);req.end();});return [{json:{analysis:result,powered:true,model:\u0027claude-sonnet-4-6\u0027,vaultSignalsUsed:cryptoMems.length}}];"
+                                     }
+                  },
+                  {
+                      "id":  "n32",
+                      "name":  "Write Obsidian Note",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       3600,
+                                       100
+                                   ],
+                      "parameters":  {
+                                         "jsCode":  "const https=require(\u0027https\u0027);const dec=$(\u0027Decision Gate\u0027).first().json;const tf=$(\u0027MTF Analysis\u0027).first().json;const reg=$(\u0027Regime Detection\u0027).first().json;const risk=$(\u0027Risk Engine\u0027).first().json;const psy=$(\u0027Psychology Engine\u0027).first().json;const pred=$(\u0027Prediction Engine\u0027).first().json;const claude=$(\u0027Claude AI Primary\u0027).first().json;const ds=$(\u0027DeepSeek AI Analysis\u0027).first().json;const news=$(\u0027News Sentiment\u0027).first().json;const h=tf.tf1h||{};const now=new Date();const dateStr=now.toISOString().slice(0,10);const timeStr=now.toISOString().replace(\u0027T\u0027,\u0027 \u0027).slice(0,16)+(\u0027 UTC\u0027);const price=Math.round(tf.price||0);const memContent=`TRADE SIGNAL ${dateStr} ${timeStr.slice(11,16)}: ${dec.direction} BTC @ $${price} | Confidence:${dec.confidence}% | Regime:${reg.regime} | RSI:${h.rsi} | Hurst:${h.hurst}(${h.hurstR}) | MACD:${h.macd\u0026\u0026h.macd.cross} | Chop:${h.chop} | Emotion:${psy\u0026\u0026psy.emotion}(${psy\u0026\u0026psy.cyclePos}) | Analogue:${psy\u0026\u0026psy.analogue\u0026\u0026psy.analogue.period} | FnG:${reg.fng} | BTC_DOM:${reg.btcDom} | Kelly:${risk.kellyPct}% | VaR:${risk.var95}% | EV:${risk.ev}% | RR:${risk.rr} | Fourier:${pred.fourierCycle}H | MC_Exp:${pred.monteCarlo\u0026\u0026pred.monteCarlo.expRet}% | News:${news\u0026\u0026news.signal} | Themes:${(news\u0026\u0026news.themes||[]).join(\u0027,\u0027)}`; const payload=JSON.stringify({memories:[{content:memContent,memory_type:\u0027episodic\u0027,importance:dec.confidence\u003e=78?5:dec.confidence\u003e=68?4:3,source:\u0027crypto_specialist_v3\u0027,session_id:`crypto_${dateStr}_${dec.direction}_${price}`,tags:[\u0027crypto_signal\u0027,\u0027btc\u0027,dec.direction.toLowerCase(),(reg.regime||\u0027\u0027).toLowerCase()]}]});const storeResult=await new Promise((resolve)=\u003e{const opts={hostname:\u0027super-agent-production.up.railway.app\u0027,path:\u0027/memory/ingest\u0027,method:\u0027POST\u0027,headers:{\u0027Content-Type\u0027:\u0027application/json\u0027,\u0027X-Memory-Secret\u0027:\u00272dc6c69574c14d615ce146e54640aa13030dade7aa86697c\u0027,\u0027Content-Length\u0027:Buffer.byteLength(payload)}};const req=https.request(opts,(res)=\u003e{let d=\u0027\u0027;res.on(\u0027data\u0027,c=\u003ed+=c);res.on(\u0027end\u0027,()=\u003e{try{resolve(JSON.parse(d));}catch(e){resolve({stored:false,err:d.slice(0,80)});}});});req.on(\u0027error\u0027,e=\u003eresolve({stored:false,err:e.message}));req.setTimeout(8000,()=\u003e{req.destroy();resolve({stored:false,err:\u0027timeout\u0027});});req.write(payload);req.end();});const noteTitle=`Signal ${dateStr} — ${dec.direction} BTC $${price} (${dec.confidence}% conf)`;const noteContent=`# ${noteTitle}\\n\\n## Signal\\n- Direction: **${dec.direction}** | Confidence: **${dec.confidence}%** | Price: **$${price.toLocaleString()}**\\n- Regime: **${reg.regime}** | Bayesian: ${Math.round((pred.bayesianProb||0.5)*100)}% | Vault Records Used: ${claude\u0026\u0026claude.vaultSignalsUsed||0}\\n- Timestamp: ${timeStr}\\n\\n## Technical (1H)\\n| RSI | MACD | Hurst | Chop | Z-Score | ATR%ile | FnG | BTC Dom |\\n|-----|------|-------|------|---------|---------|-----|----------|\\n| ${h.rsi} | ${h.macd\u0026\u0026h.macd.cross} | ${h.hurst}(${h.hurstR}) | ${h.chop} | ${h.zScore} | ${h.atrPct} | ${reg.fng} | ${reg.btcDom}% |\\n\\n## Psychology\\n- Emotion: **${psy\u0026\u0026psy.emotion}** (${psy\u0026\u0026psy.cyclePos}/100) | Phase: ${psy\u0026\u0026psy.cyclePhase}\\n- Contrarian: ${psy\u0026\u0026psy.contrarian}[${psy\u0026\u0026psy.contrStrength}] | Smart$: ${psy\u0026\u0026psy.divergence}\\n- Analogue: **${psy\u0026\u0026psy.analogue\u0026\u0026psy.analogue.period}** — ${psy\u0026\u0026psy.analogue\u0026\u0026psy.analogue.lesson}\\n- Action: **${psy\u0026\u0026psy.analogue\u0026\u0026psy.analogue.action}** | Biases: ${psy\u0026\u0026psy.biases\u0026\u0026psy.biases.map(b=\u003eb.b).join(\u0027, \u0027)||\u0027none\u0027}\\n\\n## Risk\\n- Kelly: ${risk.kellyPct}% | Stop: $${risk.stopLoss} | T1: $${risk.tp1} | T2: $${risk.tp2}\\n- R:R: ${risk.rr}:1 | EV: ${risk.ev}% | VaR(95%): -${risk.var95}% | CVaR: -${risk.cvar}%\\n\\n## News\\n- ${news\u0026\u0026news.signal} (${news\u0026\u0026news.score}) | ${(news\u0026\u0026news.themes||[]).join(\u0027, \u0027)}\\n- ${news\u0026\u0026news.topHeadlines\u0026\u0026news.topHeadlines[0]\u0026\u0026news.topHeadlines[0].title||\u0027no headlines\u0027}\\n\\n## AI Synthesis\\n### Claude (Primary)\\n\u003e ${(claude\u0026\u0026claude.analysis||\u0027not available\u0027).replace(/\\n/g,\u0027 \u0027)}\\n\\n### DeepSeek (Secondary)\\n\u003e ${(ds\u0026\u0026ds.analysis||\u0027not available\u0027).replace(/\\n/g,\u0027 \u0027)}\\n\\n## Outcome\\n\u003e To fill after trade: Entry | Exit | P\u0026L | Correct? Y/N\\n\\n---\\n#crypto #btc #${dec.direction.toLowerCase()} #${(reg.regime||\u0027\u0027).toLowerCase().replace(/_/g,\u0027-\u0027)} #${dateStr}`;return [{json:{noteTitle,noteContent,signal:`${dec.direction} @ $${price}`,memoryStored:!!storeResult,vaultEntry:memContent.slice(0,120)+\u0027...\u0027}}];"
+                                     }
+                  }
+              ],
+    "connections":  {
+                        "Schedule Trigger":  {
+                                                 "main":  [
+                                                              [
+                                                                  {
+                                                                      "node":  "Config",
+                                                                      "type":  "main",
+                                                                      "index":  0
+                                                                  }
+                                                              ]
+                                                          ]
+                                             },
+                        "Config":  {
+                                       "main":  [
+                                                    [
+                                                        {
+                                                            "node":  "Read Past Signals",
+                                                            "type":  "main",
+                                                            "index":  0
+                                                        }
+                                                    ]
+                                                ]
+                                   },
+                        "Read Past Signals":  {
+                                                  "main":  [
+                                                               [
+                                                                   {
+                                                                       "node":  "Fetch 15M",
+                                                                       "type":  "main",
+                                                                       "index":  0
+                                                                   }
+                                                               ]
+                                                           ]
+                                              },
+                        "Fetch 15M":  {
+                                          "main":  [
+                                                       [
+                                                           {
+                                                               "node":  "Fetch 1H",
+                                                               "type":  "main",
+                                                               "index":  0
+                                                           }
+                                                       ]
+                                                   ]
+                                      },
+                        "Fetch 1H":  {
+                                         "main":  [
+                                                      [
+                                                          {
+                                                              "node":  "Fetch 4H",
+                                                              "type":  "main",
+                                                              "index":  0
+                                                          }
+                                                      ]
+                                                  ]
+                                     },
+                        "Fetch 4H":  {
+                                         "main":  [
+                                                      [
+                                                          {
+                                                              "node":  "Fetch Daily",
+                                                              "type":  "main",
+                                                              "index":  0
+                                                          }
+                                                      ]
+                                                  ]
+                                     },
+                        "Fetch Daily":  {
+                                            "main":  [
+                                                         [
+                                                             {
+                                                                 "node":  "Fetch Ticker",
+                                                                 "type":  "main",
+                                                                 "index":  0
+                                                             }
+                                                         ]
+                                                     ]
+                                        },
+                        "Fetch Ticker":  {
+                                             "main":  [
+                                                          [
+                                                              {
+                                                                  "node":  "Fetch OB",
+                                                                  "type":  "main",
+                                                                  "index":  0
+                                                              }
+                                                          ]
+                                                      ]
+                                         },
+                        "Fetch OB":  {
+                                         "main":  [
+                                                      [
+                                                          {
+                                                              "node":  "Fetch Trades",
+                                                              "type":  "main",
+                                                              "index":  0
+                                                          }
+                                                      ]
+                                                  ]
+                                     },
+                        "Fetch Trades":  {
+                                             "main":  [
+                                                          [
+                                                              {
+                                                                  "node":  "Fetch FnG",
+                                                                  "type":  "main",
+                                                                  "index":  0
+                                                              }
+                                                          ]
+                                                      ]
+                                         },
+                        "Fetch FnG":  {
+                                          "main":  [
+                                                       [
+                                                           {
+                                                               "node":  "Fetch CoinGecko",
+                                                               "type":  "main",
+                                                               "index":  0
+                                                           }
+                                                       ]
+                                                   ]
+                                      },
+                        "Fetch CoinGecko":  {
+                                                "main":  [
+                                                             [
+                                                                 {
+                                                                     "node":  "Fetch News",
+                                                                     "type":  "main",
+                                                                     "index":  0
+                                                                 }
+                                                             ]
+                                                         ]
+                                            },
+                        "Fetch News":  {
+                                           "main":  [
+                                                        [
+                                                            {
+                                                                "node":  "Sign HMAC",
+                                                                "type":  "main",
+                                                                "index":  0
+                                                            }
+                                                        ]
+                                                    ]
+                                       },
+                        "Sign HMAC":  {
+                                          "main":  [
+                                                       [
+                                                           {
+                                                               "node":  "Fetch Balance",
+                                                               "type":  "main",
+                                                               "index":  0
+                                                           }
+                                                       ]
+                                                   ]
+                                      },
+                        "Fetch Balance":  {
+                                              "main":  [
+                                                           [
+                                                               {
+                                                                   "node":  "MTF Analysis",
+                                                                   "type":  "main",
+                                                                   "index":  0
+                                                               }
+                                                           ]
+                                                       ]
+                                          },
+                        "MTF Analysis":  {
+                                             "main":  [
+                                                          [
+                                                              {
+                                                                  "node":  "News Sentiment",
+                                                                  "type":  "main",
+                                                                  "index":  0
+                                                              }
+                                                          ]
+                                                      ]
+                                         },
+                        "News Sentiment":  {
+                                               "main":  [
+                                                            [
+                                                                {
+                                                                    "node":  "Microstructure",
+                                                                    "type":  "main",
+                                                                    "index":  0
+                                                                }
+                                                            ]
+                                                        ]
+                                           },
+                        "Microstructure":  {
+                                               "main":  [
+                                                            [
+                                                                {
+                                                                    "node":  "Pattern Recognition",
+                                                                    "type":  "main",
+                                                                    "index":  0
+                                                                }
+                                                            ]
+                                                        ]
+                                           },
+                        "Pattern Recognition":  {
+                                                    "main":  [
+                                                                 [
+                                                                     {
+                                                                         "node":  "Regime Detection",
+                                                                         "type":  "main",
+                                                                         "index":  0
+                                                                     }
+                                                                 ]
+                                                             ]
+                                                },
+                        "Regime Detection":  {
+                                                 "main":  [
+                                                              [
+                                                                  {
+                                                                      "node":  "Psychology Engine",
+                                                                      "type":  "main",
+                                                                      "index":  0
+                                                                  }
+                                                              ]
+                                                          ]
+                                             },
+                        "Psychology Engine":  {
+                                                  "main":  [
+                                                               [
+                                                                   {
+                                                                       "node":  "Prediction Engine",
+                                                                       "type":  "main",
+                                                                       "index":  0
+                                                                   }
+                                                               ]
+                                                           ]
+                                              },
+                        "Prediction Engine":  {
+                                                  "main":  [
+                                                               [
+                                                                   {
+                                                                       "node":  "Strategy Scoring",
+                                                                       "type":  "main",
+                                                                       "index":  0
+                                                                   }
+                                                               ]
+                                                           ]
+                                              },
+                        "Strategy Scoring":  {
+                                                 "main":  [
+                                                              [
+                                                                  {
+                                                                      "node":  "Risk Engine",
+                                                                      "type":  "main",
+                                                                      "index":  0
+                                                                  }
+                                                              ]
+                                                          ]
+                                             },
+                        "Risk Engine":  {
+                                            "main":  [
+                                                         [
+                                                             {
+                                                                 "node":  "Decision Gate",
+                                                                 "type":  "main",
+                                                                 "index":  0
+                                                             }
+                                                         ]
+                                                     ]
+                                        },
+                        "Decision Gate":  {
+                                              "main":  [
+                                                           [
+                                                               {
+                                                                   "node":  "Claude AI Primary",
+                                                                   "type":  "main",
+                                                                   "index":  0
+                                                               }
+                                                           ]
+                                                       ]
+                                          },
+                        "Claude AI Primary":  {
+                                                  "main":  [
+                                                               [
+                                                                   {
+                                                                       "node":  "DeepSeek AI Analysis",
+                                                                       "type":  "main",
+                                                                       "index":  0
+                                                                   }
+                                                               ]
+                                                           ]
+                                              },
+                        "DeepSeek AI Analysis":  {
+                                                     "main":  [
+                                                                  [
+                                                                      {
+                                                                          "node":  "Format Alert",
+                                                                          "type":  "main",
+                                                                          "index":  0
+                                                                      }
+                                                                  ]
+                                                              ]
+                                                 },
+                        "Format Alert":  {
+                                             "main":  [
+                                                          [
+                                                              {
+                                                                  "node":  "Route",
+                                                                  "type":  "main",
+                                                                  "index":  0
+                                                              }
+                                                          ]
+                                                      ]
+                                         },
+                        "Route":  {
+                                      "main":  [
+                                                   [
+                                                       {
+                                                           "node":  "Telegram Alert",
+                                                           "type":  "main",
+                                                           "index":  0
+                                                       }
+                                                   ],
+                                                   [
+                                                       {
+                                                           "node":  "Silent Log",
+                                                           "type":  "main",
+                                                           "index":  0
+                                                       }
+                                                   ]
+                                               ]
+                                  },
+                        "Telegram Alert":  {
+                                               "main":  [
+                                                            [
+                                                                {
+                                                                    "node":  "Write Obsidian Note",
+                                                                    "type":  "main",
+                                                                    "index":  0
+                                                                }
+                                                            ]
+                                                        ]
+                                           }
+                    },
+    "settings":  {
+                     "executionOrder":  "v1",
+                     "callerPolicy":  "workflowsFromSameOwner",
+                     "availableInMCP":  false
+                 },
+    "staticData":  null,
+    "meta":  null,
+    "pinData":  null,
+    "versionId":  "09b649e5-9235-4685-9144-aa35820f9923",
+    "activeVersionId":  null,
+    "versionCounter":  1,
+    "triggerCount":  0,
+    "shared":  [
+                   {
+                       "updatedAt":  "2026-04-18T07:19:08.365Z",
+                       "createdAt":  "2026-04-18T07:19:08.365Z",
+                       "role":  "workflow:owner",
+                       "workflowId":  "qRrFtlmJygHVOYmm",
+                       "projectId":  "Lrgt6JR85OZiVLcX",
+                       "project":  {
+                                       "updatedAt":  "2026-03-31T09:07:31.366Z",
+                                       "createdAt":  "2026-03-31T08:57:43.789Z",
+                                       "id":  "Lrgt6JR85OZiVLcX",
+                                       "name":  "gelson mascarenhas \u003cgelson_m@hotmail.com\u003e",
+                                       "type":  "personal",
+                                       "icon":  null,
+                                       "description":  null,
+                                       "creatorId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                   }
+                   }
+               ],
+    "tags":  [
+
+             ],
+    "activeVersion":  null
+}

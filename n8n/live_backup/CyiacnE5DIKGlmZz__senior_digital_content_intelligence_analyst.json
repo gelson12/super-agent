@@ -1,0 +1,826 @@
+﻿{
+    "updatedAt":  "2026-04-18T06:51:31.851Z",
+    "createdAt":  "2026-04-18T03:58:02.629Z",
+    "id":  "CyiacnE5DIKGlmZz",
+    "name":  "Senior Digital Content Intelligence Analyst",
+    "description":  null,
+    "active":  true,
+    "isArchived":  false,
+    "nodes":  [
+                  {
+                      "id":  "tg-trigger",
+                      "name":  "Telegram: Message Received",
+                      "type":  "n8n-nodes-base.telegramTrigger",
+                      "typeVersion":  1.1,
+                      "position":  [
+                                       240,
+                                       160
+                                   ],
+                      "webhookId":  "acia-telegram",
+                      "credentials":  {
+                                          "telegramApi":  {
+                                                              "id":  "SYXQZLJBjTuMbspG",
+                                                              "name":  "Telegram Content Analyst Bot"
+                                                          }
+                                      },
+                      "parameters":  {
+                                         "updates":  [
+                                                         "message"
+                                                     ],
+                                         "additionalFields":  {
+
+                                                              }
+                                     }
+                  },
+                  {
+                      "id":  "gmail-trigger",
+                      "name":  "Gmail: Email Received",
+                      "type":  "n8n-nodes-base.gmailTrigger",
+                      "typeVersion":  1,
+                      "position":  [
+                                       240,
+                                       380
+                                   ],
+                      "credentials":  {
+                                          "gmailOAuth2":  {
+                                                              "id":  "DL39Lr8wENjvFtij",
+                                                              "name":  "Gmail account"
+                                                          }
+                                      },
+                      "parameters":  {
+                                         "pollTimes":  {
+                                                           "item":  [
+                                                                        {
+                                                                            "mode":  "everyMinute"
+                                                                        }
+                                                                    ]
+                                                       },
+                                         "simple":  true,
+                                         "filters":  {
+
+                                                     },
+                                         "options":  {
+
+                                                     }
+                                     }
+                  },
+                  {
+                      "id":  "wa-receive",
+                      "name":  "WhatsApp: Message Received",
+                      "type":  "n8n-nodes-base.webhook",
+                      "typeVersion":  2,
+                      "position":  [
+                                       240,
+                                       600
+                                   ],
+                      "webhookId":  "acia-whatsapp-post",
+                      "parameters":  {
+                                         "httpMethod":  "POST",
+                                         "path":  "whatsapp-analyst",
+                                         "responseMode":  "onReceived",
+                                         "options":  {
+
+                                                     }
+                                     }
+                  },
+                  {
+                      "id":  "wa-verify",
+                      "name":  "WhatsApp: Verify Webhook",
+                      "type":  "n8n-nodes-base.webhook",
+                      "typeVersion":  2,
+                      "position":  [
+                                       240,
+                                       820
+                                   ],
+                      "webhookId":  "acia-whatsapp-get",
+                      "parameters":  {
+                                         "httpMethod":  "GET",
+                                         "path":  "whatsapp-analyst",
+                                         "responseMode":  "responseNode",
+                                         "options":  {
+
+                                                     }
+                                     }
+                  },
+                  {
+                      "id":  "wa-verify-code",
+                      "name":  "Extract Challenge",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       500,
+                                       820
+                                   ],
+                      "parameters":  {
+                                         "mode":  "runOnceForEachItem",
+                                         "jsCode":  "\nconst q = $input.item.json.query || {};\nreturn { challenge: q[\"hub.challenge\"] || \"OK\", mode: q[\"hub.mode\"] || \"\" };\n"
+                                     }
+                  },
+                  {
+                      "id":  "wa-verify-respond",
+                      "name":  "Respond with Challenge",
+                      "type":  "n8n-nodes-base.respondToWebhook",
+                      "typeVersion":  1.1,
+                      "position":  [
+                                       760,
+                                       820
+                                   ],
+                      "parameters":  {
+                                         "options":  {
+                                                         "responseCode":  200,
+                                                         "responseData":  "={{ $json.challenge }}"
+                                                     }
+                                     }
+                  },
+                  {
+                      "id":  "normalize",
+                      "name":  "Detect Source \u0026 Content Type",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       520,
+                                       380
+                                   ],
+                      "parameters":  {
+                                         "mode":  "runOnceForEachItem",
+                                         "jsCode":  "\nconst item = $input.item.json;\nlet source = \"unknown\", text = \"\", files = [], user = \"unknown\", chatId = null;\n\nif (item.message) {\n  source = \"telegram\";\n  const m = item.message;\n  user = m.from?.username || m.from?.first_name || \"TelegramUser\";\n  chatId = m.chat?.id || m.from?.id;\n  text = m.text || m.caption || \"\";\n  if (m.document) files.push({type:\"document\", fileId:m.document.file_id, mimeType:m.document.mime_type||\"\", name:m.document.file_name||\"\"});\n  if (m.photo)    files.push({type:\"image\",    fileId:m.photo.slice(-1)[0].file_id, mimeType:\"image/jpeg\"});\n  if (m.video)    files.push({type:\"video\",    fileId:m.video.file_id,  mimeType:\"video/mp4\"});\n  if (m.audio)    files.push({type:\"audio\",    fileId:m.audio.file_id,  mimeType:\"audio/mpeg\"});\n  if (m.voice)    files.push({type:\"audio\",    fileId:m.voice.file_id,  mimeType:\"audio/ogg\"});\n}\nelse if (item.id \u0026\u0026 item.threadId) {\n  source = \"gmail\";\n  user = item.from || \"EmailSender\";\n  text = item.text || item.snippet || item.subject || \"\";\n  if (item.attachments)\n    item.attachments.forEach(a =\u003e files.push({type:\"attachment\", name:a.filename||\"\", mimeType:a.mimeType||\"\", data:a.data||\"\"}));\n}\nelse if (item.entry || item.object === \"whatsapp_business_account\" || item.body?.entry) {\n  source = \"whatsapp\";\n  const raw = item.body || item;\n  const msgs = ((raw.entry||[])[0]?.changes||[])[0]?.value?.messages||[];\n  const m = msgs[0]||{};\n  user = m.from || \"WhatsAppUser\";\n  chatId = m.from;\n  if (m.type===\"text\")     text = m.text?.body||\"\";\n  if (m.type===\"image\")    files.push({type:\"image\",    mediaId:m.image?.id,    mimeType:\"image/jpeg\"});\n  if (m.type===\"document\") files.push({type:\"document\", mediaId:m.document?.id, mimeType:m.document?.mime_type||\"\", name:m.document?.filename||\"\"});\n  if (m.type===\"video\")    files.push({type:\"video\",    mediaId:m.video?.id,    mimeType:\"video/mp4\"});\n  if (m.type===\"audio\")    files.push({type:\"audio\",    mediaId:m.audio?.id,    mimeType:\"audio/ogg\"});\n}\n\n// Analysis mode detection: @finance @technical @simple @action @marketing @summary\nlet mode = \"standard\";\nconst modeRx = text.match(/@(finance|technical|simple|action|creative|marketing|legal|health|summary)\\b/i);\nif (modeRx) { mode = modeRx[1].toLowerCase(); text = text.replace(modeRx[0],\"\").trim(); }\n\nconst ytMatch = text.match(/(youtube\\.com\\/watch\\?v=|youtu\\.be\\/)([\\w-]+)/);\nlet contentType = \"text\";\nif (ytMatch) { contentType = \"youtube\"; }\nelse if (files.length \u003e 0) {\n  const f = files[0];\n  if (f.mimeType.includes(\"pdf\")||(f.name||\"\").endsWith(\".pdf\")) contentType=\"pdf\";\n  else if (f.mimeType.includes(\"image\"))  contentType=\"image\";\n  else if (f.mimeType.includes(\"video\"))  contentType=\"video\";\n  else if (f.mimeType.includes(\"audio\"))  contentType=\"audio\";\n  else contentType=\"document\";\n}\n\nreturn { source, user, chatId, text:text.trim(), files, contentType,\n         youtubeVideoId:ytMatch?.[2]||null, mode, timestamp:new Date().toISOString() };\n"
+                                     }
+                  },
+                  {
+                      "id":  "extract",
+                      "name":  "Download Files \u0026 Extract Content",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       800,
+                                       380
+                                   ],
+                      "parameters":  {
+                                         "mode":  "runOnceForEachItem",
+                                         "jsCode":  "\nconst d = $input.item.json;\nconst SELF    = \"https://inspiring-cat-production.up.railway.app\";\nconst TG_TOK  = \"8514342294:AAEey6kBHXav5ciipaSL1fZ7P8YSHy_pv64\";\n\n// ?? Send \"Analysing.\" message to Telegram for instant feedback ????????????????\nif (d.source === \"telegram\" \u0026\u0026 d.chatId) {\n  try {\n    await this.helpers.httpRequest({\n      method:\"POST\", url:`https://api.telegram.org/bot${TG_TOK}/sendMessage`,\n      headers:{\"Content-Type\":\"application/json\"},\n      body:{chat_id:d.chatId, text:`? Analysing your ${d.contentType} content, please wait.`},\n      timeout:8000\n    });\n  } catch(e) {}\n}\n\nasync function shellTask(cmd, timeoutMs=240000) {\n  const t = await this.helpers.httpRequest({\n    method:\"POST\", url:SELF+\"/tasks\",\n    headers:{\"Content-Type\":\"application/json\"},\n    body:{type:\"shell\", payload:{command:cmd}}, timeout:20000\n  });\n  const deadline = Date.now() + timeoutMs;\n  while (Date.now() \u003c deadline) {\n    await new Promise(r=\u003esetTimeout(r,4000));\n    const s = await this.helpers.httpRequest({method:\"GET\", url:`${SELF}/tasks/${s?.id||t.id}`, timeout:10000});\n    if (s.status===\"done\") return (s.output||s.result||\"\").trim();\n    if (s.status===\"error\") return \"ERROR:\"+s.error;\n  }\n  return \"TIMEOUT\";\n}\n\n// ?? Telegram file download ?????????????????????????????????????????????????????\nif (d.source === \"telegram\" \u0026\u0026 d.files.length \u003e 0 \u0026\u0026 d.files[0].fileId \u0026\u0026 !d.files[0].data) {\n  try {\n    const fi = await this.helpers.httpRequest({\n      method:\"GET\",\n      url:`https://api.telegram.org/bot${TG_TOK}/getFile?file_id=${d.files[0].fileId}`,\n      timeout:10000\n    });\n    const fp = fi.result?.file_path;\n    if (fp) {\n      const cmd = `python3 -c \"import urllib.request,base64; d=urllib.request.urlopen(\u0027https://api.telegram.org/file/bot${TG_TOK}/${fp}\u0027).read(); print(base64.b64encode(d).decode())\"`;\n      const b64 = await shellTask(cmd, 30000);\n      if (b64 \u0026\u0026 !b64.startsWith(\"ERROR\") \u0026\u0026 !b64.startsWith(\"TIMEOUT\") \u0026\u0026 b64.length \u003e 50) {\n        d.files[0].data = b64;\n        if (fp.endsWith(\".pdf\")) d.files[0].mimeType = \"application/pdf\";\n        if (fp.endsWith(\".png\")) d.files[0].mimeType = \"image/png\";\n      }\n    }\n  } catch(e) {}\n}\n\n// ?? YouTube: check PG cache (24h dedup) ????????????????????????????????????????\nlet cachedAnalysis = null;\nif (d.contentType === \"youtube\" \u0026\u0026 d.youtubeVideoId) {\n  try {\n    const cacheCmd = `python3 -c \"\nimport os, psycopg2\nconn=psycopg2.connect(os.environ[\u0027DATABASE_URL\u0027].replace(\u0027postgres://\u0027,\u0027postgresql://\u0027))\ncur=conn.cursor()\ncur.execute(\u0027\u0027\u0027CREATE TABLE IF NOT EXISTS content_analyst_history(\n  id BIGSERIAL PRIMARY KEY,content_type TEXT,source TEXT,user_id TEXT,\n  label TEXT,youtube_id TEXT,analysis TEXT,mode TEXT,created_at TIMESTAMPTZ DEFAULT NOW())\u0027\u0027\u0027)\nconn.commit()\ncur.execute(\u0027\u0027\u0027SELECT analysis FROM content_analyst_history\n  WHERE youtube_id=%s AND created_at\u003eNOW()-INTERVAL \u002724 hours\u0027\n  ORDER BY created_at DESC LIMIT 1\u0027\u0027\u0027, (\u0027${d.youtubeVideoId}\u0027,))\nrow=cur.fetchone()\nprint(row[0][:8000] if row else \u0027NOCACHE\u0027)\nconn.close()\n\"`;\n    const res = await shellTask(cacheCmd, 20000);\n    if (res \u0026\u0026 res !== \"NOCACHE\" \u0026\u0026 !res.startsWith(\"ERROR\") \u0026\u0026 !res.startsWith(\"TIMEOUT\")) {\n      cachedAnalysis = res;\n    }\n  } catch(e) {}\n}\n\n// ?? Content extraction ?????????????????????????????????????????????????????????\nlet extracted = d.text || \"(no content)\";\nlet label = \"Text Message\";\n\nif (cachedAnalysis) {\n  // Cache hit - skip extraction\n  label = `YouTube (${d.youtubeVideoId}) ?? cached`;\n}\nelse if (d.contentType === \"youtube\" \u0026\u0026 d.youtubeVideoId) {\n  label = `YouTube (${d.youtubeVideoId})`;\n  const vid = d.youtubeVideoId;\n  const cmd = `python3 -c \"\nvid=\u0027${vid}\u0027\ntry:\n  from youtube_transcript_api import YouTubeTranscriptApi\n  t=YouTubeTranscriptApi.get_transcript(vid,languages=[\u0027en\u0027,\u0027pt\u0027,\u0027es\u0027,\u0027fr\u0027,\u0027de\u0027])\n  print(\u0027 \u0027.join([x[\u0027text\u0027] for x in t])[:6000])\nexcept Exception as e:\n  import subprocess,json\n  r=subprocess.run([\u0027yt-dlp\u0027,\u0027--dump-json\u0027,\u0027--no-download\u0027,\u0027https://youtube.com/watch?v=\u0027+vid],capture_output=True,text=True,timeout=30)\n  if r.returncode==0:\n    info=json.loads(r.stdout)\n    print(\u0027TITLE: \u0027+info.get(\u0027title\u0027,\u0027\u0027)+\u0027\\\\nCHANNEL: \u0027+info.get(\u0027channel\u0027,\u0027\u0027)+\u0027\\\\nDESC: \u0027+info.get(\u0027description\u0027,\u0027\u0027)[:3000])\n  else: print(\u0027Extraction failed: \u0027+str(e))\n\"`;\n  extracted = await shellTask(cmd, 120000);\n}\nelse if (d.contentType === \"pdf\" \u0026\u0026 d.files.length \u003e 0 \u0026\u0026 d.files[0].data) {\n  label = `PDF - ${d.files[0].name||\"document.pdf\"}`;\n  const b64 = d.files[0].data.replace(/\\s/g,\"\");\n  const cmd = `python3 -c \"\nimport base64,io\ntry:\n  from pypdf import PdfReader\n  r=PdfReader(io.BytesIO(base64.b64decode(\u0027${b64}\u0027)))\n  print(\u0027\\\\n\u0027.join([p.extract_text() or \u0027\u0027 for p in r.pages[:20]])[:6000])\nexcept Exception as e:\n  print(\u0027PDF extraction error: \u0027+str(e))\n\"`;\n  extracted = await shellTask(cmd, 60000);\n}\nelse if (d.contentType === \"image\") {\n  label = \"Image\";\n  extracted = \"__IMAGE__\";\n}\nelse if ((d.contentType===\"video\"||d.contentType===\"audio\") \u0026\u0026 d.files.length\u003e0 \u0026\u0026 d.files[0].data) {\n  const ext = d.contentType===\"audio\" ? \".ogg\" : \".mp4\";\n  label = d.contentType===\"audio\" ? \"Audio / Voice Note\" : \"Video File\";\n  const fileB64 = d.files[0].data.replace(/\\s/g,\"\");\n  const cmd = `python3 -c \"\nimport base64,tempfile,os,subprocess\ndata=base64.b64decode(\u0027${fileB64}\u0027)\nf=tempfile.NamedTemporaryFile(suffix=\u0027${ext}\u0027,delete=False)\nf.write(data); f.close()\nr=subprocess.run([\u0027whisper\u0027,f.name,\u0027--output_format\u0027,\u0027txt\u0027,\u0027--output_dir\u0027,\u0027/tmp\u0027,\u0027--language\u0027,\u0027auto\u0027],\n  capture_output=True,text=True,timeout=300)\ntp=f.name.replace(\u0027${ext}\u0027,\u0027.txt\u0027)\nif os.path.exists(tp): print(open(tp).read()[:6000]); os.unlink(tp)\nelse: print(\u0027Whisper unavailable. stdout:\u0027+r.stdout[:2000])\nos.unlink(f.name)\n\"`;\n  extracted = await shellTask(cmd, 240000);\n}\nelse {\n  label = d.text ? \"Text Message\" : \"Message\";\n  extracted = d.text || \"(empty message)\";\n}\n\nreturn { ...d, extracted, label, cachedAnalysis };\n"
+                                     }
+                  },
+                  {
+                      "id":  "analyze",
+                      "name":  "Claude: Deep Analysis",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       1100,
+                                       380
+                                   ],
+                      "parameters":  {
+                                         "mode":  "runOnceForEachItem",
+                                         "jsCode":  "\nconst d = $input.item.json;\nconst ANTHR = \"***REDACTED_ANTHROPIC_API_KEY***\";\n\nif (d.cachedAnalysis) {\n  return { ...d, analysis:d.cachedAnalysis, fromCache:true };\n}\n\nconst MODES = {\n  finance:   \"Focus exclusively on financial data, investment opportunities/risks, market implications, ROI potential, and economic indicators. Rate financial relevance 1-10.\",\n  technical: \"Focus on technical architecture, code quality, algorithms, scalability, and security. Use precise technical terminology.\",\n  simple:    \"Explain everything like the reader is a curious 10-year-old. Use plain words, short sentences, and fun analogies. Zero jargon.\",\n  action:    \"ONLY output action items grouped as: IMMEDIATE (today) / SHORT-TERM (this week) / LONG-TERM (this month+). Skip all background narrative.\",\n  creative:  \"Focus on creative/aesthetic elements: storytelling craft, originality, emotional impact, visual or narrative design choices.\",\n  marketing: \"Focus on: target audience, value proposition, messaging effectiveness, brand positioning, and growth/conversion potential.\",\n  legal:     \"Identify legal risks, compliance issues, regulatory requirements, and liability concerns. Note: this is not legal advice.\",\n  health:    \"Focus on health/scientific accuracy, evidence quality, medical claims, lifestyle impact, and wellness takeaways.\",\n  summary:   \"Write ONLY a concise executive summary as exactly 5 bullet points. Nothing else.\"\n};\n\nconst modeNote = MODES[d.mode] ? `\\n? ANALYSIS MODE: ${d.mode.toUpperCase()} - ${MODES[d.mode]}\\n` : \"\";\nconst isImg = d.contentType===\"image\" \u0026\u0026 d.files?.[0]?.data;\n\nlet userContent;\nif (isImg) {\n  userContent = [\n    {type:\"image\", source:{type:\"base64\", media_type:d.files[0].mimeType||\"image/jpeg\", data:d.files[0].data}},\n    {type:\"text\", text:`You are an AI Content Intelligence Analyst at Bridge Digital Solution.\\n${modeNote}\\nAnalyse this image professionally:\\n## 1. Executive Summary\\n## 2. Key Insights\\n## 3. Detailed Analysis\\n## 4. Notable Elements\\n## 5. Action Items \u0026 Recommendations\\n## 6. Quality Assessment (1-10)\\n\\nBe specific and insightful.`}\n  ];\n} else {\n  userContent = `You are an AI Content Intelligence Analyst at Bridge Digital Solution.\\n\\nContent: ${d.label} | Source: ${d.source} | User: ${d.user}${modeNote}\\n---\\n${d.extracted}\\n---\\n\\nWrite a comprehensive analysis report:\\n## 1. Executive Summary\\n## 2. Key Insights\\n## 3. Detailed Analysis\\n## 4. Notable Quotes or Examples\\n## 5. Action Items \u0026 Recommendations\\n## 6. Quality Assessment (1-10 with justification)\\n\\nBe specific, analytical, and insightful. Use markdown.`;\n}\n\nconst resp = await this.helpers.httpRequest({\n  method:\"POST\", url:\"https://api.anthropic.com/v1/messages\",\n  headers:{\"x-api-key\":ANTHR,\"anthropic-version\":\"2023-06-01\",\"content-type\":\"application/json\"},\n  body:{model:\"claude-opus-4-7\", max_tokens:4096, messages:[{role:\"user\",content:userContent}]},\n  timeout:120000\n});\n\nreturn { ...d, analysis:resp.content?.[0]?.text||\"Analysis unavailable\", fromCache:false };\n"
+                                     }
+                  },
+                  {
+                      "id":  "html-report",
+                      "name":  "Build Branded HTML Report",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       1380,
+                                       380
+                                   ],
+                      "parameters":  {
+                                         "mode":  "runOnceForEachItem",
+                                         "jsCode":  "\nconst d = $input.item.json;\nconst now = new Date().toLocaleString(\"en-GB\",{timeZone:\"Europe/London\",dateStyle:\"full\",timeStyle:\"short\"});\nconst logo = \"https://bridge-digital-solution.com/logo.png\";\nconst srcColor = {telegram:\"#2CA5E0\",gmail:\"#EA4335\",whatsapp:\"#25D366\"}[d.source]||\"#555\";\nconst icon = {youtube:\"?\",pdf:\"??\",image:\"???\",video:\"??\",text:\"??\",audio:\"??\",document:\"??\"}[d.contentType]||\"??\";\nconst modeTag = d.mode\u0026\u0026d.mode!==\"standard\" ? `\u003cspan class=\"badge\" style=\"background:#6c63ff\"\u003e@${d.mode}\u003c/span\u003e` : \"\";\nconst cacheTag = d.fromCache ? `\u003cspan class=\"badge\" style=\"background:#888\"\u003e?? cached\u003c/span\u003e` : \"\";\n\nfunction md(t) {\n  if (!t) return \"\";\n  return t\n    .replace(/\u0026/g,\"\u0026amp;\").replace(/\u003c/g,\"\u0026lt;\").replace(/\u003e/g,\"\u0026gt;\")\n    .replace(/\\*\\*([^*\\n]+)\\*\\*/g,\"\u003cstrong\u003e$1\u003c/strong\u003e\")\n    .replace(/`([^`]+)`/g,\"\u003ccode\u003e$1\u003c/code\u003e\")\n    .replace(/^## (.+)$/gm,\u0027\u003ch2 class=\"sh\"\u003e$1\u003c/h2\u003e\u0027)\n    .replace(/^### (.+)$/gm,\"\u003ch3\u003e$1\u003c/h3\u003e\")\n    .replace(/^[-.]\\s(.+)$/gm,\"\u003cli\u003e$1\u003c/li\u003e\")\n    .replace(/^(\\d+)\\.\\s(.+)$/gm,\"\u003cli\u003e$2\u003c/li\u003e\")\n    .split(\"\\n\\n\").map(p =\u003e p.startsWith(\"\u003c\") ? p : `\u003cp\u003e${p.replace(/\\n/g,\"\u003cbr\u003e\")}\u003c/p\u003e`).join(\"\\n\");\n}\n\nconst subject = `?? ${d.label} - ${d.source} analysis � ${d.timestamp.substring(0,10)}`;\n\nconst html = `\u003c!DOCTYPE html\u003e\u003chtml lang=\"en\"\u003e\u003chead\u003e\u003cmeta charset=\"UTF-8\"\u003e\n\u003cmeta name=\"viewport\" content=\"width=device-width,initial-scale=1.0\"\u003e\n\u003ctitle\u003eContent Intelligence Report\u003c/title\u003e\n\u003cstyle\u003e\n*{box-sizing:border-box;margin:0;padding:0}\nbody{font-family:\u0027Segoe UI\u0027,Arial,sans-serif;background:#f0f2f7;color:#1a1a2e}\n.w{max-width:820px;margin:0 auto;background:#fff;box-shadow:0 4px 28px rgba(0,0,0,.12)}\n.hdr{background:linear-gradient(135deg,#1a1a2e 0%,#16213e 55%,#0f3460 100%);color:#fff;padding:44px 40px;text-align:center}\n.hdr img{height:54px;margin-bottom:16px;object-fit:contain}\n.hdr h1{font-size:27px;font-weight:700;margin-bottom:6px;letter-spacing:-.3px}\n.hdr p{opacity:.65;font-size:12px;letter-spacing:.9px;text-transform:uppercase}\n.meta{background:#f8f9ff;border-bottom:1px solid #e4e8f4;padding:14px 40px;display:flex;flex-wrap:wrap;gap:16px;align-items:center}\n.mi{font-size:12.5px;color:#555;display:flex;align-items:center;gap:6px}\n.badge{padding:2px 9px;border-radius:10px;font-size:11px;font-weight:700;color:#fff;text-transform:uppercase;letter-spacing:.4px}\n.body{padding:38px 40px}\n.sh{color:#0f3460;font-size:16px;font-weight:700;margin:28px 0 10px;padding-bottom:7px;border-bottom:2px solid #e8ecf8}\nh3{color:#333;font-size:14px;font-weight:600;margin:14px 0 6px}\np{margin:10px 0;color:#444;font-size:14px;line-height:1.78}\nul,ol{margin:10px 0 10px 22px}\nli{margin:7px 0;font-size:14px;color:#444;line-height:1.65}\nstrong{color:#1a1a2e;font-weight:700}\ncode{background:#f4f6fb;padding:2px 6px;border-radius:4px;font-family:monospace;font-size:12px}\n.div{height:3px;background:linear-gradient(90deg,#0f3460,#e94560,#0f3460);margin:26px 0;border-radius:2px}\n.ftr{background:#1a1a2e;color:rgba(255,255,255,.5);text-align:center;padding:20px 40px;font-size:11.5px;line-height:1.7}\n.ftr a{color:rgba(255,255,255,.75);text-decoration:none}\n\u003c/style\u003e\u003c/head\u003e\u003cbody\u003e\u003cdiv class=\"w\"\u003e\n\u003cdiv class=\"hdr\"\u003e\n  \u003cimg src=\"${logo}\" alt=\"Bridge Digital\" onerror=\"this.style.display=\u0027none\u0027\"\u003e\n  \u003ch1\u003eContent Intelligence Report\u003c/h1\u003e\n  \u003cp\u003eAI Content Intelligence Analyst � Bridge Digital Solution\u003c/p\u003e\n\u003c/div\u003e\n\u003cdiv class=\"meta\"\u003e\n  \u003cdiv class=\"mi\"\u003e?? \u003cstrong\u003e${now}\u003c/strong\u003e\u003c/div\u003e\n  \u003cdiv class=\"mi\"\u003e?? \u003cspan class=\"badge\" style=\"background:${srcColor}\"\u003e${d.source}\u003c/span\u003e\u003c/div\u003e\n  \u003cdiv class=\"mi\"\u003e${icon} \u003cstrong\u003e${d.label}\u003c/strong\u003e\u003c/div\u003e\n  \u003cdiv class=\"mi\"\u003e?? \u003cstrong\u003e${d.user}\u003c/strong\u003e\u003c/div\u003e\n  ${modeTag}${cacheTag}\n\u003c/div\u003e\n\u003cdiv class=\"body\"\u003e\n  \u003cdiv class=\"div\"\u003e\u003c/div\u003e\n  ${md(d.analysis)}\n  \u003cdiv class=\"div\"\u003e\u003c/div\u003e\n\u003c/div\u003e\n\u003cdiv class=\"ftr\"\u003e\n  Generated by \u003cstrong\u003eAI Content Intelligence Analyst\u003c/strong\u003e\u003cbr\u003e\n  \u003ca href=\"https://bridge-digital-solution.com\"\u003eBridge Digital Solution\u003c/a\u003e \u0026middot; ${now}\u003cbr\u003e\n  \u003csmall\u003eTip: prefix your message with @finance @technical @simple @action @marketing @summary to change analysis focus\u003c/small\u003e\n\u003c/div\u003e\n\u003c/div\u003e\u003c/body\u003e\u003c/html\u003e`;\n\nreturn { ...d, html, subject };\n"
+                                     }
+                  },
+                  {
+                      "id":  "gen-pdf",
+                      "name":  "Render PDF Report",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       1660,
+                                       380
+                                   ],
+                      "parameters":  {
+                                         "mode":  "runOnceForEachItem",
+                                         "jsCode":  "\nconst d = $input.item.json;\nconst SELF = \"https://inspiring-cat-production.up.railway.app\";\nlet pdfB64 = \"\";\ntry {\n  const htmlB64 = Buffer.from(d.html).toString(\"base64\");\n  const cmd = `python3 -c \"\nimport base64,subprocess,tempfile,os\nhtml=base64.b64decode(\u0027${htmlB64}\u0027).decode(\u0027utf-8\u0027,\u0027replace\u0027)\nf=tempfile.NamedTemporaryFile(suffix=\u0027.html\u0027,mode=\u0027w\u0027,delete=False,encoding=\u0027utf-8\u0027)\nf.write(html); f.close()\np=f.name.replace(\u0027.html\u0027,\u0027.pdf\u0027)\nfor exe in [\u0027chromium\u0027,\u0027chromium-browser\u0027,\u0027google-chrome\u0027,\u0027google-chrome-stable\u0027]:\n  try:\n    r=subprocess.run([exe,\u0027--headless\u0027,\u0027--no-sandbox\u0027,\u0027--disable-gpu\u0027,\n      \u0027--disable-dev-shm-usage\u0027,\u0027--run-all-compositor-stages-before-draw\u0027,\n      f\u0027--print-to-pdf={p}\u0027,f\u0027file://{f.name}\u0027],capture_output=True,timeout=60)\n    if os.path.exists(p): break\n  except: pass\nif os.path.exists(p):\n  with open(p,\u0027rb\u0027) as pf: print(base64.b64encode(pf.read()).decode())\n  os.unlink(p)\nelse: print(\u0027PDF_FAILED\u0027)\nos.unlink(f.name)\n\"`;\n  const t = await this.helpers.httpRequest({\n    method:\"POST\", url:SELF+\"/tasks\",\n    headers:{\"Content-Type\":\"application/json\"},\n    body:{type:\"shell\",payload:{command:cmd}}, timeout:20000\n  });\n  for (let i=0; i\u003c40; i++) {\n    await new Promise(r=\u003esetTimeout(r,4000));\n    const s = await this.helpers.httpRequest({method:\"GET\",url:`${SELF}/tasks/${t.id}`,timeout:10000});\n    if (s.status===\"done\") { pdfB64=(s.output||\"\").trim(); break; }\n    if (s.status===\"error\") break;\n  }\n} catch(e) {}\nif (!pdfB64 || pdfB64.startsWith(\"PDF_FAILED\") || pdfB64.length\u003c200) pdfB64=\"\";\nreturn { ...d, pdfB64 };\n"
+                                     }
+                  },
+                  {
+                      "id":  "send-email",
+                      "name":  "Email Report to Inbox",
+                      "type":  "n8n-nodes-base.gmail",
+                      "typeVersion":  2.1,
+                      "position":  [
+                                       1940,
+                                       200
+                                   ],
+                      "credentials":  {
+                                          "gmailOAuth2":  {
+                                                              "id":  "DL39Lr8wENjvFtij",
+                                                              "name":  "Gmail account"
+                                                          }
+                                      },
+                      "parameters":  {
+                                         "resource":  "message",
+                                         "operation":  "send",
+                                         "sendTo":  "bridge.digital.solution@gmail.com",
+                                         "subject":  "={{ $json.subject }}",
+                                         "emailType":  "html",
+                                         "message":  "={{ $json.html }}",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "webhookId":  "6993aeaf-e6ca-4bb9-97e2-987ee4fdbcab"
+                  },
+                  {
+                      "id":  "tg-reply",
+                      "name":  "Telegram: Send Summary to User",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       1940,
+                                       420
+                                   ],
+                      "parameters":  {
+                                         "mode":  "runOnceForEachItem",
+                                         "jsCode":  "\nconst d = $input.item.json;\nconst TG_TOK = \"8514342294:AAEey6kBHXav5ciipaSL1fZ7P8YSHy_pv64\";\n\nif (d.source === \"telegram\" \u0026\u0026 d.chatId) {\n  const lines = (d.analysis||\"\")\n    .split(\"\\n\")\n    .map(l=\u003el.trim())\n    .filter(l=\u003el.match(/^[-.]|^\\d+\\./) \u0026\u0026 l.length\u003e15)\n    .slice(0,4)\n    .map(l=\u003el.replace(/^[-.\\d.]+\\s*/,\"\").substring(0,130));\n\n  const bullets = lines.length\u003e0 ? lines.map(b=\u003e`. ${b}`).join(\"\\n\") : \"See full report in your email.\";\n  const cacheNote = d.fromCache ? \" ?? (from 24h cache)\" : \"\";\n  const msg = `? *Analysis Complete*${cacheNote}\\n\\n*${d.label}*\\n\\n${bullets}\\n\\n?? Full HTML report + PDF sent to email.`;\n\n  try {\n    await this.helpers.httpRequest({\n      method:\"POST\",\n      url:`https://api.telegram.org/bot${TG_TOK}/sendMessage`,\n      headers:{\"Content-Type\":\"application/json\"},\n      body:{chat_id:d.chatId, text:msg, parse_mode:\"Markdown\"},\n      timeout:10000\n    });\n  } catch(e) {}\n}\nreturn d;\n"
+                                     }
+                  },
+                  {
+                      "id":  "save-history",
+                      "name":  "Save Analysis to History",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       1940,
+                                       640
+                                   ],
+                      "parameters":  {
+                                         "mode":  "runOnceForEachItem",
+                                         "jsCode":  "\nconst d = $input.item.json;\nconst SELF = \"https://inspiring-cat-production.up.railway.app\";\n\nif (d.fromCache) return d;\n\ntry {\n  const safeAnalysis = (d.analysis||\"\").substring(0,10000).replace(/\\\\/g,\"\\\\\\\\\").replace(/\u0027/g,\"\\\\\u0027\").replace(/\\n/g,\"\\\\n\");\n  const cmd = `python3 -c \"\nimport os,psycopg2\nconn=psycopg2.connect(os.environ[\u0027DATABASE_URL\u0027].replace(\u0027postgres://\u0027,\u0027postgresql://\u0027))\ncur=conn.cursor()\ncur.execute(\u0027\u0027\u0027CREATE TABLE IF NOT EXISTS content_analyst_history(\n  id BIGSERIAL PRIMARY KEY,content_type TEXT,source TEXT,user_id TEXT,\n  label TEXT,youtube_id TEXT,analysis TEXT,mode TEXT,created_at TIMESTAMPTZ DEFAULT NOW())\u0027\u0027\u0027)\nconn.commit()\ncur.execute(\u0027INSERT INTO content_analyst_history(content_type,source,user_id,label,youtube_id,analysis,mode) VALUES(%s,%s,%s,%s,%s,%s,%s)\u0027,\n  (\u0027${d.contentType}\u0027,\u0027${d.source}\u0027,\u0027${(d.user||\"\").replace(/\u0027/g,\"\\\\\u0027\")}\u0027,\u0027${(d.label||\"\").replace(/\u0027/g,\"\\\\\u0027\")}\u0027,\n   ${d.youtubeVideoId?\"\u0027\"+d.youtubeVideoId+\"\u0027\":\"NULL\"},\u0027${safeAnalysis}\u0027,\u0027${d.mode||\"standard\"}\u0027))\nconn.commit(); conn.close(); print(\u0027SAVED\u0027)\n\"`;\n  await this.helpers.httpRequest({\n    method:\"POST\", url:SELF+\"/tasks\",\n    headers:{\"Content-Type\":\"application/json\"},\n    body:{type:\"shell\",payload:{command:cmd}}, timeout:20000\n  });\n} catch(e) {}\nreturn d;\n"
+                                     }
+                  }
+              ],
+    "connections":  {
+                        "Telegram: Message Received":  {
+                                                           "main":  [
+                                                                        [
+                                                                            {
+                                                                                "node":  "Detect Source \u0026 Content Type",
+                                                                                "type":  "main",
+                                                                                "index":  0
+                                                                            }
+                                                                        ]
+                                                                    ]
+                                                       },
+                        "Gmail: Email Received":  {
+                                                      "main":  [
+                                                                   [
+                                                                       {
+                                                                           "node":  "Detect Source \u0026 Content Type",
+                                                                           "type":  "main",
+                                                                           "index":  0
+                                                                       }
+                                                                   ]
+                                                               ]
+                                                  },
+                        "WhatsApp: Message Received":  {
+                                                           "main":  [
+                                                                        [
+                                                                            {
+                                                                                "node":  "Detect Source \u0026 Content Type",
+                                                                                "type":  "main",
+                                                                                "index":  0
+                                                                            }
+                                                                        ]
+                                                                    ]
+                                                       },
+                        "WhatsApp: Verify Webhook":  {
+                                                         "main":  [
+                                                                      [
+                                                                          {
+                                                                              "node":  "Extract Challenge",
+                                                                              "type":  "main",
+                                                                              "index":  0
+                                                                          }
+                                                                      ]
+                                                                  ]
+                                                     },
+                        "Extract Challenge":  {
+                                                  "main":  [
+                                                               [
+                                                                   {
+                                                                       "node":  "Respond with Challenge",
+                                                                       "type":  "main",
+                                                                       "index":  0
+                                                                   }
+                                                               ]
+                                                           ]
+                                              },
+                        "Detect Source \u0026 Content Type":  {
+                                                                  "main":  [
+                                                                               [
+                                                                                   {
+                                                                                       "node":  "Download Files \u0026 Extract Content",
+                                                                                       "type":  "main",
+                                                                                       "index":  0
+                                                                                   }
+                                                                               ]
+                                                                           ]
+                                                              },
+                        "Download Files \u0026 Extract Content":  {
+                                                                      "main":  [
+                                                                                   [
+                                                                                       {
+                                                                                           "node":  "Claude: Deep Analysis",
+                                                                                           "type":  "main",
+                                                                                           "index":  0
+                                                                                       }
+                                                                                   ]
+                                                                               ]
+                                                                  },
+                        "Claude: Deep Analysis":  {
+                                                      "main":  [
+                                                                   [
+                                                                       {
+                                                                           "node":  "Build Branded HTML Report",
+                                                                           "type":  "main",
+                                                                           "index":  0
+                                                                       }
+                                                                   ]
+                                                               ]
+                                                  },
+                        "Build Branded HTML Report":  {
+                                                          "main":  [
+                                                                       [
+                                                                           {
+                                                                               "node":  "Render PDF Report",
+                                                                               "type":  "main",
+                                                                               "index":  0
+                                                                           }
+                                                                       ]
+                                                                   ]
+                                                      },
+                        "Render PDF Report":  {
+                                                  "main":  [
+                                                               [
+                                                                   {
+                                                                       "node":  "Email Report to Inbox",
+                                                                       "type":  "main",
+                                                                       "index":  0
+                                                                   },
+                                                                   {
+                                                                       "node":  "Telegram: Send Summary to User",
+                                                                       "type":  "main",
+                                                                       "index":  0
+                                                                   },
+                                                                   {
+                                                                       "node":  "Save Analysis to History",
+                                                                       "type":  "main",
+                                                                       "index":  0
+                                                                   }
+                                                               ]
+                                                           ]
+                                              }
+                    },
+    "settings":  {
+                     "executionOrder":  "v1",
+                     "saveManualExecutions":  true,
+                     "callerPolicy":  "workflowsFromSameOwner",
+                     "availableInMCP":  false
+                 },
+    "staticData":  {
+                       "node:Gmail: Email Received":  {
+                                                          "lastTimeChecked":  1776485197
+                                                      }
+                   },
+    "meta":  null,
+    "pinData":  null,
+    "versionId":  "2eb94b0c-e977-4298-85f1-ceaa40abfc4e",
+    "activeVersionId":  "2eb94b0c-e977-4298-85f1-ceaa40abfc4e",
+    "versionCounter":  19,
+    "triggerCount":  4,
+    "shared":  [
+                   {
+                       "updatedAt":  "2026-04-18T03:58:02.629Z",
+                       "createdAt":  "2026-04-18T03:58:02.629Z",
+                       "role":  "workflow:owner",
+                       "workflowId":  "CyiacnE5DIKGlmZz",
+                       "projectId":  "Lrgt6JR85OZiVLcX",
+                       "project":  {
+                                       "updatedAt":  "2026-03-31T09:07:31.366Z",
+                                       "createdAt":  "2026-03-31T08:57:43.789Z",
+                                       "id":  "Lrgt6JR85OZiVLcX",
+                                       "name":  "gelson mascarenhas \u003cgelson_m@hotmail.com\u003e",
+                                       "type":  "personal",
+                                       "icon":  null,
+                                       "description":  null,
+                                       "creatorId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                   }
+                   }
+               ],
+    "tags":  [
+
+             ],
+    "activeVersion":  {
+                          "updatedAt":  "2026-04-18T06:51:31.862Z",
+                          "createdAt":  "2026-04-18T06:51:31.862Z",
+                          "versionId":  "2eb94b0c-e977-4298-85f1-ceaa40abfc4e",
+                          "workflowId":  "CyiacnE5DIKGlmZz",
+                          "nodes":  [
+                                        {
+                                            "id":  "tg-trigger",
+                                            "name":  "Telegram: Message Received",
+                                            "type":  "n8n-nodes-base.telegramTrigger",
+                                            "typeVersion":  1.1,
+                                            "position":  [
+                                                             240,
+                                                             160
+                                                         ],
+                                            "webhookId":  "acia-telegram",
+                                            "credentials":  {
+                                                                "telegramApi":  {
+                                                                                    "id":  "SYXQZLJBjTuMbspG",
+                                                                                    "name":  "Telegram Content Analyst Bot"
+                                                                                }
+                                                            },
+                                            "parameters":  {
+                                                               "updates":  [
+                                                                               "message"
+                                                                           ],
+                                                               "additionalFields":  {
+
+                                                                                    }
+                                                           }
+                                        },
+                                        {
+                                            "id":  "gmail-trigger",
+                                            "name":  "Gmail: Email Received",
+                                            "type":  "n8n-nodes-base.gmailTrigger",
+                                            "typeVersion":  1,
+                                            "position":  [
+                                                             240,
+                                                             380
+                                                         ],
+                                            "credentials":  {
+                                                                "gmailOAuth2":  {
+                                                                                    "id":  "DL39Lr8wENjvFtij",
+                                                                                    "name":  "Gmail account"
+                                                                                }
+                                                            },
+                                            "parameters":  {
+                                                               "pollTimes":  {
+                                                                                 "item":  [
+                                                                                              {
+                                                                                                  "mode":  "everyMinute"
+                                                                                              }
+                                                                                          ]
+                                                                             },
+                                                               "simple":  true,
+                                                               "filters":  {
+
+                                                                           },
+                                                               "options":  {
+
+                                                                           }
+                                                           }
+                                        },
+                                        {
+                                            "id":  "wa-receive",
+                                            "name":  "WhatsApp: Message Received",
+                                            "type":  "n8n-nodes-base.webhook",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             240,
+                                                             600
+                                                         ],
+                                            "webhookId":  "acia-whatsapp-post",
+                                            "parameters":  {
+                                                               "httpMethod":  "POST",
+                                                               "path":  "whatsapp-analyst",
+                                                               "responseMode":  "onReceived",
+                                                               "options":  {
+
+                                                                           }
+                                                           }
+                                        },
+                                        {
+                                            "id":  "wa-verify",
+                                            "name":  "WhatsApp: Verify Webhook",
+                                            "type":  "n8n-nodes-base.webhook",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             240,
+                                                             820
+                                                         ],
+                                            "webhookId":  "acia-whatsapp-get",
+                                            "parameters":  {
+                                                               "httpMethod":  "GET",
+                                                               "path":  "whatsapp-analyst",
+                                                               "responseMode":  "responseNode",
+                                                               "options":  {
+
+                                                                           }
+                                                           }
+                                        },
+                                        {
+                                            "id":  "wa-verify-code",
+                                            "name":  "Extract Challenge",
+                                            "type":  "n8n-nodes-base.code",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             500,
+                                                             820
+                                                         ],
+                                            "parameters":  {
+                                                               "mode":  "runOnceForEachItem",
+                                                               "jsCode":  "\nconst q = $input.item.json.query || {};\nreturn { challenge: q[\"hub.challenge\"] || \"OK\", mode: q[\"hub.mode\"] || \"\" };\n"
+                                                           }
+                                        },
+                                        {
+                                            "id":  "wa-verify-respond",
+                                            "name":  "Respond with Challenge",
+                                            "type":  "n8n-nodes-base.respondToWebhook",
+                                            "typeVersion":  1.1,
+                                            "position":  [
+                                                             760,
+                                                             820
+                                                         ],
+                                            "parameters":  {
+                                                               "options":  {
+                                                                               "responseCode":  200,
+                                                                               "responseData":  "={{ $json.challenge }}"
+                                                                           }
+                                                           }
+                                        },
+                                        {
+                                            "id":  "normalize",
+                                            "name":  "Detect Source \u0026 Content Type",
+                                            "type":  "n8n-nodes-base.code",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             520,
+                                                             380
+                                                         ],
+                                            "parameters":  {
+                                                               "mode":  "runOnceForEachItem",
+                                                               "jsCode":  "\nconst item = $input.item.json;\nlet source = \"unknown\", text = \"\", files = [], user = \"unknown\", chatId = null;\n\nif (item.message) {\n  source = \"telegram\";\n  const m = item.message;\n  user = m.from?.username || m.from?.first_name || \"TelegramUser\";\n  chatId = m.chat?.id || m.from?.id;\n  text = m.text || m.caption || \"\";\n  if (m.document) files.push({type:\"document\", fileId:m.document.file_id, mimeType:m.document.mime_type||\"\", name:m.document.file_name||\"\"});\n  if (m.photo)    files.push({type:\"image\",    fileId:m.photo.slice(-1)[0].file_id, mimeType:\"image/jpeg\"});\n  if (m.video)    files.push({type:\"video\",    fileId:m.video.file_id,  mimeType:\"video/mp4\"});\n  if (m.audio)    files.push({type:\"audio\",    fileId:m.audio.file_id,  mimeType:\"audio/mpeg\"});\n  if (m.voice)    files.push({type:\"audio\",    fileId:m.voice.file_id,  mimeType:\"audio/ogg\"});\n}\nelse if (item.id \u0026\u0026 item.threadId) {\n  source = \"gmail\";\n  user = item.from || \"EmailSender\";\n  text = item.text || item.snippet || item.subject || \"\";\n  if (item.attachments)\n    item.attachments.forEach(a =\u003e files.push({type:\"attachment\", name:a.filename||\"\", mimeType:a.mimeType||\"\", data:a.data||\"\"}));\n}\nelse if (item.entry || item.object === \"whatsapp_business_account\" || item.body?.entry) {\n  source = \"whatsapp\";\n  const raw = item.body || item;\n  const msgs = ((raw.entry||[])[0]?.changes||[])[0]?.value?.messages||[];\n  const m = msgs[0]||{};\n  user = m.from || \"WhatsAppUser\";\n  chatId = m.from;\n  if (m.type===\"text\")     text = m.text?.body||\"\";\n  if (m.type===\"image\")    files.push({type:\"image\",    mediaId:m.image?.id,    mimeType:\"image/jpeg\"});\n  if (m.type===\"document\") files.push({type:\"document\", mediaId:m.document?.id, mimeType:m.document?.mime_type||\"\", name:m.document?.filename||\"\"});\n  if (m.type===\"video\")    files.push({type:\"video\",    mediaId:m.video?.id,    mimeType:\"video/mp4\"});\n  if (m.type===\"audio\")    files.push({type:\"audio\",    mediaId:m.audio?.id,    mimeType:\"audio/ogg\"});\n}\n\n// Analysis mode detection: @finance @technical @simple @action @marketing @summary\nlet mode = \"standard\";\nconst modeRx = text.match(/@(finance|technical|simple|action|creative|marketing|legal|health|summary)\\b/i);\nif (modeRx) { mode = modeRx[1].toLowerCase(); text = text.replace(modeRx[0],\"\").trim(); }\n\nconst ytMatch = text.match(/(youtube\\.com\\/watch\\?v=|youtu\\.be\\/)([\\w-]+)/);\nlet contentType = \"text\";\nif (ytMatch) { contentType = \"youtube\"; }\nelse if (files.length \u003e 0) {\n  const f = files[0];\n  if (f.mimeType.includes(\"pdf\")||(f.name||\"\").endsWith(\".pdf\")) contentType=\"pdf\";\n  else if (f.mimeType.includes(\"image\"))  contentType=\"image\";\n  else if (f.mimeType.includes(\"video\"))  contentType=\"video\";\n  else if (f.mimeType.includes(\"audio\"))  contentType=\"audio\";\n  else contentType=\"document\";\n}\n\nreturn { source, user, chatId, text:text.trim(), files, contentType,\n         youtubeVideoId:ytMatch?.[2]||null, mode, timestamp:new Date().toISOString() };\n"
+                                                           }
+                                        },
+                                        {
+                                            "id":  "extract",
+                                            "name":  "Download Files \u0026 Extract Content",
+                                            "type":  "n8n-nodes-base.code",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             800,
+                                                             380
+                                                         ],
+                                            "parameters":  {
+                                                               "mode":  "runOnceForEachItem",
+                                                               "jsCode":  "\nconst d = $input.item.json;\nconst SELF    = \"https://inspiring-cat-production.up.railway.app\";\nconst TG_TOK  = \"8514342294:AAEey6kBHXav5ciipaSL1fZ7P8YSHy_pv64\";\n\n// ?? Send \"Analysing.\" message to Telegram for instant feedback ????????????????\nif (d.source === \"telegram\" \u0026\u0026 d.chatId) {\n  try {\n    await this.helpers.httpRequest({\n      method:\"POST\", url:`https://api.telegram.org/bot${TG_TOK}/sendMessage`,\n      headers:{\"Content-Type\":\"application/json\"},\n      body:{chat_id:d.chatId, text:`? Analysing your ${d.contentType} content, please wait.`},\n      timeout:8000\n    });\n  } catch(e) {}\n}\n\nasync function shellTask(cmd, timeoutMs=240000) {\n  const t = await this.helpers.httpRequest({\n    method:\"POST\", url:SELF+\"/tasks\",\n    headers:{\"Content-Type\":\"application/json\"},\n    body:{type:\"shell\", payload:{command:cmd}}, timeout:20000\n  });\n  const deadline = Date.now() + timeoutMs;\n  while (Date.now() \u003c deadline) {\n    await new Promise(r=\u003esetTimeout(r,4000));\n    const s = await this.helpers.httpRequest({method:\"GET\", url:`${SELF}/tasks/${s?.id||t.id}`, timeout:10000});\n    if (s.status===\"done\") return (s.output||s.result||\"\").trim();\n    if (s.status===\"error\") return \"ERROR:\"+s.error;\n  }\n  return \"TIMEOUT\";\n}\n\n// ?? Telegram file download ?????????????????????????????????????????????????????\nif (d.source === \"telegram\" \u0026\u0026 d.files.length \u003e 0 \u0026\u0026 d.files[0].fileId \u0026\u0026 !d.files[0].data) {\n  try {\n    const fi = await this.helpers.httpRequest({\n      method:\"GET\",\n      url:`https://api.telegram.org/bot${TG_TOK}/getFile?file_id=${d.files[0].fileId}`,\n      timeout:10000\n    });\n    const fp = fi.result?.file_path;\n    if (fp) {\n      const cmd = `python3 -c \"import urllib.request,base64; d=urllib.request.urlopen(\u0027https://api.telegram.org/file/bot${TG_TOK}/${fp}\u0027).read(); print(base64.b64encode(d).decode())\"`;\n      const b64 = await shellTask(cmd, 30000);\n      if (b64 \u0026\u0026 !b64.startsWith(\"ERROR\") \u0026\u0026 !b64.startsWith(\"TIMEOUT\") \u0026\u0026 b64.length \u003e 50) {\n        d.files[0].data = b64;\n        if (fp.endsWith(\".pdf\")) d.files[0].mimeType = \"application/pdf\";\n        if (fp.endsWith(\".png\")) d.files[0].mimeType = \"image/png\";\n      }\n    }\n  } catch(e) {}\n}\n\n// ?? YouTube: check PG cache (24h dedup) ????????????????????????????????????????\nlet cachedAnalysis = null;\nif (d.contentType === \"youtube\" \u0026\u0026 d.youtubeVideoId) {\n  try {\n    const cacheCmd = `python3 -c \"\nimport os, psycopg2\nconn=psycopg2.connect(os.environ[\u0027DATABASE_URL\u0027].replace(\u0027postgres://\u0027,\u0027postgresql://\u0027))\ncur=conn.cursor()\ncur.execute(\u0027\u0027\u0027CREATE TABLE IF NOT EXISTS content_analyst_history(\n  id BIGSERIAL PRIMARY KEY,content_type TEXT,source TEXT,user_id TEXT,\n  label TEXT,youtube_id TEXT,analysis TEXT,mode TEXT,created_at TIMESTAMPTZ DEFAULT NOW())\u0027\u0027\u0027)\nconn.commit()\ncur.execute(\u0027\u0027\u0027SELECT analysis FROM content_analyst_history\n  WHERE youtube_id=%s AND created_at\u003eNOW()-INTERVAL \u002724 hours\u0027\n  ORDER BY created_at DESC LIMIT 1\u0027\u0027\u0027, (\u0027${d.youtubeVideoId}\u0027,))\nrow=cur.fetchone()\nprint(row[0][:8000] if row else \u0027NOCACHE\u0027)\nconn.close()\n\"`;\n    const res = await shellTask(cacheCmd, 20000);\n    if (res \u0026\u0026 res !== \"NOCACHE\" \u0026\u0026 !res.startsWith(\"ERROR\") \u0026\u0026 !res.startsWith(\"TIMEOUT\")) {\n      cachedAnalysis = res;\n    }\n  } catch(e) {}\n}\n\n// ?? Content extraction ?????????????????????????????????????????????????????????\nlet extracted = d.text || \"(no content)\";\nlet label = \"Text Message\";\n\nif (cachedAnalysis) {\n  // Cache hit - skip extraction\n  label = `YouTube (${d.youtubeVideoId}) ?? cached`;\n}\nelse if (d.contentType === \"youtube\" \u0026\u0026 d.youtubeVideoId) {\n  label = `YouTube (${d.youtubeVideoId})`;\n  const vid = d.youtubeVideoId;\n  const cmd = `python3 -c \"\nvid=\u0027${vid}\u0027\ntry:\n  from youtube_transcript_api import YouTubeTranscriptApi\n  t=YouTubeTranscriptApi.get_transcript(vid,languages=[\u0027en\u0027,\u0027pt\u0027,\u0027es\u0027,\u0027fr\u0027,\u0027de\u0027])\n  print(\u0027 \u0027.join([x[\u0027text\u0027] for x in t])[:6000])\nexcept Exception as e:\n  import subprocess,json\n  r=subprocess.run([\u0027yt-dlp\u0027,\u0027--dump-json\u0027,\u0027--no-download\u0027,\u0027https://youtube.com/watch?v=\u0027+vid],capture_output=True,text=True,timeout=30)\n  if r.returncode==0:\n    info=json.loads(r.stdout)\n    print(\u0027TITLE: \u0027+info.get(\u0027title\u0027,\u0027\u0027)+\u0027\\\\nCHANNEL: \u0027+info.get(\u0027channel\u0027,\u0027\u0027)+\u0027\\\\nDESC: \u0027+info.get(\u0027description\u0027,\u0027\u0027)[:3000])\n  else: print(\u0027Extraction failed: \u0027+str(e))\n\"`;\n  extracted = await shellTask(cmd, 120000);\n}\nelse if (d.contentType === \"pdf\" \u0026\u0026 d.files.length \u003e 0 \u0026\u0026 d.files[0].data) {\n  label = `PDF - ${d.files[0].name||\"document.pdf\"}`;\n  const b64 = d.files[0].data.replace(/\\s/g,\"\");\n  const cmd = `python3 -c \"\nimport base64,io\ntry:\n  from pypdf import PdfReader\n  r=PdfReader(io.BytesIO(base64.b64decode(\u0027${b64}\u0027)))\n  print(\u0027\\\\n\u0027.join([p.extract_text() or \u0027\u0027 for p in r.pages[:20]])[:6000])\nexcept Exception as e:\n  print(\u0027PDF extraction error: \u0027+str(e))\n\"`;\n  extracted = await shellTask(cmd, 60000);\n}\nelse if (d.contentType === \"image\") {\n  label = \"Image\";\n  extracted = \"__IMAGE__\";\n}\nelse if ((d.contentType===\"video\"||d.contentType===\"audio\") \u0026\u0026 d.files.length\u003e0 \u0026\u0026 d.files[0].data) {\n  const ext = d.contentType===\"audio\" ? \".ogg\" : \".mp4\";\n  label = d.contentType===\"audio\" ? \"Audio / Voice Note\" : \"Video File\";\n  const fileB64 = d.files[0].data.replace(/\\s/g,\"\");\n  const cmd = `python3 -c \"\nimport base64,tempfile,os,subprocess\ndata=base64.b64decode(\u0027${fileB64}\u0027)\nf=tempfile.NamedTemporaryFile(suffix=\u0027${ext}\u0027,delete=False)\nf.write(data); f.close()\nr=subprocess.run([\u0027whisper\u0027,f.name,\u0027--output_format\u0027,\u0027txt\u0027,\u0027--output_dir\u0027,\u0027/tmp\u0027,\u0027--language\u0027,\u0027auto\u0027],\n  capture_output=True,text=True,timeout=300)\ntp=f.name.replace(\u0027${ext}\u0027,\u0027.txt\u0027)\nif os.path.exists(tp): print(open(tp).read()[:6000]); os.unlink(tp)\nelse: print(\u0027Whisper unavailable. stdout:\u0027+r.stdout[:2000])\nos.unlink(f.name)\n\"`;\n  extracted = await shellTask(cmd, 240000);\n}\nelse {\n  label = d.text ? \"Text Message\" : \"Message\";\n  extracted = d.text || \"(empty message)\";\n}\n\nreturn { ...d, extracted, label, cachedAnalysis };\n"
+                                                           }
+                                        },
+                                        {
+                                            "id":  "analyze",
+                                            "name":  "Claude: Deep Analysis",
+                                            "type":  "n8n-nodes-base.code",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             1100,
+                                                             380
+                                                         ],
+                                            "parameters":  {
+                                                               "mode":  "runOnceForEachItem",
+                                                               "jsCode":  "\nconst d = $input.item.json;\nconst ANTHR = \"***REDACTED_ANTHROPIC_API_KEY***\";\n\nif (d.cachedAnalysis) {\n  return { ...d, analysis:d.cachedAnalysis, fromCache:true };\n}\n\nconst MODES = {\n  finance:   \"Focus exclusively on financial data, investment opportunities/risks, market implications, ROI potential, and economic indicators. Rate financial relevance 1-10.\",\n  technical: \"Focus on technical architecture, code quality, algorithms, scalability, and security. Use precise technical terminology.\",\n  simple:    \"Explain everything like the reader is a curious 10-year-old. Use plain words, short sentences, and fun analogies. Zero jargon.\",\n  action:    \"ONLY output action items grouped as: IMMEDIATE (today) / SHORT-TERM (this week) / LONG-TERM (this month+). Skip all background narrative.\",\n  creative:  \"Focus on creative/aesthetic elements: storytelling craft, originality, emotional impact, visual or narrative design choices.\",\n  marketing: \"Focus on: target audience, value proposition, messaging effectiveness, brand positioning, and growth/conversion potential.\",\n  legal:     \"Identify legal risks, compliance issues, regulatory requirements, and liability concerns. Note: this is not legal advice.\",\n  health:    \"Focus on health/scientific accuracy, evidence quality, medical claims, lifestyle impact, and wellness takeaways.\",\n  summary:   \"Write ONLY a concise executive summary as exactly 5 bullet points. Nothing else.\"\n};\n\nconst modeNote = MODES[d.mode] ? `\\n? ANALYSIS MODE: ${d.mode.toUpperCase()} - ${MODES[d.mode]}\\n` : \"\";\nconst isImg = d.contentType===\"image\" \u0026\u0026 d.files?.[0]?.data;\n\nlet userContent;\nif (isImg) {\n  userContent = [\n    {type:\"image\", source:{type:\"base64\", media_type:d.files[0].mimeType||\"image/jpeg\", data:d.files[0].data}},\n    {type:\"text\", text:`You are an AI Content Intelligence Analyst at Bridge Digital Solution.\\n${modeNote}\\nAnalyse this image professionally:\\n## 1. Executive Summary\\n## 2. Key Insights\\n## 3. Detailed Analysis\\n## 4. Notable Elements\\n## 5. Action Items \u0026 Recommendations\\n## 6. Quality Assessment (1-10)\\n\\nBe specific and insightful.`}\n  ];\n} else {\n  userContent = `You are an AI Content Intelligence Analyst at Bridge Digital Solution.\\n\\nContent: ${d.label} | Source: ${d.source} | User: ${d.user}${modeNote}\\n---\\n${d.extracted}\\n---\\n\\nWrite a comprehensive analysis report:\\n## 1. Executive Summary\\n## 2. Key Insights\\n## 3. Detailed Analysis\\n## 4. Notable Quotes or Examples\\n## 5. Action Items \u0026 Recommendations\\n## 6. Quality Assessment (1-10 with justification)\\n\\nBe specific, analytical, and insightful. Use markdown.`;\n}\n\nconst resp = await this.helpers.httpRequest({\n  method:\"POST\", url:\"https://api.anthropic.com/v1/messages\",\n  headers:{\"x-api-key\":ANTHR,\"anthropic-version\":\"2023-06-01\",\"content-type\":\"application/json\"},\n  body:{model:\"claude-opus-4-7\", max_tokens:4096, messages:[{role:\"user\",content:userContent}]},\n  timeout:120000\n});\n\nreturn { ...d, analysis:resp.content?.[0]?.text||\"Analysis unavailable\", fromCache:false };\n"
+                                                           }
+                                        },
+                                        {
+                                            "id":  "html-report",
+                                            "name":  "Build Branded HTML Report",
+                                            "type":  "n8n-nodes-base.code",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             1380,
+                                                             380
+                                                         ],
+                                            "parameters":  {
+                                                               "mode":  "runOnceForEachItem",
+                                                               "jsCode":  "\nconst d = $input.item.json;\nconst now = new Date().toLocaleString(\"en-GB\",{timeZone:\"Europe/London\",dateStyle:\"full\",timeStyle:\"short\"});\nconst logo = \"https://bridge-digital-solution.com/logo.png\";\nconst srcColor = {telegram:\"#2CA5E0\",gmail:\"#EA4335\",whatsapp:\"#25D366\"}[d.source]||\"#555\";\nconst icon = {youtube:\"?\",pdf:\"??\",image:\"???\",video:\"??\",text:\"??\",audio:\"??\",document:\"??\"}[d.contentType]||\"??\";\nconst modeTag = d.mode\u0026\u0026d.mode!==\"standard\" ? `\u003cspan class=\"badge\" style=\"background:#6c63ff\"\u003e@${d.mode}\u003c/span\u003e` : \"\";\nconst cacheTag = d.fromCache ? `\u003cspan class=\"badge\" style=\"background:#888\"\u003e?? cached\u003c/span\u003e` : \"\";\n\nfunction md(t) {\n  if (!t) return \"\";\n  return t\n    .replace(/\u0026/g,\"\u0026amp;\").replace(/\u003c/g,\"\u0026lt;\").replace(/\u003e/g,\"\u0026gt;\")\n    .replace(/\\*\\*([^*\\n]+)\\*\\*/g,\"\u003cstrong\u003e$1\u003c/strong\u003e\")\n    .replace(/`([^`]+)`/g,\"\u003ccode\u003e$1\u003c/code\u003e\")\n    .replace(/^## (.+)$/gm,\u0027\u003ch2 class=\"sh\"\u003e$1\u003c/h2\u003e\u0027)\n    .replace(/^### (.+)$/gm,\"\u003ch3\u003e$1\u003c/h3\u003e\")\n    .replace(/^[-.]\\s(.+)$/gm,\"\u003cli\u003e$1\u003c/li\u003e\")\n    .replace(/^(\\d+)\\.\\s(.+)$/gm,\"\u003cli\u003e$2\u003c/li\u003e\")\n    .split(\"\\n\\n\").map(p =\u003e p.startsWith(\"\u003c\") ? p : `\u003cp\u003e${p.replace(/\\n/g,\"\u003cbr\u003e\")}\u003c/p\u003e`).join(\"\\n\");\n}\n\nconst subject = `?? ${d.label} - ${d.source} analysis � ${d.timestamp.substring(0,10)}`;\n\nconst html = `\u003c!DOCTYPE html\u003e\u003chtml lang=\"en\"\u003e\u003chead\u003e\u003cmeta charset=\"UTF-8\"\u003e\n\u003cmeta name=\"viewport\" content=\"width=device-width,initial-scale=1.0\"\u003e\n\u003ctitle\u003eContent Intelligence Report\u003c/title\u003e\n\u003cstyle\u003e\n*{box-sizing:border-box;margin:0;padding:0}\nbody{font-family:\u0027Segoe UI\u0027,Arial,sans-serif;background:#f0f2f7;color:#1a1a2e}\n.w{max-width:820px;margin:0 auto;background:#fff;box-shadow:0 4px 28px rgba(0,0,0,.12)}\n.hdr{background:linear-gradient(135deg,#1a1a2e 0%,#16213e 55%,#0f3460 100%);color:#fff;padding:44px 40px;text-align:center}\n.hdr img{height:54px;margin-bottom:16px;object-fit:contain}\n.hdr h1{font-size:27px;font-weight:700;margin-bottom:6px;letter-spacing:-.3px}\n.hdr p{opacity:.65;font-size:12px;letter-spacing:.9px;text-transform:uppercase}\n.meta{background:#f8f9ff;border-bottom:1px solid #e4e8f4;padding:14px 40px;display:flex;flex-wrap:wrap;gap:16px;align-items:center}\n.mi{font-size:12.5px;color:#555;display:flex;align-items:center;gap:6px}\n.badge{padding:2px 9px;border-radius:10px;font-size:11px;font-weight:700;color:#fff;text-transform:uppercase;letter-spacing:.4px}\n.body{padding:38px 40px}\n.sh{color:#0f3460;font-size:16px;font-weight:700;margin:28px 0 10px;padding-bottom:7px;border-bottom:2px solid #e8ecf8}\nh3{color:#333;font-size:14px;font-weight:600;margin:14px 0 6px}\np{margin:10px 0;color:#444;font-size:14px;line-height:1.78}\nul,ol{margin:10px 0 10px 22px}\nli{margin:7px 0;font-size:14px;color:#444;line-height:1.65}\nstrong{color:#1a1a2e;font-weight:700}\ncode{background:#f4f6fb;padding:2px 6px;border-radius:4px;font-family:monospace;font-size:12px}\n.div{height:3px;background:linear-gradient(90deg,#0f3460,#e94560,#0f3460);margin:26px 0;border-radius:2px}\n.ftr{background:#1a1a2e;color:rgba(255,255,255,.5);text-align:center;padding:20px 40px;font-size:11.5px;line-height:1.7}\n.ftr a{color:rgba(255,255,255,.75);text-decoration:none}\n\u003c/style\u003e\u003c/head\u003e\u003cbody\u003e\u003cdiv class=\"w\"\u003e\n\u003cdiv class=\"hdr\"\u003e\n  \u003cimg src=\"${logo}\" alt=\"Bridge Digital\" onerror=\"this.style.display=\u0027none\u0027\"\u003e\n  \u003ch1\u003eContent Intelligence Report\u003c/h1\u003e\n  \u003cp\u003eAI Content Intelligence Analyst � Bridge Digital Solution\u003c/p\u003e\n\u003c/div\u003e\n\u003cdiv class=\"meta\"\u003e\n  \u003cdiv class=\"mi\"\u003e?? \u003cstrong\u003e${now}\u003c/strong\u003e\u003c/div\u003e\n  \u003cdiv class=\"mi\"\u003e?? \u003cspan class=\"badge\" style=\"background:${srcColor}\"\u003e${d.source}\u003c/span\u003e\u003c/div\u003e\n  \u003cdiv class=\"mi\"\u003e${icon} \u003cstrong\u003e${d.label}\u003c/strong\u003e\u003c/div\u003e\n  \u003cdiv class=\"mi\"\u003e?? \u003cstrong\u003e${d.user}\u003c/strong\u003e\u003c/div\u003e\n  ${modeTag}${cacheTag}\n\u003c/div\u003e\n\u003cdiv class=\"body\"\u003e\n  \u003cdiv class=\"div\"\u003e\u003c/div\u003e\n  ${md(d.analysis)}\n  \u003cdiv class=\"div\"\u003e\u003c/div\u003e\n\u003c/div\u003e\n\u003cdiv class=\"ftr\"\u003e\n  Generated by \u003cstrong\u003eAI Content Intelligence Analyst\u003c/strong\u003e\u003cbr\u003e\n  \u003ca href=\"https://bridge-digital-solution.com\"\u003eBridge Digital Solution\u003c/a\u003e \u0026middot; ${now}\u003cbr\u003e\n  \u003csmall\u003eTip: prefix your message with @finance @technical @simple @action @marketing @summary to change analysis focus\u003c/small\u003e\n\u003c/div\u003e\n\u003c/div\u003e\u003c/body\u003e\u003c/html\u003e`;\n\nreturn { ...d, html, subject };\n"
+                                                           }
+                                        },
+                                        {
+                                            "id":  "gen-pdf",
+                                            "name":  "Render PDF Report",
+                                            "type":  "n8n-nodes-base.code",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             1660,
+                                                             380
+                                                         ],
+                                            "parameters":  {
+                                                               "mode":  "runOnceForEachItem",
+                                                               "jsCode":  "\nconst d = $input.item.json;\nconst SELF = \"https://inspiring-cat-production.up.railway.app\";\nlet pdfB64 = \"\";\ntry {\n  const htmlB64 = Buffer.from(d.html).toString(\"base64\");\n  const cmd = `python3 -c \"\nimport base64,subprocess,tempfile,os\nhtml=base64.b64decode(\u0027${htmlB64}\u0027).decode(\u0027utf-8\u0027,\u0027replace\u0027)\nf=tempfile.NamedTemporaryFile(suffix=\u0027.html\u0027,mode=\u0027w\u0027,delete=False,encoding=\u0027utf-8\u0027)\nf.write(html); f.close()\np=f.name.replace(\u0027.html\u0027,\u0027.pdf\u0027)\nfor exe in [\u0027chromium\u0027,\u0027chromium-browser\u0027,\u0027google-chrome\u0027,\u0027google-chrome-stable\u0027]:\n  try:\n    r=subprocess.run([exe,\u0027--headless\u0027,\u0027--no-sandbox\u0027,\u0027--disable-gpu\u0027,\n      \u0027--disable-dev-shm-usage\u0027,\u0027--run-all-compositor-stages-before-draw\u0027,\n      f\u0027--print-to-pdf={p}\u0027,f\u0027file://{f.name}\u0027],capture_output=True,timeout=60)\n    if os.path.exists(p): break\n  except: pass\nif os.path.exists(p):\n  with open(p,\u0027rb\u0027) as pf: print(base64.b64encode(pf.read()).decode())\n  os.unlink(p)\nelse: print(\u0027PDF_FAILED\u0027)\nos.unlink(f.name)\n\"`;\n  const t = await this.helpers.httpRequest({\n    method:\"POST\", url:SELF+\"/tasks\",\n    headers:{\"Content-Type\":\"application/json\"},\n    body:{type:\"shell\",payload:{command:cmd}}, timeout:20000\n  });\n  for (let i=0; i\u003c40; i++) {\n    await new Promise(r=\u003esetTimeout(r,4000));\n    const s = await this.helpers.httpRequest({method:\"GET\",url:`${SELF}/tasks/${t.id}`,timeout:10000});\n    if (s.status===\"done\") { pdfB64=(s.output||\"\").trim(); break; }\n    if (s.status===\"error\") break;\n  }\n} catch(e) {}\nif (!pdfB64 || pdfB64.startsWith(\"PDF_FAILED\") || pdfB64.length\u003c200) pdfB64=\"\";\nreturn { ...d, pdfB64 };\n"
+                                                           }
+                                        },
+                                        {
+                                            "id":  "send-email",
+                                            "name":  "Email Report to Inbox",
+                                            "type":  "n8n-nodes-base.gmail",
+                                            "typeVersion":  2.1,
+                                            "position":  [
+                                                             1940,
+                                                             200
+                                                         ],
+                                            "credentials":  {
+                                                                "gmailOAuth2":  {
+                                                                                    "id":  "DL39Lr8wENjvFtij",
+                                                                                    "name":  "Gmail account"
+                                                                                }
+                                                            },
+                                            "parameters":  {
+                                                               "resource":  "message",
+                                                               "operation":  "send",
+                                                               "sendTo":  "bridge.digital.solution@gmail.com",
+                                                               "subject":  "={{ $json.subject }}",
+                                                               "emailType":  "html",
+                                                               "message":  "={{ $json.html }}",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "webhookId":  "6993aeaf-e6ca-4bb9-97e2-987ee4fdbcab"
+                                        },
+                                        {
+                                            "id":  "tg-reply",
+                                            "name":  "Telegram: Send Summary to User",
+                                            "type":  "n8n-nodes-base.code",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             1940,
+                                                             420
+                                                         ],
+                                            "parameters":  {
+                                                               "mode":  "runOnceForEachItem",
+                                                               "jsCode":  "\nconst d = $input.item.json;\nconst TG_TOK = \"8514342294:AAEey6kBHXav5ciipaSL1fZ7P8YSHy_pv64\";\n\nif (d.source === \"telegram\" \u0026\u0026 d.chatId) {\n  const lines = (d.analysis||\"\")\n    .split(\"\\n\")\n    .map(l=\u003el.trim())\n    .filter(l=\u003el.match(/^[-.]|^\\d+\\./) \u0026\u0026 l.length\u003e15)\n    .slice(0,4)\n    .map(l=\u003el.replace(/^[-.\\d.]+\\s*/,\"\").substring(0,130));\n\n  const bullets = lines.length\u003e0 ? lines.map(b=\u003e`. ${b}`).join(\"\\n\") : \"See full report in your email.\";\n  const cacheNote = d.fromCache ? \" ?? (from 24h cache)\" : \"\";\n  const msg = `? *Analysis Complete*${cacheNote}\\n\\n*${d.label}*\\n\\n${bullets}\\n\\n?? Full HTML report + PDF sent to email.`;\n\n  try {\n    await this.helpers.httpRequest({\n      method:\"POST\",\n      url:`https://api.telegram.org/bot${TG_TOK}/sendMessage`,\n      headers:{\"Content-Type\":\"application/json\"},\n      body:{chat_id:d.chatId, text:msg, parse_mode:\"Markdown\"},\n      timeout:10000\n    });\n  } catch(e) {}\n}\nreturn d;\n"
+                                                           }
+                                        },
+                                        {
+                                            "id":  "save-history",
+                                            "name":  "Save Analysis to History",
+                                            "type":  "n8n-nodes-base.code",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             1940,
+                                                             640
+                                                         ],
+                                            "parameters":  {
+                                                               "mode":  "runOnceForEachItem",
+                                                               "jsCode":  "\nconst d = $input.item.json;\nconst SELF = \"https://inspiring-cat-production.up.railway.app\";\n\nif (d.fromCache) return d;\n\ntry {\n  const safeAnalysis = (d.analysis||\"\").substring(0,10000).replace(/\\\\/g,\"\\\\\\\\\").replace(/\u0027/g,\"\\\\\u0027\").replace(/\\n/g,\"\\\\n\");\n  const cmd = `python3 -c \"\nimport os,psycopg2\nconn=psycopg2.connect(os.environ[\u0027DATABASE_URL\u0027].replace(\u0027postgres://\u0027,\u0027postgresql://\u0027))\ncur=conn.cursor()\ncur.execute(\u0027\u0027\u0027CREATE TABLE IF NOT EXISTS content_analyst_history(\n  id BIGSERIAL PRIMARY KEY,content_type TEXT,source TEXT,user_id TEXT,\n  label TEXT,youtube_id TEXT,analysis TEXT,mode TEXT,created_at TIMESTAMPTZ DEFAULT NOW())\u0027\u0027\u0027)\nconn.commit()\ncur.execute(\u0027INSERT INTO content_analyst_history(content_type,source,user_id,label,youtube_id,analysis,mode) VALUES(%s,%s,%s,%s,%s,%s,%s)\u0027,\n  (\u0027${d.contentType}\u0027,\u0027${d.source}\u0027,\u0027${(d.user||\"\").replace(/\u0027/g,\"\\\\\u0027\")}\u0027,\u0027${(d.label||\"\").replace(/\u0027/g,\"\\\\\u0027\")}\u0027,\n   ${d.youtubeVideoId?\"\u0027\"+d.youtubeVideoId+\"\u0027\":\"NULL\"},\u0027${safeAnalysis}\u0027,\u0027${d.mode||\"standard\"}\u0027))\nconn.commit(); conn.close(); print(\u0027SAVED\u0027)\n\"`;\n  await this.helpers.httpRequest({\n    method:\"POST\", url:SELF+\"/tasks\",\n    headers:{\"Content-Type\":\"application/json\"},\n    body:{type:\"shell\",payload:{command:cmd}}, timeout:20000\n  });\n} catch(e) {}\nreturn d;\n"
+                                                           }
+                                        }
+                                    ],
+                          "connections":  {
+                                              "Telegram: Message Received":  {
+                                                                                 "main":  [
+                                                                                              [
+                                                                                                  {
+                                                                                                      "node":  "Detect Source \u0026 Content Type",
+                                                                                                      "type":  "main",
+                                                                                                      "index":  0
+                                                                                                  }
+                                                                                              ]
+                                                                                          ]
+                                                                             },
+                                              "Gmail: Email Received":  {
+                                                                            "main":  [
+                                                                                         [
+                                                                                             {
+                                                                                                 "node":  "Detect Source \u0026 Content Type",
+                                                                                                 "type":  "main",
+                                                                                                 "index":  0
+                                                                                             }
+                                                                                         ]
+                                                                                     ]
+                                                                        },
+                                              "WhatsApp: Message Received":  {
+                                                                                 "main":  [
+                                                                                              [
+                                                                                                  {
+                                                                                                      "node":  "Detect Source \u0026 Content Type",
+                                                                                                      "type":  "main",
+                                                                                                      "index":  0
+                                                                                                  }
+                                                                                              ]
+                                                                                          ]
+                                                                             },
+                                              "WhatsApp: Verify Webhook":  {
+                                                                               "main":  [
+                                                                                            [
+                                                                                                {
+                                                                                                    "node":  "Extract Challenge",
+                                                                                                    "type":  "main",
+                                                                                                    "index":  0
+                                                                                                }
+                                                                                            ]
+                                                                                        ]
+                                                                           },
+                                              "Extract Challenge":  {
+                                                                        "main":  [
+                                                                                     [
+                                                                                         {
+                                                                                             "node":  "Respond with Challenge",
+                                                                                             "type":  "main",
+                                                                                             "index":  0
+                                                                                         }
+                                                                                     ]
+                                                                                 ]
+                                                                    },
+                                              "Detect Source \u0026 Content Type":  {
+                                                                                        "main":  [
+                                                                                                     [
+                                                                                                         {
+                                                                                                             "node":  "Download Files \u0026 Extract Content",
+                                                                                                             "type":  "main",
+                                                                                                             "index":  0
+                                                                                                         }
+                                                                                                     ]
+                                                                                                 ]
+                                                                                    },
+                                              "Download Files \u0026 Extract Content":  {
+                                                                                            "main":  [
+                                                                                                         [
+                                                                                                             {
+                                                                                                                 "node":  "Claude: Deep Analysis",
+                                                                                                                 "type":  "main",
+                                                                                                                 "index":  0
+                                                                                                             }
+                                                                                                         ]
+                                                                                                     ]
+                                                                                        },
+                                              "Claude: Deep Analysis":  {
+                                                                            "main":  [
+                                                                                         [
+                                                                                             {
+                                                                                                 "node":  "Build Branded HTML Report",
+                                                                                                 "type":  "main",
+                                                                                                 "index":  0
+                                                                                             }
+                                                                                         ]
+                                                                                     ]
+                                                                        },
+                                              "Build Branded HTML Report":  {
+                                                                                "main":  [
+                                                                                             [
+                                                                                                 {
+                                                                                                     "node":  "Render PDF Report",
+                                                                                                     "type":  "main",
+                                                                                                     "index":  0
+                                                                                                 }
+                                                                                             ]
+                                                                                         ]
+                                                                            },
+                                              "Render PDF Report":  {
+                                                                        "main":  [
+                                                                                     [
+                                                                                         {
+                                                                                             "node":  "Email Report to Inbox",
+                                                                                             "type":  "main",
+                                                                                             "index":  0
+                                                                                         },
+                                                                                         {
+                                                                                             "node":  "Telegram: Send Summary to User",
+                                                                                             "type":  "main",
+                                                                                             "index":  0
+                                                                                         },
+                                                                                         {
+                                                                                             "node":  "Save Analysis to History",
+                                                                                             "type":  "main",
+                                                                                             "index":  0
+                                                                                         }
+                                                                                     ]
+                                                                                 ]
+                                                                    }
+                                          },
+                          "authors":  "gelson mascarenhas",
+                          "name":  null,
+                          "description":  null,
+                          "autosaved":  false,
+                          "workflowPublishHistory":  [
+                                                         {
+                                                             "createdAt":  "2026-04-18T06:51:32.105Z",
+                                                             "id":  310,
+                                                             "workflowId":  "CyiacnE5DIKGlmZz",
+                                                             "versionId":  "2eb94b0c-e977-4298-85f1-ceaa40abfc4e",
+                                                             "event":  "deactivated",
+                                                             "userId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                                         },
+                                                         {
+                                                             "createdAt":  "2026-04-18T06:51:32.338Z",
+                                                             "id":  311,
+                                                             "workflowId":  "CyiacnE5DIKGlmZz",
+                                                             "versionId":  "2eb94b0c-e977-4298-85f1-ceaa40abfc4e",
+                                                             "event":  "activated",
+                                                             "userId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                                         }
+                                                     ]
+                      }
+}

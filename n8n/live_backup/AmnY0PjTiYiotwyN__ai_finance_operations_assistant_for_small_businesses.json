@@ -1,0 +1,855 @@
+﻿{
+    "updatedAt":  "2026-04-10T22:21:00.625Z",
+    "createdAt":  "2026-04-10T22:19:33.814Z",
+    "id":  "AmnY0PjTiYiotwyN",
+    "name":  "AI Finance Operations Assistant for Small Businesses",
+    "description":  null,
+    "active":  false,
+    "isArchived":  true,
+    "nodes":  [
+                  {
+                      "parameters":  {
+                                         "updates":  [
+                                                         "messages"
+                                                     ],
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "82128ac3-8f99-40c5-86c6-53d673ab647f",
+                      "name":  "WhatsApp Business Trigger",
+                      "type":  "n8n-nodes-base.whatsAppTrigger",
+                      "typeVersion":  1,
+                      "position":  [
+                                       0,
+                                       0
+                                   ],
+                      "webhookId":  "9b1af47e-04b8-49d7-b394-53453087ac81",
+                      "credentials":  {
+                                          "whatsAppTriggerApi":  {
+                                                                     "id":  "qWl5Z2MKku7htFew",
+                                                                     "name":  "WhatsApp OAuth account"
+                                                                 }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "method":  "POST",
+                                         "url":  "https://super-agent-production.up.railway.app/chat",
+                                         "sendHeaders":  true,
+                                         "headerParameters":  {
+                                                                  "parameters":  [
+                                                                                     {
+                                                                                         "name":  "Content-Type",
+                                                                                         "value":  "application/json"
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "X-Token",
+                                                                                         "value":  "={{ $env.SUPER_AGENT_PASSWORD }}"
+                                                                                     }
+                                                                                 ]
+                                                              },
+                                         "sendBody":  true,
+                                         "specifyBody":  "json",
+                                         "jsonBody":  "={{ JSON.stringify({ message: \u0027You are an AI finance operations assistant for small businesses (Bridge Digital). Answer the following question about finances concisely: \u0027 + $json.body.message, session_id: \u0027whatsapp_\u0027 + ($json.body.from || \u0027default\u0027) }) }}",
+                                         "options":  {
+                                                         "timeout":  60000
+                                                     }
+                                     },
+                      "id":  "53bda3b3-457b-4a12-b33f-48a233e4a97d",
+                      "name":  "Finance Q\u0026A - Super Agent",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.2,
+                      "position":  [
+                                       352,
+                                       0
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "send",
+                                         "phoneNumberId":  "1028630140342045",
+                                         "recipientPhoneNumber":  "={{ $(\u0027WhatsApp Business Trigger\u0027).item.json.body.from }}",
+                                         "textBody":  "={{ $json.response }}",
+                                         "additionalFields":  {
+
+                                                              }
+                                     },
+                      "id":  "22b91313-c2e8-4d3c-abf8-0ac8ad88b397",
+                      "name":  "Send WhatsApp Response",
+                      "type":  "n8n-nodes-base.whatsApp",
+                      "typeVersion":  1.1,
+                      "position":  [
+                                       816,
+                                       0
+                                   ],
+                      "webhookId":  "0e29b97d-8fcb-476c-94bd-953a9a5d1703",
+                      "credentials":  {
+                                          "whatsAppApi":  {
+                                                              "id":  "cO8ewwCrbB15ov3L",
+                                                              "name":  "WhatsApp account"
+                                                          }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "pollTimes":  {
+                                                           "item":  [
+                                                                        {
+                                                                            "mode":  "everyMinute"
+                                                                        }
+                                                                    ]
+                                                       },
+                                         "simple":  false,
+                                         "filters":  {
+                                                         "labelIds":  [
+
+                                                                      ],
+                                                         "q":  "subject:(invoice OR receipt) OR has:attachment",
+                                                         "readStatus":  "unread"
+                                                     },
+                                         "options":  {
+                                                         "dataPropertyAttachmentsPrefixName":  "attachment_",
+                                                         "downloadAttachments":  true
+                                                     }
+                                     },
+                      "id":  "d4c03b40-2de2-4cd0-9183-c6bafa256b06",
+                      "name":  "Gmail Invoice Monitor",
+                      "type":  "n8n-nodes-base.gmailTrigger",
+                      "typeVersion":  1.3,
+                      "position":  [
+                                       0,
+                                       1392
+                                   ],
+                      "credentials":  {
+                                          "gmailOAuth2":  {
+                                                              "id":  "DL39Lr8wENjvFtij",
+                                                              "name":  "Gmail account"
+                                                          }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "resource":  "invoice",
+                                         "binaryPropertyName":  "attachment_0"
+                                     },
+                      "id":  "a1964ecd-5bd7-4d14-b46a-cdd2389b2800",
+                      "name":  "Extract Invoice Data",
+                      "type":  "n8n-nodes-base.mindee",
+                      "typeVersion":  3,
+                      "position":  [
+                                       224,
+                                       1392
+                                   ],
+                      "credentials":  {
+                                          "mindeeInvoiceApi":  {
+                                                                   "id":  "ShycnKUWIqZZrzsd",
+                                                                   "name":  "Mindee Invoice account"
+                                                               }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "method":  "POST",
+                                         "url":  "https://super-agent-production.up.railway.app/chat",
+                                         "sendHeaders":  true,
+                                         "headerParameters":  {
+                                                                  "parameters":  [
+                                                                                     {
+                                                                                         "name":  "Content-Type",
+                                                                                         "value":  "application/json"
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "X-Token",
+                                                                                         "value":  "={{ $env.SUPER_AGENT_PASSWORD }}"
+                                                                                     }
+                                                                                 ]
+                                                              },
+                                         "sendBody":  true,
+                                         "specifyBody":  "json",
+                                         "jsonBody":  "={{ JSON.stringify({ message: \u0027You are a finance data extraction specialist for Bridge Digital. Mindee OCR has extracted the following raw invoice data. Your job is to: 1) Validate all extracted fields (check amounts are numeric, dates are valid, vendor names are complete). 2) Fix any OCR errors (common issues: O vs 0, l vs 1, garbled characters). 3) Normalize the data (dates to YYYY-MM-DD, amounts to 2 decimal places, trim whitespace). 4) Extract any additional fields Mindee may have missed (payment terms, PO numbers, tax breakdown, line items). 5) Cross-reference: if the vendor name looks like a known vendor with a typo, correct it. Return ONLY a JSON object (no markdown, no explanation) with: { vendor: string, invoice_number: string, date: string (YYYY-MM-DD), due_date: string, amount: number, tax_amount: number, currency: string, line_items: [{description, quantity, unit_price, total}], payment_terms: string, po_number: string, ocr_corrections: [{field, original, corrected, reason}], extraction_confidence: number (0-100), missing_fields: [string] }. Raw Mindee data: \u0027 + JSON.stringify($json), session_id: \u0027invoice_extraction_\u0027 + Date.now() }) }}",
+                                         "options":  {
+                                                         "timeout":  60000
+                                                     }
+                                     },
+                      "id":  "48d057bb-77c4-4b17-ad37-82a3cdde2122",
+                      "name":  "Enhanced Data Extraction - Super Agent",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.2,
+                      "position":  [
+                                       448,
+                                       1392
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "// Parse the Super Agent enhanced extraction response\nconst agentResponse = $input.first().json.response;\nlet parsed;\ntry {\n  const jsonMatch = agentResponse.match(/\\{[\\s\\S]*\\}/);\n  parsed = JSON.parse(jsonMatch ? jsonMatch[0] : agentResponse);\n} catch (e) {\n  // Fall back to raw Mindee data if Super Agent parsing fails\n  const mindeeData = $(\u0027Extract Invoice Data\u0027).first().json;\n  parsed = {\n    ...mindeeData,\n    extraction_confidence: 0,\n    ocr_corrections: [],\n    missing_fields: [\u0027super_agent_parse_failed\u0027]\n  };\n}\nreturn [{ json: parsed }];"
+                                     },
+                      "id":  "cdd62a42-e548-4994-821e-726cd43c6d06",
+                      "name":  "Parse Enhanced Extraction",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       672,
+                                       1392
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "method":  "POST",
+                                         "url":  "https://super-agent-production.up.railway.app/chat",
+                                         "sendHeaders":  true,
+                                         "headerParameters":  {
+                                                                  "parameters":  [
+                                                                                     {
+                                                                                         "name":  "Content-Type",
+                                                                                         "value":  "application/json"
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "X-Token",
+                                                                                         "value":  "={{ $env.SUPER_AGENT_PASSWORD }}"
+                                                                                     }
+                                                                                 ]
+                                                              },
+                                         "sendBody":  true,
+                                         "specifyBody":  "json",
+                                         "jsonBody":  "={{ JSON.stringify({ message: \u0027You are a senior finance operations analyst for Bridge Digital. You have received validated and enriched invoice data from our extraction pipeline. Perform comprehensive analysis: 1) CATEGORIZE: Assign primary category (Office Supplies, Travel, Marketing, Software/SaaS, Professional Services, Utilities, Rent, Payroll, Insurance, Equipment, Maintenance, Training, Subscriptions) and subcategory. 2) ANOMALY ANALYSIS: Check for duplicate charges (compare vendor+amount+date pattern), unusually high amounts for this category (flag if \u003e2x typical), suspicious or unknown vendors, missing critical fields, irregular timing (weekend invoices, holiday billing), mismatched amounts vs line items, tax calculation errors. 3) RECOMMENDATIONS: For each anomaly, provide a specific action (approve, reject, investigate, escalate). 4) BUDGET IMPACT: Estimate which budget line this affects. Return ONLY a JSON object (no markdown, no explanation) with: { category: string, subcategory: string, vendor: string, amount: number, date: string, description: string, anomaly_flag: boolean, anomaly_severity: \"none\"|\"low\"|\"medium\"|\"high\"|\"critical\", anomaly_reason: string, anomaly_recommendations: [string], confidence_score: number (0-100), budget_line: string, tax_verified: boolean, line_items_verified: boolean }. Enriched invoice data: \u0027 + JSON.stringify($json), session_id: \u0027expense_categorization\u0027 }) }}",
+                                         "options":  {
+                                                         "timeout":  60000
+                                                     }
+                                     },
+                      "id":  "514730cf-760a-4dd9-9ef8-db7e4a5dcdff",
+                      "name":  "Expense Categorization - Super Agent",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.2,
+                      "position":  [
+                                       896,
+                                       1392
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "// Parse the Super Agent categorization response\nconst agentResponse = $input.first().json.response;\nlet parsed;\ntry {\n  const jsonMatch = agentResponse.match(/\\{[\\s\\S]*\\}/);\n  parsed = JSON.parse(jsonMatch ? jsonMatch[0] : agentResponse);\n} catch (e) {\n  parsed = {\n    category: \u0027Uncategorized\u0027,\n    subcategory: \u0027\u0027,\n    vendor: \u0027Unknown\u0027,\n    amount: 0,\n    date: new Date().toISOString().split(\u0027T\u0027)[0],\n    description: agentResponse,\n    anomaly_flag: true,\n    anomaly_severity: \u0027high\u0027,\n    anomaly_reason: \u0027Could not parse categorization response\u0027,\n    anomaly_recommendations: [\u0027Manual review required\u0027],\n    confidence_score: 0,\n    budget_line: \u0027Unknown\u0027,\n    tax_verified: false,\n    line_items_verified: false\n  };\n}\n\nreturn [{\n  json: {\n    ...parsed,\n    anomaly_recommendations: Array.isArray(parsed.anomaly_recommendations)\n      ? parsed.anomaly_recommendations.join(\u0027; \u0027)\n      : (parsed.anomaly_recommendations || \u0027\u0027),\n    processed_date: new Date().toISOString()\n  }\n}];"
+                                     },
+                      "id":  "859909e2-a712-40b7-8f2d-0db57d7dcc6b",
+                      "name":  "Parse Expense JSON",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       1120,
+                                       1392
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "conditions":  {
+                                                            "options":  {
+                                                                            "caseSensitive":  false,
+                                                                            "leftValue":  "",
+                                                                            "typeValidation":  "loose"
+                                                                        },
+                                                            "conditions":  [
+                                                                               {
+                                                                                   "id":  "id-1",
+                                                                                   "leftValue":  "={{ $json.anomaly_flag }}",
+                                                                                   "operator":  {
+                                                                                                    "type":  "boolean",
+                                                                                                    "operation":  "true"
+                                                                                                }
+                                                                               }
+                                                                           ],
+                                                            "combinator":  "and"
+                                                        },
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "aee9c363-57f3-443b-93c1-ee8080d62f65",
+                      "name":  "Check for Anomalies",
+                      "type":  "n8n-nodes-base.if",
+                      "typeVersion":  2.3,
+                      "position":  [
+                                       1344,
+                                       1392
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "INSERT INTO expenses (category, subcategory, vendor, amount, date, description, anomaly_flag, anomaly_severity, anomaly_reason, anomaly_recommendations, confidence_score, budget_line, processed_date) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
+                                         "options":  {
+                                                         "queryReplacement":  "={{ [$json.category, $json.subcategory, $json.vendor, $json.amount, $json.date, $json.description, $json.anomaly_flag, $json.anomaly_severity || \u0027none\u0027, $json.anomaly_reason, $json.anomaly_recommendations || \u0027\u0027, $json.confidence_score, $json.budget_line || \u0027\u0027, $json.processed_date] }}"
+                                                     }
+                                     },
+                      "id":  "d81457a6-227d-4da1-b3ce-5334c60dcd69",
+                      "name":  "Store Expense",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       1568,
+                                       1200
+                                   ],
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "Ae3yvuqjgMnVRrCo",
+                                                           "name":  "Postgres account"
+                                                       }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "sendTo":  "bridge.digital.solution@gmail.com",
+                                         "subject":  "=Anomaly Detected: {{ $json.vendor }} - £{{ $json.amount }} [{{ $json.anomaly_severity || \u0027unknown\u0027 }}]",
+                                         "emailType":  "text",
+                                         "message":  "=An anomaly has been flagged in the expense tracking system:\n\nVendor: {{ $json.vendor }}\nAmount: £{{ $json.amount }}\nCategory: {{ $json.category }}\nDate: {{ $json.date }}\nSeverity: {{ $json.anomaly_severity || \u0027unknown\u0027 }}\n\nReason: {{ $json.anomaly_reason }}\n\nRecommendations: {{ $json.anomaly_recommendations }}\n\nConfidence Score: {{ $json.confidence_score }}%\nBudget Line: {{ $json.budget_line }}\n\nPlease review this transaction in the finance system.",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "f5b5c66f-b7e6-4f8a-a369-49d3298a4162",
+                      "name":  "Alert Accountant",
+                      "type":  "n8n-nodes-base.gmail",
+                      "typeVersion":  2.2,
+                      "position":  [
+                                       1568,
+                                       1488
+                                   ],
+                      "webhookId":  "329ab8f2-e0d7-4cec-9b75-0ec60e4e499c",
+                      "credentials":  {
+                                          "gmailOAuth2":  {
+                                                              "id":  "DL39Lr8wENjvFtij",
+                                                              "name":  "Gmail account"
+                                                          }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "rule":  {
+                                                      "interval":  [
+                                                                       {
+                                                                           "field":  "weeks",
+                                                                           "triggerAtDay":  [
+                                                                                                1
+                                                                                            ],
+                                                                           "triggerAtHour":  9
+                                                                       }
+                                                                   ]
+                                                  }
+                                     },
+                      "id":  "c4430974-06b9-4760-85be-65c5a22d8166",
+                      "name":  "Weekly Summary Schedule",
+                      "type":  "n8n-nodes-base.scheduleTrigger",
+                      "typeVersion":  1.3,
+                      "position":  [
+                                       0,
+                                       864
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "SELECT * FROM expenses WHERE processed_date \u003e= NOW() - INTERVAL \u00277 days\u0027 ORDER BY processed_date DESC",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "6ee2f427-2bd4-4276-8fda-dde4dee47dd4",
+                      "name":  "Fetch Weekly Expenses",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       224,
+                                       864
+                                   ],
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "Ae3yvuqjgMnVRrCo",
+                                                           "name":  "Postgres account"
+                                                       }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "aggregate":  "aggregateAllItemData",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "1414427e-ee68-45f3-a2ce-73b01525f71f",
+                      "name":  "Aggregate Weekly Data",
+                      "type":  "n8n-nodes-base.aggregate",
+                      "typeVersion":  1,
+                      "position":  [
+                                       448,
+                                       864
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "method":  "POST",
+                                         "url":  "https://super-agent-production.up.railway.app/chat",
+                                         "sendHeaders":  true,
+                                         "headerParameters":  {
+                                                                  "parameters":  [
+                                                                                     {
+                                                                                         "name":  "Content-Type",
+                                                                                         "value":  "application/json"
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "X-Token",
+                                                                                         "value":  "={{ $env.SUPER_AGENT_PASSWORD }}"
+                                                                                     }
+                                                                                 ]
+                                                              },
+                                         "sendBody":  true,
+                                         "specifyBody":  "json",
+                                         "jsonBody":  "={{ JSON.stringify({ message: \u0027You are a finance operations assistant generating weekly expense summaries for Bridge Digital. Analyze the following weekly expenses and create a comprehensive summary including: total spending, breakdown by category, top vendors, any anomalies detected, spending trends, and actionable insights. Format it clearly for email delivery. Data: \u0027 + JSON.stringify($json), session_id: \u0027weekly_summary\u0027 }) }}",
+                                         "options":  {
+                                                         "timeout":  60000
+                                                     }
+                                     },
+                      "id":  "f52abbc8-96a6-4c6f-891d-c5992ccaa539",
+                      "name":  "Weekly Summary - Super Agent",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.2,
+                      "position":  [
+                                       672,
+                                       864
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "sendTo":  "bridge.digital.solution@gmail.com",
+                                         "subject":  "=Weekly Finance Summary - {{ $now.format(\u0027MMM DD, YYYY\u0027) }}",
+                                         "message":  "={{ $json.response }}",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "90d2be81-f19b-4f73-8808-540bcb0c73a8",
+                      "name":  "Email Weekly Summary",
+                      "type":  "n8n-nodes-base.gmail",
+                      "typeVersion":  2.2,
+                      "position":  [
+                                       1024,
+                                       768
+                                   ],
+                      "webhookId":  "37a81b2d-6a6b-4d4e-a9d3-45f86287a472",
+                      "credentials":  {
+                                          "gmailOAuth2":  {
+                                                              "id":  "DL39Lr8wENjvFtij",
+                                                              "name":  "Gmail account"
+                                                          }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "send",
+                                         "phoneNumberId":  "1028630140342045",
+                                         "recipientPhoneNumber":  "+447345787028",
+                                         "textBody":  "=*Weekly Finance Summary*\n\n{{ $json.response }}",
+                                         "additionalFields":  {
+
+                                                              }
+                                     },
+                      "id":  "6a344da1-24c6-4958-9520-e2fb93413e9d",
+                      "name":  "WhatsApp Weekly Summary",
+                      "type":  "n8n-nodes-base.whatsApp",
+                      "typeVersion":  1.1,
+                      "position":  [
+                                       1024,
+                                       960
+                                   ],
+                      "webhookId":  "b8fe3416-71af-48f2-8203-60c142196ab1",
+                      "credentials":  {
+                                          "whatsAppApi":  {
+                                                              "id":  "cO8ewwCrbB15ov3L",
+                                                              "name":  "WhatsApp account"
+                                                          }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "rule":  {
+                                                      "interval":  [
+                                                                       {
+                                                                           "field":  "cronExpression",
+                                                                           "expression":  "0 17 28 * *"
+                                                                       }
+                                                                   ]
+                                                  }
+                                     },
+                      "id":  "f3e7b9e2-066d-4ea6-b4fd-4da7769818d5",
+                      "name":  "Monthly Pack Schedule",
+                      "type":  "n8n-nodes-base.scheduleTrigger",
+                      "typeVersion":  1.3,
+                      "position":  [
+                                       0,
+                                       432
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "SELECT * FROM expenses WHERE processed_date \u003e= NOW() - INTERVAL \u002730 days\u0027 ORDER BY processed_date DESC",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "9811d7e2-f334-4898-bcc1-4dcf193e168a",
+                      "name":  "Fetch Monthly Expenses",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       224,
+                                       432
+                                   ],
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "Ae3yvuqjgMnVRrCo",
+                                                           "name":  "Postgres account"
+                                                       }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "aggregate":  "aggregateAllItemData",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "698f5264-d703-4bbc-9aa8-3db431fca3a5",
+                      "name":  "Aggregate Monthly Data",
+                      "type":  "n8n-nodes-base.aggregate",
+                      "typeVersion":  1,
+                      "position":  [
+                                       448,
+                                       432
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "method":  "POST",
+                                         "url":  "https://super-agent-production.up.railway.app/chat",
+                                         "sendHeaders":  true,
+                                         "headerParameters":  {
+                                                                  "parameters":  [
+                                                                                     {
+                                                                                         "name":  "Content-Type",
+                                                                                         "value":  "application/json"
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "X-Token",
+                                                                                         "value":  "={{ $env.SUPER_AGENT_PASSWORD }}"
+                                                                                     }
+                                                                                 ]
+                                                              },
+                                         "sendBody":  true,
+                                         "specifyBody":  "json",
+                                         "jsonBody":  "={{ JSON.stringify({ message: \u0027You are a finance operations assistant preparing month-end packs for Bridge Digital accountant. Generate a comprehensive monthly financial report including: total expenses by category, vendor analysis, anomalies detected, reconciliation notes, outstanding items, month-over-month comparisons, and key financial metrics. Format professionally for accountant review. Data: \u0027 + JSON.stringify($json), session_id: \u0027monthly_pack\u0027 }) }}",
+                                         "options":  {
+                                                         "timeout":  60000
+                                                     }
+                                     },
+                      "id":  "90492f79-682a-484c-9ed0-1bb98637b1ef",
+                      "name":  "Month-End Pack - Super Agent",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.2,
+                      "position":  [
+                                       672,
+                                       432
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "sendTo":  "bridge.digital.solution@gmail.com",
+                                         "subject":  "=Month-End Financial Pack - {{ $now.format(\u0027MMMM YYYY\u0027) }}",
+                                         "message":  "={{ $json.response }}",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "56178958-1dd1-4fd4-b7fd-7052f3be1e78",
+                      "name":  "Email Month-End Pack",
+                      "type":  "n8n-nodes-base.gmail",
+                      "typeVersion":  2.2,
+                      "position":  [
+                                       1024,
+                                       432
+                                   ],
+                      "webhookId":  "3a2b8614-f9ef-4fb8-a813-1bdecabcd09d",
+                      "credentials":  {
+                                          "gmailOAuth2":  {
+                                                              "id":  "DL39Lr8wENjvFtij",
+                                                              "name":  "Gmail account"
+                                                          }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "CREATE TABLE IF NOT EXISTS expenses (\n  id SERIAL PRIMARY KEY,\n  category VARCHAR(100),\n  subcategory VARCHAR(100),\n  vendor VARCHAR(255),\n  amount DECIMAL(12,2),\n  date VARCHAR(50),\n  description TEXT,\n  anomaly_flag BOOLEAN DEFAULT false,\n  anomaly_severity VARCHAR(20) DEFAULT \u0027none\u0027,\n  anomaly_reason TEXT,\n  anomaly_recommendations TEXT,\n  confidence_score INTEGER,\n  budget_line VARCHAR(100),\n  tax_verified BOOLEAN DEFAULT false,\n  line_items_verified BOOLEAN DEFAULT false,\n  processed_date TIMESTAMPTZ DEFAULT NOW()\n)",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "99cbc331-2092-46d8-ba37-57a6a4e0aa42",
+                      "name":  "Init Expenses Table",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       0,
+                                       1792
+                                   ],
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "Ae3yvuqjgMnVRrCo",
+                                                           "name":  "Postgres account"
+                                                       }
+                                      },
+                      "notes":  "Run this node ONCE manually to create the expenses table. Then you can disable or delete it."
+                  }
+              ],
+    "connections":  {
+                        "WhatsApp Business Trigger":  {
+                                                          "main":  [
+                                                                       [
+                                                                           {
+                                                                               "node":  "Finance Q\u0026A - Super Agent",
+                                                                               "type":  "main",
+                                                                               "index":  0
+                                                                           }
+                                                                       ]
+                                                                   ]
+                                                      },
+                        "Finance Q\u0026A - Super Agent":  {
+                                                               "main":  [
+                                                                            [
+                                                                                {
+                                                                                    "node":  "Send WhatsApp Response",
+                                                                                    "type":  "main",
+                                                                                    "index":  0
+                                                                                }
+                                                                            ]
+                                                                        ]
+                                                           },
+                        "Gmail Invoice Monitor":  {
+                                                      "main":  [
+                                                                   [
+                                                                       {
+                                                                           "node":  "Extract Invoice Data",
+                                                                           "type":  "main",
+                                                                           "index":  0
+                                                                       }
+                                                                   ]
+                                                               ]
+                                                  },
+                        "Extract Invoice Data":  {
+                                                     "main":  [
+                                                                  [
+                                                                      {
+                                                                          "node":  "Enhanced Data Extraction - Super Agent",
+                                                                          "type":  "main",
+                                                                          "index":  0
+                                                                      }
+                                                                  ]
+                                                              ]
+                                                 },
+                        "Enhanced Data Extraction - Super Agent":  {
+                                                                       "main":  [
+                                                                                    [
+                                                                                        {
+                                                                                            "node":  "Parse Enhanced Extraction",
+                                                                                            "type":  "main",
+                                                                                            "index":  0
+                                                                                        }
+                                                                                    ]
+                                                                                ]
+                                                                   },
+                        "Parse Enhanced Extraction":  {
+                                                          "main":  [
+                                                                       [
+                                                                           {
+                                                                               "node":  "Expense Categorization - Super Agent",
+                                                                               "type":  "main",
+                                                                               "index":  0
+                                                                           }
+                                                                       ]
+                                                                   ]
+                                                      },
+                        "Expense Categorization - Super Agent":  {
+                                                                     "main":  [
+                                                                                  [
+                                                                                      {
+                                                                                          "node":  "Parse Expense JSON",
+                                                                                          "type":  "main",
+                                                                                          "index":  0
+                                                                                      }
+                                                                                  ]
+                                                                              ]
+                                                                 },
+                        "Parse Expense JSON":  {
+                                                   "main":  [
+                                                                [
+                                                                    {
+                                                                        "node":  "Check for Anomalies",
+                                                                        "type":  "main",
+                                                                        "index":  0
+                                                                    }
+                                                                ]
+                                                            ]
+                                               },
+                        "Check for Anomalies":  {
+                                                    "main":  [
+                                                                 [
+                                                                     {
+                                                                         "node":  "Store Expense",
+                                                                         "type":  "main",
+                                                                         "index":  0
+                                                                     },
+                                                                     {
+                                                                         "node":  "Alert Accountant",
+                                                                         "type":  "main",
+                                                                         "index":  0
+                                                                     }
+                                                                 ],
+                                                                 [
+                                                                     {
+                                                                         "node":  "Store Expense",
+                                                                         "type":  "main",
+                                                                         "index":  0
+                                                                     }
+                                                                 ]
+                                                             ]
+                                                },
+                        "Weekly Summary Schedule":  {
+                                                        "main":  [
+                                                                     [
+                                                                         {
+                                                                             "node":  "Fetch Weekly Expenses",
+                                                                             "type":  "main",
+                                                                             "index":  0
+                                                                         }
+                                                                     ]
+                                                                 ]
+                                                    },
+                        "Fetch Weekly Expenses":  {
+                                                      "main":  [
+                                                                   [
+                                                                       {
+                                                                           "node":  "Aggregate Weekly Data",
+                                                                           "type":  "main",
+                                                                           "index":  0
+                                                                       }
+                                                                   ]
+                                                               ]
+                                                  },
+                        "Aggregate Weekly Data":  {
+                                                      "main":  [
+                                                                   [
+                                                                       {
+                                                                           "node":  "Weekly Summary - Super Agent",
+                                                                           "type":  "main",
+                                                                           "index":  0
+                                                                       }
+                                                                   ]
+                                                               ]
+                                                  },
+                        "Weekly Summary - Super Agent":  {
+                                                             "main":  [
+                                                                          [
+                                                                              {
+                                                                                  "node":  "Email Weekly Summary",
+                                                                                  "type":  "main",
+                                                                                  "index":  0
+                                                                              },
+                                                                              {
+                                                                                  "node":  "WhatsApp Weekly Summary",
+                                                                                  "type":  "main",
+                                                                                  "index":  0
+                                                                              }
+                                                                          ]
+                                                                      ]
+                                                         },
+                        "Monthly Pack Schedule":  {
+                                                      "main":  [
+                                                                   [
+                                                                       {
+                                                                           "node":  "Fetch Monthly Expenses",
+                                                                           "type":  "main",
+                                                                           "index":  0
+                                                                       }
+                                                                   ]
+                                                               ]
+                                                  },
+                        "Fetch Monthly Expenses":  {
+                                                       "main":  [
+                                                                    [
+                                                                        {
+                                                                            "node":  "Aggregate Monthly Data",
+                                                                            "type":  "main",
+                                                                            "index":  0
+                                                                        }
+                                                                    ]
+                                                                ]
+                                                   },
+                        "Aggregate Monthly Data":  {
+                                                       "main":  [
+                                                                    [
+                                                                        {
+                                                                            "node":  "Month-End Pack - Super Agent",
+                                                                            "type":  "main",
+                                                                            "index":  0
+                                                                        }
+                                                                    ]
+                                                                ]
+                                                   },
+                        "Month-End Pack - Super Agent":  {
+                                                             "main":  [
+                                                                          [
+                                                                              {
+                                                                                  "node":  "Email Month-End Pack",
+                                                                                  "type":  "main",
+                                                                                  "index":  0
+                                                                              }
+                                                                          ]
+                                                                      ]
+                                                         }
+                    },
+    "settings":  {
+                     "executionOrder":  "v1",
+                     "binaryMode":  "separate"
+                 },
+    "staticData":  null,
+    "meta":  null,
+    "pinData":  {
+
+                },
+    "versionId":  "07ddf7fe-2b96-4211-a876-c6b54a9704ed",
+    "activeVersionId":  null,
+    "versionCounter":  2,
+    "triggerCount":  0,
+    "shared":  [
+                   {
+                       "updatedAt":  "2026-04-10T22:19:33.814Z",
+                       "createdAt":  "2026-04-10T22:19:33.814Z",
+                       "role":  "workflow:owner",
+                       "workflowId":  "AmnY0PjTiYiotwyN",
+                       "projectId":  "Lrgt6JR85OZiVLcX",
+                       "project":  {
+                                       "updatedAt":  "2026-03-31T09:07:31.366Z",
+                                       "createdAt":  "2026-03-31T08:57:43.789Z",
+                                       "id":  "Lrgt6JR85OZiVLcX",
+                                       "name":  "gelson mascarenhas \u003cgelson_m@hotmail.com\u003e",
+                                       "type":  "personal",
+                                       "icon":  null,
+                                       "description":  null,
+                                       "creatorId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                   }
+                   }
+               ],
+    "tags":  [
+
+             ],
+    "activeVersion":  null
+}

@@ -1,0 +1,1037 @@
+﻿{
+    "updatedAt":  "2026-03-31T10:00:36.780Z",
+    "createdAt":  "2026-03-31T10:00:36.780Z",
+    "id":  "reHgYvQF9VMxvG8l",
+    "name":  "Business Hub",
+    "description":  null,
+    "active":  false,
+    "isArchived":  false,
+    "nodes":  [
+                  {
+                      "parameters":  {
+                                         "httpMethod":  "POST",
+                                         "path":  "business-hub",
+                                         "responseMode":  "lastNode",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "81a5e1e1-4d6f-4232-9c1c-a9203e934472",
+                      "name":  "Webhook Entry",
+                      "type":  "n8n-nodes-base.webhook",
+                      "typeVersion":  2,
+                      "position":  [
+                                       -320,
+                                       208
+                                   ],
+                      "webhookId":  "business-hub-main"
+                  },
+                  {
+                      "parameters":  {
+                                         "rules":  {
+                                                       "values":  [
+                                                                      {
+                                                                          "conditions":  {
+                                                                                             "options":  {
+                                                                                                             "caseSensitive":  false
+                                                                                                         },
+                                                                                             "combinator":  "and",
+                                                                                             "conditions":  [
+                                                                                                                {
+                                                                                                                    "id":  "route-gmail",
+                                                                                                                    "leftValue":  "={{ $json.service }}",
+                                                                                                                    "rightValue":  "gmail",
+                                                                                                                    "operator":  {
+                                                                                                                                     "type":  "string",
+                                                                                                                                     "operation":  "equals"
+                                                                                                                                 }
+                                                                                                                }
+                                                                                                            ]
+                                                                                         },
+                                                                          "renameOutput":  true,
+                                                                          "outputKey":  "Gmail"
+                                                                      },
+                                                                      {
+                                                                          "conditions":  {
+                                                                                             "options":  {
+                                                                                                             "caseSensitive":  false
+                                                                                                         },
+                                                                                             "combinator":  "and",
+                                                                                             "conditions":  [
+                                                                                                                {
+                                                                                                                    "id":  "route-slack",
+                                                                                                                    "leftValue":  "={{ $json.service }}",
+                                                                                                                    "rightValue":  "slack",
+                                                                                                                    "operator":  {
+                                                                                                                                     "type":  "string",
+                                                                                                                                     "operation":  "equals"
+                                                                                                                                 }
+                                                                                                                }
+                                                                                                            ]
+                                                                                         },
+                                                                          "renameOutput":  true,
+                                                                          "outputKey":  "Slack"
+                                                                      },
+                                                                      {
+                                                                          "conditions":  {
+                                                                                             "options":  {
+                                                                                                             "caseSensitive":  false
+                                                                                                         },
+                                                                                             "combinator":  "and",
+                                                                                             "conditions":  [
+                                                                                                                {
+                                                                                                                    "id":  "route-sheets",
+                                                                                                                    "leftValue":  "={{ $json.service }}",
+                                                                                                                    "rightValue":  "google_sheets",
+                                                                                                                    "operator":  {
+                                                                                                                                     "type":  "string",
+                                                                                                                                     "operation":  "equals"
+                                                                                                                                 }
+                                                                                                                }
+                                                                                                            ]
+                                                                                         },
+                                                                          "renameOutput":  true,
+                                                                          "outputKey":  "Google Sheets"
+                                                                      },
+                                                                      {
+                                                                          "conditions":  {
+                                                                                             "options":  {
+                                                                                                             "caseSensitive":  false
+                                                                                                         },
+                                                                                             "combinator":  "and",
+                                                                                             "conditions":  [
+                                                                                                                {
+                                                                                                                    "id":  "route-hubspot",
+                                                                                                                    "leftValue":  "={{ $json.service }}",
+                                                                                                                    "rightValue":  "hubspot",
+                                                                                                                    "operator":  {
+                                                                                                                                     "type":  "string",
+                                                                                                                                     "operation":  "equals"
+                                                                                                                                 }
+                                                                                                                }
+                                                                                                            ]
+                                                                                         },
+                                                                          "renameOutput":  true,
+                                                                          "outputKey":  "HubSpot"
+                                                                      },
+                                                                      {
+                                                                          "conditions":  {
+                                                                                             "options":  {
+                                                                                                             "caseSensitive":  false
+                                                                                                         },
+                                                                                             "combinator":  "and",
+                                                                                             "conditions":  [
+                                                                                                                {
+                                                                                                                    "id":  "route-twitter",
+                                                                                                                    "leftValue":  "={{ $json.service }}",
+                                                                                                                    "rightValue":  "twitter",
+                                                                                                                    "operator":  {
+                                                                                                                                     "type":  "string",
+                                                                                                                                     "operation":  "equals"
+                                                                                                                                 }
+                                                                                                                }
+                                                                                                            ]
+                                                                                         },
+                                                                          "renameOutput":  true,
+                                                                          "outputKey":  "Twitter/X"
+                                                                      },
+                                                                      {
+                                                                          "conditions":  {
+                                                                                             "options":  {
+                                                                                                             "caseSensitive":  false
+                                                                                                         },
+                                                                                             "combinator":  "and",
+                                                                                             "conditions":  [
+                                                                                                                {
+                                                                                                                    "id":  "route-linkedin",
+                                                                                                                    "leftValue":  "={{ $json.service }}",
+                                                                                                                    "rightValue":  "linkedin",
+                                                                                                                    "operator":  {
+                                                                                                                                     "type":  "string",
+                                                                                                                                     "operation":  "equals"
+                                                                                                                                 }
+                                                                                                                }
+                                                                                                            ]
+                                                                                         },
+                                                                          "renameOutput":  true,
+                                                                          "outputKey":  "LinkedIn"
+                                                                      },
+                                                                      {
+                                                                          "conditions":  {
+                                                                                             "options":  {
+                                                                                                             "caseSensitive":  false
+                                                                                                         },
+                                                                                             "combinator":  "and",
+                                                                                             "conditions":  [
+                                                                                                                {
+                                                                                                                    "id":  "route-telegram",
+                                                                                                                    "leftValue":  "={{ $json.service }}",
+                                                                                                                    "rightValue":  "telegram",
+                                                                                                                    "operator":  {
+                                                                                                                                     "type":  "string",
+                                                                                                                                     "operation":  "equals"
+                                                                                                                                 }
+                                                                                                                }
+                                                                                                            ]
+                                                                                         },
+                                                                          "renameOutput":  true,
+                                                                          "outputKey":  "Telegram"
+                                                                      },
+                                                                      {
+                                                                          "conditions":  {
+                                                                                             "options":  {
+                                                                                                             "caseSensitive":  false
+                                                                                                         },
+                                                                                             "combinator":  "and",
+                                                                                             "conditions":  [
+                                                                                                                {
+                                                                                                                    "id":  "route-mailchimp",
+                                                                                                                    "leftValue":  "={{ $json.service }}",
+                                                                                                                    "rightValue":  "mailchimp",
+                                                                                                                    "operator":  {
+                                                                                                                                     "type":  "string",
+                                                                                                                                     "operation":  "equals"
+                                                                                                                                 }
+                                                                                                                }
+                                                                                                            ]
+                                                                                         },
+                                                                          "renameOutput":  true,
+                                                                          "outputKey":  "Mailchimp"
+                                                                      },
+                                                                      {
+                                                                          "conditions":  {
+                                                                                             "options":  {
+                                                                                                             "caseSensitive":  false
+                                                                                                         },
+                                                                                             "combinator":  "and",
+                                                                                             "conditions":  [
+                                                                                                                {
+                                                                                                                    "id":  "route-airtable",
+                                                                                                                    "leftValue":  "={{ $json.service }}",
+                                                                                                                    "rightValue":  "airtable",
+                                                                                                                    "operator":  {
+                                                                                                                                     "type":  "string",
+                                                                                                                                     "operation":  "equals"
+                                                                                                                                 }
+                                                                                                                }
+                                                                                                            ]
+                                                                                         },
+                                                                          "renameOutput":  true,
+                                                                          "outputKey":  "Airtable"
+                                                                      },
+                                                                      {
+                                                                          "conditions":  {
+                                                                                             "options":  {
+                                                                                                             "caseSensitive":  false
+                                                                                                         },
+                                                                                             "combinator":  "and",
+                                                                                             "conditions":  [
+                                                                                                                {
+                                                                                                                    "id":  "route-facebook",
+                                                                                                                    "leftValue":  "={{ $json.service }}",
+                                                                                                                    "rightValue":  "facebook",
+                                                                                                                    "operator":  {
+                                                                                                                                     "type":  "string",
+                                                                                                                                     "operation":  "equals"
+                                                                                                                                 }
+                                                                                                                }
+                                                                                                            ]
+                                                                                         },
+                                                                          "renameOutput":  true,
+                                                                          "outputKey":  "Facebook"
+                                                                      },
+                                                                      {
+                                                                          "conditions":  {
+                                                                                             "options":  {
+                                                                                                             "caseSensitive":  false
+                                                                                                         },
+                                                                                             "combinator":  "and",
+                                                                                             "conditions":  [
+                                                                                                                {
+                                                                                                                    "id":  "route-instagram",
+                                                                                                                    "leftValue":  "={{ $json.service }}",
+                                                                                                                    "rightValue":  "instagram",
+                                                                                                                    "operator":  {
+                                                                                                                                     "type":  "string",
+                                                                                                                                     "operation":  "equals"
+                                                                                                                                 }
+                                                                                                                }
+                                                                                                            ]
+                                                                                         },
+                                                                          "renameOutput":  true,
+                                                                          "outputKey":  "Instagram"
+                                                                      },
+                                                                      {
+                                                                          "conditions":  {
+                                                                                             "options":  {
+                                                                                                             "caseSensitive":  false
+                                                                                                         },
+                                                                                             "combinator":  "and",
+                                                                                             "conditions":  [
+                                                                                                                {
+                                                                                                                    "id":  "route-whatsapp",
+                                                                                                                    "leftValue":  "={{ $json.service }}",
+                                                                                                                    "rightValue":  "whatsapp",
+                                                                                                                    "operator":  {
+                                                                                                                                     "type":  "string",
+                                                                                                                                     "operation":  "equals"
+                                                                                                                                 }
+                                                                                                                }
+                                                                                                            ]
+                                                                                         },
+                                                                          "renameOutput":  true,
+                                                                          "outputKey":  "WhatsApp"
+                                                                      },
+                                                                      {
+                                                                          "conditions":  {
+                                                                                             "options":  {
+                                                                                                             "caseSensitive":  false
+                                                                                                         },
+                                                                                             "combinator":  "and",
+                                                                                             "conditions":  [
+                                                                                                                {
+                                                                                                                    "id":  "route-tiktok",
+                                                                                                                    "leftValue":  "={{ $json.service }}",
+                                                                                                                    "rightValue":  "tiktok",
+                                                                                                                    "operator":  {
+                                                                                                                                     "type":  "string",
+                                                                                                                                     "operation":  "equals"
+                                                                                                                                 }
+                                                                                                                }
+                                                                                                            ]
+                                                                                         },
+                                                                          "renameOutput":  true,
+                                                                          "outputKey":  "TikTok"
+                                                                      },
+                                                                      {
+                                                                          "conditions":  {
+                                                                                             "options":  {
+                                                                                                             "caseSensitive":  false
+                                                                                                         },
+                                                                                             "combinator":  "and",
+                                                                                             "conditions":  [
+                                                                                                                {
+                                                                                                                    "id":  "route-youtube",
+                                                                                                                    "leftValue":  "={{ $json.service }}",
+                                                                                                                    "rightValue":  "youtube",
+                                                                                                                    "operator":  {
+                                                                                                                                     "type":  "string",
+                                                                                                                                     "operation":  "equals"
+                                                                                                                                 }
+                                                                                                                }
+                                                                                                            ]
+                                                                                         },
+                                                                          "renameOutput":  true,
+                                                                          "outputKey":  "YouTube"
+                                                                      },
+                                                                      {
+                                                                          "conditions":  {
+                                                                                             "options":  {
+                                                                                                             "caseSensitive":  false
+                                                                                                         },
+                                                                                             "combinator":  "and",
+                                                                                             "conditions":  [
+                                                                                                                {
+                                                                                                                    "id":  "route-superagent",
+                                                                                                                    "leftValue":  "={{ $json.service }}",
+                                                                                                                    "rightValue":  "super_agent",
+                                                                                                                    "operator":  {
+                                                                                                                                     "type":  "string",
+                                                                                                                                     "operation":  "equals"
+                                                                                                                                 }
+                                                                                                                }
+                                                                                                            ]
+                                                                                         },
+                                                                          "renameOutput":  true,
+                                                                          "outputKey":  "Super Agent AI"
+                                                                      }
+                                                                  ]
+                                                   },
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "d282221e-a7ff-4370-a802-2b417edc6eba",
+                      "name":  "Service Router",
+                      "type":  "n8n-nodes-base.switch",
+                      "typeVersion":  3,
+                      "position":  [
+                                       -96,
+                                       208
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "sendTo":  "={{ $json.to }}",
+                                         "subject":  "={{ $json.subject }}",
+                                         "message":  "={{ $json.body }}",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "b18ab315-109f-4ab9-b4ec-d73e0bfe328f",
+                      "name":  "Gmail",
+                      "type":  "n8n-nodes-base.gmail",
+                      "typeVersion":  2.1,
+                      "position":  [
+                                       144,
+                                       -96
+                                   ],
+                      "webhookId":  "a0577aed-0527-4b21-97e6-2da92ff20690"
+                  },
+                  {
+                      "parameters":  {
+                                         "text":  "={{ $json.message }}",
+                                         "otherOptions":  {
+
+                                                          }
+                                     },
+                      "id":  "c35a29d1-06d9-4c22-909b-e87d736c10a9",
+                      "name":  "Slack",
+                      "type":  "n8n-nodes-base.slack",
+                      "typeVersion":  2.3,
+                      "position":  [
+                                       144,
+                                       16
+                                   ],
+                      "webhookId":  "2844e37c-e306-4233-988b-719958b46574"
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "append",
+                                         "documentId":  {
+                                                            "value":  "={{ $json.spreadsheet_id }}"
+                                                        },
+                                         "sheetName":  {
+                                                           "value":  "={{ $json.sheet || \u0027Sheet1\u0027 }}"
+                                                       },
+                                         "columns":  {
+                                                         "mappingMode":  "autoMapInputData",
+                                                         "value":  {
+
+                                                                   }
+                                                     },
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "079ee47a-c472-4363-a680-044770a68554",
+                      "name":  "Google Sheets",
+                      "type":  "n8n-nodes-base.googleSheets",
+                      "typeVersion":  4.5,
+                      "position":  [
+                                       144,
+                                       112
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "additionalFields":  {
+
+                                                              },
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "a555f53c-e9b9-47c6-a345-b199a80e59cf",
+                      "name":  "HubSpot",
+                      "type":  "n8n-nodes-base.hubspot",
+                      "typeVersion":  2,
+                      "position":  [
+                                       144,
+                                       208
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "text":  "={{ $json.tweet }}",
+                                         "additionalFields":  {
+
+                                                              }
+                                     },
+                      "id":  "cc640961-e711-4ffe-ae55-02aeef8c29e9",
+                      "name":  "Twitter/X",
+                      "type":  "n8n-nodes-base.twitter",
+                      "typeVersion":  2,
+                      "position":  [
+                                       144,
+                                       304
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "person":  "urn:li:person:RECONNECT",
+                                         "text":  "={{ $json.post }}",
+                                         "additionalFields":  {
+
+                                                              }
+                                     },
+                      "id":  "c02a7b2b-60e7-4955-b246-f6ead19895cd",
+                      "name":  "LinkedIn",
+                      "type":  "n8n-nodes-base.linkedIn",
+                      "typeVersion":  1,
+                      "position":  [
+                                       144,
+                                       416
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "chatId":  "={{ $json.chat_id }}",
+                                         "text":  "={{ $json.message }}",
+                                         "additionalFields":  {
+
+                                                              }
+                                     },
+                      "id":  "89dda994-22c3-47c1-94fa-bb12029707ad",
+                      "name":  "Telegram",
+                      "type":  "n8n-nodes-base.telegram",
+                      "typeVersion":  1.2,
+                      "position":  [
+                                       144,
+                                       512
+                                   ],
+                      "webhookId":  "8a6fadbe-59ba-44bf-92fd-1dc7ba652cfc"
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "addMember"
+                                     },
+                      "id":  "62a4e0d4-f510-408b-bcf8-f7be1edc03e2",
+                      "name":  "Mailchimp",
+                      "type":  "n8n-nodes-base.mailchimp",
+                      "typeVersion":  1,
+                      "position":  [
+                                       144,
+                                       608
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "create",
+                                         "base":  {
+                                                      "__rl":  true,
+                                                      "mode":  "list",
+                                                      "value":  ""
+                                                  },
+                                         "table":  {
+                                                       "value":  "={{ $json.table }}"
+                                                   },
+                                         "columns":  {
+                                                         "mappingMode":  "autoMapInputData",
+                                                         "value":  {
+
+                                                                   }
+                                                     },
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "1a4bd8e1-0495-44e1-9c5a-cb3a85d316b8",
+                      "name":  "Airtable",
+                      "type":  "n8n-nodes-base.airtable",
+                      "typeVersion":  2.1,
+                      "position":  [
+                                       144,
+                                       704
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "url":  "https://graph.facebook.com/v19.0/me/feed",
+                                         "authentication":  "predefinedCredentialType",
+                                         "nodeCredentialType":  "facebookGraphApi",
+                                         "sendBody":  true,
+                                         "specifyBody":  "json",
+                                         "jsonBody":  "={\n  \"message\": \"{{ $json.post }}\",\n  \"access_token\": \"{{ $credentials.facebookGraphApi.accessToken }}\"\n}",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "33b40671-2024-4ab8-a27e-2affbe73acd8",
+                      "name":  "Facebook",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.2,
+                      "position":  [
+                                       144,
+                                       816
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "url":  "https://graph.facebook.com/v19.0/me/media",
+                                         "sendBody":  true,
+                                         "specifyBody":  "json",
+                                         "jsonBody":  "={\n  \"caption\": \"{{ $json.caption }}\",\n  \"image_url\": \"{{ $json.image_url }}\"\n}",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "ee43d4f7-1bad-445f-9ead-049f98a34a19",
+                      "name":  "Instagram",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.2,
+                      "position":  [
+                                       144,
+                                       912
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "url":  "https://graph.facebook.com/v19.0/PHONE_NUMBER_ID/messages",
+                                         "sendHeaders":  true,
+                                         "headerParameters":  {
+                                                                  "parameters":  [
+                                                                                     {
+                                                                                         "name":  "Authorization",
+                                                                                         "value":  "=Bearer {{ $json.whatsapp_token }}"
+                                                                                     }
+                                                                                 ]
+                                                              },
+                                         "sendBody":  true,
+                                         "specifyBody":  "json",
+                                         "jsonBody":  "={\n  \"messaging_product\": \"whatsapp\",\n  \"to\": \"{{ $json.to }}\",\n  \"type\": \"text\",\n  \"text\": { \"body\": \"{{ $json.message }}\" }\n}",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "0e35fec6-078d-429f-ad3a-dff9559044c9",
+                      "name":  "WhatsApp",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.2,
+                      "position":  [
+                                       144,
+                                       1008
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "url":  "https://open.tiktokapis.com/v2/post/publish/video/init/",
+                                         "sendHeaders":  true,
+                                         "headerParameters":  {
+                                                                  "parameters":  [
+                                                                                     {
+                                                                                         "name":  "Authorization",
+                                                                                         "value":  "=Bearer {{ $json.tiktok_token }}"
+                                                                                     }
+                                                                                 ]
+                                                              },
+                                         "sendBody":  true,
+                                         "specifyBody":  "json",
+                                         "jsonBody":  "={\n  \"post_info\": { \"title\": \"{{ $json.title }}\", \"privacy_level\": \"PUBLIC_TO_EVERYONE\" },\n  \"source_info\": { \"source\": \"URL\", \"video_url\": \"{{ $json.video_url }}\" }\n}",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "cad3de53-0330-433e-b03a-019db5ba2b3c",
+                      "name":  "TikTok",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.2,
+                      "position":  [
+                                       144,
+                                       1104
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "url":  "https://www.googleapis.com/upload/youtube/v3/videos",
+                                         "sendHeaders":  true,
+                                         "headerParameters":  {
+                                                                  "parameters":  [
+                                                                                     {
+                                                                                         "name":  "Authorization",
+                                                                                         "value":  "=Bearer {{ $json.youtube_token }}"
+                                                                                     }
+                                                                                 ]
+                                                              },
+                                         "sendBody":  true,
+                                         "specifyBody":  "json",
+                                         "jsonBody":  "={\n  \"snippet\": { \"title\": \"{{ $json.title }}\", \"description\": \"{{ $json.description }}\" },\n  \"status\": { \"privacyStatus\": \"public\" }\n}",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "302857c9-b320-4245-ad11-597fcf98bdff",
+                      "name":  "YouTube",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.2,
+                      "position":  [
+                                       144,
+                                       1216
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "method":  "POST",
+                                         "url":  "https://super-agent-production.up.railway.app/chat",
+                                         "sendHeaders":  true,
+                                         "headerParameters":  {
+                                                                  "parameters":  [
+                                                                                     {
+                                                                                         "name":  "X-Token",
+                                                                                         "value":  "={{ $json.super_agent_password || $env.SUPER_AGENT_PASSWORD }}"
+                                                                                     }
+                                                                                 ]
+                                                              },
+                                         "sendBody":  true,
+                                         "specifyBody":  "json",
+                                         "jsonBody":  "={\n  \"message\": \"{{ $json.message }}\",\n  \"session_id\": \"{{ $json.session_id || \u0027n8n-default\u0027 }}\"\n}",
+                                         "options":  {
+                                                         "response":  {
+                                                                          "response":  {
+                                                                                           "responseFormat":  "json"
+                                                                                       }
+                                                                      }
+                                                     }
+                                     },
+                      "id":  "04b19cd0-af48-4d0b-b791-6d40add9cc9b",
+                      "name":  "Super Agent AI",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.2,
+                      "position":  [
+                                       144,
+                                       1312
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "respondWith":  "json",
+                                         "responseBody":  "={\n  \"ok\": true,\n  \"service\": \"{{ $(\u0027Service Router\u0027).params.rules.values[$runIndex].outputKey }}\",\n  \"result\": {{ JSON.stringify($json) }}\n}",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "d8acc50c-7c93-43e2-93d7-74bfdfa6cfd4",
+                      "name":  "Respond",
+                      "type":  "n8n-nodes-base.respondToWebhook",
+                      "typeVersion":  1.1,
+                      "position":  [
+                                       384,
+                                       608
+                                   ]
+                  }
+              ],
+    "connections":  {
+                        "Webhook Entry":  {
+                                              "main":  [
+                                                           [
+                                                               {
+                                                                   "node":  "Service Router",
+                                                                   "type":  "main",
+                                                                   "index":  0
+                                                               }
+                                                           ]
+                                                       ]
+                                          },
+                        "Service Router":  {
+                                               "main":  [
+                                                            [
+                                                                {
+                                                                    "node":  "Gmail",
+                                                                    "type":  "main",
+                                                                    "index":  0
+                                                                }
+                                                            ],
+                                                            [
+                                                                {
+                                                                    "node":  "Slack",
+                                                                    "type":  "main",
+                                                                    "index":  0
+                                                                }
+                                                            ],
+                                                            [
+                                                                {
+                                                                    "node":  "Google Sheets",
+                                                                    "type":  "main",
+                                                                    "index":  0
+                                                                }
+                                                            ],
+                                                            [
+                                                                {
+                                                                    "node":  "HubSpot",
+                                                                    "type":  "main",
+                                                                    "index":  0
+                                                                }
+                                                            ],
+                                                            [
+                                                                {
+                                                                    "node":  "Twitter/X",
+                                                                    "type":  "main",
+                                                                    "index":  0
+                                                                }
+                                                            ],
+                                                            [
+                                                                {
+                                                                    "node":  "LinkedIn",
+                                                                    "type":  "main",
+                                                                    "index":  0
+                                                                }
+                                                            ],
+                                                            [
+                                                                {
+                                                                    "node":  "Telegram",
+                                                                    "type":  "main",
+                                                                    "index":  0
+                                                                }
+                                                            ],
+                                                            [
+                                                                {
+                                                                    "node":  "Mailchimp",
+                                                                    "type":  "main",
+                                                                    "index":  0
+                                                                }
+                                                            ],
+                                                            [
+                                                                {
+                                                                    "node":  "Airtable",
+                                                                    "type":  "main",
+                                                                    "index":  0
+                                                                }
+                                                            ],
+                                                            [
+                                                                {
+                                                                    "node":  "Facebook",
+                                                                    "type":  "main",
+                                                                    "index":  0
+                                                                }
+                                                            ],
+                                                            [
+                                                                {
+                                                                    "node":  "Instagram",
+                                                                    "type":  "main",
+                                                                    "index":  0
+                                                                }
+                                                            ],
+                                                            [
+                                                                {
+                                                                    "node":  "WhatsApp",
+                                                                    "type":  "main",
+                                                                    "index":  0
+                                                                }
+                                                            ],
+                                                            [
+                                                                {
+                                                                    "node":  "TikTok",
+                                                                    "type":  "main",
+                                                                    "index":  0
+                                                                }
+                                                            ],
+                                                            [
+                                                                {
+                                                                    "node":  "YouTube",
+                                                                    "type":  "main",
+                                                                    "index":  0
+                                                                }
+                                                            ],
+                                                            [
+                                                                {
+                                                                    "node":  "Super Agent AI",
+                                                                    "type":  "main",
+                                                                    "index":  0
+                                                                }
+                                                            ]
+                                                        ]
+                                           },
+                        "Gmail":  {
+                                      "main":  [
+                                                   [
+                                                       {
+                                                           "node":  "Respond",
+                                                           "type":  "main",
+                                                           "index":  0
+                                                       }
+                                                   ]
+                                               ]
+                                  },
+                        "Slack":  {
+                                      "main":  [
+                                                   [
+                                                       {
+                                                           "node":  "Respond",
+                                                           "type":  "main",
+                                                           "index":  0
+                                                       }
+                                                   ]
+                                               ]
+                                  },
+                        "Google Sheets":  {
+                                              "main":  [
+                                                           [
+                                                               {
+                                                                   "node":  "Respond",
+                                                                   "type":  "main",
+                                                                   "index":  0
+                                                               }
+                                                           ]
+                                                       ]
+                                          },
+                        "HubSpot":  {
+                                        "main":  [
+                                                     [
+                                                         {
+                                                             "node":  "Respond",
+                                                             "type":  "main",
+                                                             "index":  0
+                                                         }
+                                                     ]
+                                                 ]
+                                    },
+                        "Twitter/X":  {
+                                          "main":  [
+                                                       [
+                                                           {
+                                                               "node":  "Respond",
+                                                               "type":  "main",
+                                                               "index":  0
+                                                           }
+                                                       ]
+                                                   ]
+                                      },
+                        "LinkedIn":  {
+                                         "main":  [
+                                                      [
+                                                          {
+                                                              "node":  "Respond",
+                                                              "type":  "main",
+                                                              "index":  0
+                                                          }
+                                                      ]
+                                                  ]
+                                     },
+                        "Telegram":  {
+                                         "main":  [
+                                                      [
+                                                          {
+                                                              "node":  "Respond",
+                                                              "type":  "main",
+                                                              "index":  0
+                                                          }
+                                                      ]
+                                                  ]
+                                     },
+                        "Mailchimp":  {
+                                          "main":  [
+                                                       [
+                                                           {
+                                                               "node":  "Respond",
+                                                               "type":  "main",
+                                                               "index":  0
+                                                           }
+                                                       ]
+                                                   ]
+                                      },
+                        "Airtable":  {
+                                         "main":  [
+                                                      [
+                                                          {
+                                                              "node":  "Respond",
+                                                              "type":  "main",
+                                                              "index":  0
+                                                          }
+                                                      ]
+                                                  ]
+                                     },
+                        "Facebook":  {
+                                         "main":  [
+                                                      [
+                                                          {
+                                                              "node":  "Respond",
+                                                              "type":  "main",
+                                                              "index":  0
+                                                          }
+                                                      ]
+                                                  ]
+                                     },
+                        "Instagram":  {
+                                          "main":  [
+                                                       [
+                                                           {
+                                                               "node":  "Respond",
+                                                               "type":  "main",
+                                                               "index":  0
+                                                           }
+                                                       ]
+                                                   ]
+                                      },
+                        "WhatsApp":  {
+                                         "main":  [
+                                                      [
+                                                          {
+                                                              "node":  "Respond",
+                                                              "type":  "main",
+                                                              "index":  0
+                                                          }
+                                                      ]
+                                                  ]
+                                     },
+                        "TikTok":  {
+                                       "main":  [
+                                                    [
+                                                        {
+                                                            "node":  "Respond",
+                                                            "type":  "main",
+                                                            "index":  0
+                                                        }
+                                                    ]
+                                                ]
+                                   },
+                        "YouTube":  {
+                                        "main":  [
+                                                     [
+                                                         {
+                                                             "node":  "Respond",
+                                                             "type":  "main",
+                                                             "index":  0
+                                                         }
+                                                     ]
+                                                 ]
+                                    },
+                        "Super Agent AI":  {
+                                               "main":  [
+                                                            [
+                                                                {
+                                                                    "node":  "Respond",
+                                                                    "type":  "main",
+                                                                    "index":  0
+                                                                }
+                                                            ]
+                                                        ]
+                                           }
+                    },
+    "settings":  {
+                     "executionOrder":  "v1",
+                     "binaryMode":  "separate"
+                 },
+    "staticData":  null,
+    "meta":  null,
+    "pinData":  {
+
+                },
+    "versionId":  "ecf42a2f-1ae3-4fe4-a202-566fe283dbe4",
+    "activeVersionId":  null,
+    "versionCounter":  1,
+    "triggerCount":  0,
+    "shared":  [
+                   {
+                       "updatedAt":  "2026-03-31T10:00:36.780Z",
+                       "createdAt":  "2026-03-31T10:00:36.780Z",
+                       "role":  "workflow:owner",
+                       "workflowId":  "reHgYvQF9VMxvG8l",
+                       "projectId":  "Lrgt6JR85OZiVLcX",
+                       "project":  {
+                                       "updatedAt":  "2026-03-31T09:07:31.366Z",
+                                       "createdAt":  "2026-03-31T08:57:43.789Z",
+                                       "id":  "Lrgt6JR85OZiVLcX",
+                                       "name":  "gelson mascarenhas \u003cgelson_m@hotmail.com\u003e",
+                                       "type":  "personal",
+                                       "icon":  null,
+                                       "description":  null,
+                                       "creatorId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                   }
+                   }
+               ],
+    "tags":  [
+
+             ],
+    "activeVersion":  null
+}

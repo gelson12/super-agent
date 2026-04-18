@@ -1,0 +1,144 @@
+﻿{
+    "updatedAt":  "2026-04-12T11:23:05.021Z",
+    "createdAt":  "2026-04-12T11:23:05.021Z",
+    "id":  "yZckxfWsvugSBFZh",
+    "name":  "Robust Health Check",
+    "description":  null,
+    "active":  false,
+    "isArchived":  false,
+    "nodes":  [
+                  {
+                      "parameters":  {
+                                         "httpMethod":  "GET",
+                                         "path":  "health",
+                                         "responseMode":  "lastNode",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "webhook-get",
+                      "name":  "Webhook GET",
+                      "type":  "n8n-nodes-base.webhook",
+                      "typeVersion":  2,
+                      "position":  [
+                                       250,
+                                       200
+                                   ],
+                      "webhookId":  "robust-health-get"
+                  },
+                  {
+                      "parameters":  {
+                                         "httpMethod":  "POST",
+                                         "path":  "health",
+                                         "responseMode":  "lastNode",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "webhook-post",
+                      "name":  "Webhook POST",
+                      "type":  "n8n-nodes-base.webhook",
+                      "typeVersion":  2,
+                      "position":  [
+                                       250,
+                                       400
+                                   ],
+                      "webhookId":  "robust-health-post"
+                  },
+                  {
+                      "parameters":  {
+                                         "respondWith":  "json",
+                                         "responseBody":  "={{\"status\": \"ok\", \"message\": \"Health check successful\", \"method\": $node[\u0027Webhook GET\u0027].json.method, \"timestamp\": new Date().toISOString(), \"service\": \"n8n\", \"version\": \"1.0\"}}",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "respond-get",
+                      "name":  "Respond GET",
+                      "type":  "n8n-nodes-base.respondToWebhook",
+                      "typeVersion":  1.1,
+                      "position":  [
+                                       450,
+                                       200
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "respondWith":  "json",
+                                         "responseBody":  "={{\"status\": \"ok\", \"message\": \"Health check successful\", \"method\": $node[\u0027Webhook POST\u0027].json.method, \"timestamp\": new Date().toISOString(), \"service\": \"n8n\", \"version\": \"1.0\"}}",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "respond-post",
+                      "name":  "Respond POST",
+                      "type":  "n8n-nodes-base.respondToWebhook",
+                      "typeVersion":  1.1,
+                      "position":  [
+                                       450,
+                                       400
+                                   ]
+                  }
+              ],
+    "connections":  {
+                        "Webhook GET":  {
+                                            "main":  [
+                                                         [
+                                                             {
+                                                                 "node":  "Respond GET",
+                                                                 "type":  "main",
+                                                                 "index":  0
+                                                             }
+                                                         ]
+                                                     ]
+                                        },
+                        "Webhook POST":  {
+                                             "main":  [
+                                                          [
+                                                              {
+                                                                  "node":  "Respond POST",
+                                                                  "type":  "main",
+                                                                  "index":  0
+                                                              }
+                                                          ]
+                                                      ]
+                                         }
+                    },
+    "settings":  {
+                     "executionOrder":  "v1",
+                     "saveManualExecutions":  true,
+                     "callerPolicy":  "workflowsFromSameOwner",
+                     "errorWorkflow":  "",
+                     "availableInMCP":  false
+                 },
+    "staticData":  null,
+    "meta":  null,
+    "pinData":  null,
+    "versionId":  "826cd0d9-3310-41ee-8f7c-41de414efbab",
+    "activeVersionId":  null,
+    "versionCounter":  14,
+    "triggerCount":  2,
+    "shared":  [
+                   {
+                       "updatedAt":  "2026-04-12T11:23:05.021Z",
+                       "createdAt":  "2026-04-12T11:23:05.021Z",
+                       "role":  "workflow:owner",
+                       "workflowId":  "yZckxfWsvugSBFZh",
+                       "projectId":  "Lrgt6JR85OZiVLcX",
+                       "project":  {
+                                       "updatedAt":  "2026-03-31T09:07:31.366Z",
+                                       "createdAt":  "2026-03-31T08:57:43.789Z",
+                                       "id":  "Lrgt6JR85OZiVLcX",
+                                       "name":  "gelson mascarenhas \u003cgelson_m@hotmail.com\u003e",
+                                       "type":  "personal",
+                                       "icon":  null,
+                                       "description":  null,
+                                       "creatorId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                   }
+                   }
+               ],
+    "tags":  [
+
+             ],
+    "activeVersion":  null
+}

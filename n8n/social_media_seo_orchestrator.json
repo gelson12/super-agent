@@ -1,0 +1,547 @@
+{
+  "name": "Social Media SEO Orchestrator",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "social-media-seo",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "smo-webhook",
+      "name": "Webhook Entry",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "social-media-seo-main"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "cronExpression", "expression": "0 8 * * *" }]
+        }
+      },
+      "id": "smo-daily-schedule",
+      "name": "Daily Publish 08:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 480]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "cronExpression", "expression": "0 7 * * 0" }]
+        }
+      },
+      "id": "smo-weekly-schedule",
+      "name": "Weekly Report Sunday 07:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 660]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": { "caseSensitive": false },
+                "combinator": "and",
+                "conditions": [{ "id": "r1", "leftValue": "={{ $json.action }}", "rightValue": "generate_content", "operator": { "type": "string", "operation": "equals" } }]
+              },
+              "renameOutput": true,
+              "outputKey": "Generate Content"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": false },
+                "combinator": "and",
+                "conditions": [{ "id": "r2", "leftValue": "={{ $json.action }}", "rightValue": "publish_post", "operator": { "type": "string", "operation": "equals" } }]
+              },
+              "renameOutput": true,
+              "outputKey": "Publish Post"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": false },
+                "combinator": "and",
+                "conditions": [{ "id": "r3", "leftValue": "={{ $json.action }}", "rightValue": "get_analytics", "operator": { "type": "string", "operation": "equals" } }]
+              },
+              "renameOutput": true,
+              "outputKey": "Get Analytics"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": false },
+                "combinator": "and",
+                "conditions": [{ "id": "r4", "leftValue": "={{ $json.action }}", "rightValue": "seo_audit", "operator": { "type": "string", "operation": "equals" } }]
+              },
+              "renameOutput": true,
+              "outputKey": "SEO Audit"
+            },
+            {
+              "conditions": {
+                "options": { "caseSensitive": false },
+                "combinator": "and",
+                "conditions": [{ "id": "r5", "leftValue": "={{ $json.action }}", "rightValue": "schedule_post", "operator": { "type": "string", "operation": "equals" } }]
+              },
+              "renameOutput": true,
+              "outputKey": "Schedule Post"
+            }
+          ]
+        },
+        "fallbackOutput": "extra"
+      },
+      "id": "smo-action-router",
+      "name": "Action Router",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [480, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPER_AGENT_BASE_URL }}/webhook/superagent-chat",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "Content-Type", "value": "application/json" }] },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"message\": \"You are an expert social media copywriter and SEO specialist for Bridge Digital Solution agency.\\n\\nGenerate platform-optimised content for:\\nBrand: {{ $json.brand || 'Bridge Digital Solution' }}\\nPlatform: {{ $json.platform || 'all' }}\\nTopic/Brief: {{ $json.brief }}\\nTone: {{ $json.tone || 'professional yet engaging' }}\\nContent Pillar: {{ $json.pillar || 'educational' }}\\n\\nReturn ONLY valid JSON with this structure:\\n{\\n  \\\"instagram\\\": { \\\"caption\\\": \\\"...\\\", \\\"hashtags\\\": [], \\\"seo_keywords\\\": [], \\\"cta\\\": \\\"...\\\" },\\n  \\\"facebook\\\": { \\\"caption\\\": \\\"...\\\", \\\"hashtags\\\": [], \\\"seo_keywords\\\": [], \\\"cta\\\": \\\"...\\\" },\\n  \\\"tiktok\\\": { \\\"caption\\\": \\\"...\\\", \\\"hashtags\\\": [], \\\"seo_keywords\\\": [], \\\"hook\\\": \\\"...\\\" },\\n  \\\"optimal_times\\\": { \\\"instagram\\\": \\\"18:00\\\", \\\"facebook\\\": \\\"13:00\\\", \\\"tiktok\\\": \\\"20:00\\\" }\\n}\\n\\nInstagram: max 2200 chars, 30 hashtags. Facebook: conversational, 5-10 hashtags. TikTok: punchy hook first, 10-15 hashtags.\",\n  \"session_id\": \"smo-gen-{{ $now.toMillis() }}\"\n}",
+        "options": { "timeout": 60000 }
+      },
+      "id": "smo-content-gen",
+      "name": "AI Content Generator",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [780, 160]
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $json.response || $json.message || $json.output || $json.reply || '';\nlet content;\ntry {\n  const match = raw.match(/\\{[\\s\\S]*\\}/);\n  content = JSON.parse(match ? match[0] : raw);\n} catch(e) {\n  content = { parse_error: true, raw: raw.substring(0, 500) };\n}\nconst input = $('Webhook Entry').first().json;\nreturn [{ json: {\n  brand: input.brand || 'Bridge Digital Solution',\n  brief: input.brief || '',\n  platform: input.platform || 'all',\n  image_url: input.image_url || null,\n  video_url: input.video_url || null,\n  ig_caption: content.instagram?.caption || '',\n  ig_hashtags: JSON.stringify(content.instagram?.hashtags || []),\n  fb_caption: content.facebook?.caption || '',\n  fb_hashtags: JSON.stringify(content.facebook?.hashtags || []),\n  tt_caption: content.tiktok?.caption || '',\n  tt_hashtags: JSON.stringify(content.tiktok?.hashtags || []),\n  tt_hook: content.tiktok?.hook || '',\n  optimal_times: JSON.stringify(content.optimal_times || { instagram: '18:00', facebook: '13:00', tiktok: '20:00' }),\n  content_raw: JSON.stringify(content),\n  generated_at: new Date().toISOString()\n} }];"
+      },
+      "id": "smo-parse-content",
+      "name": "Parse Generated Content",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1020, 160]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO content_drafts (brand, brief, platform, ig_caption, ig_hashtags, fb_caption, fb_hashtags, tt_caption, tt_hashtags, tt_hook, image_url, video_url, optimal_times, status, created_at) VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7::jsonb,$8,$9::jsonb,$10,$11,$12,$13::jsonb,'draft',NOW()) RETURNING id, status, created_at",
+        "options": {
+          "queryParameters": "={{ $json.brand }},={{ $json.brief }},={{ $json.platform }},={{ $json.ig_caption }},={{ $json.ig_hashtags }},={{ $json.fb_caption }},={{ $json.fb_hashtags }},={{ $json.tt_caption }},={{ $json.tt_hashtags }},={{ $json.tt_hook }},={{ $json.image_url }},={{ $json.video_url }},={{ $json.optimal_times }}"
+        }
+      },
+      "id": "smo-store-draft",
+      "name": "Store Draft in DB",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1260, 160],
+      "credentials": { "postgres": { "id": "RECONNECT", "name": "Postgres account" } }
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": { "options": { "caseSensitive": false }, "combinator": "and", "conditions": [{ "id": "p1", "leftValue": "={{ $json.platform || $('Webhook Entry').first().json.platform || 'all' }}", "rightValue": "instagram", "operator": { "type": "string", "operation": "equals" } }] },
+              "renameOutput": true, "outputKey": "Instagram"
+            },
+            {
+              "conditions": { "options": { "caseSensitive": false }, "combinator": "and", "conditions": [{ "id": "p2", "leftValue": "={{ $json.platform || $('Webhook Entry').first().json.platform || 'all' }}", "rightValue": "facebook", "operator": { "type": "string", "operation": "equals" } }] },
+              "renameOutput": true, "outputKey": "Facebook"
+            },
+            {
+              "conditions": { "options": { "caseSensitive": false }, "combinator": "and", "conditions": [{ "id": "p3", "leftValue": "={{ $json.platform || $('Webhook Entry').first().json.platform || 'all' }}", "rightValue": "tiktok", "operator": { "type": "string", "operation": "equals" } }] },
+              "renameOutput": true, "outputKey": "TikTok"
+            },
+            {
+              "conditions": { "options": { "caseSensitive": false }, "combinator": "and", "conditions": [{ "id": "p4", "leftValue": "={{ $json.platform || $('Webhook Entry').first().json.platform || 'all' }}", "rightValue": "all", "operator": { "type": "string", "operation": "equals" } }] },
+              "renameOutput": true, "outputKey": "All Platforms"
+            }
+          ]
+        },
+        "fallbackOutput": "extra"
+      },
+      "id": "smo-platform-router",
+      "name": "Platform Router",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [780, 340]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Instagram 2-step publish: create container → wait → publish\nconst igUserId = $env.META_IG_USER_ID;\nconst accessToken = $env.META_ACCESS_TOKEN;\nconst item = $json;\nconst igCaption = item.ig_caption || item.caption || '';\nconst igHashtags = item.ig_hashtags ? JSON.parse(item.ig_hashtags).join(' ') : '';\nconst fullCaption = igCaption + (igHashtags ? '\\n\\n' + igHashtags : '');\n\n// Step 1: create container\nconst containerBody = {\n  caption: fullCaption,\n  access_token: accessToken\n};\nif (item.video_url) {\n  containerBody.media_type = 'REELS';\n  containerBody.video_url = item.video_url;\n} else if (item.image_url) {\n  containerBody.image_url = item.image_url;\n} else {\n  return [{ json: { platform: 'instagram', skipped: true, reason: 'no_media_url', caption: fullCaption } }];\n}\n\nconst containerRes = await this.helpers.httpRequest({\n  method: 'POST',\n  url: `https://graph.facebook.com/v19.0/${igUserId}/media`,\n  headers: { 'Content-Type': 'application/json' },\n  body: containerBody,\n  json: true\n});\n\nif (!containerRes.id) {\n  return [{ json: { platform: 'instagram', error: 'container_failed', detail: containerRes } }];\n}\n\n// Step 2: wait 20s for processing\nawait new Promise(r => setTimeout(r, 20000));\n\n// Step 3: publish\nconst publishRes = await this.helpers.httpRequest({\n  method: 'POST',\n  url: `https://graph.facebook.com/v19.0/${igUserId}/media_publish`,\n  headers: { 'Content-Type': 'application/json' },\n  body: { creation_id: containerRes.id, access_token: accessToken },\n  json: true\n});\n\nreturn [{ json: { platform: 'instagram', id: publishRes.id, container_id: containerRes.id, caption: fullCaption } }];"
+      },
+      "id": "smo-ig-publish",
+      "name": "IG Create + Publish",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1080, 260]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/v19.0/{{ $env.META_FB_PAGE_ID }}/feed",
+        "sendQuery": true,
+        "queryParameters": { "parameters": [{ "name": "access_token", "value": "={{ $env.META_ACCESS_TOKEN }}" }] },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"message\": \"{{ ($json.fb_caption || $json.caption || '') + ($json.fb_hashtags ? '\\n\\n' + JSON.parse($json.fb_hashtags).join(' ') : '') }}\"\n}",
+        "options": { "timeout": 30000 }
+      },
+      "id": "smo-fb-post",
+      "name": "FB Post to Page",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1080, 380]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://open.tiktokapis.com/v2/post/publish/text/apply/",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Bearer {{ $env.TIKTOK_ACCESS_TOKEN }}" },
+            { "name": "Content-Type", "value": "application/json; charset=UTF-8" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"post_info\": {\n    \"title\": \"{{ ($json.tt_hook ? $json.tt_hook + ' ' : '') + ($json.tt_caption || $json.caption || '') + ($json.tt_hashtags ? ' ' + JSON.parse($json.tt_hashtags).join(' ') : '') }}\",\n    \"privacy_level\": \"PUBLIC_TO_EVERYONE\",\n    \"disable_duet\": false,\n    \"disable_comment\": false,\n    \"disable_stitch\": false\n  },\n  \"source_info\": {\n    \"source\": \"PULL_FROM_URL\",\n    \"video_url\": \"{{ $json.video_url }}\"\n  }\n}",
+        "options": { "timeout": 30000 }
+      },
+      "id": "smo-tt-publish",
+      "name": "TikTok Publish Post",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1080, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "const all = $input.all();\nreturn [{ json: {\n  published: all.map(i => ({ platform: i.json.platform || 'unknown', id: i.json.id || i.json.publish_id || 'queued', skipped: i.json.skipped || false })),\n  count: all.length,\n  timestamp: new Date().toISOString()\n} }];"
+      },
+      "id": "smo-merge-results",
+      "name": "Merge Platform Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1320, 380]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://graph.facebook.com/v19.0/{{ $env.META_IG_USER_ID }}/insights",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "metric", "value": "reach,impressions,profile_views,follower_count,accounts_engaged" },
+            { "name": "period", "value": "={{ $('Webhook Entry').first().json.period || 'day' }}" },
+            { "name": "access_token", "value": "={{ $env.META_ACCESS_TOKEN }}" }
+          ]
+        },
+        "options": { "timeout": 30000 }
+      },
+      "id": "smo-ig-analytics",
+      "name": "Fetch IG Insights",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [780, 540]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://graph.facebook.com/v19.0/{{ $env.META_FB_PAGE_ID }}/insights",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "metric", "value": "page_impressions,page_reach,page_engaged_users,page_fans,page_views_total" },
+            { "name": "period", "value": "={{ $('Webhook Entry').first().json.period || 'day' }}" },
+            { "name": "access_token", "value": "={{ $env.META_ACCESS_TOKEN }}" }
+          ]
+        },
+        "options": { "timeout": 30000 }
+      },
+      "id": "smo-fb-analytics",
+      "name": "Fetch FB Page Insights",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [780, 660]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://open.tiktokapis.com/v2/research/user/info/",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Bearer {{ $env.TIKTOK_ACCESS_TOKEN }}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={ \"fields\": [\"follower_count\", \"following_count\", \"likes_count\", \"video_count\"] }",
+        "options": { "timeout": 30000 }
+      },
+      "id": "smo-tt-analytics",
+      "name": "Fetch TikTok Analytics",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [780, 780]
+    },
+    {
+      "parameters": {
+        "jsCode": "let ig = {}, fb = {}, tt = {};\ntry { ig = $('Fetch IG Insights').first().json; } catch(e) {}\ntry { fb = $('Fetch FB Page Insights').first().json; } catch(e) {}\ntry { tt = $('Fetch TikTok Analytics').first().json; } catch(e) {}\n\nconst igData = (ig.data || []).reduce((a, m) => { a[m.name] = m.values?.[0]?.value || 0; return a; }, {});\nconst fbData = (fb.data || []).reduce((a, m) => { a[m.name] = m.values?.[0]?.value || 0; return a; }, {});\nconst ttData = tt.data?.user_info || {};\n\nreturn [{ json: {\n  report_date: new Date().toISOString().split('T')[0],\n  ig_reach: igData.reach || 0,\n  ig_impressions: igData.impressions || 0,\n  ig_followers: igData.follower_count || 0,\n  ig_profile_views: igData.profile_views || 0,\n  ig_engaged: igData.accounts_engaged || 0,\n  fb_reach: fbData.page_reach || 0,\n  fb_impressions: fbData.page_impressions || 0,\n  fb_fans: fbData.page_fans || 0,\n  fb_page_views: fbData.page_views_total || 0,\n  fb_engaged: fbData.page_engaged_users || 0,\n  tt_followers: ttData.follower_count || 0,\n  tt_likes: ttData.likes_count || 0,\n  tt_videos: ttData.video_count || 0,\n  total_reach: (igData.reach || 0) + (fbData.page_reach || 0),\n  total_impressions: (igData.impressions || 0) + (fbData.page_impressions || 0),\n  total_followers: (igData.follower_count || 0) + (fbData.page_fans || 0) + (ttData.follower_count || 0)\n} }];"
+      },
+      "id": "smo-aggregate",
+      "name": "Aggregate Analytics",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1020, 660]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO content_metrics (report_date, ig_reach, ig_impressions, ig_followers, ig_profile_views, ig_engaged, fb_reach, fb_impressions, fb_fans, fb_page_views, fb_engaged_users, tt_followers, tt_likes, tt_videos, total_reach, total_impressions, total_followers, recorded_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,NOW()) ON CONFLICT (report_date) DO UPDATE SET ig_reach=EXCLUDED.ig_reach, ig_impressions=EXCLUDED.ig_impressions, ig_followers=EXCLUDED.ig_followers, fb_reach=EXCLUDED.fb_reach, fb_impressions=EXCLUDED.fb_impressions, fb_fans=EXCLUDED.fb_fans, tt_followers=EXCLUDED.tt_followers, total_reach=EXCLUDED.total_reach, total_impressions=EXCLUDED.total_impressions, total_followers=EXCLUDED.total_followers",
+        "options": {
+          "queryParameters": "={{ $json.report_date }},={{ $json.ig_reach }},={{ $json.ig_impressions }},={{ $json.ig_followers }},={{ $json.ig_profile_views }},={{ $json.ig_engaged }},={{ $json.fb_reach }},={{ $json.fb_impressions }},={{ $json.fb_fans }},={{ $json.fb_page_views }},={{ $json.fb_engaged }},={{ $json.tt_followers }},={{ $json.tt_likes }},={{ $json.tt_videos }},={{ $json.total_reach }},={{ $json.total_impressions }},={{ $json.total_followers }}"
+        }
+      },
+      "id": "smo-log-metrics",
+      "name": "Log Metrics to DB",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1260, 660],
+      "credentials": { "postgres": { "id": "RECONNECT", "name": "Postgres account" } },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPER_AGENT_BASE_URL }}/webhook/superagent-chat",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "Content-Type", "value": "application/json" }] },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"message\": \"You are a social media SEO expert for Bridge Digital Solution.\\n\\nAnalytics:\\n{{ JSON.stringify($json) }}\\n\\nQuery: {{ $('Webhook Entry').first().json.query || 'Full SEO audit' }}\\n\\nReturn JSON: { ig_seo_score, fb_seo_score, tt_seo_score, top_issues, trending_hashtags, optimal_schedule, quick_wins }\",\n  \"session_id\": \"smo-seo-{{ $now.toMillis() }}\"\n}",
+        "options": { "timeout": 60000 }
+      },
+      "id": "smo-seo-agent",
+      "name": "SEO Audit Agent",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1260, 540]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT * FROM content_drafts WHERE status = 'approved' AND scheduled_at::date = CURRENT_DATE ORDER BY scheduled_at ASC LIMIT 50",
+        "options": {}
+      },
+      "id": "smo-fetch-queue",
+      "name": "Fetch Today Queue",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [480, 480],
+      "credentials": { "postgres": { "id": "RECONNECT", "name": "Postgres account" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "const drafts = $input.all();\nif (!drafts.length) return [{ json: { skipped: true, reason: 'no_posts_today', count: 0 } }];\nreturn drafts.map(d => ({ json: { ...d.json, action: 'publish_post' } }));"
+      },
+      "id": "smo-queue-processor",
+      "name": "Process Queue Items",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [720, 480]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT COALESCE(MAX(total_followers) - MIN(total_followers), 0) AS follower_growth, COALESCE(SUM(total_reach), 0) AS weekly_reach, COALESCE(SUM(total_impressions), 0) AS weekly_impressions, COALESCE(AVG(ig_followers)::bigint, 0) AS avg_ig_followers, COALESCE(AVG(fb_fans)::bigint, 0) AS avg_fb_fans, COALESCE(AVG(tt_followers)::bigint, 0) AS avg_tt_followers FROM content_metrics WHERE recorded_at >= NOW() - INTERVAL '7 days'",
+        "options": {}
+      },
+      "id": "smo-weekly-metrics",
+      "name": "Fetch Weekly Metrics",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [480, 660],
+      "credentials": { "postgres": { "id": "RECONNECT", "name": "Postgres account" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "const m = $json;\nconst date = new Date().toLocaleDateString('en-GB', { weekday:'long', year:'numeric', month:'long', day:'numeric' });\nconst html = `<!DOCTYPE html><html><head><style>body{font-family:Arial,sans-serif;margin:0;padding:20px;background:#f5f5f5}.header{background:linear-gradient(135deg,#E1306C,#833AB4,#FD1D1D);color:white;padding:30px;border-radius:10px;margin-bottom:20px}.card{background:white;border-radius:10px;padding:20px;margin:15px 0;box-shadow:0 2px 8px rgba(0,0,0,.08)}.big{font-size:32px;font-weight:bold;color:#E1306C}.lbl{color:#888;font-size:13px}.green{color:#27ae60;font-weight:bold}</style></head><body><div class=\"header\"><h1>Bridge Digital Solution</h1><p>Weekly Social Media Report — ${date}</p></div><div class=\"card\"><h2>This Week</h2><div class=\"big\">${Number(m.weekly_reach||0).toLocaleString()}</div><div class=\"lbl\">Total Reach</div><br><div class=\"big\" style=\"color:#833AB4\">${Number(m.weekly_impressions||0).toLocaleString()}</div><div class=\"lbl\">Total Impressions</div><br><div class=\"green\">+${Number(m.follower_growth||0).toLocaleString()} followers gained</div></div><div class=\"card\"><h2>Instagram</h2><div class=\"big\">${Number(m.avg_ig_followers||0).toLocaleString()}</div><div class=\"lbl\">Avg Followers</div></div><div class=\"card\"><h2>Facebook</h2><div class=\"big\" style=\"color:#1877F2\">${Number(m.avg_fb_fans||0).toLocaleString()}</div><div class=\"lbl\">Avg Page Fans</div></div><div class=\"card\"><h2>TikTok</h2><div class=\"big\" style=\"color:#010101\">${Number(m.avg_tt_followers||0).toLocaleString()}</div><div class=\"lbl\">Avg Followers</div></div><div class=\"card\" style=\"background:#f0f8ff\"><p style=\"color:#888;font-size:12px\">Generated by Bridge Digital Solution Super Agent — Social Media SEO Orchestrator</p></div></body></html>`;\nreturn [{ json: { html_report: html, subject: 'Social Media Weekly Report — ' + new Date().toLocaleDateString('en-GB'), metrics: m } }];"
+      },
+      "id": "smo-build-report",
+      "name": "Build Weekly HTML Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [720, 660]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPER_AGENT_BASE_URL }}/webhook/gmail-digest",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{ "name": "Content-Type", "value": "application/json" }] },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"to\": \"bridge.digital.solution@gmail.com\",\n  \"subject\": \"{{ $json.subject }}\",\n  \"html_body\": \"{{ $json.html_report }}\"\n}",
+        "options": { "timeout": 30000 }
+      },
+      "id": "smo-send-digest",
+      "name": "Send Weekly Report",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [960, 660]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO content_drafts (brand, brief, platform, ig_caption, ig_hashtags, fb_caption, fb_hashtags, tt_caption, tt_hashtags, tt_hook, image_url, video_url, status, scheduled_at, optimal_times, created_at) VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7::jsonb,$8,$9::jsonb,$10,$11,$12,'approved',$13::timestamptz,$14::jsonb,NOW()) RETURNING id, status, scheduled_at",
+        "options": {
+          "queryParameters": "={{ $('Webhook Entry').first().json.brand || 'Bridge Digital Solution' }},={{ $('Webhook Entry').first().json.brief || '' }},={{ $('Webhook Entry').first().json.platform || 'all' }},={{ $('Webhook Entry').first().json.ig_caption || $('Webhook Entry').first().json.caption || '' }},={{ JSON.stringify($('Webhook Entry').first().json.ig_hashtags || []) }},={{ $('Webhook Entry').first().json.fb_caption || $('Webhook Entry').first().json.caption || '' }},={{ JSON.stringify($('Webhook Entry').first().json.fb_hashtags || []) }},={{ $('Webhook Entry').first().json.tt_caption || $('Webhook Entry').first().json.caption || '' }},={{ JSON.stringify($('Webhook Entry').first().json.tt_hashtags || []) }},={{ $('Webhook Entry').first().json.tt_hook || '' }},={{ $('Webhook Entry').first().json.image_url || null }},={{ $('Webhook Entry').first().json.video_url || null }},={{ $('Webhook Entry').first().json.scheduled_at || new Date().toISOString() }},={{ JSON.stringify($('Webhook Entry').first().json.optimal_times || {instagram:'18:00',facebook:'13:00',tiktok:'20:00'}) }}"
+        }
+      },
+      "id": "smo-schedule-post",
+      "name": "Save Scheduled Post",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [780, 420],
+      "credentials": { "postgres": { "id": "RECONNECT", "name": "Postgres account" } }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO workflow_runs (workflow_name, action, status, result_summary, ran_at) VALUES ('social_media_seo_orchestrator',$1,'success',$2,NOW())",
+        "options": {
+          "queryParameters": "={{ $('Webhook Entry').first()?.json?.action || 'scheduled' }},={{ JSON.stringify($json).substring(0,500) }}"
+        }
+      },
+      "id": "smo-log-run",
+      "name": "Log Workflow Run",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1560, 380],
+      "credentials": { "postgres": { "id": "RECONNECT", "name": "Postgres account" } },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const action = $('Webhook Entry').first()?.json?.action || 'scheduled';\nconst data = $json;\nconst responseMap = {\n  generate_content: { message: 'Content generated and saved as draft' },\n  publish_post:     { message: 'Post published successfully' },\n  get_analytics:   { message: 'Analytics fetched successfully' },\n  seo_audit:       { message: 'SEO audit complete' },\n  schedule_post:   { message: 'Post scheduled successfully' }\n};\nreturn [{ json: { success: true, action, ...(responseMap[action] || {}), data } }];"
+      },
+      "id": "smo-build-response",
+      "name": "Build Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1800, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "id": "smo-respond",
+      "name": "Return Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2040, 300]
+    }
+  ],
+  "connections": {
+    "Webhook Entry": {
+      "main": [[{ "node": "Action Router", "type": "main", "index": 0 }]]
+    },
+    "Daily Publish 08:00": {
+      "main": [[{ "node": "Fetch Today Queue", "type": "main", "index": 0 }]]
+    },
+    "Weekly Report Sunday 07:00": {
+      "main": [[{ "node": "Fetch Weekly Metrics", "type": "main", "index": 0 }]]
+    },
+    "Action Router": {
+      "main": [
+        [{ "node": "AI Content Generator", "type": "main", "index": 0 }],
+        [{ "node": "Platform Router", "type": "main", "index": 0 }],
+        [{ "node": "Fetch IG Insights", "type": "main", "index": 0 }, { "node": "Fetch FB Page Insights", "type": "main", "index": 0 }, { "node": "Fetch TikTok Analytics", "type": "main", "index": 0 }],
+        [{ "node": "Fetch IG Insights", "type": "main", "index": 0 }, { "node": "Fetch FB Page Insights", "type": "main", "index": 0 }, { "node": "Fetch TikTok Analytics", "type": "main", "index": 0 }],
+        [{ "node": "Save Scheduled Post", "type": "main", "index": 0 }]
+      ]
+    },
+    "AI Content Generator": {
+      "main": [[{ "node": "Parse Generated Content", "type": "main", "index": 0 }]]
+    },
+    "Parse Generated Content": {
+      "main": [[{ "node": "Store Draft in DB", "type": "main", "index": 0 }]]
+    },
+    "Store Draft in DB": {
+      "main": [[{ "node": "Build Response", "type": "main", "index": 0 }]]
+    },
+    "Platform Router": {
+      "main": [
+        [{ "node": "IG Create + Publish", "type": "main", "index": 0 }],
+        [{ "node": "FB Post to Page", "type": "main", "index": 0 }],
+        [{ "node": "TikTok Publish Post", "type": "main", "index": 0 }],
+        [{ "node": "IG Create + Publish", "type": "main", "index": 0 }, { "node": "FB Post to Page", "type": "main", "index": 0 }, { "node": "TikTok Publish Post", "type": "main", "index": 0 }]
+      ]
+    },
+    "IG Create + Publish": {
+      "main": [[{ "node": "Merge Platform Results", "type": "main", "index": 0 }]]
+    },
+    "FB Post to Page": {
+      "main": [[{ "node": "Merge Platform Results", "type": "main", "index": 0 }]]
+    },
+    "TikTok Publish Post": {
+      "main": [[{ "node": "Merge Platform Results", "type": "main", "index": 0 }]]
+    },
+    "Merge Platform Results": {
+      "main": [[{ "node": "Log Workflow Run", "type": "main", "index": 0 }]]
+    },
+    "Log Workflow Run": {
+      "main": [[{ "node": "Build Response", "type": "main", "index": 0 }]]
+    },
+    "Fetch IG Insights": {
+      "main": [[{ "node": "Aggregate Analytics", "type": "main", "index": 0 }]]
+    },
+    "Fetch FB Page Insights": {
+      "main": [[{ "node": "Aggregate Analytics", "type": "main", "index": 0 }]]
+    },
+    "Fetch TikTok Analytics": {
+      "main": [[{ "node": "Aggregate Analytics", "type": "main", "index": 0 }]]
+    },
+    "Aggregate Analytics": {
+      "main": [[{ "node": "Log Metrics to DB", "type": "main", "index": 0 }]]
+    },
+    "Log Metrics to DB": {
+      "main": [[{ "node": "SEO Audit Agent", "type": "main", "index": 0 }]]
+    },
+    "SEO Audit Agent": {
+      "main": [[{ "node": "Build Response", "type": "main", "index": 0 }]]
+    },
+    "Fetch Today Queue": {
+      "main": [[{ "node": "Process Queue Items", "type": "main", "index": 0 }]]
+    },
+    "Process Queue Items": {
+      "main": [[{ "node": "Platform Router", "type": "main", "index": 0 }]]
+    },
+    "Fetch Weekly Metrics": {
+      "main": [[{ "node": "Build Weekly HTML Report", "type": "main", "index": 0 }]]
+    },
+    "Build Weekly HTML Report": {
+      "main": [[{ "node": "Send Weekly Report", "type": "main", "index": 0 }]]
+    },
+    "Save Scheduled Post": {
+      "main": [[{ "node": "Build Response", "type": "main", "index": 0 }]]
+    },
+    "Build Response": {
+      "main": [[{ "node": "Return Response", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "saveExecutionProgress": true
+  },
+}

@@ -1,0 +1,421 @@
+﻿{
+    "updatedAt":  "2026-04-18T18:08:30.365Z",
+    "createdAt":  "2026-04-18T11:32:42.201Z",
+    "id":  "3k3lsAxKymNX7027",
+    "name":  "Chief of Staff - Executive Monitor",
+    "description":  null,
+    "active":  true,
+    "isArchived":  false,
+    "nodes":  [
+                  {
+                      "id":  "m1",
+                      "name":  "Every 5 Minutes",
+                      "type":  "n8n-nodes-base.scheduleTrigger",
+                      "typeVersion":  1.1,
+                      "position":  [
+                                       240,
+                                       300
+                                   ],
+                      "parameters":  {
+                                         "rule":  {
+                                                      "interval":  [
+                                                                       {
+                                                                           "field":  "minutes",
+                                                                           "minutesInterval":  5
+                                                                       }
+                                                                   ]
+                                                  }
+                                     }
+                  },
+                  {
+                      "id":  "m2",
+                      "name":  "Scan Services",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       460,
+                                       300
+                                   ],
+                      "parameters":  {
+                                         "jsCode":  "const ctx = this;\nconst IC = \"https://inspiring-cat-production.up.railway.app\";\nconst SA = \"https://super-agent-production.up.railway.app\";\n\nasync function httpGet(url) {\n  try {\n    const d = await ctx.helpers.httpRequest({ method: \u0027GET\u0027, url, timeout: 12000, ignoreHttpStatusErrors: true });\n    return { ok: true, d };\n  } catch(e) { return { ok: false, e: String(e.message) }; }\n}\nasync function httpPost(url, payload) {\n  try {\n    const d = await ctx.helpers.httpRequest({\n      method: \u0027POST\u0027, url,\n      headers: { \u0027Content-Type\u0027: \u0027application/json\u0027 },\n      body: JSON.stringify(payload),\n      timeout: 20000, ignoreHttpStatusErrors: true\n    });\n    return { ok: true, d };\n  } catch(e) { return { ok: false, e: String(e.message) }; }\n}\n\nconst [ic, sa] = await Promise.all([httpGet(IC + \u0027/health\u0027), httpGet(SA + \u0027/health\u0027)]);\n\nconst issues = [];\nif (!ic.ok) issues.push({\n  service: \u0027inspiring-cat\u0027, type: \u0027service_down\u0027, sev: \u0027critical\u0027,\n  desc: \u0027inspiring-cat container unreachable - CLI, Playwright \u0026 shell tasks offline. Error: \u0027 + ic.e,\n  proposed_fix: \u0027Check Railway for OOM kill or container crash. Trigger redeploy.\u0027,\n  fix_cmd: \u0027python3 /app/scripts/health_check.py\u0027\n});\nif (!sa.ok) issues.push({\n  service: \u0027super-agent\u0027, type: \u0027service_down\u0027, sev: \u0027critical\u0027,\n  desc: \u0027super-agent API gateway unreachable - AI routing, dashboard \u0026 HTTP endpoints offline. Error: \u0027 + sa.e,\n  proposed_fix: \u0027Check Railway super-agent logs for FastAPI crash. Trigger redeploy.\u0027,\n  fix_cmd: \u0027echo \"Restart super-agent via Railway dashboard\"\u0027\n});\nif (ic.ok \u0026\u0026 ic.d \u0026\u0026 ic.d.claude_available === false) {\n  const ttl = ic.d.claude_token_expires_in_s;\n  issues.push({\n    service: \u0027Claude CLI Pro\u0027, type: \u0027cli_auth\u0027,\n    sev: (ttl !== undefined \u0026\u0026 ttl \u003c 3600) ? \u0027critical\u0027 : \u0027high\u0027,\n    desc: \u0027Claude CLI Pro auth failure (TOKEN ERR). Token TTL: \u0027 + (ttl !== undefined ? Math.floor(ttl/60) + \u0027 min\u0027 : \u0027unknown\u0027) + \u0027. Pro-tier tasks degraded.\u0027,\n    proposed_fix: \u0027Trigger full_recovery_chain(): direct OAuth refresh -\u003e GitHub Actions relay -\u003e Playwright browser login.\u0027,\n    fix_cmd: \"python3 -c \\\"import sys;sys.path.insert(0,\u0027/app\u0027);from app.learning.cli_auto_login import full_recovery_chain;full_recovery_chain()\\\"\"\n  });\n}\n\nif (issues.length === 0) {\n  return [{ json: { action_count: 0, actions: [], ts: new Date().toISOString(), all_healthy: true } }];\n}\n\nconst SETUP_PY = `import os,psycopg2\ndb=os.environ[\u0027DATABASE_URL\u0027].replace(\u0027postgres://\u0027,\u0027postgresql://\u0027)\nconn=psycopg2.connect(db);cur=conn.cursor()\ncur.execute(\u0027\u0027\u0027CREATE TABLE IF NOT EXISTS cos_pending_actions(\n  id TEXT PRIMARY KEY,service TEXT,issue_type TEXT,severity TEXT,\n  description TEXT,proposed_fix TEXT,fix_cmd TEXT,\n  status TEXT DEFAULT \u0027pending\u0027,\n  created_at TIMESTAMPTZ DEFAULT NOW(),\n  expires_at TIMESTAMPTZ DEFAULT NOW()+INTERVAL \u002724 hours\u0027,\n  approved_at TIMESTAMPTZ,executed_at TIMESTAMPTZ,\n  response_channel TEXT,response_from TEXT,result TEXT)\u0027\u0027\u0027)\ncur.execute(\u0027\u0027\u0027CREATE TABLE IF NOT EXISTS cos_config(\n  key TEXT PRIMARY KEY,value TEXT,updated_at TIMESTAMPTZ DEFAULT NOW())\u0027\u0027\u0027)\ncur.execute(\u0027CREATE INDEX IF NOT EXISTS cos_idx ON cos_pending_actions(status,created_at)\u0027)\nconn.commit();conn.close();print(\u0027SETUP_OK\u0027)`;\n\nconst setupB64 = Buffer.from(SETUP_PY).toString(\u0027base64\u0027);\nconst setupResp = await httpPost(IC + \u0027/tasks\u0027, { type: \u0027shell\u0027, payload: { command: `python3 -c \"import base64;exec(base64.b64decode(\u0027${setupB64}\u0027).decode())\"` } });\nconst setupTask = setupResp.d;\nfor (let i = 0; i \u003c 8; i++) {\n  await new Promise(r =\u003e setTimeout(r, 2000));\n  const s = await httpGet(IC + \u0027/tasks/\u0027 + setupTask.id);\n  if (s.d \u0026\u0026 (s.d.status === \u0027done\u0027 || s.d.status === \u0027error\u0027)) break;\n}\n\nconst actions = [];\nfor (const iss of issues) {\n  const aid = \u0027cos-\u0027 + Math.random().toString(16).slice(2, 10);\n  const INSERT_PY = `import os,psycopg2\ndb=os.environ[\u0027DATABASE_URL\u0027].replace(\u0027postgres://\u0027,\u0027postgresql://\u0027)\nconn=psycopg2.connect(db);cur=conn.cursor()\ncur.execute(\"SELECT id FROM cos_pending_actions WHERE service=%s AND status=\u0027pending\u0027 AND created_at\u003eNOW()-INTERVAL \u00272 hours\u0027\",(\u0027` + iss.service + `\u0027,))\nex=cur.fetchone()\nif ex:\n    print(\u0027SKIP:\u0027+ex[0])\nelse:\n    cur.execute(\"INSERT INTO cos_pending_actions(id,service,issue_type,severity,description,proposed_fix,fix_cmd)VALUES(%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING\",\n        (\u0027` + aid + `\u0027,\u0027` + iss.service + `\u0027,\u0027` + iss.type + `\u0027,\u0027` + iss.sev + `\u0027,` + JSON.stringify(iss.desc) + `,` + JSON.stringify(iss.proposed_fix) + `,` + JSON.stringify(iss.fix_cmd) + `))\n    conn.commit();print(\u0027OK:` + aid + `\u0027)\nconn.close()`;\n  const b64 = Buffer.from(INSERT_PY).toString(\u0027base64\u0027);\n  const trResp = await httpPost(IC + \u0027/tasks\u0027, { type: \u0027shell\u0027, payload: { command: `python3 -c \"import base64;exec(base64.b64decode(\u0027${b64}\u0027).decode())\"` } });\n  const tr = trResp.d;\n  let out = \u0027\u0027, finalId = aid;\n  for (let i = 0; i \u003c 10; i++) {\n    await new Promise(r =\u003e setTimeout(r, 2000));\n    const s = await httpGet(IC + \u0027/tasks/\u0027 + tr.id);\n    if (s.d \u0026\u0026 (s.d.status === \u0027done\u0027 || s.d.status === \u0027error\u0027)) {\n      out = s.d.output || \u0027\u0027;\n      if (out.includes(\u0027SKIP:\u0027)) finalId = (out.match(/SKIP:(cos-[a-f0-9]+)/) || [\u0027\u0027, aid])[1];\n      break;\n    }\n  }\n  actions.push({ ...iss, action_id: finalId, is_new: !out.includes(\u0027SKIP:\u0027) });\n}\n\nreturn [{ json: { action_count: actions.filter(a =\u003e a.is_new).length, actions, ts: new Date().toISOString() } }];"
+                                     }
+                  },
+                  {
+                      "id":  "m3",
+                      "name":  "Has New Issues?",
+                      "type":  "n8n-nodes-base.if",
+                      "typeVersion":  2,
+                      "position":  [
+                                       700,
+                                       300
+                                   ],
+                      "parameters":  {
+                                         "conditions":  {
+                                                            "options":  {
+                                                                            "caseSensitive":  true,
+                                                                            "leftValue":  "",
+                                                                            "typeValidation":  "strict"
+                                                                        },
+                                                            "conditions":  [
+                                                                               {
+                                                                                   "id":  "c1",
+                                                                                   "leftValue":  "={{ $json.action_count }}",
+                                                                                   "rightValue":  0,
+                                                                                   "operator":  {
+                                                                                                    "type":  "number",
+                                                                                                    "operation":  "gt"
+                                                                                                }
+                                                                               }
+                                                                           ],
+                                                            "combinator":  "and"
+                                                        }
+                                     }
+                  },
+                  {
+                      "id":  "m4",
+                      "name":  "Telegram Alert",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       940,
+                                       180
+                                   ],
+                      "parameters":  {
+                                         "jsCode":  "const ctx = this;\nconst { actions, ts } = $input.first().json;\nconst IC = \"https://inspiring-cat-production.up.railway.app\";\nconst TG = \"https://api.telegram.org/bot***REDACTED_TELEGRAM_BOT_TOKEN***\";\n\nasync function httpGet(url) {\n  try {\n    const d = await ctx.helpers.httpRequest({ method: \u0027GET\u0027, url, timeout: 10000, ignoreHttpStatusErrors: true });\n    return { ok: true, d };\n  } catch(e) { return { ok: false, e: String(e.message) }; }\n}\nasync function httpPost(url, payload) {\n  try {\n    const d = await ctx.helpers.httpRequest({\n      method: \u0027POST\u0027, url,\n      headers: { \u0027Content-Type\u0027: \u0027application/json\u0027 },\n      body: JSON.stringify(payload),\n      timeout: 15000, ignoreHttpStatusErrors: true\n    });\n    return { ok: true, d };\n  } catch(e) { return { ok: false, e: String(e.message) }; }\n}\n\nconst GET_CHAT_PY = `import os,psycopg2\ndb=os.environ[\u0027DATABASE_URL\u0027].replace(\u0027postgres://\u0027,\u0027postgresql://\u0027)\nconn=psycopg2.connect(db);cur=conn.cursor()\ncur.execute(\"SELECT value FROM cos_config WHERE key=\u0027telegram_chat_id\u0027\")\nrow=cur.fetchone();print(row[0] if row else \u0027NONE\u0027);conn.close()`;\nconst gb64 = Buffer.from(GET_CHAT_PY).toString(\u0027base64\u0027);\nconst gtrResp = await httpPost(IC + \u0027/tasks\u0027, { type: \u0027shell\u0027, payload: { command: `python3 -c \"import base64;exec(base64.b64decode(\u0027${gb64}\u0027).decode())\"` } });\nconst gtr = gtrResp.d;\nlet chatId = null;\nfor (let i = 0; i \u003c 8; i++) {\n  await new Promise(r =\u003e setTimeout(r, 2000));\n  const s = await httpGet(IC + \u0027/tasks/\u0027 + gtr.id);\n  if (s.d \u0026\u0026 (s.d.status === \u0027done\u0027 || s.d.status === \u0027error\u0027)) {\n    const v = (s.d.output || \u0027\u0027).trim();\n    if (v \u0026\u0026 v !== \u0027NONE\u0027) chatId = v;\n    break;\n  }\n}\n\nif (!chatId) {\n  return [{ json: { sent: false, reason: \u0027No chat_id found. User must send any Telegram message to register.\u0027 } }];\n}\n\nconst newActions = actions.filter(a =\u003e a.is_new);\nconst sevEmoji = { critical: \u0027??\u0027, high: \u0027??\u0027, medium: \u0027??\u0027, low: \u0027??\u0027 };\n\nlet msg = \u0027?? \u003cb\u003eCHIEF OF STAFF - SYSTEM ALERT\u003c/b\u003e\\n\u0027;\nmsg += \u0027\u003ci\u003e\u0027 + new Date(ts).toUTCString() + \u0027\u003c/i\u003e\\n\u0027;\nmsg += \u0027?????????????????????????????\\n\\n\u0027;\nmsg += newActions.length + \u0027 issue\u0027 + (newActions.length !== 1 ? \u0027s\u0027 : \u0027\u0027) + \u0027 detected - your approval required:\\n\\n\u0027;\n\nconst keyboard = [];\nfor (const a of newActions) {\n  const se = sevEmoji[a.sev] || \u0027?\u0027;\n  msg += se + \u0027 \u003cb\u003e\u0027 + a.service + \u0027\u003c/b\u003e\\n\u0027;\n  msg += \u0027\u003ccode\u003e\u0027 + a.action_id + \u0027\u003c/code\u003e  .  \u0027 + a.sev.toUpperCase() + \u0027\\n\u0027;\n  msg += a.desc + \u0027\\n\\n\u0027;\n  msg += \u0027\u003cb\u003eProposed fix:\u003c/b\u003e \u0027 + (a.proposed_fix || \u0027\u0027).slice(0, 120) + \u0027\\n\\n\u0027;\n  keyboard.push([\n    { text: \u0027? Approve \u0027 + a.action_id, callback_data: \u0027COS:A:\u0027 + a.action_id },\n    { text: \u0027? Reject \u0027 + a.action_id,  callback_data: \u0027COS:R:\u0027 + a.action_id }\n  ]);\n}\nmsg += \u0027?????????????????????????????\\n\u0027;\nmsg += \u0027\u003ci\u003eUse buttons or reply: APPROVE/REJECT + action ID\\nExpires in 24 hours.\u003c/i\u003e\u0027;\n\nawait httpPost(TG + \u0027/sendMessage\u0027, { chat_id: chatId, text: msg, parse_mode: \u0027HTML\u0027, reply_markup: { inline_keyboard: keyboard } });\n\nreturn [{ json: { sent: true, chat_id: chatId, notified: newActions.map(a =\u003e a.action_id) } }];"
+                                     }
+                  },
+                  {
+                      "id":  "m5",
+                      "name":  "Prepare Email",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       940,
+                                       360
+                                   ],
+                      "parameters":  {
+                                         "jsCode":  "\nconst { actions, ts } = $input.first().json;\nconst newActions = actions.filter(a =\u003e a.is_new);\n\nconst sevColor = { critical: \u0027#c0392b\u0027, high: \u0027#d35400\u0027, medium: \u0027#d4ac0d\u0027, low: \u0027#27ae60\u0027 };\nconst topSev = newActions.reduce((acc, a) =\u003e {\n  const rank = { critical: 4, high: 3, medium: 2, low: 1 };\n  return (rank[a.sev] || 0) \u003e (rank[acc] || 0) ? a.sev : acc;\n}, \u0027low\u0027);\nconst bannerColor = sevColor[topSev] || \u0027#2c3e50\u0027;\n\nlet rows = \u0027\u0027;\nfor (const a of newActions) {\n  const sc = sevColor[a.sev] || \u0027#666\u0027;\n  const encSubjectA = encodeURIComponent(\u0027APPROVE \u0027 + a.action_id);\n  const encBodyA    = encodeURIComponent(\u0027APPROVE \u0027 + a.action_id);\n  const encSubjectR = encodeURIComponent(\u0027REJECT \u0027 + a.action_id);\n  const encBodyR    = encodeURIComponent(\u0027REJECT \u0027 + a.action_id);\n  rows += `\n    \u003ctr\u003e\n      \u003ctd style=\"padding:14px 16px;border-bottom:1px solid #eee;vertical-align:top\"\u003e\n        \u003cspan style=\"display:inline-block;padding:3px 10px;background:${sc};color:#fff;border-radius:12px;font-size:11px;font-weight:bold\"\u003e${a.sev.toUpperCase()}\u003c/span\u003e\n      \u003c/td\u003e\n      \u003ctd style=\"padding:14px 16px;border-bottom:1px solid #eee;font-weight:600;color:#1a1a1a;vertical-align:top\"\u003e${a.service}\u003c/td\u003e\n      \u003ctd style=\"padding:14px 16px;border-bottom:1px solid #eee;color:#444;font-size:14px;vertical-align:top\"\u003e${a.desc}\u003c/td\u003e\n    \u003c/tr\u003e\n    \u003ctr\u003e\n      \u003ctd colspan=\"3\" style=\"padding:10px 16px 20px;background:#fafafa;border-bottom:2px solid #ececec\"\u003e\n        \u003cdiv style=\"font-size:13px;color:#555;margin-bottom:12px\"\u003e\u003cstrong\u003eProposed fix:\u003c/strong\u003e ${a.proposed_fix || \u0027\u0027}\u003c/div\u003e\n        \u003cdiv style=\"font-size:12px;color:#888;font-family:monospace;margin-bottom:14px\"\u003eAction ID: \u003cstrong\u003e${a.action_id}\u003c/strong\u003e\u003c/div\u003e\n        \u003ca href=\"mailto:bridge.digital.solution@gmail.com?subject=${encSubjectA}\u0026body=${encBodyA}\"\n           style=\"display:inline-block;padding:11px 28px;background:#27ae60;color:#fff;text-decoration:none;border-radius:5px;font-weight:bold;font-size:14px;margin-right:10px\"\u003e\n          ? APPROVE\n        \u003c/a\u003e\n        \u003ca href=\"mailto:bridge.digital.solution@gmail.com?subject=${encSubjectR}\u0026body=${encBodyR}\"\n           style=\"display:inline-block;padding:11px 28px;background:#c0392b;color:#fff;text-decoration:none;border-radius:5px;font-weight:bold;font-size:14px\"\u003e\n          ? REJECT\n        \u003c/a\u003e\n      \u003c/td\u003e\n    \u003c/tr\u003e`;\n}\n\nconst html = `\u003c!DOCTYPE html\u003e\n\u003chtml\u003e\u003chead\u003e\u003cmeta charset=\"UTF-8\"\u003e\u003c/head\u003e\n\u003cbody style=\"margin:0;padding:20px;font-family:-apple-system,BlinkMacSystemFont,\u0027Segoe UI\u0027,Arial,sans-serif;background:#f0f2f5\"\u003e\n\u003cdiv style=\"max-width:680px;margin:0 auto;background:#fff;border-radius:10px;overflow:hidden;box-shadow:0 4px 20px rgba(0,0,0,0.12)\"\u003e\n  \u003cdiv style=\"background:${bannerColor};padding:28px 32px;text-align:center\"\u003e\n    \u003cdiv style=\"font-size:42px;margin-bottom:6px\"\u003e??\u003c/div\u003e\n    \u003ch1 style=\"margin:0;color:#fff;font-size:22px;font-weight:700\"\u003eCHIEF OF STAFF - ALERT\u003c/h1\u003e\n    \u003cp style=\"margin:6px 0 0;color:rgba(255,255,255,0.8);font-size:13px\"\u003e${new Date(ts).toUTCString()}\u003c/p\u003e\n    \u003cdiv style=\"margin-top:12px;display:inline-block;padding:4px 16px;background:rgba(0,0,0,0.2);border-radius:20px;color:#fff;font-size:12px;font-weight:600\"\u003e\n      ${newActions.length} ISSUE${newActions.length !== 1 ? \u0027S\u0027 : \u0027\u0027} PENDING APPROVAL\n    \u003c/div\u003e\n  \u003c/div\u003e\n  \u003cdiv style=\"padding:24px 28px\"\u003e\n    \u003cp style=\"margin:0 0 20px;color:#333;font-size:15px;line-height:1.5\"\u003e\n      Your automated systems have detected issues requiring your approval before any corrective action is taken.\n    \u003c/p\u003e\n    \u003ctable style=\"width:100%;border-collapse:collapse;font-size:14px;border:1px solid #e8e8e8;border-radius:6px;overflow:hidden\"\u003e\n      \u003cthead\u003e\n        \u003ctr style=\"background:#f5f5f5\"\u003e\n          \u003cth style=\"padding:11px 16px;text-align:left;border-bottom:2px solid #ddd;font-size:12px;text-transform:uppercase;color:#666;width:90px\"\u003eSeverity\u003c/th\u003e\n          \u003cth style=\"padding:11px 16px;text-align:left;border-bottom:2px solid #ddd;font-size:12px;text-transform:uppercase;color:#666;width:160px\"\u003eService\u003c/th\u003e\n          \u003cth style=\"padding:11px 16px;text-align:left;border-bottom:2px solid #ddd;font-size:12px;text-transform:uppercase;color:#666\"\u003eIssue\u003c/th\u003e\n        \u003c/tr\u003e\n      \u003c/thead\u003e\n      \u003ctbody\u003e${rows}\u003c/tbody\u003e\n    \u003c/table\u003e\n  \u003c/div\u003e\n  \u003cdiv style=\"padding:16px 28px 24px;background:#f8f9fa;border-top:1px solid #eee;font-size:12px;color:#888\"\u003e\n    \u003cp style=\"margin:0 0 6px\"\u003eVia \u003cstrong\u003eTelegram\u003c/strong\u003e: \u003ccode\u003eAPPROVE cos-xxxxxxxx\u003c/code\u003e or \u003ccode\u003eREJECT cos-xxxxxxxx\u003c/code\u003e\u003c/p\u003e\n    \u003cp style=\"margin:0\"\u003eActions expire after \u003cstrong\u003e24 hours\u003c/strong\u003e. Rejected/expired actions are logged only.\u003c/p\u003e\n  \u003c/div\u003e\n  \u003cdiv style=\"padding:14px 28px;background:#2c3e50;text-align:center;font-size:11px;color:rgba(255,255,255,0.5)\"\u003e\n    Chief of Staff � Bridge Digital Solution � Jarvis Automation Platform\n  \u003c/div\u003e\n\u003c/div\u003e\n\u003c/body\u003e\u003c/html\u003e`;\n\nconst subject = \u0027?? CoS Alert [\u0027 + topSev.toUpperCase() + \u0027]: \u0027 + newActions.map(a =\u003e a.service).join(\u0027, \u0027);\nreturn [{ json: { send_to: \u0027gelsonmascarenhas@gmail.com\u0027, subject, html, action_count: newActions.length } }];\n"
+                                     }
+                  },
+                  {
+                      "id":  "m6",
+                      "name":  "Send Email Alert",
+                      "type":  "n8n-nodes-base.gmail",
+                      "typeVersion":  2.1,
+                      "position":  [
+                                       1180,
+                                       360
+                                   ],
+                      "credentials":  {
+                                          "gmailOAuth2":  {
+                                                              "id":  "T55BDHntJ3i1NFYw",
+                                                              "name":  "Gmail account 2"
+                                                          }
+                                      },
+                      "parameters":  {
+                                         "operation":  "send",
+                                         "sendTo":  "={{ $json.send_to }}",
+                                         "subject":  "={{ $json.subject }}",
+                                         "message":  "={{ $json.html }}",
+                                         "options":  {
+                                                         "bodyType":  "html"
+                                                     }
+                                     },
+                      "webhookId":  "19d9ebc5-3621-4884-9a18-a0b0a9550fc5"
+                  }
+              ],
+    "connections":  {
+                        "Every 5 Minutes":  {
+                                                "main":  [
+                                                             [
+                                                                 {
+                                                                     "node":  "Scan Services",
+                                                                     "type":  "main",
+                                                                     "index":  0
+                                                                 }
+                                                             ]
+                                                         ]
+                                            },
+                        "Scan Services":  {
+                                              "main":  [
+                                                           [
+                                                               {
+                                                                   "node":  "Has New Issues?",
+                                                                   "type":  "main",
+                                                                   "index":  0
+                                                               }
+                                                           ]
+                                                       ]
+                                          },
+                        "Has New Issues?":  {
+                                                "main":  [
+                                                             [
+                                                                 {
+                                                                     "node":  "Telegram Alert",
+                                                                     "type":  "main",
+                                                                     "index":  0
+                                                                 },
+                                                                 {
+                                                                     "node":  "Prepare Email",
+                                                                     "type":  "main",
+                                                                     "index":  0
+                                                                 }
+                                                             ],
+                                                             [
+
+                                                             ]
+                                                         ]
+                                            },
+                        "Prepare Email":  {
+                                              "main":  [
+                                                           [
+                                                               {
+                                                                   "node":  "Send Email Alert",
+                                                                   "type":  "main",
+                                                                   "index":  0
+                                                               }
+                                                           ]
+                                                       ]
+                                          }
+                    },
+    "settings":  {
+                     "executionOrder":  "v1",
+                     "callerPolicy":  "workflowsFromSameOwner",
+                     "availableInMCP":  false
+                 },
+    "staticData":  {
+                       "node:Every 5 Minutes":  {
+                                                    "recurrenceRules":  [
+
+                                                                        ]
+                                                }
+                   },
+    "meta":  null,
+    "pinData":  null,
+    "versionId":  "c13e848b-c47e-4a2b-ba23-8f7ce267e41b",
+    "activeVersionId":  "c13e848b-c47e-4a2b-ba23-8f7ce267e41b",
+    "versionCounter":  13,
+    "triggerCount":  1,
+    "shared":  [
+                   {
+                       "updatedAt":  "2026-04-18T11:32:42.201Z",
+                       "createdAt":  "2026-04-18T11:32:42.201Z",
+                       "role":  "workflow:owner",
+                       "workflowId":  "3k3lsAxKymNX7027",
+                       "projectId":  "Lrgt6JR85OZiVLcX",
+                       "project":  {
+                                       "updatedAt":  "2026-03-31T09:07:31.366Z",
+                                       "createdAt":  "2026-03-31T08:57:43.789Z",
+                                       "id":  "Lrgt6JR85OZiVLcX",
+                                       "name":  "gelson mascarenhas \u003cgelson_m@hotmail.com\u003e",
+                                       "type":  "personal",
+                                       "icon":  null,
+                                       "description":  null,
+                                       "creatorId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                   }
+                   }
+               ],
+    "tags":  [
+
+             ],
+    "activeVersion":  {
+                          "updatedAt":  "2026-04-18T18:08:30.368Z",
+                          "createdAt":  "2026-04-18T18:08:30.368Z",
+                          "versionId":  "c13e848b-c47e-4a2b-ba23-8f7ce267e41b",
+                          "workflowId":  "3k3lsAxKymNX7027",
+                          "nodes":  [
+                                        {
+                                            "id":  "m1",
+                                            "name":  "Every 5 Minutes",
+                                            "type":  "n8n-nodes-base.scheduleTrigger",
+                                            "typeVersion":  1.1,
+                                            "position":  [
+                                                             240,
+                                                             300
+                                                         ],
+                                            "parameters":  {
+                                                               "rule":  {
+                                                                            "interval":  [
+                                                                                             {
+                                                                                                 "field":  "minutes",
+                                                                                                 "minutesInterval":  5
+                                                                                             }
+                                                                                         ]
+                                                                        }
+                                                           }
+                                        },
+                                        {
+                                            "id":  "m2",
+                                            "name":  "Scan Services",
+                                            "type":  "n8n-nodes-base.code",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             460,
+                                                             300
+                                                         ],
+                                            "parameters":  {
+                                                               "jsCode":  "const ctx = this;\nconst IC = \"https://inspiring-cat-production.up.railway.app\";\nconst SA = \"https://super-agent-production.up.railway.app\";\n\nasync function httpGet(url) {\n  try {\n    const d = await ctx.helpers.httpRequest({ method: \u0027GET\u0027, url, timeout: 12000, ignoreHttpStatusErrors: true });\n    return { ok: true, d };\n  } catch(e) { return { ok: false, e: String(e.message) }; }\n}\nasync function httpPost(url, payload) {\n  try {\n    const d = await ctx.helpers.httpRequest({\n      method: \u0027POST\u0027, url,\n      headers: { \u0027Content-Type\u0027: \u0027application/json\u0027 },\n      body: JSON.stringify(payload),\n      timeout: 20000, ignoreHttpStatusErrors: true\n    });\n    return { ok: true, d };\n  } catch(e) { return { ok: false, e: String(e.message) }; }\n}\n\nconst [ic, sa] = await Promise.all([httpGet(IC + \u0027/health\u0027), httpGet(SA + \u0027/health\u0027)]);\n\nconst issues = [];\nif (!ic.ok) issues.push({\n  service: \u0027inspiring-cat\u0027, type: \u0027service_down\u0027, sev: \u0027critical\u0027,\n  desc: \u0027inspiring-cat container unreachable - CLI, Playwright \u0026 shell tasks offline. Error: \u0027 + ic.e,\n  proposed_fix: \u0027Check Railway for OOM kill or container crash. Trigger redeploy.\u0027,\n  fix_cmd: \u0027python3 /app/scripts/health_check.py\u0027\n});\nif (!sa.ok) issues.push({\n  service: \u0027super-agent\u0027, type: \u0027service_down\u0027, sev: \u0027critical\u0027,\n  desc: \u0027super-agent API gateway unreachable - AI routing, dashboard \u0026 HTTP endpoints offline. Error: \u0027 + sa.e,\n  proposed_fix: \u0027Check Railway super-agent logs for FastAPI crash. Trigger redeploy.\u0027,\n  fix_cmd: \u0027echo \"Restart super-agent via Railway dashboard\"\u0027\n});\nif (ic.ok \u0026\u0026 ic.d \u0026\u0026 ic.d.claude_available === false) {\n  const ttl = ic.d.claude_token_expires_in_s;\n  issues.push({\n    service: \u0027Claude CLI Pro\u0027, type: \u0027cli_auth\u0027,\n    sev: (ttl !== undefined \u0026\u0026 ttl \u003c 3600) ? \u0027critical\u0027 : \u0027high\u0027,\n    desc: \u0027Claude CLI Pro auth failure (TOKEN ERR). Token TTL: \u0027 + (ttl !== undefined ? Math.floor(ttl/60) + \u0027 min\u0027 : \u0027unknown\u0027) + \u0027. Pro-tier tasks degraded.\u0027,\n    proposed_fix: \u0027Trigger full_recovery_chain(): direct OAuth refresh -\u003e GitHub Actions relay -\u003e Playwright browser login.\u0027,\n    fix_cmd: \"python3 -c \\\"import sys;sys.path.insert(0,\u0027/app\u0027);from app.learning.cli_auto_login import full_recovery_chain;full_recovery_chain()\\\"\"\n  });\n}\n\nif (issues.length === 0) {\n  return [{ json: { action_count: 0, actions: [], ts: new Date().toISOString(), all_healthy: true } }];\n}\n\nconst SETUP_PY = `import os,psycopg2\ndb=os.environ[\u0027DATABASE_URL\u0027].replace(\u0027postgres://\u0027,\u0027postgresql://\u0027)\nconn=psycopg2.connect(db);cur=conn.cursor()\ncur.execute(\u0027\u0027\u0027CREATE TABLE IF NOT EXISTS cos_pending_actions(\n  id TEXT PRIMARY KEY,service TEXT,issue_type TEXT,severity TEXT,\n  description TEXT,proposed_fix TEXT,fix_cmd TEXT,\n  status TEXT DEFAULT \u0027pending\u0027,\n  created_at TIMESTAMPTZ DEFAULT NOW(),\n  expires_at TIMESTAMPTZ DEFAULT NOW()+INTERVAL \u002724 hours\u0027,\n  approved_at TIMESTAMPTZ,executed_at TIMESTAMPTZ,\n  response_channel TEXT,response_from TEXT,result TEXT)\u0027\u0027\u0027)\ncur.execute(\u0027\u0027\u0027CREATE TABLE IF NOT EXISTS cos_config(\n  key TEXT PRIMARY KEY,value TEXT,updated_at TIMESTAMPTZ DEFAULT NOW())\u0027\u0027\u0027)\ncur.execute(\u0027CREATE INDEX IF NOT EXISTS cos_idx ON cos_pending_actions(status,created_at)\u0027)\nconn.commit();conn.close();print(\u0027SETUP_OK\u0027)`;\n\nconst setupB64 = Buffer.from(SETUP_PY).toString(\u0027base64\u0027);\nconst setupResp = await httpPost(IC + \u0027/tasks\u0027, { type: \u0027shell\u0027, payload: { command: `python3 -c \"import base64;exec(base64.b64decode(\u0027${setupB64}\u0027).decode())\"` } });\nconst setupTask = setupResp.d;\nfor (let i = 0; i \u003c 8; i++) {\n  await new Promise(r =\u003e setTimeout(r, 2000));\n  const s = await httpGet(IC + \u0027/tasks/\u0027 + setupTask.id);\n  if (s.d \u0026\u0026 (s.d.status === \u0027done\u0027 || s.d.status === \u0027error\u0027)) break;\n}\n\nconst actions = [];\nfor (const iss of issues) {\n  const aid = \u0027cos-\u0027 + Math.random().toString(16).slice(2, 10);\n  const INSERT_PY = `import os,psycopg2\ndb=os.environ[\u0027DATABASE_URL\u0027].replace(\u0027postgres://\u0027,\u0027postgresql://\u0027)\nconn=psycopg2.connect(db);cur=conn.cursor()\ncur.execute(\"SELECT id FROM cos_pending_actions WHERE service=%s AND status=\u0027pending\u0027 AND created_at\u003eNOW()-INTERVAL \u00272 hours\u0027\",(\u0027` + iss.service + `\u0027,))\nex=cur.fetchone()\nif ex:\n    print(\u0027SKIP:\u0027+ex[0])\nelse:\n    cur.execute(\"INSERT INTO cos_pending_actions(id,service,issue_type,severity,description,proposed_fix,fix_cmd)VALUES(%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING\",\n        (\u0027` + aid + `\u0027,\u0027` + iss.service + `\u0027,\u0027` + iss.type + `\u0027,\u0027` + iss.sev + `\u0027,` + JSON.stringify(iss.desc) + `,` + JSON.stringify(iss.proposed_fix) + `,` + JSON.stringify(iss.fix_cmd) + `))\n    conn.commit();print(\u0027OK:` + aid + `\u0027)\nconn.close()`;\n  const b64 = Buffer.from(INSERT_PY).toString(\u0027base64\u0027);\n  const trResp = await httpPost(IC + \u0027/tasks\u0027, { type: \u0027shell\u0027, payload: { command: `python3 -c \"import base64;exec(base64.b64decode(\u0027${b64}\u0027).decode())\"` } });\n  const tr = trResp.d;\n  let out = \u0027\u0027, finalId = aid;\n  for (let i = 0; i \u003c 10; i++) {\n    await new Promise(r =\u003e setTimeout(r, 2000));\n    const s = await httpGet(IC + \u0027/tasks/\u0027 + tr.id);\n    if (s.d \u0026\u0026 (s.d.status === \u0027done\u0027 || s.d.status === \u0027error\u0027)) {\n      out = s.d.output || \u0027\u0027;\n      if (out.includes(\u0027SKIP:\u0027)) finalId = (out.match(/SKIP:(cos-[a-f0-9]+)/) || [\u0027\u0027, aid])[1];\n      break;\n    }\n  }\n  actions.push({ ...iss, action_id: finalId, is_new: !out.includes(\u0027SKIP:\u0027) });\n}\n\nreturn [{ json: { action_count: actions.filter(a =\u003e a.is_new).length, actions, ts: new Date().toISOString() } }];"
+                                                           }
+                                        },
+                                        {
+                                            "id":  "m3",
+                                            "name":  "Has New Issues?",
+                                            "type":  "n8n-nodes-base.if",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             700,
+                                                             300
+                                                         ],
+                                            "parameters":  {
+                                                               "conditions":  {
+                                                                                  "options":  {
+                                                                                                  "caseSensitive":  true,
+                                                                                                  "leftValue":  "",
+                                                                                                  "typeValidation":  "strict"
+                                                                                              },
+                                                                                  "conditions":  [
+                                                                                                     {
+                                                                                                         "id":  "c1",
+                                                                                                         "leftValue":  "={{ $json.action_count }}",
+                                                                                                         "rightValue":  0,
+                                                                                                         "operator":  {
+                                                                                                                          "type":  "number",
+                                                                                                                          "operation":  "gt"
+                                                                                                                      }
+                                                                                                     }
+                                                                                                 ],
+                                                                                  "combinator":  "and"
+                                                                              }
+                                                           }
+                                        },
+                                        {
+                                            "id":  "m4",
+                                            "name":  "Telegram Alert",
+                                            "type":  "n8n-nodes-base.code",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             940,
+                                                             180
+                                                         ],
+                                            "parameters":  {
+                                                               "jsCode":  "const ctx = this;\nconst { actions, ts } = $input.first().json;\nconst IC = \"https://inspiring-cat-production.up.railway.app\";\nconst TG = \"https://api.telegram.org/bot***REDACTED_TELEGRAM_BOT_TOKEN***\";\n\nasync function httpGet(url) {\n  try {\n    const d = await ctx.helpers.httpRequest({ method: \u0027GET\u0027, url, timeout: 10000, ignoreHttpStatusErrors: true });\n    return { ok: true, d };\n  } catch(e) { return { ok: false, e: String(e.message) }; }\n}\nasync function httpPost(url, payload) {\n  try {\n    const d = await ctx.helpers.httpRequest({\n      method: \u0027POST\u0027, url,\n      headers: { \u0027Content-Type\u0027: \u0027application/json\u0027 },\n      body: JSON.stringify(payload),\n      timeout: 15000, ignoreHttpStatusErrors: true\n    });\n    return { ok: true, d };\n  } catch(e) { return { ok: false, e: String(e.message) }; }\n}\n\nconst GET_CHAT_PY = `import os,psycopg2\ndb=os.environ[\u0027DATABASE_URL\u0027].replace(\u0027postgres://\u0027,\u0027postgresql://\u0027)\nconn=psycopg2.connect(db);cur=conn.cursor()\ncur.execute(\"SELECT value FROM cos_config WHERE key=\u0027telegram_chat_id\u0027\")\nrow=cur.fetchone();print(row[0] if row else \u0027NONE\u0027);conn.close()`;\nconst gb64 = Buffer.from(GET_CHAT_PY).toString(\u0027base64\u0027);\nconst gtrResp = await httpPost(IC + \u0027/tasks\u0027, { type: \u0027shell\u0027, payload: { command: `python3 -c \"import base64;exec(base64.b64decode(\u0027${gb64}\u0027).decode())\"` } });\nconst gtr = gtrResp.d;\nlet chatId = null;\nfor (let i = 0; i \u003c 8; i++) {\n  await new Promise(r =\u003e setTimeout(r, 2000));\n  const s = await httpGet(IC + \u0027/tasks/\u0027 + gtr.id);\n  if (s.d \u0026\u0026 (s.d.status === \u0027done\u0027 || s.d.status === \u0027error\u0027)) {\n    const v = (s.d.output || \u0027\u0027).trim();\n    if (v \u0026\u0026 v !== \u0027NONE\u0027) chatId = v;\n    break;\n  }\n}\n\nif (!chatId) {\n  return [{ json: { sent: false, reason: \u0027No chat_id found. User must send any Telegram message to register.\u0027 } }];\n}\n\nconst newActions = actions.filter(a =\u003e a.is_new);\nconst sevEmoji = { critical: \u0027??\u0027, high: \u0027??\u0027, medium: \u0027??\u0027, low: \u0027??\u0027 };\n\nlet msg = \u0027?? \u003cb\u003eCHIEF OF STAFF - SYSTEM ALERT\u003c/b\u003e\\n\u0027;\nmsg += \u0027\u003ci\u003e\u0027 + new Date(ts).toUTCString() + \u0027\u003c/i\u003e\\n\u0027;\nmsg += \u0027?????????????????????????????\\n\\n\u0027;\nmsg += newActions.length + \u0027 issue\u0027 + (newActions.length !== 1 ? \u0027s\u0027 : \u0027\u0027) + \u0027 detected - your approval required:\\n\\n\u0027;\n\nconst keyboard = [];\nfor (const a of newActions) {\n  const se = sevEmoji[a.sev] || \u0027?\u0027;\n  msg += se + \u0027 \u003cb\u003e\u0027 + a.service + \u0027\u003c/b\u003e\\n\u0027;\n  msg += \u0027\u003ccode\u003e\u0027 + a.action_id + \u0027\u003c/code\u003e  .  \u0027 + a.sev.toUpperCase() + \u0027\\n\u0027;\n  msg += a.desc + \u0027\\n\\n\u0027;\n  msg += \u0027\u003cb\u003eProposed fix:\u003c/b\u003e \u0027 + (a.proposed_fix || \u0027\u0027).slice(0, 120) + \u0027\\n\\n\u0027;\n  keyboard.push([\n    { text: \u0027? Approve \u0027 + a.action_id, callback_data: \u0027COS:A:\u0027 + a.action_id },\n    { text: \u0027? Reject \u0027 + a.action_id,  callback_data: \u0027COS:R:\u0027 + a.action_id }\n  ]);\n}\nmsg += \u0027?????????????????????????????\\n\u0027;\nmsg += \u0027\u003ci\u003eUse buttons or reply: APPROVE/REJECT + action ID\\nExpires in 24 hours.\u003c/i\u003e\u0027;\n\nawait httpPost(TG + \u0027/sendMessage\u0027, { chat_id: chatId, text: msg, parse_mode: \u0027HTML\u0027, reply_markup: { inline_keyboard: keyboard } });\n\nreturn [{ json: { sent: true, chat_id: chatId, notified: newActions.map(a =\u003e a.action_id) } }];"
+                                                           }
+                                        },
+                                        {
+                                            "id":  "m5",
+                                            "name":  "Prepare Email",
+                                            "type":  "n8n-nodes-base.code",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             940,
+                                                             360
+                                                         ],
+                                            "parameters":  {
+                                                               "jsCode":  "\nconst { actions, ts } = $input.first().json;\nconst newActions = actions.filter(a =\u003e a.is_new);\n\nconst sevColor = { critical: \u0027#c0392b\u0027, high: \u0027#d35400\u0027, medium: \u0027#d4ac0d\u0027, low: \u0027#27ae60\u0027 };\nconst topSev = newActions.reduce((acc, a) =\u003e {\n  const rank = { critical: 4, high: 3, medium: 2, low: 1 };\n  return (rank[a.sev] || 0) \u003e (rank[acc] || 0) ? a.sev : acc;\n}, \u0027low\u0027);\nconst bannerColor = sevColor[topSev] || \u0027#2c3e50\u0027;\n\nlet rows = \u0027\u0027;\nfor (const a of newActions) {\n  const sc = sevColor[a.sev] || \u0027#666\u0027;\n  const encSubjectA = encodeURIComponent(\u0027APPROVE \u0027 + a.action_id);\n  const encBodyA    = encodeURIComponent(\u0027APPROVE \u0027 + a.action_id);\n  const encSubjectR = encodeURIComponent(\u0027REJECT \u0027 + a.action_id);\n  const encBodyR    = encodeURIComponent(\u0027REJECT \u0027 + a.action_id);\n  rows += `\n    \u003ctr\u003e\n      \u003ctd style=\"padding:14px 16px;border-bottom:1px solid #eee;vertical-align:top\"\u003e\n        \u003cspan style=\"display:inline-block;padding:3px 10px;background:${sc};color:#fff;border-radius:12px;font-size:11px;font-weight:bold\"\u003e${a.sev.toUpperCase()}\u003c/span\u003e\n      \u003c/td\u003e\n      \u003ctd style=\"padding:14px 16px;border-bottom:1px solid #eee;font-weight:600;color:#1a1a1a;vertical-align:top\"\u003e${a.service}\u003c/td\u003e\n      \u003ctd style=\"padding:14px 16px;border-bottom:1px solid #eee;color:#444;font-size:14px;vertical-align:top\"\u003e${a.desc}\u003c/td\u003e\n    \u003c/tr\u003e\n    \u003ctr\u003e\n      \u003ctd colspan=\"3\" style=\"padding:10px 16px 20px;background:#fafafa;border-bottom:2px solid #ececec\"\u003e\n        \u003cdiv style=\"font-size:13px;color:#555;margin-bottom:12px\"\u003e\u003cstrong\u003eProposed fix:\u003c/strong\u003e ${a.proposed_fix || \u0027\u0027}\u003c/div\u003e\n        \u003cdiv style=\"font-size:12px;color:#888;font-family:monospace;margin-bottom:14px\"\u003eAction ID: \u003cstrong\u003e${a.action_id}\u003c/strong\u003e\u003c/div\u003e\n        \u003ca href=\"mailto:bridge.digital.solution@gmail.com?subject=${encSubjectA}\u0026body=${encBodyA}\"\n           style=\"display:inline-block;padding:11px 28px;background:#27ae60;color:#fff;text-decoration:none;border-radius:5px;font-weight:bold;font-size:14px;margin-right:10px\"\u003e\n          ? APPROVE\n        \u003c/a\u003e\n        \u003ca href=\"mailto:bridge.digital.solution@gmail.com?subject=${encSubjectR}\u0026body=${encBodyR}\"\n           style=\"display:inline-block;padding:11px 28px;background:#c0392b;color:#fff;text-decoration:none;border-radius:5px;font-weight:bold;font-size:14px\"\u003e\n          ? REJECT\n        \u003c/a\u003e\n      \u003c/td\u003e\n    \u003c/tr\u003e`;\n}\n\nconst html = `\u003c!DOCTYPE html\u003e\n\u003chtml\u003e\u003chead\u003e\u003cmeta charset=\"UTF-8\"\u003e\u003c/head\u003e\n\u003cbody style=\"margin:0;padding:20px;font-family:-apple-system,BlinkMacSystemFont,\u0027Segoe UI\u0027,Arial,sans-serif;background:#f0f2f5\"\u003e\n\u003cdiv style=\"max-width:680px;margin:0 auto;background:#fff;border-radius:10px;overflow:hidden;box-shadow:0 4px 20px rgba(0,0,0,0.12)\"\u003e\n  \u003cdiv style=\"background:${bannerColor};padding:28px 32px;text-align:center\"\u003e\n    \u003cdiv style=\"font-size:42px;margin-bottom:6px\"\u003e??\u003c/div\u003e\n    \u003ch1 style=\"margin:0;color:#fff;font-size:22px;font-weight:700\"\u003eCHIEF OF STAFF - ALERT\u003c/h1\u003e\n    \u003cp style=\"margin:6px 0 0;color:rgba(255,255,255,0.8);font-size:13px\"\u003e${new Date(ts).toUTCString()}\u003c/p\u003e\n    \u003cdiv style=\"margin-top:12px;display:inline-block;padding:4px 16px;background:rgba(0,0,0,0.2);border-radius:20px;color:#fff;font-size:12px;font-weight:600\"\u003e\n      ${newActions.length} ISSUE${newActions.length !== 1 ? \u0027S\u0027 : \u0027\u0027} PENDING APPROVAL\n    \u003c/div\u003e\n  \u003c/div\u003e\n  \u003cdiv style=\"padding:24px 28px\"\u003e\n    \u003cp style=\"margin:0 0 20px;color:#333;font-size:15px;line-height:1.5\"\u003e\n      Your automated systems have detected issues requiring your approval before any corrective action is taken.\n    \u003c/p\u003e\n    \u003ctable style=\"width:100%;border-collapse:collapse;font-size:14px;border:1px solid #e8e8e8;border-radius:6px;overflow:hidden\"\u003e\n      \u003cthead\u003e\n        \u003ctr style=\"background:#f5f5f5\"\u003e\n          \u003cth style=\"padding:11px 16px;text-align:left;border-bottom:2px solid #ddd;font-size:12px;text-transform:uppercase;color:#666;width:90px\"\u003eSeverity\u003c/th\u003e\n          \u003cth style=\"padding:11px 16px;text-align:left;border-bottom:2px solid #ddd;font-size:12px;text-transform:uppercase;color:#666;width:160px\"\u003eService\u003c/th\u003e\n          \u003cth style=\"padding:11px 16px;text-align:left;border-bottom:2px solid #ddd;font-size:12px;text-transform:uppercase;color:#666\"\u003eIssue\u003c/th\u003e\n        \u003c/tr\u003e\n      \u003c/thead\u003e\n      \u003ctbody\u003e${rows}\u003c/tbody\u003e\n    \u003c/table\u003e\n  \u003c/div\u003e\n  \u003cdiv style=\"padding:16px 28px 24px;background:#f8f9fa;border-top:1px solid #eee;font-size:12px;color:#888\"\u003e\n    \u003cp style=\"margin:0 0 6px\"\u003eVia \u003cstrong\u003eTelegram\u003c/strong\u003e: \u003ccode\u003eAPPROVE cos-xxxxxxxx\u003c/code\u003e or \u003ccode\u003eREJECT cos-xxxxxxxx\u003c/code\u003e\u003c/p\u003e\n    \u003cp style=\"margin:0\"\u003eActions expire after \u003cstrong\u003e24 hours\u003c/strong\u003e. Rejected/expired actions are logged only.\u003c/p\u003e\n  \u003c/div\u003e\n  \u003cdiv style=\"padding:14px 28px;background:#2c3e50;text-align:center;font-size:11px;color:rgba(255,255,255,0.5)\"\u003e\n    Chief of Staff � Bridge Digital Solution � Jarvis Automation Platform\n  \u003c/div\u003e\n\u003c/div\u003e\n\u003c/body\u003e\u003c/html\u003e`;\n\nconst subject = \u0027?? CoS Alert [\u0027 + topSev.toUpperCase() + \u0027]: \u0027 + newActions.map(a =\u003e a.service).join(\u0027, \u0027);\nreturn [{ json: { send_to: \u0027gelsonmascarenhas@gmail.com\u0027, subject, html, action_count: newActions.length } }];\n"
+                                                           }
+                                        },
+                                        {
+                                            "id":  "m6",
+                                            "name":  "Send Email Alert",
+                                            "type":  "n8n-nodes-base.gmail",
+                                            "typeVersion":  2.1,
+                                            "position":  [
+                                                             1180,
+                                                             360
+                                                         ],
+                                            "credentials":  {
+                                                                "gmailOAuth2":  {
+                                                                                    "id":  "T55BDHntJ3i1NFYw",
+                                                                                    "name":  "Gmail account 2"
+                                                                                }
+                                                            },
+                                            "parameters":  {
+                                                               "operation":  "send",
+                                                               "sendTo":  "={{ $json.send_to }}",
+                                                               "subject":  "={{ $json.subject }}",
+                                                               "message":  "={{ $json.html }}",
+                                                               "options":  {
+                                                                               "bodyType":  "html"
+                                                                           }
+                                                           },
+                                            "webhookId":  "19d9ebc5-3621-4884-9a18-a0b0a9550fc5"
+                                        }
+                                    ],
+                          "connections":  {
+                                              "Every 5 Minutes":  {
+                                                                      "main":  [
+                                                                                   [
+                                                                                       {
+                                                                                           "node":  "Scan Services",
+                                                                                           "type":  "main",
+                                                                                           "index":  0
+                                                                                       }
+                                                                                   ]
+                                                                               ]
+                                                                  },
+                                              "Scan Services":  {
+                                                                    "main":  [
+                                                                                 [
+                                                                                     {
+                                                                                         "node":  "Has New Issues?",
+                                                                                         "type":  "main",
+                                                                                         "index":  0
+                                                                                     }
+                                                                                 ]
+                                                                             ]
+                                                                },
+                                              "Has New Issues?":  {
+                                                                      "main":  [
+                                                                                   [
+                                                                                       {
+                                                                                           "node":  "Telegram Alert",
+                                                                                           "type":  "main",
+                                                                                           "index":  0
+                                                                                       },
+                                                                                       {
+                                                                                           "node":  "Prepare Email",
+                                                                                           "type":  "main",
+                                                                                           "index":  0
+                                                                                       }
+                                                                                   ],
+                                                                                   [
+
+                                                                                   ]
+                                                                               ]
+                                                                  },
+                                              "Prepare Email":  {
+                                                                    "main":  [
+                                                                                 [
+                                                                                     {
+                                                                                         "node":  "Send Email Alert",
+                                                                                         "type":  "main",
+                                                                                         "index":  0
+                                                                                     }
+                                                                                 ]
+                                                                             ]
+                                                                }
+                                          },
+                          "authors":  "gelson mascarenhas",
+                          "name":  null,
+                          "description":  null,
+                          "autosaved":  false,
+                          "workflowPublishHistory":  [
+                                                         {
+                                                             "createdAt":  "2026-04-18T18:08:30.439Z",
+                                                             "id":  408,
+                                                             "workflowId":  "3k3lsAxKymNX7027",
+                                                             "versionId":  "c13e848b-c47e-4a2b-ba23-8f7ce267e41b",
+                                                             "event":  "deactivated",
+                                                             "userId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                                         },
+                                                         {
+                                                             "createdAt":  "2026-04-18T18:08:30.466Z",
+                                                             "id":  409,
+                                                             "workflowId":  "3k3lsAxKymNX7027",
+                                                             "versionId":  "c13e848b-c47e-4a2b-ba23-8f7ce267e41b",
+                                                             "event":  "activated",
+                                                             "userId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                                         }
+                                                     ]
+                      }
+}

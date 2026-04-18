@@ -1,0 +1,256 @@
+{
+  "name": "🏢 Roll Call — Daily Team Check-In",
+  "nodes": [
+
+    {
+      "id": "rc-schedule-001",
+      "name": "RC Schedule 7:15",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 80],
+      "parameters": {
+        "rule": { "interval": [{"field": "cronExpression", "expression": "15 7 * * *"}] }
+      }
+    },
+
+    {
+      "id": "rc-http-wf-002",
+      "name": "RC Get Workflows",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [240, 80],
+      "parameters": {
+        "method": "GET",
+        "url": "https://outstanding-blessing-production-1d4b.up.railway.app/api/v1/workflows?limit=50",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{"name": "X-N8N-API-KEY", "value": "={{ $env.N8N_SELF_API_KEY }}"}] }
+      }
+    },
+
+    {
+      "id": "rc-http-exec-003",
+      "name": "RC Get Executions",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [480, 80],
+      "parameters": {
+        "method": "GET",
+        "url": "https://outstanding-blessing-production-1d4b.up.railway.app/api/v1/executions?status=success&limit=100",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{"name": "X-N8N-API-KEY", "value": "={{ $env.N8N_SELF_API_KEY }}"}] }
+      }
+    },
+
+    {
+      "id": "rc-code-compile-004",
+      "name": "RC Compile Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [720, 80],
+      "parameters": {
+        "jsCode": "const workflows = ($('RC Get Workflows').first().json.data || []);\nconst executions = ($input.first().json.data || []);\n\nconst lastRunMap = {};\nexecutions.forEach(e => {\n  if (e.workflowId && (!lastRunMap[e.workflowId] || new Date(e.startedAt) > new Date(lastRunMap[e.workflowId]))) {\n    lastRunMap[e.workflowId] = e.startedAt;\n  }\n});\n\nconst active = workflows.filter(w => w.active);\nconst inactive = workflows.filter(w => !w.active);\nconst now = Date.now();\nconst twentyFourHAgo = now - 24 * 60 * 60 * 1000;\n\nconst activeEnriched = active.map(w => ({\n  name: w.name,\n  lastRun: lastRunMap[w.id] || null,\n  ranToday: lastRunMap[w.id] ? new Date(lastRunMap[w.id]).getTime() > twentyFourHAgo : false\n}));\n\nreturn [{json: {\n  activeNames: active.map(w => w.name),\n  inactiveNames: inactive.map(w => w.name),\n  activeEnriched,\n  totalActive: active.length,\n  totalInactive: inactive.length\n}}];"
+      }
+    },
+
+    {
+      "id": "rc-code-prompt-005",
+      "name": "RC Build Roll Call Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [960, 80],
+      "parameters": {
+        "jsCode": "const d = $input.first().json;\nconst now = new Date();\n\nconst prompt = `You are generating fun, personality-driven morning check-in messages for an AI office team. Each workflow is a digital employee with a unique character and job role.\n\nTODAY: ${now.toLocaleDateString('en-GB', {weekday:'long', day:'numeric', month:'long'})}\n\nACTIVE employees CHECKED IN to the office today:\n${d.activeNames.map((n, i) => `${i+1}. ${n}`).join('\\n')}\n\nINACTIVE employees working from home:\n${d.inactiveNames.map((n, i) => `${i+1}. ${n}`).join('\\n')}\n\nFor EACH active employee, generate:\n1. A single emoji avatar that matches their role\n2. A SHORT (10-15 words max) fun morning check-in message in first person, like a real employee greeting their boss\n3. A mood: energetic | focused | creative | analytical | vigilant | cheerful\n\nThe Chief of Staff should sound authoritative and managerial.\nThe Gmail/Outlook Secretary should sound organised and professional.\nThe Content Analyst should sound creative and trend-aware.\nThe Crypto Specialist should sound sharp and market-aware.\nThe Verification Code Monitor should sound vigilant and precise.\nThe GitHub Alert Receiver should sound technical and alert.\nThe Universal Catch-All should sound dependable and reassuring.\nThe Finance Assistant should sound numbers-focused.\nThe Health Monitor should sound caring and watchful.\n\nReturn ONLY valid JSON:\n{\"team\": [{\"name\": \"exact workflow name\", \"avatar\": \"single emoji\", \"message\": \"check-in message\", \"mood\": \"mood\"}]}\n\nInclude ALL ${d.activeNames.length} active employees.`;\n\nreturn [{json: {prompt, inactiveNames: d.inactiveNames, totalActive: d.totalActive, totalInactive: d.totalInactive}}];"
+      }
+    },
+
+    {
+      "id": "rc-http-gemini-006",
+      "name": "RC AI Generate Messages",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1200, 80],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + $env.GEMINI_API_KEY }}",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{"name": "Content-Type", "value": "application/json"}] },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ contents: [{ parts: [{ text: $json.prompt }] }] }) }}"
+      }
+    },
+
+    {
+      "id": "rc-code-buildhtml-007",
+      "name": "RC Build Roll Call HTML",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1440, 80],
+      "parameters": {
+        "jsCode": "const raw = $input.first().json.candidates[0].content.parts[0].text;\nlet parsed;\ntry {\n  const extracted = (raw.match(/\\{[\\s\\S]*\\}/) || [raw])[0];\n  parsed = JSON.parse(extracted);\n} catch(e) { parsed = {team: []}; }\n\nconst team = parsed.team || [];\nconst promptData = $('RC Build Roll Call Prompt').first().json;\nconst inactiveNames = promptData.inactiveNames || [];\nconst totalActive = promptData.totalActive || team.length;\nconst totalInactive = promptData.totalInactive || inactiveNames.length;\n\nconst moodColors = {\n  energetic: '#1e90ff', focused: '#7c4dff', creative: '#e91e8c',\n  analytical: '#00c851', vigilant: '#ff6d00', cheerful: '#ffbb33'\n};\n\nconst makeCard = (avatar, name, statusBadge, statusColor, message, borderColor) => {\n  const shortName = name.length > 22 ? name.substring(0, 22) + '…' : name;\n  return `<td style=\"padding:8px;vertical-align:top;\">\n    <div style=\"background:white;border-radius:14px;padding:18px 14px;box-shadow:0 3px 14px rgba(0,0,0,0.09);border-top:4px solid ${borderColor};width:155px;text-align:center;\">\n      <div style=\"font-size:34px;margin-bottom:9px;\">${avatar}</div>\n      <div style=\"font-size:10px;font-weight:bold;color:#444;text-transform:uppercase;letter-spacing:0.7px;margin-bottom:7px;line-height:1.3;\">${shortName}</div>\n      <div style=\"background:${statusColor};font-size:10px;font-weight:bold;padding:2px 9px;border-radius:20px;margin-bottom:10px;display:inline-block;\">${statusBadge}</div>\n      <div style=\"font-size:12px;color:#666;font-style:italic;line-height:1.5;\">${message}</div>\n    </div>\n  </td>`;\n};\n\nconst activeCards = team.map(e =>\n  makeCard(\n    e.avatar || '🤖',\n    e.name,\n    '✅ IN OFFICE',\n    '#e8f5e9;color:#2e7d32',\n    `\"${e.message}\"`,\n    moodColors[e.mood] || '#1e90ff'\n  )\n).join('');\n\nconst inactiveCards = inactiveNames.map(name =>\n  makeCard('😴', name, '🏠 WFH TODAY', '#fff3e0;color:#e65100', '\"Dormant — ping me via Chief of Staff!\"', '#ddd')\n).join('');\n\nconst now = new Date();\nconst html = `<!DOCTYPE html><html><head><meta charset=\"utf-8\"></head>\n<body style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;background:#eef2f7;margin:0;padding:20px;\">\n<div style=\"max-width:760px;margin:0 auto;\">\n  <div style=\"background:linear-gradient(135deg,#0f3460 0%,#16213e 60%,#1a1a2e 100%);color:white;padding:35px 30px;border-radius:18px 18px 0 0;text-align:center;\">\n    <div style=\"font-size:56px;margin-bottom:14px;\">🏢</div>\n    <h1 style=\"margin:0;font-size:24px;letter-spacing:4px;font-weight:900;text-transform:uppercase;\">Team Roll Call</h1>\n    <p style=\"margin:10px 0 4px;opacity:0.75;font-size:15px;\">${now.toLocaleDateString('en-GB', {weekday:'long', day:'numeric', month:'long', year:'numeric'})}</p>\n    <p style=\"margin:0;opacity:0.5;font-size:13px;\">Morning check-in · Reported by 🧑🏾 Chief of Staff</p>\n  </div>\n\n  <div style=\"background:white;padding:18px 30px;border-bottom:1px solid #eee;\">\n    <table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\"><tr>\n      <td style=\"text-align:center;padding:12px;\"><div style=\"font-size:36px;font-weight:900;color:#00c851;\">${totalActive}</div><div style=\"font-size:11px;color:#888;text-transform:uppercase;letter-spacing:1px;margin-top:4px;\">In Office</div></td>\n      <td style=\"text-align:center;padding:12px;border-left:1px solid #eee;border-right:1px solid #eee;\"><div style=\"font-size:36px;font-weight:900;color:#ff9800;\">${totalInactive}</div><div style=\"font-size:11px;color:#888;text-transform:uppercase;letter-spacing:1px;margin-top:4px;\">WFH / Dormant</div></td>\n      <td style=\"text-align:center;padding:12px;\"><div style=\"font-size:36px;font-weight:900;color:#1e90ff;\">${totalActive + totalInactive}</div><div style=\"font-size:11px;color:#888;text-transform:uppercase;letter-spacing:1px;margin-top:4px;\">Total Workforce</div></td>\n    </tr></table>\n  </div>\n\n  <div style=\"background:white;padding:28px 30px;\">\n    <div style=\"font-size:11px;font-weight:bold;color:#333;text-transform:uppercase;letter-spacing:2px;margin-bottom:22px;padding-bottom:12px;border-bottom:2px solid #eef2f7;\">🟢 Active Team — Checked In &amp; Ready</div>\n    <table cellpadding=\"0\" cellspacing=\"0\"><tr>${activeCards}</tr></table>\n    ${inactiveCards ? `\n    <div style=\"font-size:11px;font-weight:bold;color:#aaa;text-transform:uppercase;letter-spacing:2px;margin:32px 0 22px;padding-bottom:12px;border-bottom:2px solid #eef2f7;\">🏠 Working From Home Today</div>\n    <table cellpadding=\"0\" cellspacing=\"0\"><tr>${inactiveCards}</tr></table>` : ''}\n  </div>\n\n  <div style=\"background:linear-gradient(135deg,#0f3460,#16213e);color:white;padding:16px 28px;border-radius:0 0 18px 18px;font-size:12px;\">\n    <table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\"><tr>\n      <td>🧑🏾 Chief of Staff · Super-Agent HQ</td>\n      <td style=\"text-align:right;opacity:0.45;\">${now.toISOString()}</td>\n    </tr></table>\n  </div>\n</div></body></html>`;\n\nconst day = now.toLocaleDateString('en-GB', {weekday:'short', day:'numeric', month:'short'});\nreturn [{json: {\n  subject: `🏢 Team Roll Call — ${day} · ${totalActive} in office, ${totalInactive} WFH`,\n  body: html,\n  team_count: team.length,\n  inactive_count: inactiveNames.length,\n  summary: `${totalActive} in office, ${totalInactive} WFH`\n}}];"
+      }
+    },
+
+    {
+      "id": "rc-gmail-send-008",
+      "name": "RC Send Roll Call Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [1680, 80],
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "sendTo": "gelsonmascarenhas@gmail.com",
+        "subject": "={{ $json.subject }}",
+        "message": "={{ $json.body }}",
+        "additionalFields": {"emailType": "html"}
+      },
+      "credentials": { "gmailOAuth2": {"id": "T55BDHntJ3i1NFYw", "name": "Gmail account 2"} }
+    },
+
+    {
+      "id": "rc-webhook-009",
+      "name": "RC Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 500],
+      "webhookId": "roll-call-webhook-2026",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "roll-call",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+
+    {
+      "id": "rc-http-wf-w-010",
+      "name": "RC Get Workflows W",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [240, 500],
+      "parameters": {
+        "method": "GET",
+        "url": "https://outstanding-blessing-production-1d4b.up.railway.app/api/v1/workflows?limit=50",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{"name": "X-N8N-API-KEY", "value": "={{ $env.N8N_SELF_API_KEY }}"}] }
+      }
+    },
+
+    {
+      "id": "rc-http-exec-w-011",
+      "name": "RC Get Executions W",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [480, 500],
+      "parameters": {
+        "method": "GET",
+        "url": "https://outstanding-blessing-production-1d4b.up.railway.app/api/v1/executions?status=success&limit=100",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{"name": "X-N8N-API-KEY", "value": "={{ $env.N8N_SELF_API_KEY }}"}] }
+      }
+    },
+
+    {
+      "id": "rc-code-compile-w-012",
+      "name": "RC Compile Data W",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [720, 500],
+      "parameters": {
+        "jsCode": "const workflows = ($('RC Get Workflows W').first().json.data || []);\nconst executions = ($input.first().json.data || []);\n\nconst lastRunMap = {};\nexecutions.forEach(e => {\n  if (e.workflowId && (!lastRunMap[e.workflowId] || new Date(e.startedAt) > new Date(lastRunMap[e.workflowId]))) {\n    lastRunMap[e.workflowId] = e.startedAt;\n  }\n});\n\nconst active = workflows.filter(w => w.active);\nconst inactive = workflows.filter(w => !w.active);\nconst now = Date.now();\nconst twentyFourHAgo = now - 24 * 60 * 60 * 1000;\n\nreturn [{json: {\n  activeNames: active.map(w => w.name),\n  inactiveNames: inactive.map(w => w.name),\n  totalActive: active.length,\n  totalInactive: inactive.length\n}}];"
+      }
+    },
+
+    {
+      "id": "rc-code-prompt-w-013",
+      "name": "RC Build Roll Call Prompt W",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [960, 500],
+      "parameters": {
+        "jsCode": "const d = $input.first().json;\nconst now = new Date();\n\nconst prompt = `You are generating fun, personality-driven morning check-in messages for an AI office team. Each workflow is a digital employee with a unique character and job role.\n\nTODAY: ${now.toLocaleDateString('en-GB', {weekday:'long', day:'numeric', month:'long'})}\n\nACTIVE employees CHECKED IN to the office today:\n${d.activeNames.map((n, i) => `${i+1}. ${n}`).join('\\n')}\n\nINACTIVE employees working from home:\n${d.inactiveNames.map((n, i) => `${i+1}. ${n}`).join('\\n')}\n\nFor EACH active employee, generate:\n1. A single emoji avatar that matches their role\n2. A SHORT (10-15 words max) fun morning check-in message in first person, like a real employee greeting their boss\n3. A mood: energetic | focused | creative | analytical | vigilant | cheerful\n\nThe Chief of Staff should sound authoritative. Gmail/Outlook Secretary should sound professional. Content Analyst creative. Crypto Specialist market-aware. Verification Monitor vigilant. GitHub Receiver technical. Universal Catch-All reliable.\n\nReturn ONLY valid JSON:\n{\"team\": [{\"name\": \"exact workflow name\", \"avatar\": \"single emoji\", \"message\": \"check-in message\", \"mood\": \"mood\"}]}\n\nInclude ALL ${d.activeNames.length} active employees.`;\n\nreturn [{json: {prompt, inactiveNames: d.inactiveNames, totalActive: d.totalActive, totalInactive: d.totalInactive}}];"
+      }
+    },
+
+    {
+      "id": "rc-http-gemini-w-014",
+      "name": "RC AI Generate Messages W",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1200, 500],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + $env.GEMINI_API_KEY }}",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{"name": "Content-Type", "value": "application/json"}] },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ contents: [{ parts: [{ text: $json.prompt }] }] }) }}"
+      }
+    },
+
+    {
+      "id": "rc-code-buildhtml-w-015",
+      "name": "RC Build Roll Call HTML W",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1440, 500],
+      "parameters": {
+        "jsCode": "const raw = $input.first().json.candidates[0].content.parts[0].text;\nlet parsed;\ntry {\n  const extracted = (raw.match(/\\{[\\s\\S]*\\}/) || [raw])[0];\n  parsed = JSON.parse(extracted);\n} catch(e) { parsed = {team: []}; }\n\nconst team = parsed.team || [];\nconst promptData = $('RC Build Roll Call Prompt W').first().json;\nconst inactiveNames = promptData.inactiveNames || [];\nconst totalActive = promptData.totalActive || team.length;\nconst totalInactive = promptData.totalInactive || inactiveNames.length;\n\nconst moodColors = {\n  energetic: '#1e90ff', focused: '#7c4dff', creative: '#e91e8c',\n  analytical: '#00c851', vigilant: '#ff6d00', cheerful: '#ffbb33'\n};\n\nconst makeCard = (avatar, name, statusBadge, statusColor, message, borderColor) => {\n  const shortName = name.length > 22 ? name.substring(0, 22) + '…' : name;\n  return `<td style=\"padding:8px;vertical-align:top;\">\n    <div style=\"background:white;border-radius:14px;padding:18px 14px;box-shadow:0 3px 14px rgba(0,0,0,0.09);border-top:4px solid ${borderColor};width:155px;text-align:center;\">\n      <div style=\"font-size:34px;margin-bottom:9px;\">${avatar}</div>\n      <div style=\"font-size:10px;font-weight:bold;color:#444;text-transform:uppercase;letter-spacing:0.7px;margin-bottom:7px;line-height:1.3;\">${shortName}</div>\n      <div style=\"background:${statusColor};font-size:10px;font-weight:bold;padding:2px 9px;border-radius:20px;margin-bottom:10px;display:inline-block;\">${statusBadge}</div>\n      <div style=\"font-size:12px;color:#666;font-style:italic;line-height:1.5;\">${message}</div>\n    </div>\n  </td>`;\n};\n\nconst activeCards = team.map(e =>\n  makeCard(e.avatar || '🤖', e.name, '✅ IN OFFICE', '#e8f5e9;color:#2e7d32', `\"${e.message}\"`, moodColors[e.mood] || '#1e90ff')\n).join('');\n\nconst inactiveCards = inactiveNames.map(name =>\n  makeCard('😴', name, '🏠 WFH TODAY', '#fff3e0;color:#e65100', '\"Dormant — ping me via Chief of Staff!\"', '#ddd')\n).join('');\n\nconst now = new Date();\nconst html = `<!DOCTYPE html><html><head><meta charset=\"utf-8\"></head>\n<body style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;background:#eef2f7;margin:0;padding:20px;\">\n<div style=\"max-width:760px;margin:0 auto;\">\n  <div style=\"background:linear-gradient(135deg,#0f3460 0%,#16213e 60%,#1a1a2e 100%);color:white;padding:35px 30px;border-radius:18px 18px 0 0;text-align:center;\">\n    <div style=\"font-size:56px;margin-bottom:14px;\">🏢</div>\n    <h1 style=\"margin:0;font-size:24px;letter-spacing:4px;font-weight:900;text-transform:uppercase;\">Team Roll Call</h1>\n    <p style=\"margin:10px 0 4px;opacity:0.75;font-size:15px;\">${now.toLocaleDateString('en-GB', {weekday:'long', day:'numeric', month:'long', year:'numeric'})}</p>\n    <p style=\"margin:0;opacity:0.5;font-size:13px;\">Morning check-in · Reported by 🧑🏾 Chief of Staff</p>\n  </div>\n  <div style=\"background:white;padding:18px 30px;border-bottom:1px solid #eee;\">\n    <table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\"><tr>\n      <td style=\"text-align:center;padding:12px;\"><div style=\"font-size:36px;font-weight:900;color:#00c851;\">${totalActive}</div><div style=\"font-size:11px;color:#888;text-transform:uppercase;letter-spacing:1px;margin-top:4px;\">In Office</div></td>\n      <td style=\"text-align:center;padding:12px;border-left:1px solid #eee;border-right:1px solid #eee;\"><div style=\"font-size:36px;font-weight:900;color:#ff9800;\">${totalInactive}</div><div style=\"font-size:11px;color:#888;text-transform:uppercase;letter-spacing:1px;margin-top:4px;\">WFH / Dormant</div></td>\n      <td style=\"text-align:center;padding:12px;\"><div style=\"font-size:36px;font-weight:900;color:#1e90ff;\">${totalActive + totalInactive}</div><div style=\"font-size:11px;color:#888;text-transform:uppercase;letter-spacing:1px;margin-top:4px;\">Total Workforce</div></td>\n    </tr></table>\n  </div>\n  <div style=\"background:white;padding:28px 30px;\">\n    <div style=\"font-size:11px;font-weight:bold;color:#333;text-transform:uppercase;letter-spacing:2px;margin-bottom:22px;padding-bottom:12px;border-bottom:2px solid #eef2f7;\">🟢 Active Team — Checked In &amp; Ready</div>\n    <table cellpadding=\"0\" cellspacing=\"0\"><tr>${activeCards}</tr></table>\n    ${inactiveCards ? `\n    <div style=\"font-size:11px;font-weight:bold;color:#aaa;text-transform:uppercase;letter-spacing:2px;margin:32px 0 22px;padding-bottom:12px;border-bottom:2px solid #eef2f7;\">🏠 Working From Home Today</div>\n    <table cellpadding=\"0\" cellspacing=\"0\"><tr>${inactiveCards}</tr></table>` : ''}\n  </div>\n  <div style=\"background:linear-gradient(135deg,#0f3460,#16213e);color:white;padding:16px 28px;border-radius:0 0 18px 18px;font-size:12px;\">\n    <table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\"><tr>\n      <td>🧑🏾 Chief of Staff · Super-Agent HQ</td>\n      <td style=\"text-align:right;opacity:0.45;\">${now.toISOString()}</td>\n    </tr></table>\n  </div>\n</div></body></html>`;\n\nconst day = now.toLocaleDateString('en-GB', {weekday:'short', day:'numeric', month:'short'});\nreturn [{json: {\n  subject: `🏢 Team Roll Call — ${day} · ${totalActive} in office, ${totalInactive} WFH`,\n  body: html,\n  team: team,\n  summary: `${totalActive} in office, ${totalInactive} WFH`,\n  team_count: team.length\n}}];"
+      }
+    },
+
+    {
+      "id": "rc-respond-016",
+      "name": "RC Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1680, 500],
+      "parameters": {
+        "options": {},
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({success: true, summary: $json.summary, team_count: $json.team_count, team: $json.team, timestamp: new Date().toISOString()}) }}"
+      }
+    },
+
+    {
+      "id": "rc-gmail-send-w-017",
+      "name": "RC Send Roll Call Email W",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [1920, 500],
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "sendTo": "gelsonmascarenhas@gmail.com",
+        "subject": "={{ $json.subject }}",
+        "message": "={{ $json.body }}",
+        "additionalFields": {"emailType": "html"}
+      },
+      "credentials": { "gmailOAuth2": {"id": "T55BDHntJ3i1NFYw", "name": "Gmail account 2"} }
+    }
+
+  ],
+
+  "connections": {
+    "RC Schedule 7:15": { "main": [[{"node": "RC Get Workflows", "type": "main", "index": 0}]] },
+    "RC Get Workflows": { "main": [[{"node": "RC Get Executions", "type": "main", "index": 0}]] },
+    "RC Get Executions": { "main": [[{"node": "RC Compile Data", "type": "main", "index": 0}]] },
+    "RC Compile Data": { "main": [[{"node": "RC Build Roll Call Prompt", "type": "main", "index": 0}]] },
+    "RC Build Roll Call Prompt": { "main": [[{"node": "RC AI Generate Messages", "type": "main", "index": 0}]] },
+    "RC AI Generate Messages": { "main": [[{"node": "RC Build Roll Call HTML", "type": "main", "index": 0}]] },
+    "RC Build Roll Call HTML": { "main": [[{"node": "RC Send Roll Call Email", "type": "main", "index": 0}]] },
+
+    "RC Webhook": { "main": [[{"node": "RC Get Workflows W", "type": "main", "index": 0}]] },
+    "RC Get Workflows W": { "main": [[{"node": "RC Get Executions W", "type": "main", "index": 0}]] },
+    "RC Get Executions W": { "main": [[{"node": "RC Compile Data W", "type": "main", "index": 0}]] },
+    "RC Compile Data W": { "main": [[{"node": "RC Build Roll Call Prompt W", "type": "main", "index": 0}]] },
+    "RC Build Roll Call Prompt W": { "main": [[{"node": "RC AI Generate Messages W", "type": "main", "index": 0}]] },
+    "RC AI Generate Messages W": { "main": [[{"node": "RC Build Roll Call HTML W", "type": "main", "index": 0}]] },
+    "RC Build Roll Call HTML W": { "main": [[{"node": "RC Respond to Webhook", "type": "main", "index": 0}]] },
+    "RC Respond to Webhook": { "main": [[{"node": "RC Send Roll Call Email W", "type": "main", "index": 0}]] }
+  },
+
+  "settings": { "executionOrder": "v1" }
+}

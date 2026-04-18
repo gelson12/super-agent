@@ -1,0 +1,199 @@
+﻿{
+    "updatedAt":  "2026-04-17T07:11:17.518Z",
+    "createdAt":  "2026-04-17T07:11:17.518Z",
+    "id":  "asj4GUTfXPjBrWvZ",
+    "name":  "Layer2 GitHub Alert Receiver",
+    "description":  null,
+    "active":  true,
+    "isArchived":  false,
+    "nodes":  [
+                  {
+                      "id":  "webhook-node",
+                      "name":  "Layer2 Alert Webhook",
+                      "type":  "n8n-nodes-base.webhook",
+                      "typeVersion":  2,
+                      "position":  [
+                                       240,
+                                       300
+                                   ],
+                      "webhookId":  "layer2-github-alert",
+                      "parameters":  {
+                                         "httpMethod":  "POST",
+                                         "path":  "layer2-github-alert",
+                                         "responseMode":  "onReceived",
+                                         "responseData":  "allEntries"
+                                     }
+                  },
+                  {
+                      "id":  "log-node",
+                      "name":  "Log Alert",
+                      "type":  "n8n-nodes-base.set",
+                      "typeVersion":  3,
+                      "position":  [
+                                       460,
+                                       300
+                                   ],
+                      "parameters":  {
+                                         "mode":  "manual",
+                                         "duplicateItem":  false,
+                                         "assignments":  {
+                                                             "assignments":  [
+                                                                                 {
+                                                                                     "id":  "1",
+                                                                                     "name":  "alert",
+                                                                                     "value":  "={{ $json.body.alert }}",
+                                                                                     "type":  "string"
+                                                                                 },
+                                                                                 {
+                                                                                     "id":  "2",
+                                                                                     "name":  "message",
+                                                                                     "value":  "={{ $json.body.message }}",
+                                                                                     "type":  "string"
+                                                                                 },
+                                                                                 {
+                                                                                     "id":  "3",
+                                                                                     "name":  "received_at",
+                                                                                     "value":  "={{ new Date().toISOString() }}",
+                                                                                     "type":  "string"
+                                                                                 }
+                                                                             ]
+                                                         }
+                                     }
+                  }
+              ],
+    "connections":  {
+                        "Layer2 Alert Webhook":  {
+                                                     "main":  [
+                                                                  [
+                                                                      {
+                                                                          "node":  "Log Alert",
+                                                                          "type":  "main",
+                                                                          "index":  0
+                                                                      }
+                                                                  ]
+                                                              ]
+                                                 }
+                    },
+    "settings":  {
+                     "executionOrder":  "v1",
+                     "callerPolicy":  "workflowsFromSameOwner",
+                     "availableInMCP":  false
+                 },
+    "staticData":  null,
+    "meta":  null,
+    "pinData":  null,
+    "versionId":  "1e0f862b-54e9-4e1a-a32c-5fee6601d50c",
+    "activeVersionId":  "1e0f862b-54e9-4e1a-a32c-5fee6601d50c",
+    "versionCounter":  9,
+    "triggerCount":  1,
+    "shared":  [
+                   {
+                       "updatedAt":  "2026-04-17T07:11:17.518Z",
+                       "createdAt":  "2026-04-17T07:11:17.518Z",
+                       "role":  "workflow:owner",
+                       "workflowId":  "asj4GUTfXPjBrWvZ",
+                       "projectId":  "Lrgt6JR85OZiVLcX",
+                       "project":  {
+                                       "updatedAt":  "2026-03-31T09:07:31.366Z",
+                                       "createdAt":  "2026-03-31T08:57:43.789Z",
+                                       "id":  "Lrgt6JR85OZiVLcX",
+                                       "name":  "gelson mascarenhas \u003cgelson_m@hotmail.com\u003e",
+                                       "type":  "personal",
+                                       "icon":  null,
+                                       "description":  null,
+                                       "creatorId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                   }
+                   }
+               ],
+    "tags":  [
+
+             ],
+    "activeVersion":  {
+                          "updatedAt":  "2026-04-17T07:11:17.527Z",
+                          "createdAt":  "2026-04-17T07:11:17.527Z",
+                          "versionId":  "1e0f862b-54e9-4e1a-a32c-5fee6601d50c",
+                          "workflowId":  "asj4GUTfXPjBrWvZ",
+                          "nodes":  [
+                                        {
+                                            "id":  "webhook-node",
+                                            "name":  "Layer2 Alert Webhook",
+                                            "type":  "n8n-nodes-base.webhook",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             240,
+                                                             300
+                                                         ],
+                                            "webhookId":  "layer2-github-alert",
+                                            "parameters":  {
+                                                               "httpMethod":  "POST",
+                                                               "path":  "layer2-github-alert",
+                                                               "responseMode":  "onReceived",
+                                                               "responseData":  "allEntries"
+                                                           }
+                                        },
+                                        {
+                                            "id":  "log-node",
+                                            "name":  "Log Alert",
+                                            "type":  "n8n-nodes-base.set",
+                                            "typeVersion":  3,
+                                            "position":  [
+                                                             460,
+                                                             300
+                                                         ],
+                                            "parameters":  {
+                                                               "mode":  "manual",
+                                                               "duplicateItem":  false,
+                                                               "assignments":  {
+                                                                                   "assignments":  [
+                                                                                                       {
+                                                                                                           "id":  "1",
+                                                                                                           "name":  "alert",
+                                                                                                           "value":  "={{ $json.body.alert }}",
+                                                                                                           "type":  "string"
+                                                                                                       },
+                                                                                                       {
+                                                                                                           "id":  "2",
+                                                                                                           "name":  "message",
+                                                                                                           "value":  "={{ $json.body.message }}",
+                                                                                                           "type":  "string"
+                                                                                                       },
+                                                                                                       {
+                                                                                                           "id":  "3",
+                                                                                                           "name":  "received_at",
+                                                                                                           "value":  "={{ new Date().toISOString() }}",
+                                                                                                           "type":  "string"
+                                                                                                       }
+                                                                                                   ]
+                                                                               }
+                                                           }
+                                        }
+                                    ],
+                          "connections":  {
+                                              "Layer2 Alert Webhook":  {
+                                                                           "main":  [
+                                                                                        [
+                                                                                            {
+                                                                                                "node":  "Log Alert",
+                                                                                                "type":  "main",
+                                                                                                "index":  0
+                                                                                            }
+                                                                                        ]
+                                                                                    ]
+                                                                       }
+                                          },
+                          "authors":  "gelson mascarenhas",
+                          "name":  null,
+                          "description":  null,
+                          "autosaved":  false,
+                          "workflowPublishHistory":  [
+                                                         {
+                                                             "createdAt":  "2026-04-17T07:11:52.246Z",
+                                                             "id":  251,
+                                                             "workflowId":  "asj4GUTfXPjBrWvZ",
+                                                             "versionId":  "1e0f862b-54e9-4e1a-a32c-5fee6601d50c",
+                                                             "event":  "activated",
+                                                             "userId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                                         }
+                                                     ]
+                      }
+}

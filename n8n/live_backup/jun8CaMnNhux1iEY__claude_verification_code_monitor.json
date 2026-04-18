@@ -1,0 +1,678 @@
+﻿{
+    "updatedAt":  "2026-04-17T07:22:23.493Z",
+    "createdAt":  "2026-04-13T09:07:02.172Z",
+    "id":  "jun8CaMnNhux1iEY",
+    "name":  "Claude Verification Code Monitor",
+    "description":  null,
+    "active":  true,
+    "isArchived":  false,
+    "nodes":  [
+                  {
+                      "parameters":  {
+                                         "rule":  {
+                                                      "interval":  [
+                                                                       {
+                                                                           "field":  "seconds",
+                                                                           "secondsInterval":  30
+                                                                       }
+                                                                   ]
+                                                  }
+                                     },
+                      "id":  "schedule-trigger",
+                      "name":  "Every 30 Seconds",
+                      "type":  "n8n-nodes-base.scheduleTrigger",
+                      "typeVersion":  1.2,
+                      "position":  [
+                                       240,
+                                       400
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "resource":  "message",
+                                         "operation":  "getAll",
+                                         "returnAll":  false,
+                                         "limit":  10,
+                                         "filters":  {
+                                                         "readStatus":  "unread"
+                                                     },
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "read-outlook",
+                      "name":  "Read Unread Outlook Emails",
+                      "type":  "n8n-nodes-base.microsoftOutlook",
+                      "typeVersion":  2,
+                      "position":  [
+                                       460,
+                                       400
+                                   ],
+                      "credentials":  {
+                                          "microsoftOutlookOAuth2Api":  {
+                                                                            "id":  "9paQ8IJLgiLbjEYI",
+                                                                            "name":  "Microsoft Outlook account"
+                                                                        }
+                                      },
+                      "webhookId":  "e23ed9ac-7789-49b3-b78b-1853083081e2"
+                  },
+                  {
+                      "parameters":  {
+                                         "mode":  "runOnceForAllItems",
+                                         "language":  "javaScript",
+                                         "jsCode":  "// Filter to only recent Anthropic verification emails.\n// NOTE: simple output mode omits receivedDateTime -- treat missing as recent.\nconst items = $input.all();\nconst results = [];\nfor (const item of items) {\n  const subject = (item.json.subject || \u0027\u0027).toLowerCase();\n  const from = (item.json.from \u0026\u0026 item.json.from.emailAddress \u0026\u0026 item.json.from.emailAddress.address || item.json.from || \u0027\u0027).toLowerCase();\n  const isAnthropicSender = from.includes(\u0027anthropic.com\u0027) || from.includes(\u0027claude.ai\u0027);\n  const isLoginSubject = subject.includes(\u0027claude\u0027) || subject.includes(\u0027sign in\u0027) || subject.includes(\u0027secure link\u0027) || subject.includes(\u0027log in\u0027) || subject.includes(\u0027magic\u0027) || subject.includes(\u0027verify\u0027) || subject.includes(\u0027login\u0027) || subject.includes(\u0027authenticate\u0027);\n  if (!isAnthropicSender \u0026\u0026 !isLoginSubject) continue;\n  if (item.json.receivedDateTime || item.json.createdDateTime) {\n    const receivedAt = new Date(item.json.receivedDateTime || item.json.createdDateTime);\n    const ageMs = Date.now() - receivedAt.getTime();\n    if (ageMs \u003e 10 * 60 * 1000) continue;\n  }\n  if (!item.json.id) continue;\n  results.push({ json: { id: item.json.id, subject: item.json.subject, receivedDateTime: item.json.receivedDateTime } });\n}\nreturn results;"
+                                     },
+                      "id":  "filter-anthropic",
+                      "name":  "Filter Anthropic Emails",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       680,
+                                       400
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "curlImport":  "",
+                                         "method":  "GET",
+                                         "url":  "=https://graph.microsoft.com/v1.0/me/messages/{{ $json.id }}?$select=id,subject,body,bodyPreview,from,receivedDateTime",
+                                         "authentication":  "predefinedCredentialType",
+                                         "nodeCredentialType":  "microsoftOutlookOAuth2Api",
+                                         "sendHeaders":  false,
+                                         "sendBody":  false,
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "get-full-email",
+                      "name":  "Get Full Email Body",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.4,
+                      "position":  [
+                                       900,
+                                       400
+                                   ],
+                      "webhookId":  "ee2ebe2e-dc01-457b-90f9-abe22f5eb959",
+                      "credentials":  {
+                                          "microsoftOutlookOAuth2Api":  {
+                                                                            "id":  "9paQ8IJLgiLbjEYI",
+                                                                            "name":  "Microsoft Outlook account"
+                                                                        }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "mode":  "runOnceForAllItems",
+                                         "language":  "javaScript",
+                                         "jsCode":  "// Extract magic link URL and/or 6-digit verification code from full email body.\nconst items = $input.all();\nconst results = [];\nfor (const item of items) {\n  const bodyHtml = (item.json.body \u0026\u0026 item.json.body.content) || \u0027\u0027;\n  const bodyText = item.json.bodyPreview || \u0027\u0027;\n  const searchIn = bodyHtml + \u0027 \u0027 + bodyText;\n  const plainText = bodyHtml.replace(/\u003c[^\u003e]+\u003e/g, \u0027 \u0027).replace(/\u0026amp;/g, \u0027\u0026\u0027).replace(/\u0026nbsp;/g, \u0027 \u0027);\n  let magicUrl = null;\n  const patterns = [\n    /https:\\/\\/claude\\.ai\\/magic-link[^\\s\"\u0027\u003c\u003e)\\\\]+/i,\n    /https:\\/\\/platform\\.claude\\.com\\/magic-link[^\\s\"\u0027\u003c\u003e)\\\\]+/i,\n    /https:\\/\\/claude\\.ai\\/verify[^\\s\"\u0027\u003c\u003e)\\\\]+/i,\n    /https:\\/\\/platform\\.claude\\.com\\/[^\\s\"\u0027\u003c\u003e)\\\\]+/i,\n    /https:\\/\\/claude\\.com\\/[^\\s\"\u0027\u003c\u003e)\\\\]*(?:magic|verify|link|token)[^\\s\"\u0027\u003c\u003e)\\\\]+/i,\n    /https:\\/\\/[^\\s\"\u0027\u003c\u003e)\\\\]+\\.claude\\.(?:ai|com)\\/[^\\s\"\u0027\u003c\u003e)\\\\]+/i,\n  ];\n  for (const pattern of patterns) {\n    const m = searchIn.match(pattern);\n    if (m) { magicUrl = m[0].replace(/\u0026amp;/g, \u0027\u0026\u0027).replace(/[.,;!?]+$/, \u0027\u0027); break; }\n  }\n  let directCode = null;\n  const codePatterns = [\n    /verification\\s+code[:\\s]+([0-9]{6})\\b/i,\n    /use\\s+code[:\\s]+([0-9]{6})\\b/i,\n    /code[:\\s]+([0-9]{6})\\b/i,\n  ];\n  for (const cp of codePatterns) {\n    const cm = plainText.match(cp);\n    if (cm) { directCode = cm[1]; break; }\n  }\n  if (magicUrl) results.push({ json: { url: magicUrl, directCode: directCode, subject: item.json.subject, messageId: item.json.id } });\n  else if (directCode) results.push({ json: { url: directCode, directCode: directCode, subject: item.json.subject, messageId: item.json.id } });\n}\nreturn results.length ? results : [];"
+                                     },
+                      "id":  "extract-code",
+                      "name":  "Extract Magic Link URL",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       1120,
+                                       280
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "method":  "POST",
+                                         "url":  "https://inspiring-cat-production.up.railway.app/webhook/verification-code",
+                                         "authentication":  "none",
+                                         "sendBody":  true,
+                                         "contentType":  "json",
+                                         "specifyBody":  "json",
+                                         "jsonBody":  "={{ JSON.stringify($json.directCode ? { url: $json.url, code: $json.directCode } : { url: $json.url }) }}",
+                                         "options":  {
+                                                         "timeout":  10000
+                                                     },
+                                         "sendHeaders":  true,
+                                         "headerParameters":  {
+                                                                  "parameters":  [
+                                                                                     {
+                                                                                         "name":  "X-Webhook-Secret",
+                                                                                         "value":  "={{ $env.WEBHOOK_SECRET }}"
+                                                                                     }
+                                                                                 ]
+                                                              }
+                                     },
+                      "id":  "post-code",
+                      "name":  "POST Magic Link to CLI Worker",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.4,
+                      "position":  [
+                                       1340,
+                                       280
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "delete",
+                                         "messageId":  "={{ $json.id }}"
+                                     },
+                      "id":  "delete-message",
+                      "name":  "Delete Anthropic Email",
+                      "type":  "n8n-nodes-base.microsoftOutlook",
+                      "typeVersion":  2,
+                      "position":  [
+                                       1120,
+                                       520
+                                   ],
+                      "credentials":  {
+                                          "microsoftOutlookOAuth2Api":  {
+                                                                            "id":  "9paQ8IJLgiLbjEYI",
+                                                                            "name":  "Microsoft Outlook account"
+                                                                        }
+                                      },
+                      "webhookId":  "1f6b62cd-d351-4c9c-b87e-681304a003a8"
+                  }
+              ],
+    "connections":  {
+                        "Every 30 Seconds":  {
+                                                 "main":  [
+                                                              [
+                                                                  {
+                                                                      "node":  "Read Unread Outlook Emails",
+                                                                      "type":  "main",
+                                                                      "index":  0
+                                                                  }
+                                                              ]
+                                                          ]
+                                             },
+                        "Read Unread Outlook Emails":  {
+                                                           "main":  [
+                                                                        [
+                                                                            {
+                                                                                "node":  "Filter Anthropic Emails",
+                                                                                "type":  "main",
+                                                                                "index":  0
+                                                                            }
+                                                                        ]
+                                                                    ]
+                                                       },
+                        "Filter Anthropic Emails":  {
+                                                        "main":  [
+                                                                     [
+                                                                         {
+                                                                             "node":  "Get Full Email Body",
+                                                                             "type":  "main",
+                                                                             "index":  0
+                                                                         }
+                                                                     ]
+                                                                 ]
+                                                    },
+                        "Get Full Email Body":  {
+                                                    "main":  [
+                                                                 [
+                                                                     {
+                                                                         "node":  "Extract Magic Link URL",
+                                                                         "type":  "main",
+                                                                         "index":  0
+                                                                     },
+                                                                     {
+                                                                         "node":  "Delete Anthropic Email",
+                                                                         "type":  "main",
+                                                                         "index":  0
+                                                                     }
+                                                                 ]
+                                                             ]
+                                                },
+                        "Extract Magic Link URL":  {
+                                                       "main":  [
+                                                                    [
+                                                                        {
+                                                                            "node":  "POST Magic Link to CLI Worker",
+                                                                            "type":  "main",
+                                                                            "index":  0
+                                                                        }
+                                                                    ]
+                                                                ]
+                                                   }
+                    },
+    "settings":  {
+                     "executionOrder":  "v1",
+                     "saveManualExecutions":  true,
+                     "callerPolicy":  "workflowsFromSameOwner",
+                     "errorWorkflow":  "",
+                     "availableInMCP":  false,
+                     "binaryMode":  "separate"
+                 },
+    "staticData":  {
+                       "node:Every 30 Seconds":  {
+                                                     "recurrenceRules":  [
+
+                                                                         ]
+                                                 },
+                       "node:Watch Outlook for Anthropic Emails":  {
+                                                                       "lastTimeChecked":  "2026-04-16T08:36:16.002+01:00"
+                                                                   }
+                   },
+    "meta":  null,
+    "pinData":  {
+                    "Watch Outlook for Anthropic Emails":  [
+                                                               {
+                                                                   "json":  {
+                                                                                "@odata.etag":  "W/\"CQAAABYAAAAQ/im/rlIySotmftfq9UikAAjyZUPv\"",
+                                                                                "id":  "AQMkADAwATE4MTkxLWE2ZDItNDA3Yy0wMAItMDAKAEYAAAO4j4oX8eEoQ7ROp77L-Km_BwAQ-im-rlIySotmftfq9UikAAACAQwAAAAQ-im-rlIySotmftfq9UikAAjzak4bAAAA",
+                                                                                "createdDateTime":  "2026-04-15T03:01:47Z",
+                                                                                "lastModifiedDateTime":  "2026-04-15T03:01:48Z",
+                                                                                "changeKey":  "CQAAABYAAAAQ/im/rlIySotmftfq9UikAAjyZUPv",
+                                                                                "categories":  [
+
+                                                                                               ],
+                                                                                "receivedDateTime":  "2026-04-15T03:01:47Z",
+                                                                                "sentDateTime":  "2026-04-15T03:01:43Z",
+                                                                                "hasAttachments":  false,
+                                                                                "internetMessageId":  "\u003cnij7rDCiRGKfwQHhbuwATQ@geopod-ismtpd-110\u003e",
+                                                                                "subject":  "Secure link to log in to Claude.ai |  2026-04-15 05:01:43",
+                                                                                "bodyPreview":  "Let\u0027s get you signed in\r\nSign in with the secure link below\r\n\r\nSign in to Claude.ai\r\n\r\nIf you didn\u0027t request this email, you can safely ignore it.\r\nIf you\u0027re experiencing issues, please contact Anthropic Support.",
+                                                                                "importance":  "normal",
+                                                                                "parentFolderId":  "AQMkADAwATE4MTkxLWE2ZDItNDA3Yy0wMAItMDAKAC4AAAO4j4oX8eEoQ7ROp77L-Km_AQAQ-im-rlIySotmftfq9UikAAACAQwAAAA=",
+                                                                                "conversationId":  "AQQkADAwATE4MTkxLWE2ZDItNDA3Yy0wMAItMDAKABAApS6xsMNE10WHZTvES9xIQw==",
+                                                                                "conversationIndex":  "AQHczIQypS6xsMNE10WHZTvES9xIQw==",
+                                                                                "isDeliveryReceiptRequested":  null,
+                                                                                "isReadReceiptRequested":  false,
+                                                                                "isRead":  false,
+                                                                                "isDraft":  false,
+                                                                                "webLink":  "https://outlook.live.com/owa/?ItemID=AQMkADAwATE4MTkxLWE2ZDItNDA3Yy0wMAItMDAKAEYAAAO4j4oX8eEoQ7ROp77L%2FKm%2BBwAQ%2Fim%2FrlIySotmftfq9UikAAACAQwAAAAQ%2Fim%2FrlIySotmftfq9UikAAjzak4bAAAA\u0026exvsurl=1\u0026viewmodel=ReadMessageItem",
+                                                                                "inferenceClassification":  "focused",
+                                                                                "body":  {
+                                                                                             "contentType":  "html",
+                                                                                             "content":  "\u003chtml lang=\"und\" dir=\"auto\"\u003e\u003chead\u003e\r\n\u003cmeta http-equiv=\"Content-Type\" content=\"text/html; charset=utf-8\"\u003e\u003cmeta content=\"IE=edge\"\u003e\u003cmeta name=\"viewport\" content=\"width=device-width,initial-scale=1\"\u003e\u003cstyle type=\"text/css\"\u003e\r\n\u003c!--\r\n#outlook a\r\n\t{padding:0}\r\nbody\r\n\t{margin:0;\r\n\tpadding:0}\r\ntable, td\r\n\t{border-collapse:collapse}\r\nimg\r\n\t{border:0;\r\n\theight:auto;\r\n\tline-height:100%;\r\n\toutline:none;\r\n\ttext-decoration:none}\r\np\r\n\t{display:block;\r\n\tmargin:13px 0}\r\n--\u003e\r\n\u003c/style\u003e\u003cstyle type=\"text/css\"\u003e\r\n\u003c!--\r\n@media only screen and (min-width:480px) {\r\n.mj-column-per-100\r\n\t{width:100%!important;\r\n\tmax-width:100%}\r\n\r\n\t}\r\n--\u003e\r\n\u003c/style\u003e\u003cstyle media=\"screen and (min-width:480px)\"\u003e\r\n\u003c!--\r\n.moz-text-html .mj-column-per-100\r\n\t{width:100%!important;\r\n\tmax-width:100%}\r\n--\u003e\r\n\u003c/style\u003e\u003cstyle type=\"text/css\"\u003e\r\n\u003c!--\r\n@media only screen and (max-width:479px) {\r\ntable.mj-full-width-mobile\r\n\t{width:100%!important}\r\ntd.mj-full-width-mobile\r\n\t{width:auto!important}\r\n\r\n\t}\r\n--\u003e\r\n\u003c/style\u003e\u003c/head\u003e\u003cbody style=\"word-spacing:normal; background-color:#FAF9F5\"\u003e\u003cdiv lang=\"und\" dir=\"auto\" style=\"background-color:#FAF9F5\"\u003e\u003cdiv style=\"margin:0px auto; max-width:600px\"\u003e\u003ctable align=\"center\" border=\"0\" cellpadding=\"0\" cellspacing=\"0\" role=\"presentation\" style=\"width:100%\"\u003e\u003ctbody\u003e\u003ctr\u003e\u003ctd style=\"direction:ltr; font-size:0px; padding:0px 4px; text-align:center\"\u003e\u003cdiv style=\"margin:0px auto; max-width:592px\"\u003e\u003ctable align=\"center\" border=\"0\" cellpadding=\"0\" cellspacing=\"0\" role=\"presentation\" style=\"width:100%\"\u003e\u003ctbody\u003e\u003ctr\u003e\u003ctd style=\"direction:ltr; font-size:0px; padding:20px 0; text-align:center\"\u003e\u003c/td\u003e\u003c/tr\u003e\u003c/tbody\u003e\u003c/table\u003e\u003c/div\u003e\u003cdiv class=\"inner-wrapper\" style=\"background:#FFFFFF; background-color:#FFFFFF; margin:0px auto; border-radius:20px; max-width:592px; border:0.5px solid rgba(135,134,127,0.25); border-top:0.5px solid rgba(135,134,127,0.25); border-bottom:0.5px solid rgba(135,134,127,0.25); box-shadow:0px 4px 20px 0px rgba(0,0,0,0.04)\"\u003e\u003ctable align=\"center\" border=\"0\" cellpadding=\"0\" cellspacing=\"0\" role=\"presentation\" style=\"background:#FFFFFF; background-color:#FFFFFF; width:100%; border-radius:20px\"\u003e\u003ctbody\u003e\u003ctr\u003e\u003ctd style=\"direction:ltr; font-size:0px; padding:20px 32px 32px 32px; text-align:center\"\u003e\u003cdiv class=\"mj-column-per-100 mj-outlook-group-fix auth-centered-content\" style=\"font-size:0px; direction:ltr; display:inline-block; vertical-align:top; width:100%; text-align:left\"\u003e\u003ctable border=\"0\" cellpadding=\"0\" cellspacing=\"0\" role=\"presentation\" width=\"100%\" style=\"vertical-align:top\"\u003e\u003ctbody\u003e\u003ctr\u003e\u003ctd align=\"center\" style=\"font-size:0px; padding:10px 25px; padding-top:36px; word-break:break-word\"\u003e\u003ctable border=\"0\" cellpadding=\"0\" cellspacing=\"0\" role=\"presentation\" style=\"border-collapse:collapse; border-spacing:0px\"\u003e\u003ctbody\u003e\u003ctr\u003e\u003ctd style=\"width:128px\"\u003e\u003cimg alt=\"Claude\" src=\"https://claude.ai/images/claude_logo_full.png\" width=\"128\" height=\"auto\" style=\"border:0; display:block; outline:none; text-decoration:none; height:auto; width:100%; font-size:13px\"\u003e\u003c/td\u003e\u003c/tr\u003e\u003c/tbody\u003e\u003c/table\u003e\u003c/td\u003e\u003c/tr\u003e\u003ctr\u003e\u003ctd align=\"left\" style=\"font-size:0px; padding:10px 25px; padding-top:42px; word-break:break-word\"\u003e\u003cdiv style=\"font-family:Helvetica,sans-serif; font-size:32px; font-weight:bold; line-height:38px; color:#0F0F0D; text-align:center\"\u003eLet\u0027s get you signed in\u003c/div\u003e\u003c/td\u003e\u003c/tr\u003e\u003ctr\u003e\u003ctd align=\"left\" style=\"font-size:0px; padding:10px 25px; padding-top:10px; padding-bottom:10px; word-break:break-word\"\u003e\u003cdiv style=\"font-family:Helvetica,sans-serif; font-size:18px; line-height:28px; color:#3D3929; text-align:center\"\u003eSign in with the secure link below\u003c/div\u003e\u003c/td\u003e\u003c/tr\u003e\u003ctr\u003e\u003ctd align=\"center\" class=\"btn-link\" style=\"font-size:0px; padding:10px 25px; padding-top:16px; padding-bottom:24px; word-break:break-word\"\u003e\u003ctable border=\"0\" cellpadding=\"0\" cellspacing=\"0\" role=\"presentation\" style=\"border-collapse:separate; width:240px; line-height:100%\"\u003e\u003ctbody\u003e\u003ctr\u003e\u003ctd align=\"center\" bgcolor=\"#000000\" role=\"presentation\" valign=\"middle\" style=\"border:none; border-radius:12px; background:#000000\"\u003e\u003cp style=\"display:inline-block; width:192px; background:#000000; color:#ffffff; font-family:Helvetica,sans-serif; font-size:13px; font-weight:normal; line-height:120%; margin:0; text-decoration:none; text-transform:none; border-radius:12px; padding:0\"\u003e\u003ca href=\"https://claude.ai/magic-link#b9a0b9e896189ca86fff67a4ba9bfe40:Z2Vsc29uX21AaG90bWFpbC5jb20=\" style=\"text-decoration:none; line-height:20px; color:white; font-size:18px; display:inline-block; padding:18px 24px\"\u003eSign in to Claude.ai\u003c/a\u003e\u003c/p\u003e\u003c/td\u003e\u003c/tr\u003e\u003c/tbody\u003e\u003c/table\u003e\u003c/td\u003e\u003c/tr\u003e\u003ctr\u003e\u003ctd align=\"left\" style=\"font-size:0px; padding:0px 32px; word-break:break-word\"\u003e\u003cdiv style=\"font-family:Arial; font-size:14px; line-height:22px; color:#737163; text-align:center\"\u003eIf you didn\u0027t request this email, you can safely ignore it.\u003cbr\u003eIf you\u0027re experiencing issues, please contact \u003ca href=\"https://url8792.mail.anthropic.com/ls/click?upn=u001.rFcAmKXLOm9u6wLRWHIUYc0QkMTx61-2B0VNcZthi30myKv6o51Mmuf6-2Fasw4G-2FEWnhXCy_zdBPLXmf43ALVzUyQGHIQrVcJ5GBfhtDlS0QWO9oDLcDduPPvtvQkcSo6xd0AJJ-2B5iLUqDsoZPcaUxRqJtjach1moDsZyL8j5zjOOFc345pMsdixdpWbBevTkuDuabvttmS25wV4UF79xDsYCkETxczGAYAY-2BijGBnkHUydrAmobSjzpo1hH5vsDIlIVRlXZz8UtKV4s3KhqfW7Pch6KGe10F7MXinHej9aXpHdZJc3mfoCLaCkY9MZuTVEOGsqW2HCZcGmKQ29uWNSjkg4DoOT87u52pRlU5fITs8zHfP4-3D\" style=\"color:inherit\"\u003eAnthropic Support\u003c/a\u003e.\u003c/div\u003e\u003c/td\u003e\u003c/tr\u003e\u003c/tbody\u003e\u003c/table\u003e\u003c/div\u003e\u003c/td\u003e\u003c/tr\u003e\u003c/tbody\u003e\u003c/table\u003e\u003c/div\u003e\u003cdiv style=\"margin:0px auto; max-width:592px\"\u003e\u003ctable align=\"center\" border=\"0\" cellpadding=\"0\" cellspacing=\"0\" role=\"presentation\" style=\"width:100%\"\u003e\u003ctbody\u003e\u003ctr\u003e\u003ctd style=\"direction:ltr; font-size:0px; padding:20px 0; text-align:center\"\u003e\u003c/td\u003e\u003c/tr\u003e\u003c/tbody\u003e\u003c/table\u003e\u003c/div\u003e\u003c/td\u003e\u003c/tr\u003e\u003c/tbody\u003e\u003c/table\u003e\u003c/div\u003e\u003c/div\u003e\u003cimg src=\"https://url8792.mail.anthropic.com/wf/open?upn=u001.9vayrb458wbebE3sVaNQbHA5L4pd-2Fo6q8SvPI-2F3SmqBtFov2kc9CyFNer5zo-2F7ZDjz-2B1ttGu5Slenkvk83wNIuXuh4zKac9osQlZm5QKOyFT25fRbzxnSDfEgaepZIsGDi0Y-2FhEAys-2BzSZvn94dkOYaxFvWPhqPleRX6jpaq4se1TUGdey1CohTv8nNNzMymikVr5HOHD21Rhm3c-2B4MBSfhHn-2BxSoiCyTvAs-2BIjX-2Bv9Xtp7t-2F5dwmn4G6yOmwP-2FtEt-2FJvKCSahrZ6KAkrRol6In-2F4EFizag3DyYfMXzGYO4-3D\" alt=\"\" width=\"1\" height=\"1\" border=\"0\" style=\"height:1px!important; width:1px!important; border-width:0!important; margin-top:0!important; margin-bottom:0!important; margin-right:0!important; margin-left:0!important; padding-top:0!important; padding-bottom:0!important; padding-right:0!important; padding-left:0!important\"\u003e \u003c/body\u003e\u003c/html\u003e"
+                                                                                         },
+                                                                                "sender":  {
+                                                                                               "emailAddress":  {
+                                                                                                                    "name":  "Anthropic",
+                                                                                                                    "address":  "no-reply-79iH3Q7qdT44s7DHWjCvwQ@mail.anthropic.com"
+                                                                                                                }
+                                                                                           },
+                                                                                "from":  {
+                                                                                             "emailAddress":  {
+                                                                                                                  "name":  "Anthropic",
+                                                                                                                  "address":  "no-reply-79iH3Q7qdT44s7DHWjCvwQ@mail.anthropic.com"
+                                                                                                              }
+                                                                                         },
+                                                                                "toRecipients":  [
+                                                                                                     {
+                                                                                                         "emailAddress":  {
+                                                                                                                              "name":  "gelson_m@hotmail.com",
+                                                                                                                              "address":  "gelson_m@hotmail.com"
+                                                                                                                          }
+                                                                                                     }
+                                                                                                 ],
+                                                                                "ccRecipients":  [
+
+                                                                                                 ],
+                                                                                "bccRecipients":  [
+
+                                                                                                  ],
+                                                                                "replyTo":  [
+                                                                                                {
+                                                                                                    "emailAddress":  {
+                                                                                                                         "name":  "Anthropic",
+                                                                                                                         "address":  "no-reply-79iH3Q7qdT44s7DHWjCvwQ@mail.anthropic.com"
+                                                                                                                     }
+                                                                                                }
+                                                                                            ],
+                                                                                "flag":  {
+                                                                                             "flagStatus":  "notFlagged"
+                                                                                         }
+                                                                            },
+                                                                   "pairedItem":  {
+                                                                                      "item":  0
+                                                                                  }
+                                                               },
+                                                               {
+                                                                   "json":  {
+                                                                                "@odata.etag":  "W/\"CQAAABYAAAAQ/im/rlIySotmftfq9UikAAjyZUP5\"",
+                                                                                "id":  "AQMkADAwATE4MTkxLWE2ZDItNDA3Yy0wMAItMDAKAEYAAAO4j4oX8eEoQ7ROp77L-Km_BwAQ-im-rlIySotmftfq9UikAAACAQwAAAAQ-im-rlIySotmftfq9UikAAjzak4cAAAA",
+                                                                                "createdDateTime":  "2026-04-15T03:01:53Z",
+                                                                                "lastModifiedDateTime":  "2026-04-15T03:01:53Z",
+                                                                                "changeKey":  "CQAAABYAAAAQ/im/rlIySotmftfq9UikAAjyZUP5",
+                                                                                "categories":  [
+
+                                                                                               ],
+                                                                                "receivedDateTime":  "2026-04-15T03:01:53Z",
+                                                                                "sentDateTime":  "2026-04-15T03:01:50Z",
+                                                                                "hasAttachments":  false,
+                                                                                "internetMessageId":  "\u003cG2HDzhiUQbuoi9Fk5cW0yA@geopod-ismtpd-41\u003e",
+                                                                                "subject":  "Secure link to log in to Claude.ai |  2026-04-15 05:01:50",
+                                                                                "bodyPreview":  "Let\u0027s get you signed in\r\nSign in with the secure link below\r\n\r\nSign in to Claude.ai\r\n\r\nIf you didn\u0027t request this email, you can safely ignore it.\r\nIf you\u0027re experiencing issues, please contact Anthropic Support.",
+                                                                                "importance":  "normal",
+                                                                                "parentFolderId":  "AQMkADAwATE4MTkxLWE2ZDItNDA3Yy0wMAItMDAKAC4AAAO4j4oX8eEoQ7ROp77L-Km_AQAQ-im-rlIySotmftfq9UikAAACAQwAAAA=",
+                                                                                "conversationId":  "AQQkADAwATE4MTkxLWE2ZDItNDA3Yy0wMAItMDAKABAA_QdtBEzlBUGE3DinNFF--Q==",
+                                                                                "conversationIndex":  "AQHczIQ2+QdtBEzlBUGE3DinNFF//Q==",
+                                                                                "isDeliveryReceiptRequested":  null,
+                                                                                "isReadReceiptRequested":  false,
+                                                                                "isRead":  false,
+                                                                                "isDraft":  false,
+                                                                                "webLink":  "https://outlook.live.com/owa/?ItemID=AQMkADAwATE4MTkxLWE2ZDItNDA3Yy0wMAItMDAKAEYAAAO4j4oX8eEoQ7ROp77L%2FKm%2BBwAQ%2Fim%2FrlIySotmftfq9UikAAACAQwAAAAQ%2Fim%2FrlIySotmftfq9UikAAjzak4cAAAA\u0026exvsurl=1\u0026viewmodel=ReadMessageItem",
+                                                                                "inferenceClassification":  "focused",
+                                                                                "body":  {
+                                                                                             "contentType":  "html",
+                                                                                             "content":  "\u003chtml lang=\"und\" dir=\"auto\"\u003e\u003chead\u003e\r\n\u003cmeta http-equiv=\"Content-Type\" content=\"text/html; charset=utf-8\"\u003e\u003cmeta content=\"IE=edge\"\u003e\u003cmeta name=\"viewport\" content=\"width=device-width,initial-scale=1\"\u003e\u003cstyle type=\"text/css\"\u003e\r\n\u003c!--\r\n#outlook a\r\n\t{padding:0}\r\nbody\r\n\t{margin:0;\r\n\tpadding:0}\r\ntable, td\r\n\t{border-collapse:collapse}\r\nimg\r\n\t{border:0;\r\n\theight:auto;\r\n\tline-height:100%;\r\n\toutline:none;\r\n\ttext-decoration:none}\r\np\r\n\t{display:block;\r\n\tmargin:13px 0}\r\n--\u003e\r\n\u003c/style\u003e\u003cstyle type=\"text/css\"\u003e\r\n\u003c!--\r\n@media only screen and (min-width:480px) {\r\n.mj-column-per-100\r\n\t{width:100%!important;\r\n\tmax-width:100%}\r\n\r\n\t}\r\n--\u003e\r\n\u003c/style\u003e\u003cstyle media=\"screen and (min-width:480px)\"\u003e\r\n\u003c!--\r\n.moz-text-html .mj-column-per-100\r\n\t{width:100%!important;\r\n\tmax-width:100%}\r\n--\u003e\r\n\u003c/style\u003e\u003cstyle type=\"text/css\"\u003e\r\n\u003c!--\r\n@media only screen and (max-width:479px) {\r\ntable.mj-full-width-mobile\r\n\t{width:100%!important}\r\ntd.mj-full-width-mobile\r\n\t{width:auto!important}\r\n\r\n\t}\r\n--\u003e\r\n\u003c/style\u003e\u003c/head\u003e\u003cbody style=\"word-spacing:normal; background-color:#FAF9F5\"\u003e\u003cdiv lang=\"und\" dir=\"auto\" style=\"background-color:#FAF9F5\"\u003e\u003cdiv style=\"margin:0px auto; max-width:600px\"\u003e\u003ctable align=\"center\" border=\"0\" cellpadding=\"0\" cellspacing=\"0\" role=\"presentation\" style=\"width:100%\"\u003e\u003ctbody\u003e\u003ctr\u003e\u003ctd style=\"direction:ltr; font-size:0px; padding:0px 4px; text-align:center\"\u003e\u003cdiv style=\"margin:0px auto; max-width:592px\"\u003e\u003ctable align=\"center\" border=\"0\" cellpadding=\"0\" cellspacing=\"0\" role=\"presentation\" style=\"width:100%\"\u003e\u003ctbody\u003e\u003ctr\u003e\u003ctd style=\"direction:ltr; font-size:0px; padding:20px 0; text-align:center\"\u003e\u003c/td\u003e\u003c/tr\u003e\u003c/tbody\u003e\u003c/table\u003e\u003c/div\u003e\u003cdiv class=\"inner-wrapper\" style=\"background:#FFFFFF; background-color:#FFFFFF; margin:0px auto; border-radius:20px; max-width:592px; border:0.5px solid rgba(135,134,127,0.25); border-top:0.5px solid rgba(135,134,127,0.25); border-bottom:0.5px solid rgba(135,134,127,0.25); box-shadow:0px 4px 20px 0px rgba(0,0,0,0.04)\"\u003e\u003ctable align=\"center\" border=\"0\" cellpadding=\"0\" cellspacing=\"0\" role=\"presentation\" style=\"background:#FFFFFF; background-color:#FFFFFF; width:100%; border-radius:20px\"\u003e\u003ctbody\u003e\u003ctr\u003e\u003ctd style=\"direction:ltr; font-size:0px; padding:20px 32px 32px 32px; text-align:center\"\u003e\u003cdiv class=\"mj-column-per-100 mj-outlook-group-fix auth-centered-content\" style=\"font-size:0px; direction:ltr; display:inline-block; vertical-align:top; width:100%; text-align:left\"\u003e\u003ctable border=\"0\" cellpadding=\"0\" cellspacing=\"0\" role=\"presentation\" width=\"100%\" style=\"vertical-align:top\"\u003e\u003ctbody\u003e\u003ctr\u003e\u003ctd align=\"center\" style=\"font-size:0px; padding:10px 25px; padding-top:36px; word-break:break-word\"\u003e\u003ctable border=\"0\" cellpadding=\"0\" cellspacing=\"0\" role=\"presentation\" style=\"border-collapse:collapse; border-spacing:0px\"\u003e\u003ctbody\u003e\u003ctr\u003e\u003ctd style=\"width:128px\"\u003e\u003cimg alt=\"Claude\" src=\"https://claude.ai/images/claude_logo_full.png\" width=\"128\" height=\"auto\" style=\"border:0; display:block; outline:none; text-decoration:none; height:auto; width:100%; font-size:13px\"\u003e\u003c/td\u003e\u003c/tr\u003e\u003c/tbody\u003e\u003c/table\u003e\u003c/td\u003e\u003c/tr\u003e\u003ctr\u003e\u003ctd align=\"left\" style=\"font-size:0px; padding:10px 25px; padding-top:42px; word-break:break-word\"\u003e\u003cdiv style=\"font-family:Helvetica,sans-serif; font-size:32px; font-weight:bold; line-height:38px; color:#0F0F0D; text-align:center\"\u003eLet\u0027s get you signed in\u003c/div\u003e\u003c/td\u003e\u003c/tr\u003e\u003ctr\u003e\u003ctd align=\"left\" style=\"font-size:0px; padding:10px 25px; padding-top:10px; padding-bottom:10px; word-break:break-word\"\u003e\u003cdiv style=\"font-family:Helvetica,sans-serif; font-size:18px; line-height:28px; color:#3D3929; text-align:center\"\u003eSign in with the secure link below\u003c/div\u003e\u003c/td\u003e\u003c/tr\u003e\u003ctr\u003e\u003ctd align=\"center\" class=\"btn-link\" style=\"font-size:0px; padding:10px 25px; padding-top:16px; padding-bottom:24px; word-break:break-word\"\u003e\u003ctable border=\"0\" cellpadding=\"0\" cellspacing=\"0\" role=\"presentation\" style=\"border-collapse:separate; width:240px; line-height:100%\"\u003e\u003ctbody\u003e\u003ctr\u003e\u003ctd align=\"center\" bgcolor=\"#000000\" role=\"presentation\" valign=\"middle\" style=\"border:none; border-radius:12px; background:#000000\"\u003e\u003cp style=\"display:inline-block; width:192px; background:#000000; color:#ffffff; font-family:Helvetica,sans-serif; font-size:13px; font-weight:normal; line-height:120%; margin:0; text-decoration:none; text-transform:none; border-radius:12px; padding:0\"\u003e\u003ca href=\"https://claude.ai/magic-link#4931e544bf6a807e5cee4c50c3f9757d:Z2Vsc29uX21AaG90bWFpbC5jb20=\" style=\"text-decoration:none; line-height:20px; color:white; font-size:18px; display:inline-block; padding:18px 24px\"\u003eSign in to Claude.ai\u003c/a\u003e\u003c/p\u003e\u003c/td\u003e\u003c/tr\u003e\u003c/tbody\u003e\u003c/table\u003e\u003c/td\u003e\u003c/tr\u003e\u003ctr\u003e\u003ctd align=\"left\" style=\"font-size:0px; padding:0px 32px; word-break:break-word\"\u003e\u003cdiv style=\"font-family:Arial; font-size:14px; line-height:22px; color:#737163; text-align:center\"\u003eIf you didn\u0027t request this email, you can safely ignore it.\u003cbr\u003eIf you\u0027re experiencing issues, please contact \u003ca href=\"https://url8792.mail.anthropic.com/ls/click?upn=u001.rFcAmKXLOm9u6wLRWHIUYc0QkMTx61-2B0VNcZthi30myKv6o51Mmuf6-2Fasw4G-2FEWn9MIi_zdBPLXmf43ALVzUyQGHIQrVcJ5GBfhtDlS0QWO9oDLcHNUmHpcyu-2FshpXZWCHLiSDzHmXDw1YJ1gfCiz7iVKE2Yc6HBq4XcCbi6kTLHOhhpBMI-2BrTtY1qxoYETAymzpCe-2Fpz-2FpnJRQ-2FMFno93iqE-2BYlfqU0XQnharUpuc73T1qDvEx3Tybm7MImujYi98BRPwyiTF7-2BzJVCz9B-2FMeKDblXp6QC4uT0fzw0QKjB9wfXDQqJATFczmZQ0aIBLhKNaB-2BG2cdIjyajpJlisYBByA2HHPYNoZn8ocmOTi6S7S9Yg-3D\" style=\"color:inherit\"\u003eAnthropic Support\u003c/a\u003e.\u003c/div\u003e\u003c/td\u003e\u003c/tr\u003e\u003c/tbody\u003e\u003c/table\u003e\u003c/div\u003e\u003c/td\u003e\u003c/tr\u003e\u003c/tbody\u003e\u003c/table\u003e\u003c/div\u003e\u003cdiv style=\"margin:0px auto; max-width:592px\"\u003e\u003ctable align=\"center\" border=\"0\" cellpadding=\"0\" cellspacing=\"0\" role=\"presentation\" style=\"width:100%\"\u003e\u003ctbody\u003e\u003ctr\u003e\u003ctd style=\"direction:ltr; font-size:0px; padding:20px 0; text-align:center\"\u003e\u003c/td\u003e\u003c/tr\u003e\u003c/tbody\u003e\u003c/table\u003e\u003c/div\u003e\u003c/td\u003e\u003c/tr\u003e\u003c/tbody\u003e\u003c/table\u003e\u003c/div\u003e\u003c/div\u003e\u003cimg src=\"https://url8792.mail.anthropic.com/wf/open?upn=u001.9vayrb458wbebE3sVaNQbHA5L4pd-2Fo6q8SvPI-2F3SmqBrj6kKWJ00CtEGlNdQRjFKHPjLvfhIhaDH1jXknPU-2FySvXEeV39J2ttV9qea0mRMsPyVDUv3MxaDo2-2FZqTGjoMkz7YFpd-2Fbitd388axq5JAYE-2BkJLekHo-2F48UrSr0rHlbSruNTIE0vgYde32BNlVZmT9HqdzVq1dbpLO2h3b1c8F0RMpPdOP6TI-2FnC-2F1t1WkoenUT2kRqEITJkiR-2FkahcCeplKuCMUo8qVvTc0q1ObaI0YBeHKIOb6S2As3ihfRtk-3D\" alt=\"\" width=\"1\" height=\"1\" border=\"0\" style=\"height:1px!important; width:1px!important; border-width:0!important; margin-top:0!important; margin-bottom:0!important; margin-right:0!important; margin-left:0!important; padding-top:0!important; padding-bottom:0!important; padding-right:0!important; padding-left:0!important\"\u003e \u003c/body\u003e\u003c/html\u003e"
+                                                                                         },
+                                                                                "sender":  {
+                                                                                               "emailAddress":  {
+                                                                                                                    "name":  "Anthropic",
+                                                                                                                    "address":  "no-reply-IHfBTWRgl31hF3vG_n4FTw@mail.anthropic.com"
+                                                                                                                }
+                                                                                           },
+                                                                                "from":  {
+                                                                                             "emailAddress":  {
+                                                                                                                  "name":  "Anthropic",
+                                                                                                                  "address":  "no-reply-IHfBTWRgl31hF3vG_n4FTw@mail.anthropic.com"
+                                                                                                              }
+                                                                                         },
+                                                                                "toRecipients":  [
+                                                                                                     {
+                                                                                                         "emailAddress":  {
+                                                                                                                              "name":  "gelson_m@hotmail.com",
+                                                                                                                              "address":  "gelson_m@hotmail.com"
+                                                                                                                          }
+                                                                                                     }
+                                                                                                 ],
+                                                                                "ccRecipients":  [
+
+                                                                                                 ],
+                                                                                "bccRecipients":  [
+
+                                                                                                  ],
+                                                                                "replyTo":  [
+                                                                                                {
+                                                                                                    "emailAddress":  {
+                                                                                                                         "name":  "Anthropic",
+                                                                                                                         "address":  "no-reply-IHfBTWRgl31hF3vG_n4FTw@mail.anthropic.com"
+                                                                                                                     }
+                                                                                                }
+                                                                                            ],
+                                                                                "flag":  {
+                                                                                             "flagStatus":  "notFlagged"
+                                                                                         }
+                                                                            },
+                                                                   "pairedItem":  {
+                                                                                      "item":  1
+                                                                                  }
+                                                               }
+                                                           ]
+                },
+    "versionId":  "84aed6f6-f0ef-43ca-80a7-649ab7038490",
+    "activeVersionId":  "84aed6f6-f0ef-43ca-80a7-649ab7038490",
+    "versionCounter":  361,
+    "triggerCount":  1,
+    "shared":  [
+                   {
+                       "updatedAt":  "2026-04-13T09:07:02.172Z",
+                       "createdAt":  "2026-04-13T09:07:02.172Z",
+                       "role":  "workflow:owner",
+                       "workflowId":  "jun8CaMnNhux1iEY",
+                       "projectId":  "Lrgt6JR85OZiVLcX",
+                       "project":  {
+                                       "updatedAt":  "2026-03-31T09:07:31.366Z",
+                                       "createdAt":  "2026-03-31T08:57:43.789Z",
+                                       "id":  "Lrgt6JR85OZiVLcX",
+                                       "name":  "gelson mascarenhas \u003cgelson_m@hotmail.com\u003e",
+                                       "type":  "personal",
+                                       "icon":  null,
+                                       "description":  null,
+                                       "creatorId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                   }
+                   }
+               ],
+    "tags":  [
+
+             ],
+    "activeVersion":  {
+                          "updatedAt":  "2026-04-17T07:22:23.496Z",
+                          "createdAt":  "2026-04-17T07:22:23.496Z",
+                          "versionId":  "84aed6f6-f0ef-43ca-80a7-649ab7038490",
+                          "workflowId":  "jun8CaMnNhux1iEY",
+                          "nodes":  [
+                                        {
+                                            "parameters":  {
+                                                               "rule":  {
+                                                                            "interval":  [
+                                                                                             {
+                                                                                                 "field":  "seconds",
+                                                                                                 "secondsInterval":  30
+                                                                                             }
+                                                                                         ]
+                                                                        }
+                                                           },
+                                            "id":  "schedule-trigger",
+                                            "name":  "Every 30 Seconds",
+                                            "type":  "n8n-nodes-base.scheduleTrigger",
+                                            "typeVersion":  1.2,
+                                            "position":  [
+                                                             240,
+                                                             400
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "resource":  "message",
+                                                               "operation":  "getAll",
+                                                               "returnAll":  false,
+                                                               "limit":  10,
+                                                               "filters":  {
+                                                                               "readStatus":  "unread"
+                                                                           },
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "read-outlook",
+                                            "name":  "Read Unread Outlook Emails",
+                                            "type":  "n8n-nodes-base.microsoftOutlook",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             460,
+                                                             400
+                                                         ],
+                                            "credentials":  {
+                                                                "microsoftOutlookOAuth2Api":  {
+                                                                                                  "id":  "9paQ8IJLgiLbjEYI",
+                                                                                                  "name":  "Microsoft Outlook account"
+                                                                                              }
+                                                            },
+                                            "webhookId":  "e23ed9ac-7789-49b3-b78b-1853083081e2"
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "mode":  "runOnceForAllItems",
+                                                               "language":  "javaScript",
+                                                               "jsCode":  "// Filter to only recent Anthropic verification emails.\n// NOTE: simple output mode omits receivedDateTime -- treat missing as recent.\nconst items = $input.all();\nconst results = [];\nfor (const item of items) {\n  const subject = (item.json.subject || \u0027\u0027).toLowerCase();\n  const from = (item.json.from \u0026\u0026 item.json.from.emailAddress \u0026\u0026 item.json.from.emailAddress.address || item.json.from || \u0027\u0027).toLowerCase();\n  const isAnthropicSender = from.includes(\u0027anthropic.com\u0027) || from.includes(\u0027claude.ai\u0027);\n  const isLoginSubject = subject.includes(\u0027claude\u0027) || subject.includes(\u0027sign in\u0027) || subject.includes(\u0027secure link\u0027) || subject.includes(\u0027log in\u0027) || subject.includes(\u0027magic\u0027) || subject.includes(\u0027verify\u0027) || subject.includes(\u0027login\u0027) || subject.includes(\u0027authenticate\u0027);\n  if (!isAnthropicSender \u0026\u0026 !isLoginSubject) continue;\n  if (item.json.receivedDateTime || item.json.createdDateTime) {\n    const receivedAt = new Date(item.json.receivedDateTime || item.json.createdDateTime);\n    const ageMs = Date.now() - receivedAt.getTime();\n    if (ageMs \u003e 10 * 60 * 1000) continue;\n  }\n  if (!item.json.id) continue;\n  results.push({ json: { id: item.json.id, subject: item.json.subject, receivedDateTime: item.json.receivedDateTime } });\n}\nreturn results;"
+                                                           },
+                                            "id":  "filter-anthropic",
+                                            "name":  "Filter Anthropic Emails",
+                                            "type":  "n8n-nodes-base.code",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             680,
+                                                             400
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "curlImport":  "",
+                                                               "method":  "GET",
+                                                               "url":  "=https://graph.microsoft.com/v1.0/me/messages/{{ $json.id }}?$select=id,subject,body,bodyPreview,from,receivedDateTime",
+                                                               "authentication":  "predefinedCredentialType",
+                                                               "nodeCredentialType":  "microsoftOutlookOAuth2Api",
+                                                               "sendHeaders":  false,
+                                                               "sendBody":  false,
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "get-full-email",
+                                            "name":  "Get Full Email Body",
+                                            "type":  "n8n-nodes-base.httpRequest",
+                                            "typeVersion":  4.4,
+                                            "position":  [
+                                                             900,
+                                                             400
+                                                         ],
+                                            "webhookId":  "ee2ebe2e-dc01-457b-90f9-abe22f5eb959",
+                                            "credentials":  {
+                                                                "microsoftOutlookOAuth2Api":  {
+                                                                                                  "id":  "9paQ8IJLgiLbjEYI",
+                                                                                                  "name":  "Microsoft Outlook account"
+                                                                                              }
+                                                            }
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "mode":  "runOnceForAllItems",
+                                                               "language":  "javaScript",
+                                                               "jsCode":  "// Extract magic link URL and/or 6-digit verification code from full email body.\nconst items = $input.all();\nconst results = [];\nfor (const item of items) {\n  const bodyHtml = (item.json.body \u0026\u0026 item.json.body.content) || \u0027\u0027;\n  const bodyText = item.json.bodyPreview || \u0027\u0027;\n  const searchIn = bodyHtml + \u0027 \u0027 + bodyText;\n  const plainText = bodyHtml.replace(/\u003c[^\u003e]+\u003e/g, \u0027 \u0027).replace(/\u0026amp;/g, \u0027\u0026\u0027).replace(/\u0026nbsp;/g, \u0027 \u0027);\n  let magicUrl = null;\n  const patterns = [\n    /https:\\/\\/claude\\.ai\\/magic-link[^\\s\"\u0027\u003c\u003e)\\\\]+/i,\n    /https:\\/\\/platform\\.claude\\.com\\/magic-link[^\\s\"\u0027\u003c\u003e)\\\\]+/i,\n    /https:\\/\\/claude\\.ai\\/verify[^\\s\"\u0027\u003c\u003e)\\\\]+/i,\n    /https:\\/\\/platform\\.claude\\.com\\/[^\\s\"\u0027\u003c\u003e)\\\\]+/i,\n    /https:\\/\\/claude\\.com\\/[^\\s\"\u0027\u003c\u003e)\\\\]*(?:magic|verify|link|token)[^\\s\"\u0027\u003c\u003e)\\\\]+/i,\n    /https:\\/\\/[^\\s\"\u0027\u003c\u003e)\\\\]+\\.claude\\.(?:ai|com)\\/[^\\s\"\u0027\u003c\u003e)\\\\]+/i,\n  ];\n  for (const pattern of patterns) {\n    const m = searchIn.match(pattern);\n    if (m) { magicUrl = m[0].replace(/\u0026amp;/g, \u0027\u0026\u0027).replace(/[.,;!?]+$/, \u0027\u0027); break; }\n  }\n  let directCode = null;\n  const codePatterns = [\n    /verification\\s+code[:\\s]+([0-9]{6})\\b/i,\n    /use\\s+code[:\\s]+([0-9]{6})\\b/i,\n    /code[:\\s]+([0-9]{6})\\b/i,\n  ];\n  for (const cp of codePatterns) {\n    const cm = plainText.match(cp);\n    if (cm) { directCode = cm[1]; break; }\n  }\n  if (magicUrl) results.push({ json: { url: magicUrl, directCode: directCode, subject: item.json.subject, messageId: item.json.id } });\n  else if (directCode) results.push({ json: { url: directCode, directCode: directCode, subject: item.json.subject, messageId: item.json.id } });\n}\nreturn results.length ? results : [];"
+                                                           },
+                                            "id":  "extract-code",
+                                            "name":  "Extract Magic Link URL",
+                                            "type":  "n8n-nodes-base.code",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             1120,
+                                                             280
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "method":  "POST",
+                                                               "url":  "https://inspiring-cat-production.up.railway.app/webhook/verification-code",
+                                                               "authentication":  "none",
+                                                               "sendBody":  true,
+                                                               "contentType":  "json",
+                                                               "specifyBody":  "json",
+                                                               "jsonBody":  "={{ JSON.stringify($json.directCode ? { url: $json.url, code: $json.directCode } : { url: $json.url }) }}",
+                                                               "options":  {
+                                                                               "timeout":  10000
+                                                                           },
+                                                               "sendHeaders":  true,
+                                                               "headerParameters":  {
+                                                                                        "parameters":  [
+                                                                                                           {
+                                                                                                               "name":  "X-Webhook-Secret",
+                                                                                                               "value":  "={{ $env.WEBHOOK_SECRET }}"
+                                                                                                           }
+                                                                                                       ]
+                                                                                    }
+                                                           },
+                                            "id":  "post-code",
+                                            "name":  "POST Magic Link to CLI Worker",
+                                            "type":  "n8n-nodes-base.httpRequest",
+                                            "typeVersion":  4.4,
+                                            "position":  [
+                                                             1340,
+                                                             280
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "operation":  "delete",
+                                                               "messageId":  "={{ $json.id }}"
+                                                           },
+                                            "id":  "delete-message",
+                                            "name":  "Delete Anthropic Email",
+                                            "type":  "n8n-nodes-base.microsoftOutlook",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             1120,
+                                                             520
+                                                         ],
+                                            "credentials":  {
+                                                                "microsoftOutlookOAuth2Api":  {
+                                                                                                  "id":  "9paQ8IJLgiLbjEYI",
+                                                                                                  "name":  "Microsoft Outlook account"
+                                                                                              }
+                                                            },
+                                            "webhookId":  "1f6b62cd-d351-4c9c-b87e-681304a003a8"
+                                        }
+                                    ],
+                          "connections":  {
+                                              "Every 30 Seconds":  {
+                                                                       "main":  [
+                                                                                    [
+                                                                                        {
+                                                                                            "node":  "Read Unread Outlook Emails",
+                                                                                            "type":  "main",
+                                                                                            "index":  0
+                                                                                        }
+                                                                                    ]
+                                                                                ]
+                                                                   },
+                                              "Read Unread Outlook Emails":  {
+                                                                                 "main":  [
+                                                                                              [
+                                                                                                  {
+                                                                                                      "node":  "Filter Anthropic Emails",
+                                                                                                      "type":  "main",
+                                                                                                      "index":  0
+                                                                                                  }
+                                                                                              ]
+                                                                                          ]
+                                                                             },
+                                              "Filter Anthropic Emails":  {
+                                                                              "main":  [
+                                                                                           [
+                                                                                               {
+                                                                                                   "node":  "Get Full Email Body",
+                                                                                                   "type":  "main",
+                                                                                                   "index":  0
+                                                                                               }
+                                                                                           ]
+                                                                                       ]
+                                                                          },
+                                              "Get Full Email Body":  {
+                                                                          "main":  [
+                                                                                       [
+                                                                                           {
+                                                                                               "node":  "Extract Magic Link URL",
+                                                                                               "type":  "main",
+                                                                                               "index":  0
+                                                                                           },
+                                                                                           {
+                                                                                               "node":  "Delete Anthropic Email",
+                                                                                               "type":  "main",
+                                                                                               "index":  0
+                                                                                           }
+                                                                                       ]
+                                                                                   ]
+                                                                      },
+                                              "Extract Magic Link URL":  {
+                                                                             "main":  [
+                                                                                          [
+                                                                                              {
+                                                                                                  "node":  "POST Magic Link to CLI Worker",
+                                                                                                  "type":  "main",
+                                                                                                  "index":  0
+                                                                                              }
+                                                                                          ]
+                                                                                      ]
+                                                                         }
+                                          },
+                          "authors":  "gelson mascarenhas",
+                          "name":  null,
+                          "description":  null,
+                          "autosaved":  false,
+                          "workflowPublishHistory":  [
+                                                         {
+                                                             "createdAt":  "2026-04-17T07:22:23.703Z",
+                                                             "id":  254,
+                                                             "workflowId":  "jun8CaMnNhux1iEY",
+                                                             "versionId":  "84aed6f6-f0ef-43ca-80a7-649ab7038490",
+                                                             "event":  "deactivated",
+                                                             "userId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                                         },
+                                                         {
+                                                             "createdAt":  "2026-04-17T07:22:23.733Z",
+                                                             "id":  255,
+                                                             "workflowId":  "jun8CaMnNhux1iEY",
+                                                             "versionId":  "84aed6f6-f0ef-43ca-80a7-649ab7038490",
+                                                             "event":  "activated",
+                                                             "userId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                                         }
+                                                     ]
+                      }
+}

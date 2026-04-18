@@ -1,0 +1,229 @@
+﻿{
+    "updatedAt":  "2026-04-13T09:33:21.842Z",
+    "createdAt":  "2026-04-13T09:33:21.842Z",
+    "id":  "Ybk0RxHPw5TvBrbH",
+    "name":  "Anthropic API Emergency Fallback",
+    "description":  null,
+    "active":  false,
+    "isArchived":  false,
+    "nodes":  [
+                  {
+                      "parameters":  {
+                                         "rule":  {
+                                                      "interval":  [
+                                                                       {
+                                                                           "field":  "minutes",
+                                                                           "minutesInterval":  5
+                                                                       }
+                                                                   ]
+                                                  }
+                                     },
+                      "id":  "trigger",
+                      "name":  "Every 5 Minutes",
+                      "type":  "n8n-nodes-base.scheduleTrigger",
+                      "typeVersion":  1.2,
+                      "position":  [
+                                       240,
+                                       300
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "method":  "GET",
+                                         "url":  "https://api.anthropic.com/v1/messages",
+                                         "sendHeaders":  true,
+                                         "headerParameters":  {
+                                                                  "parameters":  [
+                                                                                     {
+                                                                                         "name":  "x-api-key",
+                                                                                         "value":  "={{$env.ANTHROPIC_API_KEY}}"
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "anthropic-version",
+                                                                                         "value":  "2023-06-01"
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "content-type",
+                                                                                         "value":  "application/json"
+                                                                                     }
+                                                                                 ]
+                                                              },
+                                         "options":  {
+                                                         "timeout":  10000
+                                                     }
+                                     },
+                      "id":  "test-anthropic-api",
+                      "name":  "Test Anthropic API",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.4,
+                      "position":  [
+                                       460,
+                                       200
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "mode":  "runOnceForAllItems",
+                                         "language":  "javaScript",
+                                         "jsCode":  "const response = $(\u0027Test Anthropic API\u0027).first();\nconst status = response.statusCode;\nconst body = response.json;\n\nlet message = \u0027\u0027;\nlet apiWorking = false;\n\nif (status === 401 || status === 403) {\n  message = \u0027❌ ANTHROPIC_API_KEY invalid or has no credits (HTTP \u0027 + status + \u0027)\u0027;\n} else if (status === 200) {\n  message = \u0027✅ Anthropic API is working\u0027;\n  apiWorking = true;\n} else if (status === 429) {\n  message = \u0027⚠️ Anthropic API rate limited (HTTP 429)\u0027;\n} else if (status \u003e= 400 \u0026\u0026 status \u003c 500) {\n  message = \u0027❌ Anthropic API client error (HTTP \u0027 + status + \u0027)\u0027;\n} else if (status \u003e= 500) {\n  message = \u0027❌ Anthropic API server error (HTTP \u0027 + status + \u0027)\u0027;\n} else {\n  message = \u0027❓ Unexpected response (HTTP \u0027 + status + \u0027)\u0027;\n}\n\nreturn [{\n  json: {\n    message,\n    apiWorking,\n    statusCode: status,\n    responseBody: body\n  }\n}];"
+                                     },
+                      "id":  "analyze-response",
+                      "name":  "Analyze API Response",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       700,
+                                       200
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "conditions":  {
+                                                            "options":  {
+                                                                            "caseSensitive":  true
+                                                                        },
+                                                            "conditions":  [
+                                                                               {
+                                                                                   "leftValue":  "={{ $json.apiWorking }}",
+                                                                                   "rightValue":  false,
+                                                                                   "operator":  {
+                                                                                                    "type":  "boolean",
+                                                                                                    "operation":  "equals"
+                                                                                                }
+                                                                               }
+                                                                           ]
+                                                        }
+                                     },
+                      "id":  "if-api-down",
+                      "name":  "API Down?",
+                      "type":  "n8n-nodes-base.if",
+                      "typeVersion":  2,
+                      "position":  [
+                                       940,
+                                       200
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "method":  "POST",
+                                         "url":  "https://super-agent-production.up.railway.app/chat",
+                                         "sendHeaders":  true,
+                                         "headerParameters":  {
+                                                                  "parameters":  [
+                                                                                     {
+                                                                                         "name":  "X-Token",
+                                                                                         "value":  "shadow"
+                                                                                     }
+                                                                                 ]
+                                                              },
+                                         "sendBody":  true,
+                                         "contentType":  "json",
+                                         "specifyBody":  "json",
+                                         "jsonBody":  "={{ JSON.stringify({ message: \u0027[URGENT] Anthropic API Emergency Alert: \u0027 + $json.message + \u0027. All Anthropic agents are offline. Please add credits to Anthropic account immediately.\u0027, session_id: \u0027n8n_emergency_alert\u0027 }) }}",
+                                         "options":  {
+                                                         "timeout":  120000
+                                                     }
+                                     },
+                      "id":  "alert-super-agent",
+                      "name":  "Alert Super Agent",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.4,
+                      "position":  [
+                                       1180,
+                                       160
+                                   ]
+                  }
+              ],
+    "connections":  {
+                        "Every 5 Minutes":  {
+                                                "main":  [
+                                                             [
+                                                                 {
+                                                                     "node":  "Test Anthropic API",
+                                                                     "type":  "main",
+                                                                     "index":  0
+                                                                 }
+                                                             ]
+                                                         ]
+                                            },
+                        "Test Anthropic API":  {
+                                                   "main":  [
+                                                                [
+                                                                    {
+                                                                        "node":  "Analyze API Response",
+                                                                        "type":  "main",
+                                                                        "index":  0
+                                                                    }
+                                                                ]
+                                                            ]
+                                               },
+                        "Analyze API Response":  {
+                                                     "main":  [
+                                                                  [
+                                                                      {
+                                                                          "node":  "API Down?",
+                                                                          "type":  "main",
+                                                                          "index":  0
+                                                                      }
+                                                                  ]
+                                                              ]
+                                                 },
+                        "API Down?":  {
+                                          "main":  [
+                                                       [
+                                                           {
+                                                               "node":  "Alert Super Agent",
+                                                               "type":  "main",
+                                                               "index":  0
+                                                           }
+                                                       ],
+                                                       [
+
+                                                       ]
+                                                   ]
+                                      }
+                    },
+    "settings":  {
+                     "executionOrder":  "v1",
+                     "saveManualExecutions":  true,
+                     "callerPolicy":  "workflowsFromSameOwner",
+                     "errorWorkflow":  "",
+                     "availableInMCP":  false
+                 },
+    "staticData":  {
+                       "node:Every 5 Minutes":  {
+                                                    "recurrenceRules":  [
+
+                                                                        ]
+                                                }
+                   },
+    "meta":  null,
+    "pinData":  null,
+    "versionId":  "27847cee-b113-4866-bf61-d10cefba94d7",
+    "activeVersionId":  null,
+    "versionCounter":  13,
+    "triggerCount":  1,
+    "shared":  [
+                   {
+                       "updatedAt":  "2026-04-13T09:33:21.842Z",
+                       "createdAt":  "2026-04-13T09:33:21.842Z",
+                       "role":  "workflow:owner",
+                       "workflowId":  "Ybk0RxHPw5TvBrbH",
+                       "projectId":  "Lrgt6JR85OZiVLcX",
+                       "project":  {
+                                       "updatedAt":  "2026-03-31T09:07:31.366Z",
+                                       "createdAt":  "2026-03-31T08:57:43.789Z",
+                                       "id":  "Lrgt6JR85OZiVLcX",
+                                       "name":  "gelson mascarenhas \u003cgelson_m@hotmail.com\u003e",
+                                       "type":  "personal",
+                                       "icon":  null,
+                                       "description":  null,
+                                       "creatorId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                   }
+                   }
+               ],
+    "tags":  [
+
+             ],
+    "activeVersion":  null
+}
