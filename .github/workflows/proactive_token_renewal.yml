@@ -1,42 +1,33 @@
 name: Proactive Claude Token Renewal
 
 # Runs every 12 hours INDEPENDENTLY of inspiring-cat being alive.
-# Uses GitHub-hosted runners (Azure IPs) which are NOT blocked by Anthropic's
-# Cloudflare WAF — so the OAuth refresh_token exchange ALWAYS succeeds here.
+# GitHub-hosted runners use Azure IPs NOT blocked by Anthropic's Cloudflare WAF,
+# so the OAuth refresh_token exchange always succeeds from here.
 #
-# This is the n8n-independent, Playwright-independent, email-independent
-# backup path. When n8n is down or Anthropic's email is slow, this cron
-# renews the token silently without any human intervention.
-#
-# Flow:
-#   1. Read CLAUDE_REFRESH_TOKEN + CLAUDE_CLIENT_ID from GitHub Secrets
-#   2. Check inspiring-cat /health — skip if token has >24h remaining
-#   3. POST to claude.com/cai/oauth/token (Azure IP, not blocked by Cloudflare)
-#   4. POST OAuth response to inspiring-cat /webhook/proactive-renewal
-#      → inspiring-cat patches credentials file + propagates to Railway + super-agent
-#   5. Update CLAUDE_REFRESH_TOKEN secret so next run has the rotated token
-#   6. Alert n8n on failure (so you know the secret needs refreshing)
+# This is the n8n-independent, Playwright-independent, email-independent path.
+# When n8n is down or Anthropic's email is slow, this cron renews the token
+# silently without any human intervention.
 #
 # One-time setup (only needed once, then self-maintaining):
-#   1. Shell task on inspiring-cat:
-#        python3 -c "import json; d=json.load(open('/root/.claude/.credentials.json')); \
-#          print(d.get('claudeAiOauth',{}).get('refreshToken',''))"
-#   2. Copy the value → GitHub → Settings → Secrets → CLAUDE_REFRESH_TOKEN
-#   3. Set CLAUDE_CLIENT_ID = 9d1c250a-e61b-44d9-88ed-5944d1962f5e
-#   4. Set INSPIRING_CAT_WEBHOOK_SECRET in both GitHub Secrets AND Railway Variables
-#
-# After the first successful run, the workflow auto-updates CLAUDE_REFRESH_TOKEN.
+#   1. Shell task on inspiring-cat to get the refresh_token:
+#        python3 /dev/stdin << 'EOF'
+#        import json
+#        d = json.load(open("/root/.claude/.credentials.json"))
+#        print(d.get("claudeAiOauth",{}).get("refreshToken",""))
+#        EOF
+#   2. GitHub → Settings → Secrets → New secret: CLAUDE_REFRESH_TOKEN
+#   3. GitHub → Settings → Secrets → New secret: CLAUDE_CLIENT_ID = 9d1c250a-e61b-44d9-88ed-5944d1962f5e
+#   4. INSPIRING_CAT_WEBHOOK_SECRET must be set in both GitHub Secrets AND Railway Variables
 
 on:
   schedule:
-    - cron: '0 */12 * * *'      # Every 12 hours — independent of container state
-  workflow_dispatch:              # Manual trigger for testing / forced renewal
+    - cron: '0 */12 * * *'
+  workflow_dispatch:
   repository_dispatch:
-    types: [proactive_token_renewal]  # Triggered by inspiring-cat on demand
+    types: [proactive_token_renewal]
 
 permissions:
   contents: read
-  secrets: write                  # Required for gh secret set
 
 env:
   INSPIRING_CAT_URL: https://inspiring-cat-production.up.railway.app
@@ -56,21 +47,16 @@ jobs:
           RESP=$(curl -s -w "\n%{http_code}" "${INSPIRING_CAT_URL}/health" --max-time 10)
           CODE=$(echo "$RESP" | tail -n1)
           BODY=$(echo "$RESP" | head -n -1)
-
           echo "Health HTTP ${CODE}"
 
-          TTL=$(echo "$BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('claude_token_expires_in_s', 0))" 2>/dev/null || echo "0")
-          AVAILABLE=$(echo "$BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('claude_available', False))" 2>/dev/null || echo "False")
+          TTL=$(echo "$BODY" | jq -r '.claude_token_expires_in_s // 0' 2>/dev/null || echo "0")
+          AVAILABLE=$(echo "$BODY" | jq -r '.claude_available // false' 2>/dev/null || echo "false")
 
           echo "token_ttl=${TTL}" >> $GITHUB_OUTPUT
           echo "claude_available=${AVAILABLE}" >> $GITHUB_OUTPUT
-          echo "container_reachable=$([ "$CODE" = "200" ] && echo true || echo false)" >> $GITHUB_OUTPUT
-
           echo "claude_available=${AVAILABLE}, token_ttl=${TTL}s"
 
-          # Skip renewal if token is healthy with >24h remaining AND container is reachable.
-          # This prevents unnecessary OAuth calls that burn refresh_token quota.
-          if [ "$CODE" = "200" ] && [ "$AVAILABLE" = "True" ] && [ "${TTL:-0}" -gt 86400 ] 2>/dev/null; then
+          if [ "$CODE" = "200" ] && [ "$AVAILABLE" = "true" ] && [ "${TTL:-0}" -gt 86400 ] 2>/dev/null; then
             echo "Token healthy (${TTL}s remaining) — skipping renewal."
             echo "skip=true" >> $GITHUB_OUTPUT
           else
@@ -91,15 +77,11 @@ jobs:
         run: |
           if [ -z "$REFRESH_TOKEN" ]; then
             echo "ERROR: CLAUDE_REFRESH_TOKEN secret is not set."
-            echo "Set it via: GitHub → Settings → Secrets → CLAUDE_REFRESH_TOKEN"
-            echo "Get the value from inspiring-cat shell task:"
-            echo "  python3 -c \"import json; d=json.load(open('/root/.claude/.credentials.json')); print(d.get('claudeAiOauth',{}).get('refreshToken',''))\""
+            echo "Get it via inspiring-cat shell task, then set it in GitHub Secrets."
             exit 1
           fi
 
-          # Use default client_id if secret not set
           CLIENT="${CLIENT_ID:-9d1c250a-e61b-44d9-88ed-5944d1962f5e}"
-
           echo "Attempting OAuth refresh from GitHub Actions runner (Azure IP)..."
 
           HTTP_RESPONSE=$(curl -s -w "\n%{http_code}" \
@@ -108,39 +90,36 @@ jobs:
             -H "Origin: https://claude.ai" \
             -H "Referer: https://claude.ai/" \
             -H "User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36" \
-            -d "{\"grant_type\":\"refresh_token\",\"refresh_token\":\"${REFRESH_TOKEN}\",\"client_id\":\"${CLIENT}\"}" \
+            --data-raw "{\"grant_type\":\"refresh_token\",\"refresh_token\":\"${REFRESH_TOKEN}\",\"client_id\":\"${CLIENT}\"}" \
             --max-time 20)
 
           HTTP_BODY=$(echo "$HTTP_RESPONSE" | head -n -1)
           HTTP_CODE=$(echo "$HTTP_RESPONSE" | tail -n1)
-
           echo "OAuth endpoint: HTTP ${HTTP_CODE}"
 
           if [ "$HTTP_CODE" != "200" ]; then
             echo "ERROR: OAuth refresh failed (HTTP ${HTTP_CODE})"
             echo "Body: ${HTTP_BODY:0:300}"
             echo "oauth_ok=false" >> $GITHUB_OUTPUT
-            echo "http_code=${HTTP_CODE}" >> $GITHUB_OUTPUT
             exit 1
           fi
 
-          NEW_ACCESS=$(echo "$HTTP_BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('access_token',''))" 2>/dev/null || echo "")
-          NEW_REFRESH=$(echo "$HTTP_BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('refresh_token',''))" 2>/dev/null || echo "")
-          EXPIRES_IN=$(echo "$HTTP_BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('expires_in',3600))" 2>/dev/null || echo "3600")
+          NEW_ACCESS=$(echo "$HTTP_BODY" | jq -r '.access_token // empty')
+          NEW_REFRESH=$(echo "$HTTP_BODY" | jq -r '.refresh_token // empty')
+          EXPIRES_IN=$(echo "$HTTP_BODY" | jq -r '.expires_in // 3600')
 
           if [ -z "$NEW_ACCESS" ]; then
             echo "ERROR: OAuth returned 200 but no access_token in response"
-            echo "Response keys: $(echo "$HTTP_BODY" | python3 -c "import sys,json; print(list(json.load(sys.stdin).keys()))" 2>/dev/null)"
             echo "oauth_ok=false" >> $GITHUB_OUTPUT
             exit 1
           fi
 
-          echo "OAuth refresh SUCCESS — access_token obtained (expires_in=${EXPIRES_IN}s)"
-          echo "oauth_ok=true"                 >> $GITHUB_OUTPUT
-          echo "expires_in=${EXPIRES_IN}"       >> $GITHUB_OUTPUT
+          echo "OAuth refresh SUCCESS — expires_in=${EXPIRES_IN}s"
+          echo "oauth_ok=true"    >> $GITHUB_OUTPUT
+          echo "expires_in=${EXPIRES_IN}" >> $GITHUB_OUTPUT
           echo "refresh_rotated=$([ -n "${NEW_REFRESH}" ] && echo true || echo false)" >> $GITHUB_OUTPUT
 
-          # Store tokens in env (never in outputs — keeps them out of logs)
+          # Store in env — never in outputs (keeps tokens out of logs)
           echo "NEW_ACCESS_TOKEN=${NEW_ACCESS}"   >> $GITHUB_ENV
           echo "NEW_REFRESH_TOKEN=${NEW_REFRESH}" >> $GITHUB_ENV
 
@@ -152,20 +131,17 @@ jobs:
           EXPIRES_IN:     ${{ steps.exchange.outputs.expires_in }}
         run: |
           if [ -z "$WEBHOOK_SECRET" ]; then
-            echo "WARNING: INSPIRING_CAT_WEBHOOK_SECRET not set — skipping inspiring-cat push."
+            echo "WARNING: INSPIRING_CAT_WEBHOOK_SECRET not set — skipping."
             echo "pushed=false" >> $GITHUB_OUTPUT
             exit 0
           fi
 
-          PAYLOAD=$(python3 -c "
-import json, os
-print(json.dumps({
-    'secret':        os.environ['WEBHOOK_SECRET'],
-    'access_token':  os.environ['NEW_ACCESS_TOKEN'],
-    'refresh_token': os.environ.get('NEW_REFRESH_TOKEN', ''),
-    'expires_in':    int(os.environ.get('EXPIRES_IN', '3600')),
-}))
-")
+          PAYLOAD=$(jq -cn \
+            --arg secret "$WEBHOOK_SECRET" \
+            --arg access "$NEW_ACCESS_TOKEN" \
+            --arg refresh "$NEW_REFRESH_TOKEN" \
+            --argjson expires "${EXPIRES_IN:-3600}" \
+            '{secret: $secret, access_token: $access, refresh_token: $refresh, expires_in: $expires}')
 
           RESP=$(curl -s -w "\n%{http_code}" \
             -X POST "${INSPIRING_CAT_URL}/webhook/proactive-renewal" \
@@ -175,19 +151,18 @@ print(json.dumps({
 
           CODE=$(echo "$RESP" | tail -n1)
           BODY=$(echo "$RESP" | head -n -1)
-
           echo "inspiring-cat /webhook/proactive-renewal: HTTP ${CODE}"
 
           if [ "$CODE" = "200" ]; then
-            echo "✅ Token pushed to inspiring-cat successfully"
+            echo "Token pushed to inspiring-cat successfully"
             echo "pushed=true" >> $GITHUB_OUTPUT
           else
-            echo "⚠️  inspiring-cat push failed (HTTP ${CODE}) — token still updated via Railway var below"
+            echo "inspiring-cat push failed (HTTP ${CODE}) — Railway var update below is the backup"
             echo "Response: ${BODY:0:200}"
             echo "pushed=false" >> $GITHUB_OUTPUT
           fi
 
-      - name: Update Railway CLAUDE_SESSION_TOKEN via GraphQL
+      - name: Update Railway CLAUDE_SESSION_TOKEN
         id: railway-update
         if: steps.exchange.outputs.oauth_ok == 'true'
         env:
@@ -195,69 +170,63 @@ print(json.dumps({
           PROJECT_ID:        ${{ secrets.RAILWAY_PROJECT_ID }}
           SERVICE_ID:        ${{ secrets.RAILWAY_SERVICE_ID }}
           ENV_ID:            ${{ secrets.RAILWAY_ENV_ID }}
+          EXPIRES_IN:        ${{ steps.exchange.outputs.expires_in }}
         run: |
           if [ -z "$RAILWAY_API_TOKEN" ] || [ -z "$SERVICE_ID" ]; then
-            echo "Railway secrets not set — skipping Railway variable update."
+            echo "Railway secrets not set — skipping."
             echo "success=false" >> $GITHUB_OUTPUT
             exit 0
           fi
 
-          # Encode credentials as base64 for CLAUDE_SESSION_TOKEN
-          TOKEN_B64=$(python3 -c "
-import json, base64, os, time
-creds = {
-    'claudeAiOauth': {
-        'accessToken':  os.environ['NEW_ACCESS_TOKEN'],
-        'refreshToken': os.environ.get('NEW_REFRESH_TOKEN', ''),
-        'expiresAt':    int((time.time() + int(os.environ.get('EXPIRES_IN','3600'))) * 1000),
-    }
-}
-print(base64.b64encode(json.dumps(creds).encode()).decode())
-")
+          # Build minimal credentials JSON and base64-encode it
+          EXPIRES_AT_MS=$(( $(date +%s) * 1000 + ${EXPIRES_IN:-3600} * 1000 ))
+          CREDS_JSON=$(jq -cn \
+            --arg at "$NEW_ACCESS_TOKEN" \
+            --arg rt "$NEW_REFRESH_TOKEN" \
+            --argjson exp "$EXPIRES_AT_MS" \
+            '{claudeAiOauth: {accessToken: $at, refreshToken: $rt, expiresAt: $exp}}')
+          TOKEN_B64=$(echo "$CREDS_JSON" | base64 -w0)
 
           MUTATION='mutation($i: VariableUpsertInput!) { variableUpsert(input: $i) }'
-          VARS=$(python3 -c "
-import json, os
-print(json.dumps({'i': {
-    'projectId':     os.environ['PROJECT_ID'],
-    'serviceId':     os.environ['SERVICE_ID'],
-    'environmentId': os.environ['ENV_ID'],
-    'name':          'CLAUDE_SESSION_TOKEN',
-    'value':         os.environ['TOKEN_B64'],
-}}))
-" TOKEN_B64="$TOKEN_B64")
+          VARS=$(jq -cn \
+            --arg p "$PROJECT_ID" --arg s "$SERVICE_ID" \
+            --arg e "$ENV_ID"     --arg v "$TOKEN_B64" \
+            '{"i":{"projectId":$p,"serviceId":$s,"environmentId":$e,"name":"CLAUDE_SESSION_TOKEN","value":$v}}')
 
           for attempt in 1 2 3; do
             RESP=$(curl -s -w "\n%{http_code}" \
               -X POST "https://backboard.railway.app/graphql/v2" \
               -H "Authorization: Bearer ${RAILWAY_API_TOKEN}" \
               -H "Content-Type: application/json" \
-              -d "{\"query\":\"${MUTATION}\",\"variables\":${VARS}}" \
+              --data-raw "{\"query\":\"${MUTATION}\",\"variables\":${VARS}}" \
               --max-time 20)
             CODE=$(echo "$RESP" | tail -n1)
             BODY=$(echo "$RESP" | head -n -1)
             echo "Railway GraphQL: HTTP ${CODE} (attempt ${attempt}/3)"
             if [ "$CODE" = "200" ]; then
-              ERRS=$(echo "$BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('errors',''))" 2>/dev/null || echo "")
-              if [ -z "$ERRS" ] || [ "$ERRS" = "None" ]; then
-                echo "✅ CLAUDE_SESSION_TOKEN updated in Railway"
+              ERRS=$(echo "$BODY" | jq -r '.errors // empty' 2>/dev/null)
+              if [ -z "$ERRS" ]; then
+                echo "CLAUDE_SESSION_TOKEN updated in Railway"
                 echo "success=true" >> $GITHUB_OUTPUT
                 exit 0
               fi
             fi
             [ $attempt -lt 3 ] && sleep $((attempt * 10))
           done
-          echo "⚠️  Railway update failed after 3 attempts"
+          echo "Railway update failed after 3 attempts"
           echo "success=false" >> $GITHUB_OUTPUT
 
       - name: Update CLAUDE_REFRESH_TOKEN secret (if token was rotated)
-        if: steps.exchange.outputs.oauth_ok == 'true' && steps.exchange.outputs.refresh_rotated == 'true' && env.NEW_REFRESH_TOKEN != ''
+        if: >
+          steps.exchange.outputs.oauth_ok == 'true' &&
+          steps.exchange.outputs.refresh_rotated == 'true' &&
+          env.NEW_REFRESH_TOKEN != ''
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_PAT }}
         run: |
           echo "Updating CLAUDE_REFRESH_TOKEN secret with rotated token..."
           echo "$NEW_REFRESH_TOKEN" | gh secret set CLAUDE_REFRESH_TOKEN --repo "$GITHUB_REPO"
-          echo "✅ CLAUDE_REFRESH_TOKEN secret updated — next cron run is armed."
+          echo "CLAUDE_REFRESH_TOKEN secret updated — next cron run is armed."
 
       - name: Alert on failure
         if: failure()
@@ -266,21 +235,9 @@ print(json.dumps({'i': {
           TTL:         ${{ steps.health.outputs.token_ttl }}
           AVAILABLE:   ${{ steps.health.outputs.claude_available }}
         run: |
-          HOURS_LEFT=$(python3 -c "print(round(int('${TTL:-0}') / 3600, 1))" 2>/dev/null || echo "?")
-          curl -s -X POST "${N8N_WEBHOOK:-}" \
+          HOURS_LEFT=$(echo "${TTL:-0}" | awk '{printf "%.1f", $1/3600}')
+          curl -s -X POST "${N8N_WEBHOOK:-https://httpbin.org/post}" \
             -H "Content-Type: application/json" \
-            -d "{
-              \"alert\": \"proactive_renewal_failed\",
-              \"source\": \"github_actions_cron\",
-              \"token_hours_remaining\": \"${HOURS_LEFT}\",
-              \"claude_available\": \"${AVAILABLE}\",
-              \"message\": \"Proactive token renewal cron FAILED. Token has ${HOURS_LEFT}h remaining. Check CLAUDE_REFRESH_TOKEN secret is valid and not expired. If <6h remaining, manual login required.\"
-            }" \
+            --data-raw "{\"alert\":\"proactive_renewal_failed\",\"source\":\"github_actions_cron\",\"token_hours_remaining\":\"${HOURS_LEFT}\",\"claude_available\":\"${AVAILABLE}\",\"message\":\"Proactive token renewal FAILED. Token has ${HOURS_LEFT}h remaining. Check CLAUDE_REFRESH_TOKEN secret.\"}" \
             --max-time 10 || true
-
-          echo ""
-          echo "=== RENEWAL FAILED ==="
-          echo "Token TTL remaining: ${HOURS_LEFT}h"
-          echo "If <6h remaining, manual login is needed:"
-          echo "  POST ${INSPIRING_CAT_URL}/auth/login-status"
-          echo "  OR: VS Code terminal → claude login"
+          echo "RENEWAL FAILED — token TTL remaining: ${HOURS_LEFT}h"
