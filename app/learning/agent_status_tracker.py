@@ -587,10 +587,12 @@ def get_all_statuses() -> list[dict]:
     for wid in _KNOWN_WORKERS:
         result.append(get_worker_status(wid))
     # Include any dynamically added workers not in _KNOWN_WORKERS
+    # Snapshot IDs under lock, then call get_worker_status() outside — it also acquires _lock,
+    # and threading.Lock is non-reentrant, so calling it while holding _lock causes a deadlock.
     with _lock:
-        for wid in _workers:
-            if wid not in _KNOWN_WORKERS:
-                result.append(get_worker_status(wid))
+        dynamic_wids = [wid for wid in _workers if wid not in _KNOWN_WORKERS]
+    for wid in dynamic_wids:
+        result.append(get_worker_status(wid))
 
     # Sort: error/strike/sick first (need attention), then working, then idle/sleeping
     order = {"error": 0, "strike": 1, "sick": 2, "recovering": 3, "working": 4, "talking": 5, "idle": 6, "break": 7, "coffee_break": 8, "sleeping": 9}
