@@ -917,6 +917,49 @@ async def webhook_proactive_renewal(req: Request):
         return {"ok": False, "error": str(e)}
 
 
+@app.post("/webhook/trigger-playwright-refresh")
+async def webhook_trigger_playwright_refresh(req: Request):
+    """
+    Trigger inspiring-cat's full_recovery_chain() asynchronously.
+
+    Called by GitHub Actions proactive_token_renewal.yml when the token TTL
+    is low and direct OAuth is unavailable. The recovery runs in a background
+    thread so this endpoint returns immediately (202) without waiting.
+
+    Payload: {"secret": "<INSPIRING_CAT_WEBHOOK_SECRET>"}
+    """
+    try:
+        payload = await req.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+
+    expected = os.environ.get("INSPIRING_CAT_WEBHOOK_SECRET", "") or os.environ.get("OAUTH_RELAY_SECRET", "")
+    if not expected or payload.get("secret", "") != expected:
+        _bg_log("trigger-playwright-refresh: rejected — wrong secret", "webhook")
+        raise HTTPException(status_code=403, detail="Invalid secret")
+
+    import threading
+
+    def _run_recovery():
+        try:
+            import sys
+            sys.path.insert(0, "/app")
+            from app.learning.cli_auto_login import full_recovery_chain
+            _bg_log("trigger-playwright-refresh: starting full_recovery_chain() in background", "webhook")
+            ok = full_recovery_chain()
+            _bg_log(
+                f"trigger-playwright-refresh: full_recovery_chain() {'SUCCESS ✓' if ok else 'FAILED'}",
+                "webhook",
+            )
+        except Exception as e:
+            _bg_log(f"trigger-playwright-refresh: recovery error — {e}", "webhook")
+
+    t = threading.Thread(target=_run_recovery, daemon=True)
+    t.start()
+    _bg_log("trigger-playwright-refresh: background recovery thread started", "webhook")
+    return {"ok": True, "message": "Playwright recovery started in background"}
+
+
 @app.post("/webhook/manual-auth-code")
 def webhook_manual_auth_code(request: dict):
     """

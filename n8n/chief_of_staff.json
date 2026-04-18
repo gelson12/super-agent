@@ -23,7 +23,7 @@
         "method": "GET",
         "url": "https://outstanding-blessing-production-1d4b.up.railway.app/api/v1/workflows?limit=50",
         "sendHeaders": true,
-        "headerParameters": { "parameters": [{"name": "X-N8N-API-KEY", "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIwOTk3N2NkYS05MTQwLTRlNjgtYTk0OC1lODhkMWY0MDBjMTgiLCJpc3MiOiJuOG4iLCJhdWQiOiJwdWJsaWMtYXBpIiwianRpIjoiYmUzMWVlYmYtZDYxNS00M2FjLThmZTItYzZhZDY2ZWNlYzI0IiwiaWF0IjoxNzc0OTQ4MzgzfQ.EYsvgW0U0bwT154aDhujDwtJUDivYQLnqDTDBvnecP8"}] }
+        "headerParameters": { "parameters": [{"name": "X-N8N-API-KEY", "value": "={{ $env.N8N_SELF_API_KEY }}"}] }
       }
     },
 
@@ -37,7 +37,7 @@
         "method": "GET",
         "url": "https://outstanding-blessing-production-1d4b.up.railway.app/api/v1/executions?status=error&limit=100",
         "sendHeaders": true,
-        "headerParameters": { "parameters": [{"name": "X-N8N-API-KEY", "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIwOTk3N2NkYS05MTQwLTRlNjgtYTk0OC1lODhkMWY0MDBjMTgiLCJpc3MiOiJuOG4iLCJhdWQiOiJwdWJsaWMtYXBpIiwianRpIjoiYmUzMWVlYmYtZDYxNS00M2FjLThmZTItYzZhZDY2ZWNlYzI0IiwiaWF0IjoxNzc0OTQ4MzgzfQ.EYsvgW0U0bwT154aDhujDwtJUDivYQLnqDTDBvnecP8"}] }
+        "headerParameters": { "parameters": [{"name": "X-N8N-API-KEY", "value": "={{ $env.N8N_SELF_API_KEY }}"}] }
       }
     },
 
@@ -88,7 +88,7 @@
       "position": [1440, 80],
       "parameters": {
         "method": "POST",
-        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=AIzaSyDo1THZSz3g9grP37SIA3uiwApfs5hxjB4",
+        "url": "={{ 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + $env.GEMINI_API_KEY }}",
         "sendHeaders": true,
         "headerParameters": { "parameters": [{"name": "Content-Type", "value": "application/json"}] },
         "sendBody": true,
@@ -146,7 +146,7 @@
         "method": "GET",
         "url": "https://outstanding-blessing-production-1d4b.up.railway.app/api/v1/executions?status=error&limit=100",
         "sendHeaders": true,
-        "headerParameters": { "parameters": [{"name": "X-N8N-API-KEY", "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIwOTk3N2NkYS05MTQwLTRlNjgtYTk0OC1lODhkMWY0MDBjMTgiLCJpc3MiOiJuOG4iLCJhdWQiOiJwdWJsaWMtYXBpIiwianRpIjoiYmUzMWVlYmYtZDYxNS00M2FjLThmZTItYzZhZDY2ZWNlYzI0IiwiaWF0IjoxNzc0OTQ4MzgzfQ.EYsvgW0U0bwT154aDhujDwtJUDivYQLnqDTDBvnecP8"}] }
+        "headerParameters": { "parameters": [{"name": "X-N8N-API-KEY", "value": "={{ $env.N8N_SELF_API_KEY }}"}] }
       }
     },
 
@@ -196,7 +196,7 @@
       "position": [1200, 540],
       "parameters": {
         "method": "POST",
-        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=AIzaSyDo1THZSz3g9grP37SIA3uiwApfs5hxjB4",
+        "url": "={{ 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + $env.GEMINI_API_KEY }}",
         "sendHeaders": true,
         "headerParameters": { "parameters": [{"name": "Content-Type", "value": "application/json"}] },
         "sendBody": true,
@@ -243,7 +243,7 @@
         "method": "POST",
         "url": "={{ 'https://outstanding-blessing-production-1d4b.up.railway.app/api/v1/workflows/' + $('Evaluate System Health').first().json.failingIds[0] + '/activate' }}",
         "sendHeaders": true,
-        "headerParameters": { "parameters": [{"name": "X-N8N-API-KEY", "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIwOTk3N2NkYS05MTQwLTRlNjgtYTk0OC1lODhkMWY0MDBjMTgiLCJpc3MiOiJuOG4iLCJhdWQiOiJwdWJsaWMtYXBpIiwianRpIjoiYmUzMWVlYmYtZDYxNS00M2FjLThmZTItYzZhZDY2ZWNlYzI0IiwiaWF0IjoxNzc0OTQ4MzgzfQ.EYsvgW0U0bwT154aDhujDwtJUDivYQLnqDTDBvnecP8"}] }
+        "headerParameters": { "parameters": [{"name": "X-N8N-API-KEY", "value": "={{ $env.N8N_SELF_API_KEY }}"}] }
       }
     },
 
@@ -290,7 +290,7 @@
       "position": [480, 1200],
       "parameters": {
         "method": "POST",
-        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=AIzaSyDo1THZSz3g9grP37SIA3uiwApfs5hxjB4",
+        "url": "={{ 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + $env.GEMINI_API_KEY }}",
         "sendHeaders": true,
         "headerParameters": { "parameters": [{"name": "Content-Type", "value": "application/json"}] },
         "sendBody": true,
@@ -343,7 +343,7 @@
         "method": "GET",
         "url": "https://outstanding-blessing-production-1d4b.up.railway.app/api/v1/workflows?limit=50",
         "sendHeaders": true,
-        "headerParameters": { "parameters": [{"name": "X-N8N-API-KEY", "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIwOTk3N2NkYS05MTQwLTRlNjgtYTk0OC1lODhkMWY0MDBjMTgiLCJpc3MiOiJuOG4iLCJhdWQiOiJwdWJsaWMtYXBpIiwianRpIjoiYmUzMWVlYmYtZDYxNS00M2FjLThmZTItYzZhZDY2ZWNlYzI0IiwiaWF0IjoxNzc0OTQ4MzgzfQ.EYsvgW0U0bwT154aDhujDwtJUDivYQLnqDTDBvnecP8"}] }
+        "headerParameters": { "parameters": [{"name": "X-N8N-API-KEY", "value": "={{ $env.N8N_SELF_API_KEY }}"}] }
       }
     },
 
@@ -377,7 +377,7 @@
         "method": "GET",
         "url": "https://outstanding-blessing-production-1d4b.up.railway.app/api/v1/workflows?limit=50",
         "sendHeaders": true,
-        "headerParameters": { "parameters": [{"name": "X-N8N-API-KEY", "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIwOTk3N2NkYS05MTQwLTRlNjgtYTk0OC1lODhkMWY0MDBjMTgiLCJpc3MiOiJuOG4iLCJhdWQiOiJwdWJsaWMtYXBpIiwianRpIjoiYmUzMWVlYmYtZDYxNS00M2FjLThmZTItYzZhZDY2ZWNlYzI0IiwiaWF0IjoxNzc0OTQ4MzgzfQ.EYsvgW0U0bwT154aDhujDwtJUDivYQLnqDTDBvnecP8"}] }
+        "headerParameters": { "parameters": [{"name": "X-N8N-API-KEY", "value": "={{ $env.N8N_SELF_API_KEY }}"}] }
       }
     },
 
@@ -402,7 +402,7 @@
         "method": "POST",
         "url": "={{ 'https://outstanding-blessing-production-1d4b.up.railway.app/api/v1/workflows/' + $json.workflow_id + ($json.new_active ? '/activate' : '/deactivate') }}",
         "sendHeaders": true,
-        "headerParameters": { "parameters": [{"name": "X-N8N-API-KEY", "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIwOTk3N2NkYS05MTQwLTRlNjgtYTk0OC1lODhkMWY0MDBjMTgiLCJpc3MiOiJuOG4iLCJhdWQiOiJwdWJsaWMtYXBpIiwianRpIjoiYmUzMWVlYmYtZDYxNS00M2FjLThmZTItYzZhZDY2ZWNlYzI0IiwiaWF0IjoxNzc0OTQ4MzgzfQ.EYsvgW0U0bwT154aDhujDwtJUDivYQLnqDTDBvnecP8"}] }
+        "headerParameters": { "parameters": [{"name": "X-N8N-API-KEY", "value": "={{ $env.N8N_SELF_API_KEY }}"}] }
       }
     },
 
@@ -429,7 +429,7 @@
         "method": "GET",
         "url": "https://outstanding-blessing-production-1d4b.up.railway.app/api/v1/workflows?limit=50",
         "sendHeaders": true,
-        "headerParameters": { "parameters": [{"name": "X-N8N-API-KEY", "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIwOTk3N2NkYS05MTQwLTRlNjgtYTk0OC1lODhkMWY0MDBjMTgiLCJpc3MiOiJuOG4iLCJhdWQiOiJwdWJsaWMtYXBpIiwianRpIjoiYmUzMWVlYmYtZDYxNS00M2FjLThmZTItYzZhZDY2ZWNlYzI0IiwiaWF0IjoxNzc0OTQ4MzgzfQ.EYsvgW0U0bwT154aDhujDwtJUDivYQLnqDTDBvnecP8"}] }
+        "headerParameters": { "parameters": [{"name": "X-N8N-API-KEY", "value": "={{ $env.N8N_SELF_API_KEY }}"}] }
       }
     },
 
@@ -454,7 +454,7 @@
         "method": "POST",
         "url": "={{ 'https://outstanding-blessing-production-1d4b.up.railway.app/api/v1/workflows/' + $json.workflow_id + '/deactivate' }}",
         "sendHeaders": true,
-        "headerParameters": { "parameters": [{"name": "X-N8N-API-KEY", "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIwOTk3N2NkYS05MTQwLTRlNjgtYTk0OC1lODhkMWY0MDBjMTgiLCJpc3MiOiJuOG4iLCJhdWQiOiJwdWJsaWMtYXBpIiwianRpIjoiYmUzMWVlYmYtZDYxNS00M2FjLThmZTItYzZhZDY2ZWNlYzI0IiwiaWF0IjoxNzc0OTQ4MzgzfQ.EYsvgW0U0bwT154aDhujDwtJUDivYQLnqDTDBvnecP8"}] }
+        "headerParameters": { "parameters": [{"name": "X-N8N-API-KEY", "value": "={{ $env.N8N_SELF_API_KEY }}"}] }
       }
     },
 
@@ -468,7 +468,7 @@
         "method": "POST",
         "url": "={{ 'https://outstanding-blessing-production-1d4b.up.railway.app/api/v1/workflows/' + $('Find Workflow to Restart').first().json.workflow_id + '/activate' }}",
         "sendHeaders": true,
-        "headerParameters": { "parameters": [{"name": "X-N8N-API-KEY", "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIwOTk3N2NkYS05MTQwLTRlNjgtYTk0OC1lODhkMWY0MDBjMTgiLCJpc3MiOiJuOG4iLCJhdWQiOiJwdWJsaWMtYXBpIiwianRpIjoiYmUzMWVlYmYtZDYxNS00M2FjLThmZTItYzZhZDY2ZWNlYzI0IiwiaWF0IjoxNzc0OTQ4MzgzfQ.EYsvgW0U0bwT154aDhujDwtJUDivYQLnqDTDBvnecP8"}] }
+        "headerParameters": { "parameters": [{"name": "X-N8N-API-KEY", "value": "={{ $env.N8N_SELF_API_KEY }}"}] }
       }
     },
 
@@ -495,7 +495,7 @@
         "method": "GET",
         "url": "https://outstanding-blessing-production-1d4b.up.railway.app/api/v1/executions?status=error&limit=20",
         "sendHeaders": true,
-        "headerParameters": { "parameters": [{"name": "X-N8N-API-KEY", "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIwOTk3N2NkYS05MTQwLTRlNjgtYTk0OC1lODhkMWY0MDBjMTgiLCJpc3MiOiJuOG4iLCJhdWQiOiJwdWJsaWMtYXBpIiwianRpIjoiYmUzMWVlYmYtZDYxNS00M2FjLThmZTItYzZhZDY2ZWNlYzI0IiwiaWF0IjoxNzc0OTQ4MzgzfQ.EYsvgW0U0bwT154aDhujDwtJUDivYQLnqDTDBvnecP8"}] }
+        "headerParameters": { "parameters": [{"name": "X-N8N-API-KEY", "value": "={{ $env.N8N_SELF_API_KEY }}"}] }
       }
     },
 
@@ -509,7 +509,7 @@
         "method": "GET",
         "url": "https://outstanding-blessing-production-1d4b.up.railway.app/api/v1/workflows?limit=50",
         "sendHeaders": true,
-        "headerParameters": { "parameters": [{"name": "X-N8N-API-KEY", "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIwOTk3N2NkYS05MTQwLTRlNjgtYTk0OC1lODhkMWY0MDBjMTgiLCJpc3MiOiJuOG4iLCJhdWQiOiJwdWJsaWMtYXBpIiwianRpIjoiYmUzMWVlYmYtZDYxNS00M2FjLThmZTItYzZhZDY2ZWNlYzI0IiwiaWF0IjoxNzc0OTQ4MzgzfQ.EYsvgW0U0bwT154aDhujDwtJUDivYQLnqDTDBvnecP8"}] }
+        "headerParameters": { "parameters": [{"name": "X-N8N-API-KEY", "value": "={{ $env.N8N_SELF_API_KEY }}"}] }
       }
     },
 
@@ -591,7 +591,7 @@
         "method": "GET",
         "url": "https://outstanding-blessing-production-1d4b.up.railway.app/api/v1/workflows?limit=50",
         "sendHeaders": true,
-        "headerParameters": { "parameters": [{"name": "X-N8N-API-KEY", "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIwOTk3N2NkYS05MTQwLTRlNjgtYTk0OC1lODhkMWY0MDBjMTgiLCJpc3MiOiJuOG4iLCJhdWQiOiJwdWJsaWMtYXBpIiwianRpIjoiYmUzMWVlYmYtZDYxNS00M2FjLThmZTItYzZhZDY2ZWNlYzI0IiwiaWF0IjoxNzc0OTQ4MzgzfQ.EYsvgW0U0bwT154aDhujDwtJUDivYQLnqDTDBvnecP8"}] }
+        "headerParameters": { "parameters": [{"name": "X-N8N-API-KEY", "value": "={{ $env.N8N_SELF_API_KEY }}"}] }
       }
     },
 
@@ -625,7 +625,7 @@
         "method": "GET",
         "url": "https://outstanding-blessing-production-1d4b.up.railway.app/api/v1/workflows?limit=50",
         "sendHeaders": true,
-        "headerParameters": { "parameters": [{"name": "X-N8N-API-KEY", "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIwOTk3N2NkYS05MTQwLTRlNjgtYTk0OC1lODhkMWY0MDBjMTgiLCJpc3MiOiJuOG4iLCJhdWQiOiJwdWJsaWMtYXBpIiwianRpIjoiYmUzMWVlYmYtZDYxNS00M2FjLThmZTItYzZhZDY2ZWNlYzI0IiwiaWF0IjoxNzc0OTQ4MzgzfQ.EYsvgW0U0bwT154aDhujDwtJUDivYQLnqDTDBvnecP8"}] }
+        "headerParameters": { "parameters": [{"name": "X-N8N-API-KEY", "value": "={{ $env.N8N_SELF_API_KEY }}"}] }
       }
     },
 
@@ -648,7 +648,7 @@
       "position": [1680, 1940],
       "parameters": {
         "method": "POST",
-        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=AIzaSyDo1THZSz3g9grP37SIA3uiwApfs5hxjB4",
+        "url": "={{ 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + $env.GEMINI_API_KEY }}",
         "sendHeaders": true,
         "headerParameters": { "parameters": [{"name": "Content-Type", "value": "application/json"}] },
         "sendBody": true,
