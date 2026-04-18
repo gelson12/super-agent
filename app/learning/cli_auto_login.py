@@ -397,8 +397,11 @@ def _trigger_n8n_email_monitor() -> bool:
                     except Exception:
                         pass
                     return False  # abort — don't wait 600s for a link that cannot arrive
+            except urllib.error.HTTPError as _http_err:
+                # 401/403 = API key invalid but n8n IS reachable — do not abort
+                _log(f"n8n API returned HTTP {_http_err.code} (key issue) — n8n is reachable, continuing Playwright flow.")
             except (urllib.error.URLError, OSError) as _net_err:
-                # n8n is unreachable — abort and alert immediately
+                # n8n is genuinely unreachable — abort and alert immediately
                 _log(f"ABORT: n8n unreachable ({_net_err}) — cannot receive magic link. Sending alert.")
                 try:
                     from ..alerts.notifier import send_alert
