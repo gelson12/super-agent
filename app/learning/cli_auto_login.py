@@ -77,7 +77,7 @@ _RATELIMIT_DEFAULT_COOLDOWN = 86400  # 24h for any hit beyond index 3
 # requests; no "error sending login link" is returned so _check_ratelimit() doesn't
 # trigger). Set whenever the browser attempt times out; cleared after 20 minutes.
 _last_playwright_timeout: float = 0.0
-_PLAYWRIGHT_BACKOFF_S: float = 20 * 60  # 20 minutes between Playwright attempts
+_PLAYWRIGHT_BACKOFF_S: float = 5 * 60  # 5 minutes between Playwright attempts (was 20)
 # Timestamps of every Playwright browser-login attempt (unix epoch, float).
 # Persisted to /workspace so restarts don't reset the 1-hour thrash counter.
 _PLAYWRIGHT_ATTEMPTS_FILE = Path("/workspace/.playwright_attempts.json")
@@ -229,8 +229,8 @@ def _log(msg: str) -> None:
 # waiting browser automation thread.
 import queue
 _verification_code_queue: queue.Queue = queue.Queue()  # carries the magic link URL
-_VERIFICATION_CODE_TIMEOUT = 360  # max seconds to wait for magic URL from n8n
-# 360s = 6 minutes: email delivery (~15s) + n8n poll interval (up to 60s) + POST + buffer.
+_VERIFICATION_CODE_TIMEOUT = 600  # max seconds to wait for magic URL from n8n
+# 600s = 10 minutes: Anthropic can take 5-7 min to deliver magic link emails under load.
 # Increased from 180s: Hotmail delivery can be delayed by up to 3 min from Railway IPs
 # and the browser flow itself takes ~30s before we start waiting, giving n8n just 150s
 # with the old value (only 1-2 poll cycles in the worst case).
@@ -359,30 +359,68 @@ def _trigger_n8n_email_monitor() -> bool:
          f"and POST the magic link to /webhook/verification-code. "
          f"Waiting up to {_VERIFICATION_CODE_TIMEOUT}s...")
 
-    # Quick n8n API check — verify the workflow is active and not erroring.
-    # Non-fatal: we proceed even if this check fails.
+    # Hard n8n pre-flight check — if n8n is DOWN or workflow INACTIVE, abort
+    # immediately and send an email alert rather than wasting 600s waiting for
+    # a magic link that can never arrive.
     _N8N_WORKFLOW_ID = "jun8CaMnNhux1iEY"
     try:
         import urllib.request, json as _json
         n8n_url = os.environ.get("N8N_BASE_URL", "").rstrip("/")
         n8n_key = os.environ.get("N8N_API_KEY", "")
         if n8n_url and n8n_key:
-            req = urllib.request.Request(
-                f"{n8n_url}/api/v1/workflows/{_N8N_WORKFLOW_ID}",
-                headers={"X-N8N-API-KEY": n8n_key, "Accept": "application/json"},
-            )
-            with urllib.request.urlopen(req, timeout=8) as resp:
-                wf = _json.loads(resp.read().decode())
+            try:
+                req = urllib.request.Request(
+                    f"{n8n_url}/api/v1/workflows/{_N8N_WORKFLOW_ID}",
+                    headers={"X-N8N-API-KEY": n8n_key, "Accept": "application/json"},
+                )
+                with urllib.request.urlopen(req, timeout=8) as resp:
+                    wf = _json.loads(resp.read().decode())
                 active = wf.get("active", False)
                 _log(f"n8n workflow '{wf.get('name', _N8N_WORKFLOW_ID)}' active={active}")
                 if not active:
-                    _log("WARNING: Claude-Verification-Monitor workflow is INACTIVE in n8n! "
-                         "Magic link emails will NOT be delivered. "
-                         "Activate it at your n8n instance → Workflows → Claude Verification Code Monitor → toggle Active.")
+                    _log("ABORT: Claude-Verification-Monitor workflow is INACTIVE — "
+                         "magic link emails will NOT be delivered. Sending alert.")
+                    try:
+                        from ..alerts.notifier import send_alert
+                        send_alert(
+                            subject="n8n Claude-Verification-Monitor INACTIVE — CLI recovery blocked",
+                            body=(
+                                f"Recovery aborted: n8n workflow '{_N8N_WORKFLOW_ID}' is INACTIVE.\n\n"
+                                f"Magic link emails cannot be delivered until the workflow is active.\n\n"
+                                f"Fix: {n8n_url}/workflow/{_N8N_WORKFLOW_ID} → toggle Active ON.\n\n"
+                                f"Claude CLI Pro will remain down until this is fixed."
+                            ),
+                            alert_key="n8n_workflow_inactive",
+                            level="CRITICAL",
+                            force=True,
+                        )
+                    except Exception:
+                        pass
+                    return False  # abort — don't wait 600s for a link that cannot arrive
+            except (urllib.error.URLError, OSError) as _net_err:
+                # n8n is unreachable — abort and alert immediately
+                _log(f"ABORT: n8n unreachable ({_net_err}) — cannot receive magic link. Sending alert.")
+                try:
+                    from ..alerts.notifier import send_alert
+                    send_alert(
+                        subject="n8n UNREACHABLE — Claude CLI recovery blocked",
+                        body=(
+                            f"Recovery aborted: n8n is unreachable at {n8n_url}.\n"
+                            f"Error: {_net_err}\n\n"
+                            f"Magic link emails cannot be delivered while n8n is down.\n\n"
+                            f"Check Railway → divine-contentment → n8n service status."
+                        ),
+                        alert_key="n8n_unreachable_recovery",
+                        level="CRITICAL",
+                        force=True,
+                    )
+                except Exception:
+                    pass
+                return False  # abort — don't waste 600s
         else:
-            _log("n8n status check skipped (N8N_BASE_URL or N8N_API_KEY not set).")
+            _log("n8n pre-flight check skipped (N8N_BASE_URL or N8N_API_KEY not set) — proceeding.")
     except Exception as _n8n_e:
-        _log(f"n8n workflow status check failed (non-fatal): {_n8n_e}")
+        _log(f"n8n pre-flight check error (non-fatal, proceeding): {_n8n_e}")
 
     return True
 
@@ -734,10 +772,13 @@ def _do_auto_login(email: str) -> bool:
                 pass
         return False
 
-    # Step 3: Trigger n8n email monitor BEFORE opening browser
-    # n8n will start watching for the Anthropic verification email
-    _log("Step 3a: Triggering n8n email monitor...")
-    _trigger_n8n_email_monitor()
+    # Step 3: Trigger n8n email monitor BEFORE opening browser.
+    # Returns False if n8n is confirmed DOWN or workflow INACTIVE — abort immediately
+    # rather than waiting 600s for a magic link that can never arrive.
+    _log("Step 3a: Triggering n8n email monitor (pre-flight check)...")
+    if not _trigger_n8n_email_monitor():
+        _log("auto_login_claude: aborting — n8n pre-flight check failed.")
+        return False
 
     # Show violet talking line: N8N Agent ↔ Claude CLI Pro
     # This is the communication channel during self-healing (n8n reads email → sends code)
@@ -2641,7 +2682,47 @@ def maybe_proactive_refresh() -> bool:
                 f"{int(remaining_s // 60)}m — escalating to full_recovery_chain()"
             )
             try:
-                return full_recovery_chain()
+                _chain_ok = full_recovery_chain()
+                if not _chain_ok:
+                    # Track consecutive failures so vault+email alerts fire even from
+                    # watchdog cycles (previously only run_proactive_refresh() tracked this)
+                    try:
+                        from .pro_token_keeper import _read_fail_count, _write_fail_count, _send_vault_alert, _FAIL_ALERT_THRESHOLD
+                        _fc = _read_fail_count() + 1
+                        _write_fail_count(_fc)
+                        _log(f"Proactive refresh (watchdog path): consecutive failure #{_fc}/{_FAIL_ALERT_THRESHOLD}")
+                        if _fc >= _FAIL_ALERT_THRESHOLD:
+                            _send_vault_alert(_fc)
+                            try:
+                                from ..alerts.notifier import send_alert
+                                send_alert(
+                                    subject=f"Claude CLI proactive refresh FAILING ({_fc}× in a row)",
+                                    body=(
+                                        f"Proactive token refresh has failed {_fc} consecutive times.\n\n"
+                                        f"Token expires in {int(remaining_s // 60)} minutes.\n\n"
+                                        f"Both direct OAuth refresh AND full recovery chain (Playwright) failed.\n\n"
+                                        f"Likely cause: n8n verification workflow down, or Anthropic email delayed.\n\n"
+                                        f"Action required if CLI goes down:\n"
+                                        f"  1. Check n8n → Claude Verification Code Monitor → active\n"
+                                        f"  2. POST https://inspiring-cat-production.up.railway.app/auth/login-status\n"
+                                        f"  3. Manual: VS Code terminal → claude login"
+                                    ),
+                                    alert_key=f"proactive_refresh_failing_{_fc}",
+                                    level="CRITICAL",
+                                    force=True,
+                                )
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+                else:
+                    # Reset fail counter on success
+                    try:
+                        from .pro_token_keeper import _write_fail_count
+                        _write_fail_count(0)
+                    except Exception:
+                        pass
+                return _chain_ok
             except Exception as _pe:
                 _log(f"Proactive refresh: recovery escalation error — {_pe}")
         return False
@@ -3000,7 +3081,7 @@ def full_recovery_chain() -> bool:
             f_browser = _pool.submit(_browser_attempt)
             futures   = [f_direct, f_browser]
 
-            for future in _cf.as_completed(futures, timeout=720):
+            for future in _cf.as_completed(futures, timeout=900):  # 15 min — accommodates 600s email wait + browser overhead
                 elapsed = time.time() - _recovery_started_at
                 # Stall alert: fires once if neither thread has succeeded after 8 min.
                 # Usually means the magic link email never arrived — n8n may be broken.
@@ -3008,9 +3089,30 @@ def full_recovery_chain() -> bool:
                     _stall_alerted = True
                     _log(f"[STALL] Recovery taking {elapsed:.0f}s — magic link may not have "
                          f"arrived. Check n8n workflow jun8CaMnNhux1iEY and Outlook inbox.")
+                    # Write vault note AND send email so you're actually notified
                     try:
                         from .pro_token_keeper import _send_vault_alert
                         _send_vault_alert(0)
+                    except Exception:
+                        pass
+                    try:
+                        from ..alerts.notifier import send_alert
+                        send_alert(
+                            subject="Claude CLI recovery STALLING — magic link not arriving",
+                            body=(
+                                f"Recovery has been running for {int(elapsed)}s with no result.\n\n"
+                                f"Most likely cause: Anthropic email is delayed OR n8n workflow "
+                                f"'jun8CaMnNhux1iEY' is not delivering the magic link to inspiring-cat.\n\n"
+                                f"Check:\n"
+                                f"  1. Hotmail inbox (gelson_m@hotmail.com) for Anthropic verification email\n"
+                                f"  2. n8n → Claude Verification Code Monitor → active + recent executions\n"
+                                f"  3. inspiring-cat logs for 'webhook/verification-code' POST entries\n\n"
+                                f"Recovery will continue retrying. If still down in 30min, manual login needed."
+                            ),
+                            alert_key="recovery_stall",
+                            level="CRITICAL",
+                            force=True,
+                        )
                     except Exception:
                         pass
                 try:
@@ -3061,7 +3163,7 @@ def full_recovery_chain() -> bool:
                     _log(f"Recovery attempt raised: {_attempt_err}")
 
         except _cf.TimeoutError:
-            _log("=== Recovery timed out after 12 minutes — manual login required ===")
+            _log("=== Recovery timed out after 15 minutes — manual login required ===")
         finally:
             # Release pool resources on timeout / exception / normal exit
             _pool.shutdown(wait=False, cancel_futures=True)
