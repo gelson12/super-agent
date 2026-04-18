@@ -59,7 +59,7 @@ def _sanitize_error(text: str) -> str:
 # Protected paths require header: X-Token: <UI_PASSWORD>
 # If UI_PASSWORD is not set, auth is disabled.
 
-_OPEN_PATHS = {"/", "/health", "/auth", "/credits/pro-status", "/credits/pro-reset", "/agents", "/dashboard", "/observability", "/stats", "/stats/report", "/admin/infrastructure-info"}
+_OPEN_PATHS = {"/", "/health", "/auth", "/credits/pro-status", "/credits/pro-reset", "/agents", "/dashboard", "/observability", "/intelligence", "/stats", "/stats/report", "/admin/infrastructure-info"}
 _OPEN_PREFIXES = ("/static", "/downloads", "/webhook", "/n8n/connection-info", "/activity", "/dashboard/", "/stats/", "/metrics/")  # token-in-URL or public info
 # NOTE: /chat, /chat/stream, /chat/direct, and /install-guide are intentionally
 # NOT in _OPEN_PATHS/_OPEN_PREFIXES — they require X-Token when UI_PASSWORD is set.
@@ -2106,8 +2106,10 @@ def chat_ensemble(req: EnsembleRequest, request: Request):
 @app.get("/intelligence", include_in_schema=False)
 def intelligence_dashboard():
     """Gamified intelligence dashboard — XP, levels, achievements, behavioral heatmap."""
-    from fastapi.responses import FileResponse
-    return FileResponse("static/intelligence.html")
+    path = os.path.join(_static_dir, "intelligence.html")
+    if os.path.isfile(path):
+        return FileResponse(path)
+    return {"error": "intelligence.html not found in static/"}
 
 
 @app.get("/metrics/intelligence", tags=["meta"])
