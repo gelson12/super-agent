@@ -244,15 +244,10 @@ async def _lifespan(app: FastAPI):
     # so it fires once on every startup without blocking the lifespan.
     _threading.Thread(target=_post_deploy_check, daemon=True).start()
 
-    # Refresh Pro token on startup — ensures Railway var is always current
-    # so the NEXT redeploy gets a fresh token regardless of when it happens.
-    def _startup_token_refresh():
-        try:
-            from .learning.pro_token_keeper import run_token_keeper
-            run_token_keeper()
-        except Exception:
-            pass
-    _threading.Thread(target=_startup_token_refresh, daemon=True).start()
+    # Token keeper removed from super-agent — lives in cli_worker (inspiring-cat) only.
+    # Running it here caused startup hangs: subprocess("claude") doesn't exist in this
+    # container, 30s timeout fires, then full_recovery_chain() runs Playwright here
+    # which was never intended and crashed the process on every deploy.
 
     # Bootstrap prompt library — seeds v1 for all tracked prompts from static constants.
     # Best-effort: never delays startup if it fails.
