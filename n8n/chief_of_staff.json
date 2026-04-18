@@ -1,0 +1,746 @@
+{
+  "name": "🧑🏾 Chief of Staff — System Intelligence & Operations",
+  "nodes": [
+
+    {
+      "id": "cos-trig-morning-001",
+      "name": "7 AM Morning Briefing",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 80],
+      "parameters": {
+        "rule": { "interval": [{"field": "cronExpression", "expression": "0 7 * * *"}] }
+      }
+    },
+
+    {
+      "id": "cos-http-workflows-002",
+      "name": "Get All n8n Workflows",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [240, 80],
+      "parameters": {
+        "method": "GET",
+        "url": "https://outstanding-blessing-production-1d4b.up.railway.app/api/v1/workflows?limit=50",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{"name": "X-N8N-API-KEY", "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIwOTk3N2NkYS05MTQwLTRlNjgtYTk0OC1lODhkMWY0MDBjMTgiLCJpc3MiOiJuOG4iLCJhdWQiOiJwdWJsaWMtYXBpIiwianRpIjoiYmUzMWVlYmYtZDYxNS00M2FjLThmZTItYzZhZDY2ZWNlYzI0IiwiaWF0IjoxNzc0OTQ4MzgzfQ.EYsvgW0U0bwT154aDhujDwtJUDivYQLnqDTDBvnecP8"}] }
+      }
+    },
+
+    {
+      "id": "cos-http-executions-003",
+      "name": "Get Failed Executions 24h",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [480, 80],
+      "parameters": {
+        "method": "GET",
+        "url": "https://outstanding-blessing-production-1d4b.up.railway.app/api/v1/executions?status=error&limit=100",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{"name": "X-N8N-API-KEY", "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIwOTk3N2NkYS05MTQwLTRlNjgtYTk0OC1lODhkMWY0MDBjMTgiLCJpc3MiOiJuOG4iLCJhdWQiOiJwdWJsaWMtYXBpIiwianRpIjoiYmUzMWVlYmYtZDYxNS00M2FjLThmZTItYzZhZDY2ZWNlYzI0IiwiaWF0IjoxNzc0OTQ4MzgzfQ.EYsvgW0U0bwT154aDhujDwtJUDivYQLnqDTDBvnecP8"}] }
+      }
+    },
+
+    {
+      "id": "cos-gmail-unread-004",
+      "name": "Get Gmail Unread Emails",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [720, 80],
+      "parameters": {
+        "resource": "message",
+        "operation": "getAll",
+        "returnAll": false,
+        "limit": 10,
+        "simple": true,
+        "filters": {"readStatus": "unread"}
+      },
+      "credentials": { "gmailOAuth2": {"id": "T55BDHntJ3i1NFYw", "name": "Gmail account 2"} }
+    },
+
+    {
+      "id": "cos-code-compile-005",
+      "name": "Compile Briefing Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [960, 80],
+      "parameters": {
+        "jsCode": "const workflows = ($('Get All n8n Workflows').first().json.data || []);\nconst executions = ($('Get Failed Executions 24h').first().json.data || []);\nconst emails = $input.all().map(e => e.json);\n\nconst now = new Date();\nconst twentyFourHoursAgo = now.getTime() - 24 * 60 * 60 * 1000;\nconst recentFailures = executions.filter(e => new Date(e.startedAt).getTime() > twentyFourHoursAgo);\n\nconst active = workflows.filter(w => w.active);\nconst inactive = workflows.filter(w => !w.active);\n\nconst failuresByWf = {};\nrecentFailures.forEach(e => {\n  const name = workflows.find(w => w.id === e.workflowId)?.name || e.workflowId;\n  if (!failuresByWf[name]) failuresByWf[name] = 0;\n  failuresByWf[name]++;\n});\n\nconst failureSummary = Object.entries(failuresByWf)\n  .sort((a,b) => b[1]-a[1])\n  .map(([name, count]) => `${name}: ${count} error(s)`)\n  .join(', ') || 'None — all systems nominal';\n\nconst emailSummary = emails.slice(0, 7).map((e, i) =>\n  `${i+1}. \"${(e.subject || e.Subject || '(no subject)').substring(0,60)}\" — ${(e.from || e.From || 'unknown').substring(0,40)}`\n).join('\\n') || 'Inbox is clear';\n\nreturn [{ json: {\n  date: now.toLocaleDateString('en-GB', {weekday:'long', year:'numeric', month:'long', day:'numeric'}),\n  time: now.toLocaleTimeString('en-GB', {hour:'2-digit', minute:'2-digit', timeZone:'Europe/London'}),\n  totalWorkflows: workflows.length,\n  activeCount: active.length,\n  inactiveCount: inactive.length,\n  activeWorkflows: active.map(w => w.name).join(', ') || 'None',\n  inactiveWorkflows: inactive.map(w => w.name).join(', ') || 'None',\n  failuresLast24h: recentFailures.length,\n  failureSummary,\n  unreadEmails: emails.length,\n  emailSummary\n}}];"
+      }
+    },
+
+    {
+      "id": "cos-code-briefprompt-006",
+      "name": "Build Briefing Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1200, 80],
+      "parameters": {
+        "jsCode": "const d = $input.first().json;\nconst healthColor = d.failuresLast24h === 0 ? '#00c851' : d.failuresLast24h < 5 ? '#ffbb33' : '#ff4444';\nconst healthLabel = d.failuresLast24h === 0 ? 'ALL SYSTEMS NOMINAL' : `${d.failuresLast24h} FAILURES DETECTED`;\n\nconst prompt = `You are the AI Chief of Staff for a high-tech digital super-agent operation. Generate a STUNNING HTML executive morning briefing email.\n\nDATA INPUT:\n- Date: ${d.date} | Time: ${d.time} GMT\n- Total n8n Workflows: ${d.totalWorkflows} (${d.activeCount} active, ${d.inactiveCount} inactive)\n- Active Workflows: ${d.activeWorkflows}\n- Inactive Workflows (need attention): ${d.inactiveWorkflows}\n- Failures in last 24h: ${d.failuresLast24h} — ${d.failureSummary}\n- Unread Emails: ${d.unreadEmails}\n- Top Inbox Items:\\n${d.emailSummary}\n\nCreate a world-class HTML executive briefing with these sections:\n1. HEADER: Dark gradient (#0f3460 to #16213e), white text, avatar emoji 🧑🏾, title CHIEF OF STAFF, date/time\n2. EXECUTIVE SUMMARY: 2-3 punchy sentences about the day ahead\n3. SYSTEM HEALTH: Health status badge (${healthColor}, text: \"${healthLabel}\"), table of active/inactive workflows\n4. INBOX INTELLIGENCE: Card showing unread count, list of top emails\n5. ACTION ITEMS: 3-5 specific recommended actions based on inactive workflows and failures\n6. QUICK COMMANDS: Show webhook commands in a styled code block: POST /webhook/chief-of-staff with examples\n7. FOOTER: Chief of Staff AI | Super-Agent Operations\n\nDESIGN RULES: Use ONLY inline CSS. Dark executive color scheme: deep navy (#0f3460), electric blue (#1e90ff), clean white. Max-width 680px centered. Card-based layout. Return ONLY raw HTML starting with <!DOCTYPE html>.`;\n\nreturn [{json: {prompt}}];"
+      }
+    },
+
+    {
+      "id": "cos-http-gemini-brief-007",
+      "name": "AI Generate Briefing",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1440, 80],
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=AIzaSyDo1THZSz3g9grP37SIA3uiwApfs5hxjB4",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{"name": "Content-Type", "value": "application/json"}] },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ contents: [{ parts: [{ text: $json.prompt }] }] }) }}"
+      }
+    },
+
+    {
+      "id": "cos-code-parsebrief-008",
+      "name": "Extract Briefing HTML",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1680, 80],
+      "parameters": {
+        "jsCode": "const raw = $input.first().json.candidates[0].content.parts[0].text;\nconst html = raw.replace(/^```html\\n?/i, '').replace(/^```\\n?/i, '').replace(/\\n?```$/i, '').trim();\nconst compiled = $('Compile Briefing Data').first().json;\nconst day = new Date().toLocaleDateString('en-GB', {weekday:'long', day:'numeric', month:'long'});\nreturn [{ json: {\n  subject: `🧑🏾 Chief of Staff Briefing — ${day} | ${compiled.activeCount} active, ${compiled.unreadEmails} unread`,\n  body: html\n}}];"
+      }
+    },
+
+    {
+      "id": "cos-gmail-sendbrief-009",
+      "name": "Send Morning Briefing",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [1920, 80],
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "sendTo": "gelsonmascarenhas@gmail.com",
+        "subject": "={{ $json.subject }}",
+        "message": "={{ $json.body }}",
+        "additionalFields": {"emailType": "html"}
+      },
+      "credentials": { "gmailOAuth2": {"id": "T55BDHntJ3i1NFYw", "name": "Gmail account 2"} }
+    },
+
+    {
+      "id": "cos-trig-health-010",
+      "name": "System Health Monitor",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 600],
+      "parameters": {
+        "rule": { "interval": [{"field": "minutes", "minutesInterval": 20}] }
+      }
+    },
+
+    {
+      "id": "cos-http-errors-011",
+      "name": "Fetch Recent Failures",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [240, 600],
+      "parameters": {
+        "method": "GET",
+        "url": "https://outstanding-blessing-production-1d4b.up.railway.app/api/v1/executions?status=error&limit=100",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{"name": "X-N8N-API-KEY", "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIwOTk3N2NkYS05MTQwLTRlNjgtYTk0OC1lODhkMWY0MDBjMTgiLCJpc3MiOiJuOG4iLCJhdWQiOiJwdWJsaWMtYXBpIiwianRpIjoiYmUzMWVlYmYtZDYxNS00M2FjLThmZTItYzZhZDY2ZWNlYzI0IiwiaWF0IjoxNzc0OTQ4MzgzfQ.EYsvgW0U0bwT154aDhujDwtJUDivYQLnqDTDBvnecP8"}] }
+      }
+    },
+
+    {
+      "id": "cos-code-evalhealth-012",
+      "name": "Evaluate System Health",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 600],
+      "parameters": {
+        "jsCode": "const executions = ($input.first().json.data || []);\nconst windowMs = 20 * 60 * 1000;\nconst cutoff = Date.now() - windowMs;\n\nconst recent = executions.filter(e => new Date(e.startedAt).getTime() > cutoff);\n\nconst byWorkflow = {};\nrecent.forEach(e => {\n  if (!e.workflowId) return;\n  if (!byWorkflow[e.workflowId]) byWorkflow[e.workflowId] = {workflowId: e.workflowId, count: 0};\n  byWorkflow[e.workflowId].count++;\n});\n\nconst failures = Object.values(byWorkflow);\nconst critical = failures.filter(f => f.count >= 2);\nconst failingIds = failures.map(f => f.workflowId).filter(Boolean);\n\nreturn [{ json: {\n  failureCount: failures.length,\n  criticalCount: critical.length,\n  failingIds,\n  criticalWorkflows: critical.map(f => `WorkflowID ${f.workflowId} (${f.count} errors)`).join(', ') || 'None',\n  allFailures: failures.map(f => `${f.workflowId}: ${f.count}`).join(', '),\n  timestamp: new Date().toISOString(),\n  windowMinutes: 20\n}}];"
+      }
+    },
+
+    {
+      "id": "cos-if-critical-013",
+      "name": "Critical Failures?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [720, 600],
+      "parameters": {
+        "conditions": {
+          "options": {"caseSensitive": true, "leftValue": "", "typeValidation": "strict"},
+          "conditions": [{"id": "crit-check-1", "leftValue": "={{ $json.failureCount }}", "rightValue": 0, "operator": {"type": "number", "operation": "gt"}}],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+
+    {
+      "id": "cos-code-alertprompt-014",
+      "name": "Build Alert Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [960, 540],
+      "parameters": {
+        "jsCode": "const h = $input.first().json;\nconst prompt = `URGENT: System alert for the Super-Agent n8n automation platform.\n\nIn the last ${h.windowMinutes} minutes:\n- Failing workflows: ${h.failureCount}\n- Critical (2+ errors): ${h.criticalWorkflows}\n- All failures: ${h.allFailures}\n- Failing workflow IDs: ${h.failingIds.join(', ')}\n\nProvide:\n1. A concise 2-sentence diagnosis\n2. Immediate recommended action (1 sentence)\n3. Severity level: LOW / MEDIUM / HIGH / CRITICAL\n4. Whether auto-restart is appropriate (yes/no)\n\nReturn JSON: {\"diagnosis\": \"...\", \"action\": \"...\", \"severity\": \"...\", \"auto_restart\": true/false, \"subject_line\": \"alert email subject max 60 chars\"}`;\nreturn [{json: {prompt, failureCount: h.failureCount, criticalWorkflows: h.criticalWorkflows, failingIds: h.failingIds}}];"
+      }
+    },
+
+    {
+      "id": "cos-http-gemini-alert-015",
+      "name": "AI Diagnose Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1200, 540],
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=AIzaSyDo1THZSz3g9grP37SIA3uiwApfs5hxjB4",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{"name": "Content-Type", "value": "application/json"}] },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ contents: [{ parts: [{ text: $json.prompt }] }] }) }}"
+      }
+    },
+
+    {
+      "id": "cos-code-parsealert-016",
+      "name": "Extract Alert Text",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1440, 540],
+      "parameters": {
+        "jsCode": "const raw = $input.first().json.candidates[0].content.parts[0].text;\nlet parsed;\ntry {\n  const extracted = (raw.match(/\\{[\\s\\S]*\\}/) || [raw])[0];\n  parsed = JSON.parse(extracted);\n} catch(e) {\n  parsed = {diagnosis: raw, action: 'Check n8n execution logs', severity: 'MEDIUM', auto_restart: false, subject_line: 'System Alert: Workflow Failures Detected'};\n}\n\nconst health = $('Evaluate System Health').first().json;\nconst severityColor = parsed.severity === 'CRITICAL' ? '#ff1744' : parsed.severity === 'HIGH' ? '#ff4444' : '#ffbb33';\nconst autoHealMsg = parsed.auto_restart ? '<p style=\"color:#00c851;\"><strong>🔧 Auto-Heal:</strong> Chief of Staff is automatically restarting the failing workflow(s).</p>' : '';\n\nconst body = `<div style=\"font-family:Arial,sans-serif;max-width:600px;margin:0 auto;\">\n  <div style=\"background:#0f3460;color:white;padding:20px;border-radius:8px 8px 0 0;\">\n    <h2 style=\"margin:0;\">🧑🏾 Chief of Staff — System Alert</h2>\n    <p style=\"margin:5px 0 0;opacity:0.8;font-size:14px;\">${new Date().toLocaleString('en-GB')}</p>\n  </div>\n  <div style=\"background:#fff8f8;border:2px solid ${severityColor};padding:20px;\">\n    <div style=\"background:${severityColor};color:white;display:inline-block;padding:4px 12px;border-radius:4px;font-weight:bold;margin-bottom:15px;\">${parsed.severity}</div>\n    <p><strong>Failures detected:</strong> ${health.failureCount} workflow(s) in last ${health.windowMinutes} min</p>\n    <p><strong>Critical:</strong> ${health.criticalWorkflows}</p>${autoHealMsg}\n    <hr style=\"border:1px solid #eee;\">\n    <p><strong>Diagnosis:</strong> ${parsed.diagnosis}</p>\n    <p><strong>Recommended Action:</strong> ${parsed.action}</p>\n    <hr style=\"border:1px solid #eee;\">\n    <p style=\"font-size:12px;color:#666;\">To check status: POST /webhook/chief-of-staff {\"command\":\"status\"}<br>To view history: POST /webhook/chief-of-staff {\"command\":\"history\"}</p>\n  </div>\n  <div style=\"background:#0f3460;color:white;padding:10px;border-radius:0 0 8px 8px;font-size:12px;text-align:center;\">🧑🏾 Chief of Staff AI | Super-Agent Operations</div>\n</div>`;\n\nreturn [{json: { subject: `⚠️ [${parsed.severity}] ${parsed.subject_line}`, body, autoRestart: parsed.auto_restart }}];"
+      }
+    },
+
+    {
+      "id": "cos-gmail-sendalert-017",
+      "name": "Send Alert Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [1680, 540],
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "sendTo": "gelsonmascarenhas@gmail.com",
+        "subject": "={{ $json.subject }}",
+        "message": "={{ $json.body }}",
+        "additionalFields": {"emailType": "html"}
+      },
+      "credentials": { "gmailOAuth2": {"id": "T55BDHntJ3i1NFYw", "name": "Gmail account 2"} }
+    },
+
+    {
+      "id": "cos-http-autoheal-045",
+      "name": "Auto Heal Workflow",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1920, 540],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'https://outstanding-blessing-production-1d4b.up.railway.app/api/v1/workflows/' + $('Evaluate System Health').first().json.failingIds[0] + '/activate' }}",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{"name": "X-N8N-API-KEY", "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIwOTk3N2NkYS05MTQwLTRlNjgtYTk0OC1lODhkMWY0MDBjMTgiLCJpc3MiOiJuOG4iLCJhdWQiOiJwdWJsaWMtYXBpIiwianRpIjoiYmUzMWVlYmYtZDYxNS00M2FjLThmZTItYzZhZDY2ZWNlYzI0IiwiaWF0IjoxNzc0OTQ4MzgzfQ.EYsvgW0U0bwT154aDhujDwtJUDivYQLnqDTDBvnecP8"}] }
+      }
+    },
+
+    {
+      "id": "cos-noop-healthy-018",
+      "name": "All Systems Healthy",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [960, 720],
+      "parameters": {}
+    },
+
+    {
+      "id": "cos-webhook-cmd-019",
+      "name": "Chief of Staff Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 1200],
+      "webhookId": "cos-cmd-webhook-2026",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "chief-of-staff",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+
+    {
+      "id": "cos-code-cmdprompt-020",
+      "name": "Build Command Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [240, 1200],
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body || {};\nconst command = body.command || body.query || body.text || JSON.stringify(body);\n\nconst prompt = `You are the Chief of Staff AI command parser. Parse this command and return a structured JSON intent.\n\nCOMMAND: \"${command}\"\n\nAVAILABLE INTENTS:\n- \"status\": user wants system status / health overview of all workflows\n- \"activate\": user wants to start a specific workflow (extract workflow_name, action=\"activate\")\n- \"deactivate\": user wants to stop a workflow (extract workflow_name, action=\"deactivate\")\n- \"restart\": user wants to restart (stop then start) a specific workflow (extract workflow_name)\n- \"history\": user wants to see recent errors or failure history of the system\n- \"dispatch\": user wants to send a command to another secretary agent — Gmail or Outlook (extract target workflow name and the sub_command to pass)\n- \"brief\": user wants an instant intelligence briefing or summary\n- \"general\": anything else — a question, request, or conversation\n\nReturn ONLY valid JSON:\n{\"intent\": \"status|activate|deactivate|restart|history|dispatch|brief|general\", \"workflow_name\": \"name if applicable or null\", \"action\": \"activate|deactivate or null\", \"target\": \"gmail secretary|outlook secretary or null\", \"sub_command\": \"the command to pass to the sub-agent, or null\", \"query\": \"original command\"}`;\n\nreturn [{json: {prompt, original_command: command}}];"
+      }
+    },
+
+    {
+      "id": "cos-http-gemini-cmd-021",
+      "name": "AI Parse Command",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [480, 1200],
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=AIzaSyDo1THZSz3g9grP37SIA3uiwApfs5hxjB4",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{"name": "Content-Type", "value": "application/json"}] },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ contents: [{ parts: [{ text: $json.prompt }] }] }) }}"
+      }
+    },
+
+    {
+      "id": "cos-code-parsecmd-022",
+      "name": "Parse Command Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [720, 1200],
+      "parameters": {
+        "jsCode": "const raw = $input.first().json.candidates[0].content.parts[0].text;\nlet parsed;\ntry {\n  const extracted = (raw.match(/\\{[\\s\\S]*\\}/) || [raw])[0];\n  parsed = JSON.parse(extracted);\n} catch(e) {\n  parsed = {intent: 'general', query: $('Build Command Prompt').first().json.original_command};\n}\nconst valid = ['status','activate','deactivate','restart','history','dispatch','brief','general'];\nif (!valid.includes(parsed.intent)) parsed.intent = 'general';\nreturn [{json: parsed}];"
+      }
+    },
+
+    {
+      "id": "cos-switch-route-023",
+      "name": "Route Command",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [960, 1200],
+      "parameters": {
+        "mode": "rules",
+        "rules": {
+          "values": [
+            { "conditions": { "options": {"caseSensitive": false}, "conditions": [{"leftValue": "={{ $json.intent }}", "rightValue": "status", "operator": {"type": "string", "operation": "equals"}}], "combinator": "and" }, "output": 0 },
+            { "conditions": { "options": {"caseSensitive": false}, "conditions": [{"leftValue": "={{ $json.intent }}", "rightValue": "activate", "operator": {"type": "string", "operation": "equals"}}], "combinator": "and" }, "output": 1 },
+            { "conditions": { "options": {"caseSensitive": false}, "conditions": [{"leftValue": "={{ $json.intent }}", "rightValue": "deactivate", "operator": {"type": "string", "operation": "equals"}}], "combinator": "and" }, "output": 2 },
+            { "conditions": { "options": {"caseSensitive": false}, "conditions": [{"leftValue": "={{ $json.intent }}", "rightValue": "restart", "operator": {"type": "string", "operation": "equals"}}], "combinator": "and" }, "output": 3 },
+            { "conditions": { "options": {"caseSensitive": false}, "conditions": [{"leftValue": "={{ $json.intent }}", "rightValue": "history", "operator": {"type": "string", "operation": "equals"}}], "combinator": "and" }, "output": 4 },
+            { "conditions": { "options": {"caseSensitive": false}, "conditions": [{"leftValue": "={{ $json.intent }}", "rightValue": "dispatch", "operator": {"type": "string", "operation": "equals"}}], "combinator": "and" }, "output": 5 },
+            { "conditions": { "options": {"caseSensitive": false}, "conditions": [{"leftValue": "={{ $json.intent }}", "rightValue": "brief", "operator": {"type": "string", "operation": "equals"}}], "combinator": "and" }, "output": 6 }
+          ]
+        },
+        "fallbackOutput": 7
+      }
+    },
+
+    {
+      "id": "cos-http-getstatus-024",
+      "name": "Get Status Data",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1200, 980],
+      "parameters": {
+        "method": "GET",
+        "url": "https://outstanding-blessing-production-1d4b.up.railway.app/api/v1/workflows?limit=50",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{"name": "X-N8N-API-KEY", "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIwOTk3N2NkYS05MTQwLTRlNjgtYTk0OC1lODhkMWY0MDBjMTgiLCJpc3MiOiJuOG4iLCJhdWQiOiJwdWJsaWMtYXBpIiwianRpIjoiYmUzMWVlYmYtZDYxNS00M2FjLThmZTItYzZhZDY2ZWNlYzI0IiwiaWF0IjoxNzc0OTQ4MzgzfQ.EYsvgW0U0bwT154aDhujDwtJUDivYQLnqDTDBvnecP8"}] }
+      }
+    },
+
+    {
+      "id": "cos-code-fmtstatus-025",
+      "name": "Format Status Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1440, 980],
+      "parameters": {
+        "jsCode": "const workflows = ($input.first().json.data || []);\nconst active = workflows.filter(w => w.active);\nconst inactive = workflows.filter(w => !w.active);\n\nconst activeList = active.map(w => `✅ ${w.name}`).join('\\n');\nconst inactiveList = inactive.map(w => `⏸️  ${w.name}`).join('\\n');\n\nreturn [{ json: {\n  success: true,\n  response: `🧑🏾 CHIEF OF STAFF — SYSTEM STATUS\\n\\n📊 Total: ${workflows.length} workflows\\n\\n🟢 ACTIVE (${active.length}):\\n${activeList}\\n\\n🔴 INACTIVE (${inactive.length}):\\n${inactiveList}\\n\\n💡 Commands: activate [name] | deactivate [name] | restart [name] | history | dispatch to [agent]: [command]`,\n  timestamp: new Date().toISOString(),\n  active_count: active.length,\n  inactive_count: inactive.length\n}}];"
+      }
+    },
+
+    {
+      "id": "cos-respond-status-026",
+      "name": "Respond: Status",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1680, 980],
+      "parameters": { "options": {}, "respondWith": "json", "responseBody": "={{ JSON.stringify($json) }}" }
+    },
+
+    {
+      "id": "cos-http-getfortoggle-027",
+      "name": "Get Workflows for Toggle",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1200, 1140],
+      "parameters": {
+        "method": "GET",
+        "url": "https://outstanding-blessing-production-1d4b.up.railway.app/api/v1/workflows?limit=50",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{"name": "X-N8N-API-KEY", "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIwOTk3N2NkYS05MTQwLTRlNjgtYTk0OC1lODhkMWY0MDBjMTgiLCJpc3MiOiJuOG4iLCJhdWQiOiJwdWJsaWMtYXBpIiwianRpIjoiYmUzMWVlYmYtZDYxNS00M2FjLThmZTItYzZhZDY2ZWNlYzI0IiwiaWF0IjoxNzc0OTQ4MzgzfQ.EYsvgW0U0bwT154aDhujDwtJUDivYQLnqDTDBvnecP8"}] }
+      }
+    },
+
+    {
+      "id": "cos-code-findwf-028",
+      "name": "Find and Map Workflow",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1440, 1140],
+      "parameters": {
+        "jsCode": "const workflows = ($input.first().json.data || []);\nconst intent = $('Parse Command Result').first().json;\nconst targetName = ((intent.workflow_name || intent.query || '')).toLowerCase().trim();\nconst isActivate = intent.intent === 'activate';\n\nif (!targetName) {\n  return [{json: {error: true, message: 'No workflow name specified. Usage: {\"command\": \"activate Crypto Specialist\"}'}}];\n}\n\nconst match = workflows.find(w => w.name.toLowerCase().includes(targetName));\nif (!match) {\n  const available = workflows.map(w => w.name).join(', ');\n  return [{json: {error: true, message: `Workflow \"${targetName}\" not found. Available: ${available}`}}];\n}\n\nreturn [{json: { error: false, workflow_id: match.id, workflow_name: match.name, new_active: isActivate, action: isActivate ? 'activated' : 'deactivated' }}];"
+      }
+    },
+
+    {
+      "id": "cos-http-toggleapi-029",
+      "name": "Toggle Workflow API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1680, 1140],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'https://outstanding-blessing-production-1d4b.up.railway.app/api/v1/workflows/' + $json.workflow_id + ($json.new_active ? '/activate' : '/deactivate') }}",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{"name": "X-N8N-API-KEY", "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIwOTk3N2NkYS05MTQwLTRlNjgtYTk0OC1lODhkMWY0MDBjMTgiLCJpc3MiOiJuOG4iLCJhdWQiOiJwdWJsaWMtYXBpIiwianRpIjoiYmUzMWVlYmYtZDYxNS00M2FjLThmZTItYzZhZDY2ZWNlYzI0IiwiaWF0IjoxNzc0OTQ4MzgzfQ.EYsvgW0U0bwT154aDhujDwtJUDivYQLnqDTDBvnecP8"}] }
+      }
+    },
+
+    {
+      "id": "cos-respond-toggle-030",
+      "name": "Respond: Toggle",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1920, 1140],
+      "parameters": {
+        "options": {},
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({success: true, response: '🧑🏾 Workflow \"' + $('Find and Map Workflow').first().json.workflow_name + '\" has been ' + $('Find and Map Workflow').first().json.action + ' successfully.', timestamp: new Date().toISOString()}) }}"
+      }
+    },
+
+    {
+      "id": "cos-http-getwfrestart-037",
+      "name": "Get WFs for Restart",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1200, 1300],
+      "parameters": {
+        "method": "GET",
+        "url": "https://outstanding-blessing-production-1d4b.up.railway.app/api/v1/workflows?limit=50",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{"name": "X-N8N-API-KEY", "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIwOTk3N2NkYS05MTQwLTRlNjgtYTk0OC1lODhkMWY0MDBjMTgiLCJpc3MiOiJuOG4iLCJhdWQiOiJwdWJsaWMtYXBpIiwianRpIjoiYmUzMWVlYmYtZDYxNS00M2FjLThmZTItYzZhZDY2ZWNlYzI0IiwiaWF0IjoxNzc0OTQ4MzgzfQ.EYsvgW0U0bwT154aDhujDwtJUDivYQLnqDTDBvnecP8"}] }
+      }
+    },
+
+    {
+      "id": "cos-code-findwfrestart-038",
+      "name": "Find Workflow to Restart",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1440, 1300],
+      "parameters": {
+        "jsCode": "const workflows = ($input.first().json.data || []);\nconst intent = $('Parse Command Result').first().json;\nconst targetName = ((intent.workflow_name || intent.query || '')).toLowerCase().trim();\n\nif (!targetName) {\n  return [{json: {error: true, message: 'No workflow name specified. Usage: {\"command\": \"restart Crypto Specialist\"}'}}];\n}\n\nconst match = workflows.find(w => w.name.toLowerCase().includes(targetName));\nif (!match) {\n  const available = workflows.map(w => w.name).join(', ');\n  return [{json: {error: true, message: `Workflow \"${targetName}\" not found. Available: ${available}`}}];\n}\n\nreturn [{json: { error: false, workflow_id: match.id, workflow_name: match.name, was_active: match.active }}];"
+      }
+    },
+
+    {
+      "id": "cos-http-deactivateforrestart-039",
+      "name": "Deactivate for Restart",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1680, 1300],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'https://outstanding-blessing-production-1d4b.up.railway.app/api/v1/workflows/' + $json.workflow_id + '/deactivate' }}",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{"name": "X-N8N-API-KEY", "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIwOTk3N2NkYS05MTQwLTRlNjgtYTk0OC1lODhkMWY0MDBjMTgiLCJpc3MiOiJuOG4iLCJhdWQiOiJwdWJsaWMtYXBpIiwianRpIjoiYmUzMWVlYmYtZDYxNS00M2FjLThmZTItYzZhZDY2ZWNlYzI0IiwiaWF0IjoxNzc0OTQ4MzgzfQ.EYsvgW0U0bwT154aDhujDwtJUDivYQLnqDTDBvnecP8"}] }
+      }
+    },
+
+    {
+      "id": "cos-http-reactivate-040",
+      "name": "Reactivate After Restart",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1920, 1300],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'https://outstanding-blessing-production-1d4b.up.railway.app/api/v1/workflows/' + $('Find Workflow to Restart').first().json.workflow_id + '/activate' }}",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{"name": "X-N8N-API-KEY", "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIwOTk3N2NkYS05MTQwLTRlNjgtYTk0OC1lODhkMWY0MDBjMTgiLCJpc3MiOiJuOG4iLCJhdWQiOiJwdWJsaWMtYXBpIiwianRpIjoiYmUzMWVlYmYtZDYxNS00M2FjLThmZTItYzZhZDY2ZWNlYzI0IiwiaWF0IjoxNzc0OTQ4MzgzfQ.EYsvgW0U0bwT154aDhujDwtJUDivYQLnqDTDBvnecP8"}] }
+      }
+    },
+
+    {
+      "id": "cos-respond-restart-041",
+      "name": "Respond: Restart",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2160, 1300],
+      "parameters": {
+        "options": {},
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({success: true, response: '🔄 Workflow \"' + $('Find Workflow to Restart').first().json.workflow_name + '\" has been fully restarted (deactivated → activated). Fresh start complete.', timestamp: new Date().toISOString()}) }}"
+      }
+    },
+
+    {
+      "id": "cos-http-errorhistory-042",
+      "name": "Get Error History",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1200, 1460],
+      "parameters": {
+        "method": "GET",
+        "url": "https://outstanding-blessing-production-1d4b.up.railway.app/api/v1/executions?status=error&limit=20",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{"name": "X-N8N-API-KEY", "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIwOTk3N2NkYS05MTQwLTRlNjgtYTk0OC1lODhkMWY0MDBjMTgiLCJpc3MiOiJuOG4iLCJhdWQiOiJwdWJsaWMtYXBpIiwianRpIjoiYmUzMWVlYmYtZDYxNS00M2FjLThmZTItYzZhZDY2ZWNlYzI0IiwiaWF0IjoxNzc0OTQ4MzgzfQ.EYsvgW0U0bwT154aDhujDwtJUDivYQLnqDTDBvnecP8"}] }
+      }
+    },
+
+    {
+      "id": "cos-http-wfnameshistory-043",
+      "name": "Get WF Names for History",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1440, 1460],
+      "parameters": {
+        "method": "GET",
+        "url": "https://outstanding-blessing-production-1d4b.up.railway.app/api/v1/workflows?limit=50",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{"name": "X-N8N-API-KEY", "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIwOTk3N2NkYS05MTQwLTRlNjgtYTk0OC1lODhkMWY0MDBjMTgiLCJpc3MiOiJuOG4iLCJhdWQiOiJwdWJsaWMtYXBpIiwianRpIjoiYmUzMWVlYmYtZDYxNS00M2FjLThmZTItYzZhZDY2ZWNlYzI0IiwiaWF0IjoxNzc0OTQ4MzgzfQ.EYsvgW0U0bwT154aDhujDwtJUDivYQLnqDTDBvnecP8"}] }
+      }
+    },
+
+    {
+      "id": "cos-code-fmthistory-044",
+      "name": "Format Error History",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1680, 1460],
+      "parameters": {
+        "jsCode": "const executions = ($('Get Error History').first().json.data || []).slice(0, 15);\nconst workflows = ($input.first().json.data || []);\n\nconst wfMap = {};\nworkflows.forEach(w => { wfMap[w.id] = w.name; });\n\nconst failuresByWf = {};\nexecutions.forEach(e => {\n  const name = wfMap[e.workflowId] || `ID:${e.workflowId}`;\n  if (!failuresByWf[name]) failuresByWf[name] = 0;\n  failuresByWf[name]++;\n});\n\nconst sorted = Object.entries(failuresByWf).sort((a,b) => b[1]-a[1]);\nconst topFailer = sorted[0]?.[0] || 'None';\nconst topCount = sorted[0]?.[1] || 0;\n\nconst recentList = executions.slice(0, 12).map((e, i) => {\n  const name = wfMap[e.workflowId] || e.workflowId;\n  const dt = new Date(e.startedAt);\n  const time = dt.toLocaleTimeString('en-GB', {hour:'2-digit', minute:'2-digit'});\n  const date = dt.toLocaleDateString('en-GB', {day:'numeric', month:'short'});\n  return `${i+1}. [${date} ${time}] ${name}`;\n}).join('\\n');\n\nconst leaderboard = sorted.slice(0,5).map(([name,cnt]) => `  ${name}: ${cnt} failure(s)`).join('\\n');\n\nreturn [{json: {\n  success: true,\n  response: `🧑🏾 CHIEF OF STAFF — ERROR HISTORY\\n\\n📋 Last ${executions.length} failed executions:\\n\\n${recentList}\\n\\n🏴 Failure Leaderboard (most problematic):\\n${leaderboard}\\n\\n💡 Remediation:\\n• To restart a workflow: {\"command\": \"restart [name]\"}\\n• To check live status: {\"command\": \"status\"}\\n• For full alert: {\"command\": \"dispatch to gmail secretary: check unread\"}`,\n  timestamp: new Date().toISOString()\n}}];"
+      }
+    },
+
+    {
+      "id": "cos-respond-history-045",
+      "name": "Respond: History",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1920, 1460],
+      "parameters": { "options": {}, "respondWith": "json", "responseBody": "={{ JSON.stringify($json) }}" }
+    },
+
+    {
+      "id": "cos-code-builddispatch-046",
+      "name": "Build Dispatch Call",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1200, 1620],
+      "parameters": {
+        "jsCode": "const intent = $input.first().json;\nconst N8N_BASE = 'https://outstanding-blessing-production-1d4b.up.railway.app';\n\nconst webhookMap = [\n  {keys: ['gmail secretary', 'gmail manager', 'gmail'], path: '/webhook/gmail-secretary'},\n  {keys: ['outlook secretary', 'outlook', 'microsoft'], path: '/webhook/secretary'},\n  {keys: ['chief of staff', 'chief', 'cos'], path: '/webhook/chief-of-staff'}\n];\n\nconst target = (intent.target || intent.query || '').toLowerCase();\nlet path = '/webhook/gmail-secretary';\nfor (const mapping of webhookMap) {\n  if (mapping.keys.some(k => target.includes(k))) { path = mapping.path; break; }\n}\n\nconst subCommand = intent.sub_command || intent.query || 'status';\n\nreturn [{json: {\n  webhook_url: N8N_BASE + path,\n  sub_command: subCommand,\n  target: intent.target || 'gmail secretary',\n  path\n}}];"
+      }
+    },
+
+    {
+      "id": "cos-http-executedispatch-047",
+      "name": "Execute Dispatch",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1440, 1620],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.webhook_url }}",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{"name": "Content-Type", "value": "application/json"}] },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ command: $json.sub_command }) }}"
+      }
+    },
+
+    {
+      "id": "cos-code-fmtdispatch-048",
+      "name": "Format Dispatch Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1680, 1620],
+      "parameters": {
+        "jsCode": "const result = $input.first().json;\nconst intent = $('Parse Command Result').first().json;\nconst dispatchMeta = $('Build Dispatch Call').first().json;\n\nlet responseText;\nif (result.code && result.code >= 400) {\n  responseText = `⚠️ The sub-agent at ${dispatchMeta.path} returned an error: ${result.message || JSON.stringify(result)}`;\n} else if (typeof result.response === 'string') {\n  responseText = result.response;\n} else {\n  responseText = JSON.stringify(result, null, 2);\n}\n\nreturn [{json: {\n  success: true,\n  response: `🧑🏾 CHIEF OF STAFF — DISPATCH RESULT\\n\\n📡 Routed to: ${dispatchMeta.target}\\n💬 Command: \"${dispatchMeta.sub_command}\"\\n\\n📩 Sub-agent response:\\n${responseText}`,\n  timestamp: new Date().toISOString()\n}}];"
+      }
+    },
+
+    {
+      "id": "cos-respond-dispatch-049",
+      "name": "Respond: Dispatch",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1920, 1620],
+      "parameters": { "options": {}, "respondWith": "json", "responseBody": "={{ JSON.stringify($json) }}" }
+    },
+
+    {
+      "id": "cos-http-briefdata-031",
+      "name": "Get Brief Data",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1200, 1780],
+      "parameters": {
+        "method": "GET",
+        "url": "https://outstanding-blessing-production-1d4b.up.railway.app/api/v1/workflows?limit=50",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{"name": "X-N8N-API-KEY", "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIwOTk3N2NkYS05MTQwLTRlNjgtYTk0OC1lODhkMWY0MDBjMTgiLCJpc3MiOiJuOG4iLCJhdWQiOiJwdWJsaWMtYXBpIiwianRpIjoiYmUzMWVlYmYtZDYxNS00M2FjLThmZTItYzZhZDY2ZWNlYzI0IiwiaWF0IjoxNzc0OTQ4MzgzfQ.EYsvgW0U0bwT154aDhujDwtJUDivYQLnqDTDBvnecP8"}] }
+      }
+    },
+
+    {
+      "id": "cos-code-fmtbrief-032",
+      "name": "Format Instant Brief",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1440, 1780],
+      "parameters": {
+        "jsCode": "const workflows = ($input.first().json.data || []);\nconst active = workflows.filter(w => w.active);\nconst inactive = workflows.filter(w => !w.active);\nconst now = new Date();\n\nconst brief = `🧑🏾 CHIEF OF STAFF — INSTANT BRIEFING\\n📅 ${now.toLocaleDateString('en-GB', {weekday:'long', day:'numeric', month:'long', year:'numeric'})} | ${now.toLocaleTimeString('en-GB')}\\n\\n📊 SYSTEM OVERVIEW\\n• ${workflows.length} total workflows registered\\n• ${active.length} currently active\\n• ${inactive.length} dormant\\n\\n🟢 ACTIVE WORKFORCE:\\n${active.map(w => `  → ${w.name}`).join('\\n')}\\n\\n⏸️ DORMANT (activate on demand):\\n${inactive.map(w => `  → ${w.name}`).join('\\n')}\\n\\n💡 FULL COMMAND MENU:\\n• status — Full health report\\n• activate [name] — Start a workflow\\n• deactivate [name] — Pause a workflow\\n• restart [name] — Hard restart a workflow\\n• history — View recent system errors\\n• dispatch to [gmail|outlook] secretary: [command] — Route to a sub-agent\\n• [any question] — Ask me anything\\n\\n— 🧑🏾 Chief of Staff AI, ${now.toISOString()}`;\n\nreturn [{ json: {success: true, response: brief, timestamp: now.toISOString(), active_count: active.length, inactive_count: inactive.length}}];"
+      }
+    },
+
+    {
+      "id": "cos-respond-brief-033",
+      "name": "Respond: Brief",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1680, 1780],
+      "parameters": { "options": {}, "respondWith": "json", "responseBody": "={{ JSON.stringify($json) }}" }
+    },
+
+    {
+      "id": "cos-http-getcontext-050",
+      "name": "Get Context for General",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1200, 1940],
+      "parameters": {
+        "method": "GET",
+        "url": "https://outstanding-blessing-production-1d4b.up.railway.app/api/v1/workflows?limit=50",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{"name": "X-N8N-API-KEY", "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIwOTk3N2NkYS05MTQwLTRlNjgtYTk0OC1lODhkMWY0MDBjMTgiLCJpc3MiOiJuOG4iLCJhdWQiOiJwdWJsaWMtYXBpIiwianRpIjoiYmUzMWVlYmYtZDYxNS00M2FjLThmZTItYzZhZDY2ZWNlYzI0IiwiaWF0IjoxNzc0OTQ4MzgzfQ.EYsvgW0U0bwT154aDhujDwtJUDivYQLnqDTDBvnecP8"}] }
+      }
+    },
+
+    {
+      "id": "cos-code-buildgeneralprompt-051",
+      "name": "Build General Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1440, 1940],
+      "parameters": {
+        "jsCode": "const workflows = ($input.first().json.data || []);\nconst intent = $('Parse Command Result').first().json;\nconst query = intent.query || intent.workflow_name || 'hello';\nconst active = workflows.filter(w => w.active).map(w => w.name);\nconst inactive = workflows.filter(w => !w.active).map(w => w.name);\n\nconst prompt = `You are the Chief of Staff AI (🧑🏾) for a digital super-agent automation system. You are intelligent, concise, and actionable.\n\nLIVE SYSTEM STATE RIGHT NOW:\n- Active workflows (${active.length}): ${active.join(', ')}\n- Dormant workflows (${inactive.length}): ${inactive.join(', ')}\n\nYOUR FULL CAPABILITIES:\n- status: full system health report\n- brief: instant intelligence briefing\n- activate [name] / deactivate [name]: control any workflow\n- restart [name]: hard restart a workflow\n- history: analyse recent system errors\n- dispatch to gmail secretary: [command] — route commands to Gmail Secretary\n- dispatch to outlook secretary: [command] — route commands to Outlook Secretary\n- [any question]: answer anything about the system\n\nUSER QUERY: \"${query}\"\n\nRespond in 3-5 sentences. Be specific — reference actual workflow names and states from the live data above. Give actionable advice.`;\n\nreturn [{json: {prompt}}];"
+      }
+    },
+
+    {
+      "id": "cos-http-gemini-general-034",
+      "name": "AI General Answer",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1680, 1940],
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=AIzaSyDo1THZSz3g9grP37SIA3uiwApfs5hxjB4",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{"name": "Content-Type", "value": "application/json"}] },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ contents: [{ parts: [{ text: $json.prompt }] }] }) }}"
+      }
+    },
+
+    {
+      "id": "cos-code-parsegeneral-035",
+      "name": "Parse General Answer",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1920, 1940],
+      "parameters": {
+        "jsCode": "const raw = $input.first().json.candidates[0].content.parts[0].text;\nreturn [{ json: { success: true, response: raw.trim(), timestamp: new Date().toISOString() }}];"
+      }
+    },
+
+    {
+      "id": "cos-respond-general-036",
+      "name": "Respond: General",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2160, 1940],
+      "parameters": { "options": {}, "respondWith": "json", "responseBody": "={{ JSON.stringify($json) }}" }
+    }
+
+  ],
+
+  "connections": {
+    "7 AM Morning Briefing": { "main": [[{"node": "Get All n8n Workflows", "type": "main", "index": 0}]] },
+    "Get All n8n Workflows": { "main": [[{"node": "Get Failed Executions 24h", "type": "main", "index": 0}]] },
+    "Get Failed Executions 24h": { "main": [[{"node": "Get Gmail Unread Emails", "type": "main", "index": 0}]] },
+    "Get Gmail Unread Emails": { "main": [[{"node": "Compile Briefing Data", "type": "main", "index": 0}]] },
+    "Compile Briefing Data": { "main": [[{"node": "Build Briefing Prompt", "type": "main", "index": 0}]] },
+    "Build Briefing Prompt": { "main": [[{"node": "AI Generate Briefing", "type": "main", "index": 0}]] },
+    "AI Generate Briefing": { "main": [[{"node": "Extract Briefing HTML", "type": "main", "index": 0}]] },
+    "Extract Briefing HTML": { "main": [[{"node": "Send Morning Briefing", "type": "main", "index": 0}]] },
+
+    "System Health Monitor": { "main": [[{"node": "Fetch Recent Failures", "type": "main", "index": 0}]] },
+    "Fetch Recent Failures": { "main": [[{"node": "Evaluate System Health", "type": "main", "index": 0}]] },
+    "Evaluate System Health": { "main": [[{"node": "Critical Failures?", "type": "main", "index": 0}]] },
+    "Critical Failures?": {
+      "main": [
+        [{"node": "Build Alert Prompt", "type": "main", "index": 0}],
+        [{"node": "All Systems Healthy", "type": "main", "index": 0}]
+      ]
+    },
+    "Build Alert Prompt": { "main": [[{"node": "AI Diagnose Alert", "type": "main", "index": 0}]] },
+    "AI Diagnose Alert": { "main": [[{"node": "Extract Alert Text", "type": "main", "index": 0}]] },
+    "Extract Alert Text": { "main": [[{"node": "Send Alert Email", "type": "main", "index": 0}]] },
+    "Send Alert Email": { "main": [[{"node": "Auto Heal Workflow", "type": "main", "index": 0}]] },
+
+    "Chief of Staff Webhook": { "main": [[{"node": "Build Command Prompt", "type": "main", "index": 0}]] },
+    "Build Command Prompt": { "main": [[{"node": "AI Parse Command", "type": "main", "index": 0}]] },
+    "AI Parse Command": { "main": [[{"node": "Parse Command Result", "type": "main", "index": 0}]] },
+    "Parse Command Result": { "main": [[{"node": "Route Command", "type": "main", "index": 0}]] },
+    "Route Command": {
+      "main": [
+        [{"node": "Get Status Data", "type": "main", "index": 0}],
+        [{"node": "Get Workflows for Toggle", "type": "main", "index": 0}],
+        [{"node": "Get Workflows for Toggle", "type": "main", "index": 0}],
+        [{"node": "Get WFs for Restart", "type": "main", "index": 0}],
+        [{"node": "Get Error History", "type": "main", "index": 0}],
+        [{"node": "Build Dispatch Call", "type": "main", "index": 0}],
+        [{"node": "Get Brief Data", "type": "main", "index": 0}],
+        [{"node": "Get Context for General", "type": "main", "index": 0}]
+      ]
+    },
+    "Get Status Data": { "main": [[{"node": "Format Status Response", "type": "main", "index": 0}]] },
+    "Format Status Response": { "main": [[{"node": "Respond: Status", "type": "main", "index": 0}]] },
+    "Get Workflows for Toggle": { "main": [[{"node": "Find and Map Workflow", "type": "main", "index": 0}]] },
+    "Find and Map Workflow": { "main": [[{"node": "Toggle Workflow API", "type": "main", "index": 0}]] },
+    "Toggle Workflow API": { "main": [[{"node": "Respond: Toggle", "type": "main", "index": 0}]] },
+    "Get WFs for Restart": { "main": [[{"node": "Find Workflow to Restart", "type": "main", "index": 0}]] },
+    "Find Workflow to Restart": { "main": [[{"node": "Deactivate for Restart", "type": "main", "index": 0}]] },
+    "Deactivate for Restart": { "main": [[{"node": "Reactivate After Restart", "type": "main", "index": 0}]] },
+    "Reactivate After Restart": { "main": [[{"node": "Respond: Restart", "type": "main", "index": 0}]] },
+    "Get Error History": { "main": [[{"node": "Get WF Names for History", "type": "main", "index": 0}]] },
+    "Get WF Names for History": { "main": [[{"node": "Format Error History", "type": "main", "index": 0}]] },
+    "Format Error History": { "main": [[{"node": "Respond: History", "type": "main", "index": 0}]] },
+    "Build Dispatch Call": { "main": [[{"node": "Execute Dispatch", "type": "main", "index": 0}]] },
+    "Execute Dispatch": { "main": [[{"node": "Format Dispatch Response", "type": "main", "index": 0}]] },
+    "Format Dispatch Response": { "main": [[{"node": "Respond: Dispatch", "type": "main", "index": 0}]] },
+    "Get Brief Data": { "main": [[{"node": "Format Instant Brief", "type": "main", "index": 0}]] },
+    "Format Instant Brief": { "main": [[{"node": "Respond: Brief", "type": "main", "index": 0}]] },
+    "Get Context for General": { "main": [[{"node": "Build General Prompt", "type": "main", "index": 0}]] },
+    "Build General Prompt": { "main": [[{"node": "AI General Answer", "type": "main", "index": 0}]] },
+    "AI General Answer": { "main": [[{"node": "Parse General Answer", "type": "main", "index": 0}]] },
+    "Parse General Answer": { "main": [[{"node": "Respond: General", "type": "main", "index": 0}]] }
+  },
+
+  "settings": { "executionOrder": "v1" }
+}

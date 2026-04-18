@@ -291,6 +291,17 @@
     }
     .speak-btn:hover { color: #c9a227; }
 
+    .feedback-row { display:flex; align-items:center; gap:6px; margin-top:4px; }
+    .fb-btn {
+      background: none; border: 1px solid #2a2a2a; border-radius: 4px;
+      color: #555; padding: 2px 7px; font-size: 13px; cursor: pointer;
+      transition: all 0.2s; line-height: 1.4;
+    }
+    .fb-btn:hover { border-color: #555; color: #c9d1d9; background: #1a1a1a; }
+    .fb-btn.voted-up   { border-color: #3fb950; color: #3fb950; background: #0d2a14; }
+    .fb-btn.voted-down { border-color: #f85149; color: #f85149; background: #2d0f0e; }
+    .fb-thanks { font-size: 10px; color: #555; }
+
     .typing .bubble {
       background: #1e1e1e;
       border: 1px solid #2a2a2a;
@@ -1652,6 +1663,42 @@
     return div;
   }
 
+  // ── Response feedback (👍 / 👎) ─────────────────────────────────────────────
+  function _attachFeedback(msgDiv, origMsg, modelUsed, routedBy) {
+    const row = document.createElement('div');
+    row.className = 'feedback-row';
+    const up   = document.createElement('button');
+    const down = document.createElement('button');
+    const thanks = document.createElement('span');
+    up.className = 'fb-btn'; up.textContent = '👍'; up.title = 'Good response';
+    down.className = 'fb-btn'; down.textContent = '👎'; down.title = 'Bad response';
+    thanks.className = 'fb-thanks';
+    row.appendChild(up); row.appendChild(down); row.appendChild(thanks);
+    msgDiv.appendChild(row);
+
+    function vote(rating) {
+      if (up.disabled) return;
+      up.disabled = down.disabled = true;
+      if (rating >= 4) { up.classList.add('voted-up'); }
+      else             { down.classList.add('voted-down'); }
+      thanks.textContent = rating >= 4 ? 'Thanks!' : 'Noted — will improve';
+      fetch('/feedback', {
+        method: 'POST',
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({
+          session_id: sessionId,
+          message:    origMsg,
+          model_used: modelUsed || 'UNKNOWN',
+          routed_by:  routedBy  || 'unknown',
+          rating,
+          correction: '',
+        }),
+      }).catch(() => {});
+    }
+    up.onclick   = () => vote(5);
+    down.onclick = () => vote(1);
+  }
+
   // ── TTS ─────────────────────────────────────────────────────────────────────
   function speakText(text, btn) {
     if (!window.speechSynthesis) return;
@@ -1772,6 +1819,7 @@
         const decoder = new TextDecoder();
 
         let streamMeta = 'CLAUDE · streaming';
+        let streamModel = 'CLAUDE', streamRoute = 'streaming';
         let sseBuffer = '';
         // Thinking indicator state
         let thinkingWrap = null;
@@ -1797,6 +1845,7 @@
                 const mem = parseInt(parts[2] || '0', 10);
                 const memBadge = mem > 0 ? ` · 🧠 ${mem} memories` : '';
                 streamMeta = `✓ ${model} · via ${route}${memBadge}`;
+                streamModel = model; streamRoute = route;
                 continue;
               }
               // ── Progress / thinking step ──────────────────────────────────
@@ -1851,6 +1900,7 @@
         sp.onclick = () => speakText(fullText, sp);
         meta.appendChild(sp);
         msgDiv.appendChild(meta);
+        _attachFeedback(msgDiv, text, streamModel, streamRoute);
         chat.scrollTop = chat.scrollHeight;
       }
     } catch (_) { streamOk = false; }
@@ -1882,6 +1932,7 @@
           sp.onclick = () => speakText(data.response, sp);
           meta.appendChild(sp);
           msgDiv.appendChild(meta);
+          _attachFeedback(msgDiv, text, data.model_used, data.routed_by);
         } else {
           bubble.textContent = '⚠️ ' + (data.detail || 'Something went wrong.');
         }

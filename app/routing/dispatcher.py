@@ -2061,6 +2061,17 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
         memory_hits=_memory_count,
     )
     adapter.tick()
+    # Log dispatch event to live activity stream
+    try:
+        from ..activity_log import bg_log as _bg_dispatch
+        _preview = message[:80].replace("\n", " ")
+        _ok = "✓" if not (response.startswith("[") and response.endswith("]")) else "✗"
+        _bg_dispatch(
+            f"{_ok} [{model}] {_preview!r} — {_dispatch_latency_ms:.0f}ms via {routed_by}",
+            source="dispatch",
+        )
+    except Exception:
+        pass
     # Feature 4: store exchange in semantic memory for future cross-session recall
     store_memory(session_id, f"Q: {message[:300]} A: {response[:300]}",
                  source="super_agent")

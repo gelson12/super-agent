@@ -28,6 +28,7 @@
       min-height: 100vh;
       overflow-x: hidden;
       overflow-y: visible;
+      padding-bottom: 165px;
     }
 
     /* ── Header ──────────────────────────────────────────────────── */
@@ -1512,7 +1513,12 @@
     <span id="office-clock">--:--:--</span>
     <span id="office-date"></span>
   </div>
-  <a href="/" class="back-link">&larr; BACK TO CHAT</a>
+  <div style="display:flex;gap:10px;align-items:center;">
+    <a href="/observability" class="back-link" style="font-size:0.28rem;">Observability</a>
+    <a href="/intelligence" class="back-link" style="font-size:0.28rem;">Intelligence</a>
+    <a href="/spend" class="back-link" style="font-size:0.28rem;">💸 Spend</a>
+    <a href="/" class="back-link">&larr; Chat</a>
+  </div>
 </div>
 
 <div id="system-health-bar">
@@ -1611,6 +1617,44 @@
 
 <div class="filing-cabinet">🗄️</div>
 <div id="toast-container"></div>
+
+<!-- ── Live Activity Feed ─────────────────────────────────────────── -->
+<div id="live-feed" style="
+  position:fixed; bottom:0; left:0; right:0; z-index:1100;
+  background:#060a0f; border-top:1px solid #1c2333;
+  font-family:'Courier New',monospace; font-size:11px;
+  padding:0; max-height:160px; transition:max-height 0.25s ease;
+">
+  <div id="live-feed-header" style="
+    display:flex; align-items:center; gap:10px; padding:5px 14px;
+    border-bottom:1px solid #1c2333; cursor:pointer; user-select:none;
+  " onclick="toggleFeed()">
+    <span id="live-dot" style="width:7px;height:7px;border-radius:50%;
+      background:#3fb950;box-shadow:0 0 6px #3fb950;flex-shrink:0;
+      animation:pulse-dot 2s infinite;"></span>
+    <span style="color:#58a6ff;font-size:10px;letter-spacing:1px;">LIVE ACTIVITY FEED</span>
+    <span id="feed-count" style="color:#484f58;font-size:10px;"></span>
+    <span style="margin-left:auto;color:#484f58;font-size:10px;" id="feed-toggle-label">▼ collapse</span>
+  </div>
+  <div id="live-feed-body" style="
+    overflow-y:auto; max-height:120px; padding:4px 0;
+    scrollbar-width:thin; scrollbar-color:#1e2d4a #060a0f;
+  ">
+    <div style="color:#484f58;padding:6px 14px;font-size:10px;">Connecting to activity stream…</div>
+  </div>
+</div>
+<style>
+  @keyframes pulse-dot { 0%,100%{opacity:1} 50%{opacity:0.3} }
+  .feed-line { padding:3px 14px; border-bottom:1px solid #0d1117; white-space:nowrap;
+               overflow:hidden; text-overflow:ellipsis; color:#8b949e; font-size:11px; }
+  .feed-line:hover { background:#0d1117; }
+  .feed-ts { color:#484f58; margin-right:8px; font-size:10px; }
+  .feed-src-dispatch { color:#3fb950; font-weight:bold; }
+  .feed-src-health   { color:#58a6ff; }
+  .feed-src-improve  { color:#bc8cff; }
+  .feed-src-alert    { color:#f85149; }
+  .feed-src-default  { color:#d29922; }
+</style>
 <svg id="talking-lines" style="position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:999;"></svg>
 
 <!-- Log panel overlay + drawer -->
@@ -2509,6 +2553,80 @@ function showToast(workerId, fromState, toState) {
   setTimeout(() => el.classList.add("toast-exit"), 3000);
   setTimeout(() => { if (el.parentNode) el.parentNode.removeChild(el); }, 3500);
 }
+
+// ── Live Activity Feed ──────────────────────────────────────────────────────
+(function() {
+  const body      = document.getElementById('live-feed-body');
+  const countEl   = document.getElementById('feed-count');
+  const dotEl     = document.getElementById('live-dot');
+  let   lineCount = 0;
+  let   collapsed = false;
+
+  function srcClass(src) {
+    if (!src) return 'feed-src-default';
+    if (src === 'dispatch')    return 'feed-src-dispatch';
+    if (src.includes('health')) return 'feed-src-health';
+    if (src.includes('improv') || src.includes('self')) return 'feed-src-improve';
+    if (src.includes('alert')) return 'feed-src-alert';
+    return 'feed-src-default';
+  }
+
+  function addLine(text) {
+    const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    // Detect source tag [source]
+    const srcMatch = text.match(/^\[(\w[\w_-]*)\]/);
+    const src  = srcMatch ? srcMatch[1] : '';
+    const msg  = srcMatch ? text.slice(srcMatch[0].length + 1) : text;
+    const div  = document.createElement('div');
+    div.className = 'feed-line';
+    div.innerHTML = `<span class="feed-ts">${now}</span>`
+      + (src ? `<span class="${srcClass(src)}">[${src}]</span> ` : '')
+      + `<span>${msg.replace(/</g,'&lt;')}</span>`;
+    body.appendChild(div);
+    // Keep max 60 lines
+    while (body.children.length > 60) body.removeChild(body.firstChild);
+    body.scrollTop = body.scrollHeight;
+    lineCount++;
+    countEl.textContent = lineCount + ' events';
+    // Pulse the dot
+    dotEl.style.background = '#58a6ff';
+    dotEl.style.boxShadow  = '0 0 10px #58a6ff';
+    setTimeout(() => {
+      dotEl.style.background = '#3fb950';
+      dotEl.style.boxShadow  = '0 0 6px #3fb950';
+    }, 300);
+  }
+
+  function connect() {
+    const es = new EventSource('/activity/stream');
+    es.onmessage = e => {
+      const d = e.data;
+      if (d === '[ACTIVITY_STREAM_START]') { body.innerHTML = ''; return; }
+      if (d === '[ACTIVITY_STREAM_TIMEOUT]') { es.close(); setTimeout(connect, 2000); return; }
+      addLine(d);
+    };
+    es.onerror = () => { es.close(); setTimeout(connect, 5000); };
+  }
+
+  // Also load recent activity on start
+  fetch('/activity/recent?lines=20')
+    .then(r => r.ok ? r.json() : null)
+    .then(data => {
+      if (!data?.lines) return;
+      body.innerHTML = '';
+      data.lines.forEach(l => addLine(l));
+    })
+    .catch(() => {})
+    .finally(() => connect());
+
+  window.toggleFeed = function() {
+    const feed = document.getElementById('live-feed');
+    const label = document.getElementById('feed-toggle-label');
+    collapsed = !collapsed;
+    feed.style.maxHeight = collapsed ? '28px' : '160px';
+    label.textContent = collapsed ? '▲ expand' : '▼ collapse';
+  };
+})();
 
 // ── Keyboard shortcuts ──────────────────────────────────────────────────────
 document.addEventListener("keydown", e => {

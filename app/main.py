@@ -59,7 +59,7 @@ def _sanitize_error(text: str) -> str:
 # Protected paths require header: X-Token: <UI_PASSWORD>
 # If UI_PASSWORD is not set, auth is disabled.
 
-_OPEN_PATHS = {"/", "/health", "/auth", "/credits/pro-status", "/credits/pro-reset", "/agents", "/dashboard", "/observability", "/intelligence", "/stats", "/stats/report", "/admin/infrastructure-info"}
+_OPEN_PATHS = {"/", "/health", "/auth", "/credits/pro-status", "/credits/pro-reset", "/agents", "/dashboard", "/observability", "/intelligence", "/spend", "/stats", "/stats/report", "/admin/infrastructure-info"}
 _OPEN_PREFIXES = ("/static", "/downloads", "/webhook", "/n8n/connection-info", "/activity", "/dashboard/", "/stats/", "/metrics/")  # token-in-URL or public info
 # NOTE: /chat, /chat/stream, /chat/direct, and /install-guide are intentionally
 # NOT in _OPEN_PATHS/_OPEN_PREFIXES — they require X-Token when UI_PASSWORD is set.
@@ -636,10 +636,25 @@ async def _lifespan(app: FastAPI):
         replace_existing=True,
     )
 
-    # ── Proactive alerting — model-down notifications (every 30min check) ─────
-    # Piggybacks on the existing health check result and fires n8n alert
-    # when a model transitions from healthy to down for the first time.
+    # ── Proactive alerting — model-down + budget + anomaly emails ────────────
     _alert_state: dict = {}   # model → last_alerted_ts
+    _budget_alerted_pcts: set = set()  # budget thresholds already emailed this day
+
+    def _send_alert_email(subject: str, body: str) -> None:
+        """Fire-and-forget email via secretary webhook. Never raises."""
+        try:
+            from .tools.secretary_tools import secretary_email as _sec
+            import json as _j
+            _sec.invoke({
+                "action": "send",
+                "params_json": _j.dumps({
+                    "to": os.environ.get("ALERT_EMAIL", "gelson_m@hotmail.com"),
+                    "subject": f"[Super Agent] {subject}",
+                    "body": body,
+                }),
+            })
+        except Exception:
+            pass
 
     def _proactive_alert_job():
         try:
@@ -652,13 +667,20 @@ async def _lifespan(app: FastAPI):
                 state = w.get("state", "")
                 if state in ("sick", "strike"):
                     last_alerted = _alert_state.get(model_id, 0)
-                    if now - last_alerted > 3600:  # alert at most once per hour per model
+                    if now - last_alerted > 3600:
                         _alert_state[model_id] = now
                         msg = (f"ALERT: {model_id} is {state}. "
                                f"Last seen: {w.get('last_seen', 'unknown')}. "
                                f"Consecutive errors: {w.get('consecutive_errors', 0)}")
                         bg_log(msg, source="proactive_alert")
-                        # Push to n8n for email/Slack/webhook delivery
+                        # Send email + n8n webhook
+                        import threading as _thr_alert
+                        _thr_alert.Thread(
+                            target=_send_alert_email,
+                            args=(f"Agent {model_id} is {state.upper()}",
+                                  f"{msg}\n\nCheck: https://super-agent-production.up.railway.app/agents"),
+                            daemon=True,
+                        ).start()
                         try:
                             import requests as _req
                             _n8n = os.environ.get("N8N_BASE_URL", "")
@@ -674,16 +696,112 @@ async def _lifespan(app: FastAPI):
                         except Exception:
                             pass
                 else:
-                    # Clear alert state when model recovers
                     _alert_state.pop(model_id, None)
         except Exception as _e:
             bg_log(f"Proactive alert check error: {_e}", source="proactive_alert")
+
+    def _budget_alert_job():
+        """Email when daily spend hits 50%, 80%, or 100% of DAILY_BUDGET_USD."""
+        try:
+            import datetime as _dt
+            today = _dt.date.today().isoformat()
+            # Reset thresholds on new day
+            global _budget_alerted_pcts
+            if getattr(_budget_alert_job, "_last_day", None) != today:
+                _budget_alerted_pcts = set()
+                _budget_alert_job._last_day = today  # type: ignore[attr-defined]
+            spend = _spend_summary()
+            daily   = spend.get("today", 0) or 0
+            budget  = spend.get("budget_usd_daily", 5.0) or 5.0
+            pct_used = (daily / budget * 100) if budget > 0 else 0
+            for threshold in (50, 80, 100):
+                if pct_used >= threshold and threshold not in _budget_alerted_pcts:
+                    _budget_alerted_pcts.add(threshold)
+                    subj = f"Budget alert: {threshold}% of daily budget used"
+                    body = (
+                        f"Daily spend: ${daily:.4f} / ${budget:.2f} ({pct_used:.1f}%)\n"
+                        f"Check spend dashboard: https://super-agent-production.up.railway.app/spend"
+                    )
+                    bg_log(f"BUDGET ALERT {threshold}%: ${daily:.4f}/${budget:.2f}", source="budget_alert")
+                    import threading as _thr_bgt
+                    _thr_bgt.Thread(target=_send_alert_email, args=(subj, body), daemon=True).start()
+        except Exception as _be:
+            bg_log(f"Budget alert error: {_be}", source="budget_alert")
 
     scheduler.add_job(
         _proactive_alert_job,
         "interval",
         minutes=30,
         id="proactive_alert",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        _budget_alert_job,
+        "interval",
+        minutes=15,
+        id="budget_alert",
+        replace_existing=True,
+    )
+
+    def _daily_digest_job():
+        """Send a daily summary email every morning at 08:00 UTC."""
+        try:
+            import datetime as _dt
+            # Build digest body
+            spend   = _spend_summary()
+            summary = insight_log.normalized_summary()
+            total   = summary.get("total_interactions", 0)
+            mdist   = summary.get("model_distribution", {})
+            errs    = summary.get("error_count", 0)
+            err_pct = summary.get("error_rate_pct", 0)
+            today_usd = spend.get("today", 0) or 0
+            budget    = spend.get("budget_usd_daily", 5.0) or 5.0
+            try:
+                from .learning.intelligence_score import get_stats as _get_xp
+                xp_data = _get_xp()
+                xp_line = (f"  XP: {xp_data.get('xp', 0)} | "
+                           f"Level {xp_data.get('level', 1)} — {xp_data.get('level_name', '?')} | "
+                           f"Prediction accuracy: {xp_data.get('prediction_accuracy', 0):.1%}")
+            except Exception:
+                xp_line = "  XP data unavailable"
+            model_lines = "\n".join(
+                f"  • {m}: {c} requests" for m, c in
+                sorted(mdist.items(), key=lambda x: -x[1])
+            ) or "  (no data)"
+            body = (
+                f"Good morning! Here is your Super Agent daily digest for {_dt.date.today()}.\n\n"
+                f"── Activity ─────────────────────────────────\n"
+                f"  Total requests (24h): {total}\n"
+                f"  Errors: {errs} ({err_pct:.1f}%)\n\n"
+                f"── Agent Usage ──────────────────────────────\n"
+                f"{model_lines}\n\n"
+                f"── Intelligence ─────────────────────────────\n"
+                f"{xp_line}\n\n"
+                f"── Cost ─────────────────────────────────────\n"
+                f"  Today: ${today_usd:.4f} / ${budget:.2f} budget\n"
+                f"  7-day total: ${spend.get('last_7_days', 0):.4f}\n\n"
+                f"── Links ────────────────────────────────────\n"
+                f"  Agents:  https://super-agent-production.up.railway.app/agents\n"
+                f"  Observe: https://super-agent-production.up.railway.app/observability\n"
+                f"  Spend:   https://super-agent-production.up.railway.app/spend\n"
+                f"  Intel:   https://super-agent-production.up.railway.app/intelligence\n"
+            )
+            bg_log("Sending daily digest email", source="daily_digest")
+            import threading as _thr_digest
+            _thr_digest.Thread(
+                target=_send_alert_email,
+                args=(f"Daily Digest — {_dt.date.today()}", body),
+                daemon=True,
+            ).start()
+        except Exception as _de:
+            bg_log(f"Daily digest error: {_de}", source="daily_digest")
+
+    scheduler.add_job(
+        _daily_digest_job,
+        "cron",
+        hour=8,
+        minute=0,
+        id="daily_digest",
         replace_existing=True,
     )
 
@@ -2110,6 +2228,15 @@ def intelligence_dashboard():
     if os.path.isfile(path):
         return FileResponse(path)
     return {"error": "intelligence.html not found in static/"}
+
+
+@app.get("/spend", include_in_schema=False)
+def spend_dashboard():
+    """API cost and budget tracking dashboard."""
+    path = os.path.join(_static_dir, "spend.html")
+    if os.path.isfile(path):
+        return FileResponse(path)
+    return {"error": "spend.html not found in static/"}
 
 
 @app.get("/metrics/intelligence", tags=["meta"])

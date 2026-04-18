@@ -111,6 +111,87 @@ def secretary_email(action: str, params_json: str = "{}") -> str:
         return f"[secretary error: {type(exc).__name__}: {exc}]"
 
 
+_GMAIL_PATH = "/webhook/gmail-agent"
+
+_VALID_GMAIL_ACTIONS = {
+    "list", "search", "get", "send", "reply", "forward",
+    "create_draft", "delete", "trash", "mark_read", "mark_unread",
+    "add_label", "remove_label", "list_labels",
+}
+
+
+def _gmail_url() -> str:
+    base = os.environ.get("N8N_BASE_URL", "").rstrip("/")
+    if not base:
+        try:
+            from ..config import settings
+            base = (settings.n8n_base_url or "").rstrip("/")
+        except Exception:
+            pass
+    return base + _GMAIL_PATH if base else ""
+
+
+@tool
+def gmail_email(action: str, params_json: str = "{}") -> str:
+    """
+    Read, search, and send Gmail emails via the Gmail Secretary n8n workflow.
+
+    Use this when the user asks about Gmail, Google Mail, or their personal email inbox
+    (as opposed to Outlook / Microsoft 365 which uses secretary_email).
+
+    Args:
+        action: One of:
+          list         — list recent inbox emails (params: max_results, label)
+          search       — search emails (params: query, max_results)
+                         Example queries: "from:boss@company.com", "subject:invoice is:unread"
+          get          — get a single email body (params: message_id)
+          send         — send a new email (params: to, subject, body, cc)
+          reply        — reply to an email (params: thread_id, body)
+          forward      — forward an email (params: message_id, to, body)
+          create_draft — save draft without sending (params: to, subject, body, cc)
+          delete       — permanently delete (params: message_id)
+          trash        — move to trash (params: message_id)
+          mark_read    — mark as read (params: message_id)
+          mark_unread  — mark as unread (params: message_id)
+          add_label    — add a label (params: message_id, label)
+          remove_label — remove a label (params: message_id, label)
+          list_labels  — list all Gmail labels
+
+        params_json: JSON string of parameters for the action.
+          Examples:
+            '{"max_results": 10, "label": "INBOX"}'
+            '{"query": "from:someone@example.com is:unread", "max_results": 5}'
+            '{"to": "friend@gmail.com", "subject": "Hi", "body": "Hello there!"}'
+
+    Returns:
+        JSON string with email data, or an error string starting with '[gmail error:'.
+    """
+    url = _gmail_url()
+    if not url:
+        return "[gmail error: N8N_BASE_URL not set — configure it in Railway Variables]"
+
+    action = action.strip().lower()
+    if action not in _VALID_GMAIL_ACTIONS:
+        valid = ", ".join(sorted(_VALID_GMAIL_ACTIONS))
+        return f"[gmail error: unknown action '{action}'. Valid: {valid}]"
+
+    try:
+        params = json.loads(params_json) if params_json.strip() else {}
+    except json.JSONDecodeError as e:
+        return f"[gmail error: invalid params_json — {e}]"
+
+    try:
+        with httpx.Client(timeout=_TIMEOUT) as client:
+            resp = client.post(url, json={"action": action, "params": params})
+        if resp.status_code >= 400:
+            return f"[gmail error: HTTP {resp.status_code} — {resp.text[:300]}]"
+        return resp.text
+    except httpx.TimeoutException:
+        return "[gmail error: request timed out — Gmail API may be slow, retry once]"
+    except Exception as exc:
+        return f"[gmail error: {type(exc).__name__}: {exc}]"
+
+
 # ── Convenience list for agent tool registration ──────────────────────────────
 
-SECRETARY_TOOLS = [secretary_email]
+SECRETARY_TOOLS = [secretary_email, gmail_email]

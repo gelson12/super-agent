@@ -1,0 +1,219 @@
+{
+  "name": "Gmail Agent Webhook",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "gmail-agent",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wh-001",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $input.first().json;\nconst body = raw.body || raw;\nreturn [{ json: { action: (body.action||'list').toLowerCase(), params: body.params||{} } }];"
+      },
+      "id": "parse-001",
+      "name": "Parse",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": { "combinator": "and", "conditions": [{ "leftValue": "={{ $json.action }}", "rightValue": "list", "operator": { "type": "string", "operation": "equals" } }] },
+              "outputKey": "0"
+            },
+            {
+              "conditions": { "combinator": "and", "conditions": [{ "leftValue": "={{ $json.action }}", "rightValue": "search", "operator": { "type": "string", "operation": "equals" } }] },
+              "outputKey": "1"
+            },
+            {
+              "conditions": { "combinator": "and", "conditions": [{ "leftValue": "={{ $json.action }}", "rightValue": "get", "operator": { "type": "string", "operation": "equals" } }] },
+              "outputKey": "2"
+            },
+            {
+              "conditions": { "combinator": "and", "conditions": [{ "leftValue": "={{ $json.action }}", "rightValue": "send", "operator": { "type": "string", "operation": "equals" } }] },
+              "outputKey": "3"
+            },
+            {
+              "conditions": { "combinator": "and", "conditions": [{ "leftValue": "={{ $json.action }}", "rightValue": "reply", "operator": { "type": "string", "operation": "equals" } }] },
+              "outputKey": "4"
+            },
+            {
+              "conditions": { "combinator": "and", "conditions": [{ "leftValue": "={{ $json.action }}", "rightValue": "trash", "operator": { "type": "string", "operation": "equals" } }] },
+              "outputKey": "5"
+            }
+          ]
+        },
+        "fallbackOutput": "extra"
+      },
+      "id": "route-001",
+      "name": "Route",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "returnAll": false,
+        "limit": "={{ $json.params.max_results || 10 }}",
+        "filters": {},
+        "options": {}
+      },
+      "id": "gm-list",
+      "name": "List Emails",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [900, 60],
+      "credentials": { "gmailOAuth2": { "id": "RECONNECT", "name": "Gmail account" } }
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "returnAll": false,
+        "limit": "={{ $json.params.max_results || 10 }}",
+        "filters": { "q": "={{ $json.params.query || '' }}" },
+        "options": {}
+      },
+      "id": "gm-search",
+      "name": "Search Emails",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [900, 180],
+      "credentials": { "gmailOAuth2": { "id": "RECONNECT", "name": "Gmail account" } }
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "messageId": "={{ $json.params.message_id }}",
+        "options": { "format": "resolved" }
+      },
+      "id": "gm-get",
+      "name": "Get Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [900, 300],
+      "credentials": { "gmailOAuth2": { "id": "RECONNECT", "name": "Gmail account" } }
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.params.to }}",
+        "subject": "={{ $json.params.subject }}",
+        "emailType": "text",
+        "message": "={{ $json.params.body }}",
+        "options": {}
+      },
+      "id": "gm-send",
+      "name": "Send Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [900, 420],
+      "credentials": { "gmailOAuth2": { "id": "RECONNECT", "name": "Gmail account" } }
+    },
+    {
+      "parameters": {
+        "operation": "reply",
+        "messageId": "={{ $json.params.thread_id || $json.params.message_id }}",
+        "emailType": "text",
+        "message": "={{ $json.params.body }}",
+        "options": {}
+      },
+      "id": "gm-reply",
+      "name": "Reply Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [900, 540],
+      "credentials": { "gmailOAuth2": { "id": "RECONNECT", "name": "Gmail account" } }
+    },
+    {
+      "parameters": {
+        "operation": "delete",
+        "messageId": "={{ $json.params.message_id }}",
+        "options": {}
+      },
+      "id": "gm-trash",
+      "name": "Trash Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [900, 660],
+      "credentials": { "gmailOAuth2": { "id": "RECONNECT", "name": "Gmail account" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "const emails = $input.all().map(i => ({ id: i.json.id, subject: i.json.subject||i.json.snippet||'(no subject)', from: i.json.from, date: i.json.date, snippet: i.json.snippet||'', unread: (i.json.labelIds||[]).includes('UNREAD') }));\nreturn [{ json: { success: true, count: emails.length, emails } }];"
+      },
+      "id": "fmt-list",
+      "name": "Format List",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 120]
+    },
+    {
+      "parameters": {
+        "jsCode": "const e = $input.first().json;\nreturn [{ json: { success: true, id: e.id, subject: e.subject, from: e.from, date: e.date, body: (e.body&&(e.body.html||e.body.plain))||e.snippet||'', labels: e.labelIds||[] } }];"
+      },
+      "id": "fmt-get",
+      "name": "Format Get",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const e = $input.first().json;\nreturn [{ json: { success: true, action: 'done', id: e.id||null, threadId: e.threadId||null } }];"
+      },
+      "id": "fmt-action",
+      "name": "Format Action",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 480]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}"
+      },
+      "id": "resp-001",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1340, 300]
+    }
+  ],
+  "connections": {
+    "Webhook":       { "main": [[{ "node": "Parse",        "type": "main", "index": 0 }]] },
+    "Parse":         { "main": [[{ "node": "Route",        "type": "main", "index": 0 }]] },
+    "Route": {
+      "main": [
+        [{ "node": "List Emails",   "type": "main", "index": 0 }],
+        [{ "node": "Search Emails", "type": "main", "index": 0 }],
+        [{ "node": "Get Email",     "type": "main", "index": 0 }],
+        [{ "node": "Send Email",    "type": "main", "index": 0 }],
+        [{ "node": "Reply Email",   "type": "main", "index": 0 }],
+        [{ "node": "Trash Email",   "type": "main", "index": 0 }]
+      ]
+    },
+    "List Emails":   { "main": [[{ "node": "Format List",   "type": "main", "index": 0 }]] },
+    "Search Emails": { "main": [[{ "node": "Format List",   "type": "main", "index": 0 }]] },
+    "Get Email":     { "main": [[{ "node": "Format Get",    "type": "main", "index": 0 }]] },
+    "Send Email":    { "main": [[{ "node": "Format Action", "type": "main", "index": 0 }]] },
+    "Reply Email":   { "main": [[{ "node": "Format Action", "type": "main", "index": 0 }]] },
+    "Trash Email":   { "main": [[{ "node": "Format Action", "type": "main", "index": 0 }]] },
+    "Format List":   { "main": [[{ "node": "Respond",       "type": "main", "index": 0 }]] },
+    "Format Get":    { "main": [[{ "node": "Respond",       "type": "main", "index": 0 }]] },
+    "Format Action": { "main": [[{ "node": "Respond",       "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "meta": { "templateId": "gmail-agent-v1" },
+  "tags": [{ "name": "gmail" }, { "name": "agent-callable" }]
+}
