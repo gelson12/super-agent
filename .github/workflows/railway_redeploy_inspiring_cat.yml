@@ -1,5 +1,11 @@
 name: Redeploy Inspiring Cat on Railway
 
+# Triggers a FRESH BUILD of inspiring-cat from the latest GitHub commit.
+# Use this after pushing code changes — Railway doesn't auto-deploy this service.
+#
+# Uses serviceInstanceDeploy (fresh build from source) NOT deploymentRedeploy
+# (which just restarts the same old Docker image without picking up new code).
+
 on:
   repository_dispatch:
     types: [railway_redeploy_inspiring_cat]
@@ -14,7 +20,7 @@ jobs:
     timeout-minutes: 5
 
     steps:
-      - name: Trigger Railway redeploy for inspiring-cat
+      - name: Trigger fresh Railway build for inspiring-cat
         env:
           RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
           SERVICE_ID:        ${{ secrets.RAILWAY_SERVICE_ID }}
@@ -25,70 +31,47 @@ jobs:
             exit 1
           fi
 
-          echo "Querying latest deployment for service ${SERVICE_ID}..."
-          QUERY='query($serviceId:String!,$envId:String!){deployments(input:{serviceId:$serviceId,environmentId:$envId},first:1){edges{node{id status}}}}'
-          VARS=$(printf '{"serviceId":"%s","envId":"%s"}' "$SERVICE_ID" "$ENV_ID")
+          # serviceInstanceDeploy triggers a fresh build from the GitHub source
+          # (latest commit on the connected branch) — unlike deploymentRedeploy
+          # which just replays the same Docker image.
+          echo "Triggering fresh build via serviceInstanceDeploy..."
+          MUT='mutation($sId:String!,$eId:String!){serviceInstanceDeploy(serviceId:$sId,environmentId:$eId)}'
+          VARS=$(printf '{"sId":"%s","eId":"%s"}' "$SERVICE_ID" "$ENV_ID")
 
           RESP=$(curl -s -w "\n%{http_code}" \
             -X POST "https://backboard.railway.app/graphql/v2" \
             -H "Authorization: Bearer ${RAILWAY_API_TOKEN}" \
             -H "Content-Type: application/json" \
-            --data-raw "{\"query\":\"$QUERY\",\"variables\":$VARS}" \
+            --data-raw "{\"query\":\"$MUT\",\"variables\":$VARS}" \
             --max-time 20)
 
           CODE=$(echo "$RESP" | tail -1)
           BODY=$(echo "$RESP" | head -n -1)
-          echo "Query HTTP: ${CODE}"
+          echo "serviceInstanceDeploy HTTP: ${CODE}"
+          echo "Response: ${BODY:0:400}"
 
-          DEPLOY_ID=$(echo "$BODY" | python3 -c "
-          import sys, json
-          d = json.load(sys.stdin)
-          edges = d.get('data', {}).get('deployments', {}).get('edges', [])
-          print(edges[0]['node']['id'] if edges else '')
-          " 2>/dev/null || echo "")
-
-          if [ -z "$DEPLOY_ID" ]; then
-            echo "Could not find deployment ID. Response: ${BODY:0:300}"
-            # Fallback: try serviceInstanceRedeploy
-            echo "Trying serviceInstanceRedeploy mutation..."
-            MUT2='mutation($sId:String!,$eId:String!){serviceInstanceRedeploy(serviceId:$sId,environmentId:$eId)}'
-            VARS2=$(printf '{"sId":"%s","eId":"%s"}' "$SERVICE_ID" "$ENV_ID")
-            RESP2=$(curl -s -w "\n%{http_code}" \
-              -X POST "https://backboard.railway.app/graphql/v2" \
-              -H "Authorization: Bearer ${RAILWAY_API_TOKEN}" \
-              -H "Content-Type: application/json" \
-              --data-raw "{\"query\":\"$MUT2\",\"variables\":$VARS2}" \
-              --max-time 20)
-            CODE2=$(echo "$RESP2" | tail -1)
-            BODY2=$(echo "$RESP2" | head -n -1)
-            echo "serviceInstanceRedeploy HTTP: ${CODE2}"
-            echo "Response: ${BODY2:0:300}"
-            exit 0
+          if [ "$CODE" = "200" ]; then
+            ERRS=$(echo "$BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); errs=d.get('errors'); print(errs if errs else 'none')" 2>/dev/null)
+            if [ "$ERRS" = "none" ] || [ -z "$ERRS" ]; then
+              echo "Fresh build triggered successfully — inspiring-cat will rebuild from latest GitHub commit."
+              exit 0
+            fi
+            echo "GraphQL errors: $ERRS"
           fi
 
-          echo "Found deployment ID: ${DEPLOY_ID}"
-          echo "Triggering redeploy..."
+          # Fallback: try deploymentCreate
+          echo "Trying deploymentCreate fallback..."
+          MUT2='mutation($sId:String!,$eId:String!){deploymentCreate(input:{serviceId:$sId,environmentId:$eId}){id status}}'
+          VARS2=$(printf '{"sId":"%s","eId":"%s"}' "$SERVICE_ID" "$ENV_ID")
 
-          MUT='mutation($id:String!){deploymentRedeploy(id:$id){id status}}'
-          VARS3=$(printf '{"id":"%s"}' "$DEPLOY_ID")
-
-          RESP3=$(curl -s -w "\n%{http_code}" \
+          RESP2=$(curl -s -w "\n%{http_code}" \
             -X POST "https://backboard.railway.app/graphql/v2" \
             -H "Authorization: Bearer ${RAILWAY_API_TOKEN}" \
             -H "Content-Type: application/json" \
-            --data-raw "{\"query\":\"$MUT\",\"variables\":$VARS3}" \
+            --data-raw "{\"query\":\"$MUT2\",\"variables\":$VARS2}" \
             --max-time 20)
 
-          CODE3=$(echo "$RESP3" | tail -1)
-          BODY3=$(echo "$RESP3" | head -n -1)
-          echo "Redeploy HTTP: ${CODE3}"
-          echo "Response: ${BODY3:0:300}"
-
-          if [ "$CODE3" = "200" ]; then
-            ERRORS=$(echo "$BODY3" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('errors',''))" 2>/dev/null)
-            if [ -z "$ERRORS" ] || [ "$ERRORS" = "[]" ] || [ "$ERRORS" = "None" ]; then
-              echo "Redeploy triggered successfully"
-            else
-              echo "GraphQL errors: $ERRORS"
-            fi
-          fi
+          CODE2=$(echo "$RESP2" | tail -1)
+          BODY2=$(echo "$RESP2" | head -n -1)
+          echo "deploymentCreate HTTP: ${CODE2}"
+          echo "Response: ${BODY2:0:400}"
