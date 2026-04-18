@@ -15,7 +15,6 @@ on:
 
 permissions:
   contents: read
-  secrets: write
 
 env:
   GITHUB_REPO: gelson12/super-agent
@@ -28,7 +27,7 @@ jobs:
     steps:
       - name: Store CLAUDE_REFRESH_TOKEN and CLAUDE_CLIENT_ID secrets
         env:
-          GH_TOKEN:      ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN:      ${{ secrets.GITHUB_PAT }}
           REFRESH_TOKEN: ${{ github.event.client_payload.refresh_token }}
           CLIENT_ID:     ${{ github.event.client_payload.client_id }}
         run: |
