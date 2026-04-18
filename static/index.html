@@ -2165,9 +2165,34 @@
     return h % _WF_AVATAR_POOL.length;
   }
 
-  function _wfAvatarBadge(id) {
+  // Workflow description lookup — keyed by name substring (case-insensitive partial match)
+  const _WF_DESCRIPTIONS = {
+    "claude verification code monitor":        "Monitors the Hotmail inbox for Claude magic-link emails and forwards the verification code to inspiring-cat to complete OAuth login automatically.",
+    "senior digital content intelligence":     "Analyses content from WhatsApp, Gmail & Telegram — YouTube videos, PDFs, images and text. Generates a branded HTML + PDF report and emails it.",
+    "secretary — gmail manager":               "Monitors the Gmail inbox, drafts replies, sends emails and manages labels on behalf of the team.",
+    "secretary — outlook":                     "Handles Outlook email and calendar — reads, drafts and sends messages, creates meetings and manages scheduling.",
+    "chief of staff":                          "Top-level orchestrator. Monitors system health, coordinates between agents and escalates critical issues.",
+    "layer2 github alert":                     "Receives GitHub webhook alerts — PRs, issues, CI failures — and routes them to the appropriate agent for action.",
+    "universal catch-all":                     "Safety-net webhook that captures any unrouted incoming message and logs it for manual review.",
+    "ai finance operations":                   "Handles bookkeeping queries, invoice processing and financial summaries for small business operations.",
+    "anthropic api emergency fallback":        "Switches to backup Anthropic API credentials automatically when the primary key hits rate limits or errors.",
+    "crypto specialist":                       "Monitors crypto market data, generates trading signals and sends price-alert notifications for configured assets.",
+    "claude-verification-monitor":             "Listens for Claude.ai magic-link verification emails and auto-completes the browser login flow via Playwright.",
+  };
+
+  function _wfGetTip(wf) {
+    const lc = (wf.name || '').toLowerCase();
+    for (const [key, desc] of Object.entries(_WF_DESCRIPTIONS)) {
+      if (lc.includes(key)) return desc;
+    }
+    // Fallback: show full name + ID
+    return (wf.name || 'Workflow') + '\nID: ' + String(wf.id);
+  }
+
+  function _wfAvatarBadge(id, wf) {
+    const tip = wf ? _wfGetTip(wf) : 'Workflow #' + String(id);
     const av = _WF_AVATAR_POOL[_wfAvatarIdx(id)];
-    return `<div title="Workflow #${_oEsc(String(id))}" style="
+    return `<div data-tip="${_oEsc(tip)}" class="wf-zzz-wrap" style="
       width:36px;height:36px;border-radius:50%;flex-shrink:0;
       background:${av.bg};border:2px solid ${av.ring};
       display:flex;align-items:center;justify-content:center;
@@ -2289,6 +2314,44 @@
       .wf-av-live  { filter:drop-shadow(0 0 6px #4ade80); }
       .wf-av-sleep { filter:brightness(0.45) saturate(0.4); }
       .wf-av-off   { filter:brightness(0.25) saturate(0.2); }
+      .wf-zzz-wrap[data-tip] { cursor:help; }
+      .wf-zzz-wrap[data-tip]::after {
+        content:attr(data-tip);
+        position:absolute;
+        bottom:calc(100% + 12px);
+        right:0;
+        transform:none;
+        background:#0f0b05;
+        border:1px solid #c9a96e;
+        color:#e8d5a0;
+        font-size:9px;
+        font-family:'Press Start 2P',monospace;
+        padding:8px 10px;
+        border-radius:3px;
+        white-space:normal;
+        width:200px;
+        line-height:1.7;
+        z-index:9999;
+        opacity:0;
+        pointer-events:none;
+        transition:opacity 0.18s ease;
+        text-align:left;
+        box-shadow:0 6px 20px rgba(0,0,0,0.85);
+      }
+      .wf-zzz-wrap[data-tip]::before {
+        content:"";
+        position:absolute;
+        bottom:calc(100% + 6px);
+        right:12px;
+        border:6px solid transparent;
+        border-top-color:#c9a96e;
+        z-index:9999;
+        opacity:0;
+        pointer-events:none;
+        transition:opacity 0.18s ease;
+      }
+      .wf-zzz-wrap[data-tip]:hover::after,
+      .wf-zzz-wrap[data-tip]:hover::before { opacity:1; }
     `;
     document.head.appendChild(st);
   }
@@ -2539,7 +2602,7 @@
         <span class="wf-zzz z1">z</span>
         <span class="wf-zzz z2">z</span>
         <span class="wf-zzz z3">z</span>` : '';
-      return `<div class="wf-zzz-wrap" title="Workflow #${_oEsc(String(wf.id))}">
+      return `<div class="wf-zzz-wrap" data-tip="${_oEsc(_wfGetTip(wf))}">
         <div class="${avClass}" style="${badgeStyle}">${av.emoji}</div>
         ${zzzBubbles}
       </div>`;
