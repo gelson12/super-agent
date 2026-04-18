@@ -116,6 +116,24 @@ def _ensure_tables() -> bool:
                             UNIQUE(date, challenge_key)
                         )
                     """)
+                    # ── Behavior patterns (time + transitions) ────────────
+                    cur.execute("""
+                        CREATE TABLE IF NOT EXISTS behavior_patterns_state (
+                            id           INTEGER PRIMARY KEY DEFAULT 1,
+                            time_counts  JSONB   DEFAULT '{}',
+                            transitions  JSONB   DEFAULT '{}',
+                            last_agent   TEXT    DEFAULT '',
+                            updated_at   DOUBLE PRECISION DEFAULT 0
+                        )
+                    """)
+                    # ── Trajectory sequence store ─────────────────────────
+                    cur.execute("""
+                        CREATE TABLE IF NOT EXISTS trajectory_state (
+                            id             INTEGER PRIMARY KEY DEFAULT 1,
+                            sequence_store JSONB   DEFAULT '[]',
+                            updated_at     DOUBLE PRECISION DEFAULT 0
+                        )
+                    """)
             _tables_ready = True
             return True
         except Exception:
@@ -370,6 +388,132 @@ def get_xp_history(limit: int = 120) -> list[dict]:
             pass
 
 
+# ── Behavior patterns load / save ────────────────────────────────────────────
+
+def load_behavior_patterns() -> dict | None:
+    """
+    Return {"time_counts": {..}, "transitions": {..}, "last_agent": str} or None.
+    time_counts keys are "weekday,hour" strings (JSON can't store tuple keys).
+    """
+    if not _ensure_tables():
+        return None
+    conn = _pg_conn()
+    if not conn:
+        return None
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT time_counts, transitions, last_agent
+                FROM behavior_patterns_state WHERE id = 1
+            """)
+            row = cur.fetchone()
+        if not row:
+            return None
+        return {
+            "time_counts":  dict(row[0]) if row[0] else {},
+            "transitions":  dict(row[1]) if row[1] else {},
+            "last_agent":   row[2] or "",
+        }
+    except Exception:
+        return None
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def save_behavior_patterns(time_counts: dict, transitions: dict, last_agent: str) -> None:
+    """Upsert behavior pattern state. Called from background thread."""
+    if not _ensure_tables():
+        return
+    conn = _pg_conn()
+    if not conn:
+        return
+    try:
+        # Convert tuple keys "(weekday, hour)" → "weekday,hour" for JSON
+        tc_serial = {
+            f"{k[0]},{k[1]}": dict(v)
+            for k, v in time_counts.items()
+        }
+        tr_serial = {k: dict(v) for k, v in transitions.items()}
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO behavior_patterns_state
+                        (id, time_counts, transitions, last_agent, updated_at)
+                    VALUES (1, %s, %s, %s, %s)
+                    ON CONFLICT (id) DO UPDATE SET
+                        time_counts = EXCLUDED.time_counts,
+                        transitions = EXCLUDED.transitions,
+                        last_agent  = EXCLUDED.last_agent,
+                        updated_at  = EXCLUDED.updated_at
+                """, (json.dumps(tc_serial), json.dumps(tr_serial), last_agent or "", time.time()))
+    except Exception:
+        pass
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+# ── Trajectory predictor load / save ─────────────────────────────────────────
+
+def load_trajectory_state() -> list | None:
+    """
+    Return sequence_store as list of [window_list, next_agent] pairs, or None.
+    (Tuples are serialized as JSON arrays.)
+    """
+    if not _ensure_tables():
+        return None
+    conn = _pg_conn()
+    if not conn:
+        return None
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT sequence_store FROM trajectory_state WHERE id = 1")
+            row = cur.fetchone()
+        if not row or not row[0]:
+            return None
+        return list(row[0])
+    except Exception:
+        return None
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def save_trajectory_state(sequence_store: list) -> None:
+    """Upsert trajectory sequence store. Called from background thread."""
+    if not _ensure_tables():
+        return
+    conn = _pg_conn()
+    if not conn:
+        return
+    try:
+        # Each entry is (window_tuple, next_agent) — serialize window as list
+        serialized = [[list(w), n] for w, n in sequence_store]
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO trajectory_state (id, sequence_store, updated_at)
+                    VALUES (1, %s, %s)
+                    ON CONFLICT (id) DO UPDATE SET
+                        sequence_store = EXCLUDED.sequence_store,
+                        updated_at     = EXCLUDED.updated_at
+                """, (json.dumps(serialized[-1000:]), time.time()))
+    except Exception:
+        pass
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
 # ── Background auto-save (every 60 s) ────────────────────────────────────────
 
 _bg_save_started = False
@@ -402,6 +546,16 @@ def start_background_save() -> None:
             try:
                 from .agent_leaderboard import _stats as _lb_stats
                 save_leaderboard_state(_lb_stats)
+            except Exception:
+                pass
+            try:
+                from .behavior_patterns import _time_counts, _transitions, _last_agent
+                save_behavior_patterns(_time_counts, _transitions, _last_agent or "")
+            except Exception:
+                pass
+            try:
+                from .trajectory_predictor import _sequence_store
+                save_trajectory_state(list(_sequence_store))
             except Exception:
                 pass
 

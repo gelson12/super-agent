@@ -115,3 +115,45 @@ def get_top_transitions() -> dict[str, tuple[str, float]]:
         if to_agent:
             result[agent] = (to_agent, conf)
     return result
+
+
+# ── Startup restore from PostgreSQL ──────────────────────────────────────────
+
+def _restore_from_db() -> None:
+    """Reload time_counts and transitions from DB. Runs in a background thread."""
+    global _last_agent
+    try:
+        from .intelligence_persistence import load_behavior_patterns, start_background_save
+        data = load_behavior_patterns()
+        if not data:
+            start_background_save()
+            return
+
+        # Restore time_counts — keys stored as "weekday,hour" strings
+        with _time_lock:
+            for key_str, counts in data["time_counts"].items():
+                try:
+                    wd, hr = key_str.split(",")
+                    bucket = (int(wd), int(hr))
+                    for agent, cnt in counts.items():
+                        _time_counts[bucket][agent] = int(cnt)
+                except Exception:
+                    pass
+
+        # Restore transitions
+        with _tr_lock:
+            for from_agent, nexts in data["transitions"].items():
+                for to_agent, cnt in nexts.items():
+                    _transitions[from_agent][to_agent] = int(cnt)
+
+        # Restore last_agent
+        with _last_lock:
+            _last_agent = data.get("last_agent") or None
+
+        start_background_save()
+    except Exception:
+        pass
+
+
+import threading as _threading
+_threading.Thread(target=_restore_from_db, daemon=True, name="bp-restore").start()
