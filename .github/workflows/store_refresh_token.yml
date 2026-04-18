@@ -1,0 +1,49 @@
+name: Store Refresh Token Secret
+
+# Fired by inspiring-cat (via _push_token_to_railway) after EVERY successful
+# token refresh — Playwright recovery, direct OAuth, proactive renewal.
+#
+# This keeps CLAUDE_REFRESH_TOKEN secret always current so the proactive
+# renewal cron always has a valid refresh_token to work with.
+#
+# The refresh_token rotates with each OAuth exchange — without this workflow,
+# the stored secret would go stale after the first proactive renewal run.
+
+on:
+  repository_dispatch:
+    types: [store_refresh_token]
+
+permissions:
+  contents: read
+  secrets: write
+
+env:
+  GITHUB_REPO: gelson12/super-agent
+
+jobs:
+  store-secret:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+
+    steps:
+      - name: Store CLAUDE_REFRESH_TOKEN and CLAUDE_CLIENT_ID secrets
+        env:
+          GH_TOKEN:      ${{ secrets.GITHUB_TOKEN }}
+          REFRESH_TOKEN: ${{ github.event.client_payload.refresh_token }}
+          CLIENT_ID:     ${{ github.event.client_payload.client_id }}
+        run: |
+          if [ -z "$REFRESH_TOKEN" ]; then
+            echo "ERROR: dispatch payload missing refresh_token — skipping."
+            exit 1
+          fi
+
+          echo "Storing rotated CLAUDE_REFRESH_TOKEN secret..."
+          echo "$REFRESH_TOKEN" | gh secret set CLAUDE_REFRESH_TOKEN --repo "$GITHUB_REPO"
+          echo "✅ CLAUDE_REFRESH_TOKEN updated."
+
+          if [ -n "$CLIENT_ID" ]; then
+            echo "$CLIENT_ID" | gh secret set CLAUDE_CLIENT_ID --repo "$GITHUB_REPO"
+            echo "✅ CLAUDE_CLIENT_ID confirmed."
+          fi
+
+          echo "Proactive renewal cron is now armed with the latest refresh_token."
