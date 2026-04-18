@@ -785,6 +785,138 @@ async def webhook_github_oauth_result(req: Request):
         return {"ok": False, "error": str(e)}
 
 
+@app.post("/webhook/proactive-renewal")
+async def webhook_proactive_renewal(req: Request):
+    """
+    Receive a raw OAuth response from the GitHub Actions proactive renewal cron
+    and apply it to the local credentials file — bypassing n8n / Playwright / email.
+
+    GitHub Actions runners use Azure IPs that are NOT blocked by Anthropic's
+    Cloudflare WAF, so they successfully POST to claude.com/cai/oauth/token.
+    This endpoint receives the result and patches the credentials file, then calls
+    _push_token_to_railway() to propagate the fresh token everywhere.
+
+    This is the n8n-independent backup path. When n8n is down, this keeps the
+    token alive without any email magic-link flow.
+
+    Security: INSPIRING_CAT_WEBHOOK_SECRET in both inspiring-cat Railway Variables
+    and the GitHub Actions secret of the same name.
+
+    Payload: {
+        "secret": "<INSPIRING_CAT_WEBHOOK_SECRET>",
+        "access_token": "...",
+        "refresh_token": "...",
+        "expires_in": 3600          # seconds
+    }
+    """
+    try:
+        payload = await req.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+
+    expected = os.environ.get("INSPIRING_CAT_WEBHOOK_SECRET", "") or os.environ.get("OAUTH_RELAY_SECRET", "")
+    if not expected or payload.get("secret", "") != expected:
+        _bg_log("proactive-renewal: rejected — wrong secret", "webhook")
+        raise HTTPException(status_code=403, detail="Invalid secret")
+
+    access_token  = str(payload.get("access_token", "")).strip()
+    refresh_token = str(payload.get("refresh_token", "")).strip()
+    expires_in    = int(payload.get("expires_in", 3600))
+
+    if not access_token:
+        raise HTTPException(status_code=400, detail="Missing access_token")
+
+    try:
+        import sys, json as _json, time as _time
+        sys.path.insert(0, "/app")
+        from pathlib import Path as _Path
+
+        _CREDS_FILE = _Path("/root/.claude/.credentials.json")
+        _CREDS_FILE2 = _Path("/root/.claude/credentials.json")
+
+        # Load existing credentials to preserve structure; create minimal skeleton if absent
+        creds = {}
+        for _cf in (_CREDS_FILE, _CREDS_FILE2):
+            try:
+                if _cf.exists():
+                    creds = _json.loads(_cf.read_text())
+                    break
+            except Exception:
+                pass
+
+        if not creds:
+            creds = {"claudeAiOauth": {}}
+
+        expires_at_ms = int((_time.time() + expires_in) * 1000)
+
+        # Patch all known token field variants so any CLI version picks it up
+        for _top in ("accessToken", "access_token"):
+            if _top in creds:
+                creds[_top] = access_token
+        for _top in ("refreshToken", "refresh_token", "oauthRefreshToken"):
+            if _top in creds:
+                creds[_top] = refresh_token
+
+        for _nested_key in ("claudeAiOauth", "claudeAiOAuth", "oauth", "session", "credentials"):
+            _nested = creds.get(_nested_key, {})
+            if isinstance(_nested, dict) and _nested:
+                for _ak in ("accessToken", "access_token"):
+                    if _ak in _nested:
+                        _nested[_ak] = access_token
+                for _rk in ("refreshToken", "refresh_token", "oauthRefreshToken"):
+                    if _rk in _nested:
+                        _nested[_rk] = refresh_token
+                for _ek in ("expiresAt", "expires_at"):
+                    if _ek in _nested:
+                        _nested[_ek] = expires_at_ms
+                creds[_nested_key] = _nested
+
+        # If credentials were minimal/empty, build a full structure the CLI recognises
+        oauth = creds.setdefault("claudeAiOauth", {})
+        oauth.setdefault("accessToken", access_token)
+        oauth["accessToken"] = access_token
+        oauth.setdefault("refreshToken", refresh_token)
+        oauth["refreshToken"] = refresh_token
+        oauth["expiresAt"] = expires_at_ms
+
+        creds_json = _json.dumps(creds, indent=2)
+        _CREDS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _CREDS_FILE.write_text(creds_json)
+        _CREDS_FILE.chmod(0o600)
+        try:
+            _CREDS_FILE2.write_text(creds_json)
+            _CREDS_FILE2.chmod(0o600)
+        except Exception:
+            pass
+
+        # Push the fresh token everywhere (Railway var, super-agent, volume backup)
+        from app.learning.cli_auto_login import _push_token_to_railway
+        _push_token_to_railway()
+
+        # Clear CLI_DOWN so inspiring-cat resumes immediately
+        try:
+            from app.learning.pro_router import clear_cli_down_flag, reset_pro_flag
+            reset_pro_flag()
+        except Exception:
+            pass
+        try:
+            from app.learning.agent_status_tracker import mark_done
+            mark_done("Claude CLI Pro")
+        except Exception:
+            pass
+
+        _bg_log(
+            f"proactive-renewal: credentials patched + pushed "
+            f"(expires_in={expires_in}s, refresh_rotated={bool(refresh_token)})",
+            "webhook"
+        )
+        return {"ok": True, "expires_in": expires_in, "pushed": True}
+
+    except Exception as e:
+        _bg_log(f"proactive-renewal: error — {e}", "webhook")
+        return {"ok": False, "error": str(e)}
+
+
 @app.post("/webhook/manual-auth-code")
 def webhook_manual_auth_code(request: dict):
     """

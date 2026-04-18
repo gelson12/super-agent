@@ -2275,6 +2275,54 @@ def _push_token_to_railway() -> None:
             _log("SUPER_AGENT_URL or API key not set — skipping in-memory token push to super-agent. "
                  "Add SUPER_AGENT_URL=https://super-agent-production.up.railway.app to inspiring-cat Railway Variables.")
 
+        # ── Layer 5: update CLAUDE_REFRESH_TOKEN GitHub Secret ───────────────
+        # Fire a repository_dispatch so the GitHub Actions runner stores the latest
+        # refresh_token as a secret. This keeps the proactive renewal cron armed
+        # even after Playwright recoveries (which rotate the refresh_token).
+        _gh_pat = os.environ.get("GITHUB_PAT", "")
+        _gh_repo = os.environ.get("GITHUB_REPO", "gelson12/super-agent")
+        if _gh_pat:
+            try:
+                import json as _j2
+                _creds_raw = _j2.loads(_CREDS_FILE.read_text())
+                _rt = (
+                    _creds_raw.get("refreshToken")
+                    or _creds_raw.get("refresh_token")
+                    or _creds_raw.get("claudeAiOauth", {}).get("refreshToken")
+                    or _creds_raw.get("claudeAiOauth", {}).get("refresh_token")
+                    or ""
+                )
+                _cid = (
+                    _creds_raw.get("clientId")
+                    or _creds_raw.get("client_id")
+                    or _creds_raw.get("claudeAiOauth", {}).get("clientId")
+                    or "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+                )
+                if _rt:
+                    import urllib.request as _ureq2
+                    _dispatch2 = _j2.dumps({
+                        "event_type": "store_refresh_token",
+                        "client_payload": {
+                            "refresh_token": _rt,
+                            "client_id": _cid,
+                        },
+                    }).encode()
+                    _req2 = _ureq2.Request(
+                        f"https://api.github.com/repos/{_gh_repo}/dispatches",
+                        data=_dispatch2,
+                        headers={
+                            "Content-Type": "application/json",
+                            "Authorization": f"Bearer {_gh_pat}",
+                            "Accept": "application/vnd.github.v3+json",
+                            "X-GitHub-Api-Version": "2022-11-28",
+                        },
+                        method="POST",
+                    )
+                    with _ureq2.urlopen(_req2, timeout=10) as _r2:
+                        _log(f"Dispatched store_refresh_token to GitHub Actions (HTTP {_r2.status}) ✓")
+            except Exception as _ghe:
+                _log(f"GitHub Secret update dispatch failed (non-fatal): {_ghe}")
+
     except Exception as e:
         _log(f"Token push error: {e}")
 
