@@ -141,33 +141,10 @@ def _scheduled_health_check() -> None:
         except Exception:
             pass
 
-        # LLM-based investigation only when credit allows
-        if not _hc_uses_llm():
-            bg_log("Health check: metrics snapshot taken (LLM skipped — critical credit tier)", source="health_check")
-            return
-
-        from .agents.self_improve_agent import run_self_improve_agent
-        bg_log("Scheduled health check starting — investigating all services autonomously", source="health_check")
-        _t0 = __import__("time").time()
-        run_self_improve_agent(
-            "SCHEDULED HEALTH CHECK — investigate ALL services autonomously:\n"
-            "1. railway_get_deployment_status + railway_get_logs — deployed and healthy?\n"
-            "2. db_health_check + db_get_failure_patterns — DB healthy? Recurring errors?\n"
-            "3. n8n_list_workflows — CALL THIS to verify n8n is LIVE and reachable.\n"
-            "   If it returns data: report workflow count, how many active vs inactive.\n"
-            "   If it returns an error: n8n is DOWN — report as CRITICAL.\n"
-            "   DO NOT just check config files — you must verify the live instance.\n"
-            "4. run_shell_command('supervisorctl status') — are all processes running?\n"
-            "5. db_get_error_stats — which models/routes are failing most?\n"
-            "Auto-fix any SAFE issues. Record findings in a brief internal log. "
-            "Only notify the user if you find something critical that needs their input.\n"
-            "IMPORTANT: Do NOT create test workflows during health checks. Only READ.",
-            authorized=False,
-        )
-        _elapsed = __import__("time").time() - _t0
-        # Record cost estimate: health check uses ~3000 input + ~1000 output chars on average
-        _ledger_record("CLAUDE", 3000, 1000, category="health_check")
-        bg_log(f"Scheduled health check complete ({_elapsed:.0f}s)", source="health_check")
+        # LLM-based health check disabled — run_self_improve_agent() in background
+        # threads consumed heavy memory (LangGraph) and caused OOM crashes that
+        # put super-agent in a restart loop. Metrics snapshot above is sufficient.
+        bg_log("Health check: metrics snapshot complete (LLM investigation disabled — was causing OOM crashes)", source="health_check")
     except Exception as _e:
         bg_log(f"Scheduled health check error: {_e}", source="health_check")
 
@@ -240,9 +217,9 @@ async def _lifespan(app: FastAPI):
     from .learning.weekly_review import run_weekly_review
     from .learning.improvement_monitor import tick as _monitor_tick
     import threading as _threading
-    # Run post-deploy check in a background thread (not the scheduler)
-    # so it fires once on every startup without blocking the lifespan.
-    _threading.Thread(target=_post_deploy_check, daemon=True).start()
+    # Post-deploy LLM check disabled — it ran run_self_improve_agent() on every
+    # boot, which consumed heavy memory (LangGraph + agents) and caused OOM
+    # crashes in the Railway container, putting super-agent in a restart loop.
 
     # Token keeper removed from super-agent — lives in cli_worker (inspiring-cat) only.
     # Running it here caused startup hangs: subprocess("claude") doesn't exist in this
