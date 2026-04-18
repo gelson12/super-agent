@@ -88,7 +88,7 @@
       "position": [1440, 80],
       "parameters": {
         "method": "POST",
-        "url": "={{ 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + $env.GEMINI_API_KEY }}",
+        "url": "={{ 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=' + $env.GEMINI_API_KEY }}",
         "sendHeaders": true,
         "headerParameters": { "parameters": [{"name": "Content-Type", "value": "application/json"}] },
         "sendBody": true,
@@ -196,7 +196,7 @@
       "position": [1200, 540],
       "parameters": {
         "method": "POST",
-        "url": "={{ 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + $env.GEMINI_API_KEY }}",
+        "url": "={{ 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=' + $env.GEMINI_API_KEY }}",
         "sendHeaders": true,
         "headerParameters": { "parameters": [{"name": "Content-Type", "value": "application/json"}] },
         "sendBody": true,
@@ -290,7 +290,7 @@
       "position": [480, 1200],
       "parameters": {
         "method": "POST",
-        "url": "={{ 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + $env.GEMINI_API_KEY }}",
+        "url": "={{ 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=' + $env.GEMINI_API_KEY }}",
         "sendHeaders": true,
         "headerParameters": { "parameters": [{"name": "Content-Type", "value": "application/json"}] },
         "sendBody": true,
@@ -648,7 +648,7 @@
       "position": [1680, 1940],
       "parameters": {
         "method": "POST",
-        "url": "={{ 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + $env.GEMINI_API_KEY }}",
+        "url": "={{ 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=' + $env.GEMINI_API_KEY }}",
         "sendHeaders": true,
         "headerParameters": { "parameters": [{"name": "Content-Type", "value": "application/json"}] },
         "sendBody": true,
