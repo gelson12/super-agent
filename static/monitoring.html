@@ -1,0 +1,766 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>BRIDGE DIGITAL — System Monitor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet"/>
+<style>
+/* ── Reset & Base ──────────────────────────────────────────────────────── */
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:       #05050f;
+  --bg2:      #0a0a1a;
+  --bg3:      #0f0f28;
+  --glass:    rgba(10,10,30,0.7);
+  --border:   rgba(0,210,255,0.15);
+  --cyan:     #00d4ff;
+  --cyan-dim: rgba(0,212,255,0.25);
+  --purple:   #7b2fff;
+  --green:    #00ff88;
+  --red:      #ff2d55;
+  --yellow:   #ffcc00;
+  --text:     #c8d8f0;
+  --text-dim: #5a7090;
+  --font-mono: 'JetBrains Mono', 'Courier New', monospace;
+  --font-hud:  'Orbitron', monospace;
+}
+html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--font-mono);font-size:13px;overflow-x:hidden}
+
+/* ── Animated grid background ─────────────────────────────────────────── */
+body::before{
+  content:'';position:fixed;inset:0;z-index:0;
+  background-image:
+    linear-gradient(rgba(0,212,255,0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0,212,255,0.03) 1px, transparent 1px);
+  background-size:40px 40px;
+  animation:gridShift 20s linear infinite;
+  pointer-events:none;
+}
+@keyframes gridShift{0%{transform:translate(0,0)}100%{transform:translate(40px,40px)}}
+
+/* Scanline overlay */
+body::after{
+  content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
+  background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,0.05) 2px,rgba(0,0,0,0.05) 4px);
+  animation:scanlines 8s linear infinite;
+}
+@keyframes scanlines{0%{background-position:0 0}100%{background-position:0 100px}}
+
+/* ── Layout ───────────────────────────────────────────────────────────── */
+#app{position:relative;z-index:1;min-height:100vh;display:flex;flex-direction:column;gap:0}
+
+/* ── Topbar ───────────────────────────────────────────────────────────── */
+#topbar{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:14px 28px;
+  background:var(--glass);
+  border-bottom:1px solid var(--border);
+  backdrop-filter:blur(12px);
+  position:sticky;top:0;z-index:100;
+}
+.topbar-left{display:flex;align-items:center;gap:16px}
+.logo-mark{
+  width:38px;height:38px;border-radius:8px;
+  background:linear-gradient(135deg,var(--cyan),var(--purple));
+  display:flex;align-items:center;justify-content:center;
+  font-family:var(--font-hud);font-weight:900;font-size:16px;color:#fff;
+  box-shadow:0 0 20px var(--cyan-dim);
+}
+.sys-title{font-family:var(--font-hud);font-size:13px;font-weight:700;letter-spacing:3px;color:var(--cyan);text-transform:uppercase}
+.sys-sub{font-size:10px;color:var(--text-dim);letter-spacing:2px;margin-top:2px}
+
+.topbar-right{display:flex;align-items:center;gap:20px}
+#clock{font-family:var(--font-hud);font-size:14px;color:var(--cyan);letter-spacing:2px}
+#overall-badge{
+  font-family:var(--font-hud);font-size:11px;font-weight:700;letter-spacing:2px;
+  padding:6px 14px;border-radius:4px;border:1px solid currentColor;
+  transition:all 0.3s;
+}
+.badge-healthy{color:var(--green);border-color:var(--green);box-shadow:0 0 12px rgba(0,255,136,0.3)}
+.badge-degraded{color:var(--yellow);border-color:var(--yellow);box-shadow:0 0 12px rgba(255,204,0,0.3)}
+.badge-critical{color:var(--red);border-color:var(--red);box-shadow:0 0 12px rgba(255,45,85,0.3);animation:pulse-red 1.5s infinite}
+.badge-unknown{color:var(--text-dim);border-color:var(--text-dim)}
+@keyframes pulse-red{0%,100%{box-shadow:0 0 12px rgba(255,45,85,0.3)}50%{box-shadow:0 0 24px rgba(255,45,85,0.7)}}
+
+#run-check-btn{
+  font-family:var(--font-hud);font-size:10px;letter-spacing:2px;font-weight:700;
+  padding:7px 16px;border-radius:4px;border:1px solid var(--cyan);
+  background:transparent;color:var(--cyan);cursor:pointer;
+  transition:all 0.2s;text-transform:uppercase;
+}
+#run-check-btn:hover{background:var(--cyan-dim);box-shadow:0 0 12px var(--cyan-dim)}
+#run-check-btn:disabled{opacity:0.4;cursor:not-allowed}
+
+/* ── Main content ─────────────────────────────────────────────────────── */
+main{flex:1;padding:24px 28px;display:flex;flex-direction:column;gap:24px;max-width:1600px;width:100%;margin:0 auto}
+
+/* ── Section headers ──────────────────────────────────────────────────── */
+.section-label{
+  font-family:var(--font-hud);font-size:10px;letter-spacing:4px;color:var(--cyan);
+  text-transform:uppercase;margin-bottom:12px;display:flex;align-items:center;gap:10px;
+}
+.section-label::after{content:'';flex:1;height:1px;background:var(--border)}
+
+/* ── Stat cards row ───────────────────────────────────────────────────── */
+#stat-row{display:grid;grid-template-columns:repeat(4,1fr);gap:16px}
+.stat-card{
+  background:var(--glass);border:1px solid var(--border);border-radius:8px;
+  padding:20px;backdrop-filter:blur(8px);position:relative;overflow:hidden;
+  transition:border-color 0.3s,box-shadow 0.3s;
+}
+.stat-card::before{
+  content:'';position:absolute;top:0;left:0;right:0;height:2px;
+  background:linear-gradient(90deg,transparent,var(--cyan),transparent);
+  animation:topScan 3s linear infinite;
+}
+@keyframes topScan{0%{transform:translateX(-100%)}100%{transform:translateX(100%)}}
+.stat-card:hover{border-color:var(--cyan-dim);box-shadow:0 0 20px rgba(0,212,255,0.1)}
+.stat-num{font-family:var(--font-hud);font-size:32px;font-weight:900;line-height:1;margin-bottom:6px}
+.stat-label{font-size:10px;letter-spacing:2px;color:var(--text-dim);text-transform:uppercase}
+.stat-num.ok{color:var(--green)}
+.stat-num.warn{color:var(--yellow)}
+.stat-num.err{color:var(--red)}
+.stat-num.neu{color:var(--cyan)}
+
+/* ── System health grid ───────────────────────────────────────────────── */
+#health-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.health-card{
+  background:var(--glass);border:1px solid var(--border);border-radius:8px;
+  padding:20px;backdrop-filter:blur(8px);
+}
+.health-card-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
+.health-card-title{font-family:var(--font-hud);font-size:11px;letter-spacing:2px;color:var(--text);text-transform:uppercase}
+.status-orb{
+  width:12px;height:12px;border-radius:50%;flex-shrink:0;
+}
+.orb-green{background:var(--green);box-shadow:0 0 8px var(--green),0 0 16px rgba(0,255,136,0.4);animation:orbPulse 2s infinite}
+.orb-yellow{background:var(--yellow);box-shadow:0 0 8px var(--yellow);animation:orbPulse 1.5s infinite}
+.orb-red{background:var(--red);box-shadow:0 0 8px var(--red);animation:orbPulse 0.8s infinite}
+.orb-gray{background:var(--text-dim);opacity:0.4}
+@keyframes orbPulse{0%,100%{transform:scale(1)}50%{transform:scale(1.3)}}
+
+.check-list{display:flex;flex-direction:column;gap:6px}
+.check-item{display:flex;align-items:flex-start;gap:8px;font-size:11px;line-height:1.4}
+.check-sym{flex-shrink:0;margin-top:1px;font-size:11px}
+.check-sym.pass{color:var(--green)}
+.check-sym.fail{color:var(--red)}
+.check-sym.warn{color:var(--yellow)}
+.check-name{color:var(--text);flex:1}
+.check-detail{color:var(--text-dim);font-size:10px;margin-left:16px;margin-top:1px}
+
+/* ── CLI Layer stack ──────────────────────────────────────────────────── */
+#cli-layers{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+.layer-card{
+  background:var(--glass);border:1px solid var(--border);border-radius:8px;
+  padding:16px;text-align:center;position:relative;overflow:hidden;
+  transition:all 0.3s;
+}
+.layer-card.active-layer{border-color:var(--green);box-shadow:0 0 16px rgba(0,255,136,0.15)}
+.layer-card.down-layer{border-color:var(--red);box-shadow:0 0 16px rgba(255,45,85,0.15)}
+.layer-card.warn-layer{border-color:var(--yellow)}
+.layer-num{font-family:var(--font-hud);font-size:24px;font-weight:900;margin-bottom:4px}
+.layer-name{font-size:10px;letter-spacing:1px;color:var(--text-dim);text-transform:uppercase;margin-bottom:12px}
+.layer-status{font-size:11px;padding:4px 10px;border-radius:3px;display:inline-block;font-weight:700;letter-spacing:1px}
+.ls-ok{background:rgba(0,255,136,0.1);color:var(--green);border:1px solid rgba(0,255,136,0.3)}
+.ls-fail{background:rgba(255,45,85,0.1);color:var(--red);border:1px solid rgba(255,45,85,0.3)}
+.ls-warn{background:rgba(255,204,0,0.1);color:var(--yellow);border:1px solid rgba(255,204,0,0.3)}
+.ls-skip{background:rgba(90,112,144,0.1);color:var(--text-dim);border:1px solid rgba(90,112,144,0.2)}
+.layer-detail{font-size:10px;color:var(--text-dim);margin-top:8px}
+
+/* ── Reports timeline ─────────────────────────────────────────────────── */
+#timeline{display:flex;flex-direction:column;gap:8px}
+.timeline-item{
+  display:flex;align-items:center;gap:16px;
+  background:var(--glass);border:1px solid var(--border);border-radius:6px;
+  padding:12px 16px;transition:border-color 0.2s;cursor:pointer;
+}
+.timeline-item:hover{border-color:var(--cyan-dim)}
+.tl-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.tl-time{font-size:10px;color:var(--text-dim);width:140px;flex-shrink:0;font-family:var(--font-hud)}
+.tl-status{font-family:var(--font-hud);font-size:10px;font-weight:700;letter-spacing:1px;width:80px;flex-shrink:0}
+.tl-counts{font-size:11px;color:var(--text-dim);flex:1}
+.tl-badge{font-size:10px;padding:2px 8px;border-radius:3px}
+
+/* ── Suggestions queue ────────────────────────────────────────────────── */
+#suggestions-toolbar{display:flex;gap:8px;margin-bottom:12px;align-items:center}
+.filter-btn{
+  font-family:var(--font-hud);font-size:9px;letter-spacing:2px;padding:5px 12px;
+  border-radius:3px;border:1px solid var(--border);background:transparent;
+  color:var(--text-dim);cursor:pointer;transition:all 0.2s;text-transform:uppercase;
+}
+.filter-btn.active{border-color:var(--cyan);color:var(--cyan);background:var(--cyan-dim)}
+#suggestions-count{margin-left:auto;font-size:11px;color:var(--text-dim)}
+
+#suggestions-list{display:flex;flex-direction:column;gap:10px}
+.suggestion-card{
+  background:var(--glass);border-radius:8px;padding:18px 20px;
+  display:flex;gap:16px;align-items:flex-start;
+  transition:border-color 0.2s,box-shadow 0.2s;
+  border:1px solid var(--border);
+}
+.suggestion-card.sev-critical{border-left:3px solid var(--red)}
+.suggestion-card.sev-high{border-left:3px solid var(--yellow)}
+.suggestion-card.sev-medium{border-left:3px solid var(--cyan)}
+.suggestion-card.sev-low{border-left:3px solid var(--text-dim)}
+.sug-sev{
+  font-family:var(--font-hud);font-size:9px;letter-spacing:1px;font-weight:700;
+  padding:3px 8px;border-radius:3px;flex-shrink:0;margin-top:2px;text-transform:uppercase;
+}
+.sev-critical .sug-sev{background:rgba(255,45,85,0.15);color:var(--red);border:1px solid rgba(255,45,85,0.4)}
+.sev-high .sug-sev{background:rgba(255,204,0,0.12);color:var(--yellow);border:1px solid rgba(255,204,0,0.4)}
+.sev-medium .sug-sev{background:rgba(0,212,255,0.1);color:var(--cyan);border:1px solid rgba(0,212,255,0.3)}
+.sev-low .sug-sev{background:rgba(90,112,144,0.1);color:var(--text-dim);border:1px solid rgba(90,112,144,0.3)}
+.sug-body{flex:1;min-width:0}
+.sug-system{font-size:10px;color:var(--text-dim);letter-spacing:1px;text-transform:uppercase;margin-bottom:4px}
+.sug-title{font-size:13px;color:var(--text);font-weight:500;margin-bottom:6px}
+.sug-desc{font-size:11px;color:var(--text-dim);line-height:1.6;margin-bottom:8px}
+.sug-fix{
+  font-size:11px;color:var(--cyan);background:rgba(0,212,255,0.05);
+  border:1px solid rgba(0,212,255,0.15);border-radius:4px;
+  padding:8px 12px;line-height:1.6;
+}
+.sug-fix::before{content:'FIX ▶  ';font-weight:700;opacity:0.6}
+.sug-actions{display:flex;gap:8px;margin-top:10px}
+.btn-approve,.btn-reject{
+  font-family:var(--font-hud);font-size:9px;letter-spacing:2px;font-weight:700;
+  padding:6px 16px;border-radius:4px;cursor:pointer;
+  transition:all 0.2s;text-transform:uppercase;border:1px solid;
+}
+.btn-approve{color:var(--green);border-color:var(--green);background:transparent}
+.btn-approve:hover{background:rgba(0,255,136,0.1);box-shadow:0 0 12px rgba(0,255,136,0.2)}
+.btn-reject{color:var(--red);border-color:var(--red);background:transparent}
+.btn-reject:hover{background:rgba(255,45,85,0.1)}
+.btn-approve:disabled,.btn-reject:disabled{opacity:0.3;cursor:not-allowed}
+.sug-status-tag{
+  font-family:var(--font-hud);font-size:9px;letter-spacing:2px;padding:4px 10px;border-radius:3px;
+  text-transform:uppercase;align-self:flex-start;
+}
+.tag-approved{background:rgba(0,255,136,0.1);color:var(--green);border:1px solid rgba(0,255,136,0.3)}
+.tag-rejected{background:rgba(255,45,85,0.1);color:var(--red);border:1px solid rgba(255,45,85,0.3)}
+
+/* ── Loader ───────────────────────────────────────────────────────────── */
+.loading{
+  display:flex;align-items:center;justify-content:center;
+  padding:40px;color:var(--text-dim);font-size:12px;letter-spacing:2px;gap:10px;
+}
+.spinner{width:16px;height:16px;border:2px solid var(--border);border-top-color:var(--cyan);border-radius:50%;animation:spin 0.8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ── Empty state ──────────────────────────────────────────────────────── */
+.empty{
+  text-align:center;padding:48px;color:var(--text-dim);
+  border:1px dashed var(--border);border-radius:8px;
+}
+.empty-icon{font-size:32px;margin-bottom:12px;opacity:0.4}
+.empty-msg{font-size:12px;letter-spacing:1px}
+
+/* ── Last update bar ──────────────────────────────────────────────────── */
+#refresh-bar{
+  text-align:center;padding:8px;font-size:10px;color:var(--text-dim);
+  letter-spacing:2px;border-top:1px solid var(--border);
+}
+
+/* ── Two-col layout for bottom half ──────────────────────────────────── */
+.two-col{display:grid;grid-template-columns:1fr 1.4fr;gap:24px}
+
+/* ── Toast notifications ──────────────────────────────────────────────── */
+#toast-container{position:fixed;bottom:24px;right:24px;z-index:1000;display:flex;flex-direction:column;gap:8px}
+.toast{
+  background:var(--bg3);border-radius:6px;padding:12px 20px;
+  font-size:12px;min-width:240px;display:flex;align-items:center;gap:10px;
+  animation:slideIn 0.3s ease,fadeOut 0.3s ease 3.7s forwards;border-left:3px solid;
+}
+.toast.success{border-color:var(--green);color:var(--green)}
+.toast.error{border-color:var(--red);color:var(--red)}
+.toast.info{border-color:var(--cyan);color:var(--cyan)}
+@keyframes slideIn{from{transform:translateX(110%);opacity:0}to{transform:translateX(0);opacity:1}}
+@keyframes fadeOut{to{opacity:0;transform:translateX(110%)}}
+
+/* ── Responsive ───────────────────────────────────────────────────────── */
+@media(max-width:1100px){
+  #health-grid{grid-template-columns:1fr 1fr}
+  #stat-row{grid-template-columns:repeat(2,1fr)}
+  .two-col{grid-template-columns:1fr}
+}
+@media(max-width:700px){
+  #cli-layers{grid-template-columns:repeat(2,1fr)}
+  #stat-row{grid-template-columns:1fr 1fr}
+}
+</style>
+</head>
+<body>
+<div id="app">
+
+<!-- ── Topbar ─────────────────────────────────────────────────────────────── -->
+<div id="topbar">
+  <div class="topbar-left">
+    <div class="logo-mark">B</div>
+    <div>
+      <div class="sys-title">Bridge Digital</div>
+      <div class="sys-sub">SYSTEM OPERATIONS MONITOR — v1.0</div>
+    </div>
+  </div>
+  <div class="topbar-right">
+    <div id="clock">--:--:--</div>
+    <div id="overall-badge" class="badge-unknown">LOADING…</div>
+    <button id="run-check-btn" onclick="triggerCheck()">▶ RUN CHECK</button>
+  </div>
+</div>
+
+<!-- ── Main ───────────────────────────────────────────────────────────────── -->
+<main>
+
+  <!-- Stat row -->
+  <div>
+    <div class="section-label">Live Metrics</div>
+    <div id="stat-row">
+      <div class="stat-card">
+        <div class="stat-num neu" id="stat-total">—</div>
+        <div class="stat-label">Checks Run</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-num ok" id="stat-passed">—</div>
+        <div class="stat-label">Passed</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-num err" id="stat-failed">—</div>
+        <div class="stat-label">Failed</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-num warn" id="stat-pending">—</div>
+        <div class="stat-label">Pending Suggestions</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- System health grid -->
+  <div>
+    <div class="section-label">System Health</div>
+    <div id="health-grid">
+      <div class="health-card" id="card-n8n">
+        <div class="health-card-header">
+          <span class="health-card-title">n8n Workflows</span>
+          <span class="status-orb orb-gray" id="orb-n8n"></span>
+        </div>
+        <div class="check-list" id="checks-n8n"><div class="loading"><div class="spinner"></div>LOADING</div></div>
+      </div>
+      <div class="health-card" id="card-agent">
+        <div class="health-card-header">
+          <span class="health-card-title">Super-Agent API</span>
+          <span class="status-orb orb-gray" id="orb-agent"></span>
+        </div>
+        <div class="check-list" id="checks-agent"><div class="loading"><div class="spinner"></div>LOADING</div></div>
+      </div>
+      <div class="health-card" id="card-crypto">
+        <div class="health-card-header">
+          <span class="health-card-title">Crypto / Finance Workflows</span>
+          <span class="status-orb orb-gray" id="orb-crypto"></span>
+        </div>
+        <div class="check-list" id="checks-crypto"><div class="loading"><div class="spinner"></div>LOADING</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- CLI Layer stack -->
+  <div>
+    <div class="section-label">Claude CLI Token Healing Layers</div>
+    <div id="cli-layers">
+      <div class="layer-card" id="layer-1">
+        <div class="layer-num" style="color:var(--text-dim)">L1</div>
+        <div class="layer-name">Direct OAuth</div>
+        <div class="layer-status ls-skip">BLOCKED</div>
+        <div class="layer-detail">Cloudflare blocks Railway IPs — by design</div>
+      </div>
+      <div class="layer-card" id="layer-2">
+        <div class="layer-num" style="color:var(--cyan)">L2</div>
+        <div class="layer-name">Volume + PostgreSQL</div>
+        <div class="layer-status ls-skip" id="l2-status">CHECKING…</div>
+        <div class="layer-detail" id="l2-detail">Credential backup</div>
+      </div>
+      <div class="layer-card" id="layer-3">
+        <div class="layer-num" style="color:var(--cyan)">L3</div>
+        <div class="layer-name">GitHub Actions</div>
+        <div class="layer-status ls-skip" id="l3-status">CHECKING…</div>
+        <div class="layer-detail" id="l3-detail">OAuth relay</div>
+      </div>
+      <div class="layer-card" id="layer-4">
+        <div class="layer-num" style="color:var(--cyan)">L4</div>
+        <div class="layer-name">Playwright + n8n</div>
+        <div class="layer-status ls-skip" id="l4-status">CHECKING…</div>
+        <div class="layer-detail" id="l4-detail">Magic link flow</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bottom: timeline + suggestions -->
+  <div class="two-col">
+
+    <!-- Timeline -->
+    <div>
+      <div class="section-label">Check History</div>
+      <div id="timeline"><div class="loading"><div class="spinner"></div>LOADING HISTORY</div></div>
+    </div>
+
+    <!-- Suggestions queue -->
+    <div>
+      <div class="section-label">Improvement Suggestions</div>
+      <div id="suggestions-toolbar">
+        <button class="filter-btn active" onclick="setFilter('pending',this)">PENDING</button>
+        <button class="filter-btn" onclick="setFilter('approved',this)">APPROVED</button>
+        <button class="filter-btn" onclick="setFilter('rejected',this)">REJECTED</button>
+        <button class="filter-btn" onclick="setFilter('all',this)">ALL</button>
+        <span id="suggestions-count"></span>
+      </div>
+      <div id="suggestions-list"><div class="loading"><div class="spinner"></div>LOADING</div></div>
+    </div>
+
+  </div>
+
+</main>
+
+<!-- Refresh bar -->
+<div id="refresh-bar">AUTO-REFRESH EVERY 30s &nbsp;|&nbsp; <span id="last-update">—</span></div>
+
+</div><!-- #app -->
+
+<!-- Toast container -->
+<div id="toast-container"></div>
+
+<script>
+// ── Config ──────────────────────────────────────────────────────────────────
+const API = '/monitoring/api';
+let currentFilter = 'pending';
+let checkRunning = false;
+
+// ── Clock ────────────────────────────────────────────────────────────────────
+function updateClock() {
+  const now = new Date();
+  document.getElementById('clock').textContent =
+    now.toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
+}
+setInterval(updateClock, 1000);
+updateClock();
+
+// ── Toast ────────────────────────────────────────────────────────────────────
+function toast(msg, type = 'info') {
+  const el = document.createElement('div');
+  el.className = `toast ${type}`;
+  el.innerHTML = `<span>${type === 'success' ? '✓' : type === 'error' ? '✗' : '◈'}</span>${msg}`;
+  document.getElementById('toast-container').appendChild(el);
+  setTimeout(() => el.remove(), 4200);
+}
+
+// ── Status helpers ───────────────────────────────────────────────────────────
+function statusColor(s) {
+  return s === 'healthy' ? 'var(--green)' : s === 'degraded' ? 'var(--yellow)' : s === 'critical' ? 'var(--red)' : 'var(--text-dim)';
+}
+function orbClass(s) {
+  return s === 'healthy' ? 'orb-green' : s === 'degraded' ? 'orb-yellow' : s === 'critical' ? 'orb-red' : 'orb-gray';
+}
+function badgeClass(s) {
+  return s === 'healthy' ? 'badge-healthy' : s === 'degraded' ? 'badge-degraded' : s === 'critical' ? 'badge-critical' : 'badge-unknown';
+}
+function tlDotColor(s) {
+  return s === 'healthy' ? 'var(--green)' : s === 'degraded' ? 'var(--yellow)' : s === 'critical' ? 'var(--red)' : 'var(--text-dim)';
+}
+function timeAgo(iso) {
+  if (!iso) return '—';
+  const diff = (Date.now() - new Date(iso)) / 1000;
+  if (diff < 60) return `${Math.round(diff)}s ago`;
+  if (diff < 3600) return `${Math.round(diff/60)}m ago`;
+  if (diff < 86400) return `${Math.round(diff/3600)}h ago`;
+  return `${Math.round(diff/86400)}d ago`;
+}
+
+// ── Load status ──────────────────────────────────────────────────────────────
+async function loadStatus() {
+  try {
+    const r = await fetch(`${API}/status`);
+    const d = await r.json();
+    if (d.status === 'no_data') return;
+
+    // Update badge
+    const badge = document.getElementById('overall-badge');
+    badge.textContent = (d.overall_status || 'unknown').toUpperCase();
+    badge.className = 'badge-' + (d.overall_status || 'unknown');
+
+    // Stats
+    document.getElementById('stat-total').textContent = d.checks_total ?? '—';
+    document.getElementById('stat-passed').textContent = d.checks_passed ?? '—';
+    document.getElementById('stat-failed').textContent = d.checks_failed ?? '—';
+
+    // Health cards orbs
+    const orbMap = {n8n: d.n8n_status, agent: d.agent_status};
+    for (const [key, status] of Object.entries(orbMap)) {
+      const orb = document.getElementById(`orb-${key}`);
+      if (orb) { orb.className = 'status-orb ' + orbClass(status); }
+    }
+
+    // Populate check lists from data.checks
+    if (d.data && d.data.checks) {
+      populateCheckCards(d.data.checks);
+    }
+
+    // CLI layers from checks
+    if (d.data && d.data.checks) {
+      populateCLILayers(d.data.checks);
+    }
+
+    document.getElementById('last-update').textContent = 'Last updated: ' + timeAgo(d.created_at);
+  } catch(e) {
+    console.error('Status load error', e);
+  }
+}
+
+function populateCheckCards(checks) {
+  const cats = {n8n:'n8n', agent:'agent', crypto:'crypto'};
+  for (const [cat, elId] of Object.entries(cats)) {
+    const catChecks = checks.filter(c => c.category === cat);
+    const el = document.getElementById(`checks-${elId}`);
+    if (!el) continue;
+    if (!catChecks.length) {
+      el.innerHTML = `<div class="empty" style="padding:20px"><div class="empty-msg">No data yet — run a check</div></div>`;
+      continue;
+    }
+    el.innerHTML = catChecks.map(c => `
+      <div class="check-item">
+        <span class="check-sym ${c.passed ? 'pass' : 'fail'}">${c.passed ? '✓' : '✗'}</span>
+        <div>
+          <div class="check-name">${esc(c.name)}</div>
+          ${c.detail ? `<div class="check-detail">${esc(c.detail)}</div>` : ''}
+        </div>
+      </div>`).join('');
+    // Update orb
+    const failures = catChecks.filter(c => !c.passed).length;
+    const status = failures === 0 ? 'healthy' : failures === 1 ? 'degraded' : 'critical';
+    const orb = document.getElementById(`orb-${elId}`);
+    if (orb) orb.className = 'status-orb ' + orbClass(status);
+  }
+}
+
+function populateCLILayers(checks) {
+  const cliChecks = checks.filter(c => c.category === 'cli');
+  // Layer 2: "Layer 2 CLI worker" or "Layer 2b PostgreSQL token"
+  const l2worker = cliChecks.find(c => c.name.toLowerCase().includes('layer 2 cli worker'));
+  const l2pg     = cliChecks.find(c => c.name.toLowerCase().includes('postgresql'));
+  const l3       = cliChecks.find(c => c.name.toLowerCase().includes('layer 3'));
+  const l4       = cliChecks.find(c => c.name.toLowerCase().includes('layer 4'));
+
+  function setLayer(id, check, fallbackWarn) {
+    const card = document.getElementById(id);
+    if (!card) return;
+    const statusEl = card.querySelector('[id$="-status"]');
+    const detailEl = card.querySelector('[id$="-detail"]');
+    if (!check) {
+      if (statusEl) { statusEl.textContent = 'UNKNOWN'; statusEl.className = 'layer-status ls-skip'; }
+      return;
+    }
+    const isWarn = !check.passed && fallbackWarn;
+    if (check.passed && !check.detail.toLowerCase().includes('warn')) {
+      card.className = 'layer-card active-layer';
+      if (statusEl) { statusEl.textContent = 'ONLINE'; statusEl.className = 'layer-status ls-ok'; }
+    } else if (!check.passed) {
+      card.className = 'layer-card down-layer';
+      if (statusEl) { statusEl.textContent = 'DOWN'; statusEl.className = 'layer-status ls-fail'; }
+    } else {
+      card.className = 'layer-card warn-layer';
+      if (statusEl) { statusEl.textContent = 'WARN'; statusEl.className = 'layer-status ls-warn'; }
+    }
+    if (detailEl && check.detail) detailEl.textContent = check.detail.slice(0, 60);
+  }
+
+  // L2 — combine worker + PG
+  const l2ok = (l2worker?.passed ?? true) && (l2pg?.passed ?? true);
+  const l2detail = [l2worker?.detail, l2pg?.detail].filter(Boolean).join(' | ').slice(0, 80);
+  const fakeL2 = l2worker || l2pg
+    ? { passed: l2ok, detail: l2detail }
+    : null;
+  setLayer('layer-2', fakeL2, false);
+
+  setLayer('layer-3', l3, true);
+  setLayer('layer-4', l4, false);
+}
+
+// ── Load reports timeline ─────────────────────────────────────────────────────
+async function loadReports() {
+  try {
+    const r = await fetch(`${API}/reports?limit=12`);
+    const data = await r.json();
+    const el = document.getElementById('timeline');
+    if (!data.length) {
+      el.innerHTML = `<div class="empty"><div class="empty-icon">◈</div><div class="empty-msg">No health checks recorded yet.<br>Click ▶ RUN CHECK to start.</div></div>`;
+      return;
+    }
+    el.innerHTML = data.map(d => `
+      <div class="timeline-item" onclick="showReport('${d.id}')">
+        <div class="tl-dot" style="background:${tlDotColor(d.overall_status)}"></div>
+        <div class="tl-time">${timeAgo(d.created_at)}</div>
+        <div class="tl-status" style="color:${tlDotColor(d.overall_status)}">${(d.overall_status||'?').toUpperCase()}</div>
+        <div class="tl-counts">
+          <span style="color:var(--green)">✓${d.checks_passed}</span>
+          &nbsp;
+          <span style="color:var(--red)">✗${d.checks_failed}</span>
+          &nbsp;
+          <span style="color:var(--text-dim)">${d.run_type}</span>
+        </div>
+        <span class="tl-badge" style="color:${tlDotColor(d.n8n_status)};border:1px solid ${tlDotColor(d.n8n_status)};padding:2px 6px;border-radius:3px;font-size:9px">n8n</span>
+        <span class="tl-badge" style="color:${tlDotColor(d.cli_status)};border:1px solid ${tlDotColor(d.cli_status)};padding:2px 6px;border-radius:3px;font-size:9px;margin-left:4px">CLI</span>
+      </div>`).join('');
+  } catch(e) {
+    console.error('Reports error', e);
+  }
+}
+
+function showReport(id) {
+  toast(`Loading report ${id.slice(0,8)}…`, 'info');
+}
+
+// ── Load suggestions ──────────────────────────────────────────────────────────
+async function loadSuggestions(filter) {
+  const el = document.getElementById('suggestions-list');
+  el.innerHTML = `<div class="loading"><div class="spinner"></div>LOADING</div>`;
+  try {
+    const r = await fetch(`${API}/suggestions?status=${filter}&limit=50`);
+    const data = await r.json();
+    document.getElementById('suggestions-count').textContent = `${data.length} item${data.length !== 1 ? 's' : ''}`;
+    document.getElementById('stat-pending').textContent = data.filter(s => s.status === 'pending').length || (filter === 'pending' ? data.length : '—');
+    if (!data.length) {
+      el.innerHTML = `<div class="empty"><div class="empty-icon">◈</div><div class="empty-msg">${filter === 'pending' ? 'No pending suggestions — system looks clean.' : 'No suggestions found.'}</div></div>`;
+      return;
+    }
+    el.innerHTML = data.map(s => renderSuggestion(s)).join('');
+  } catch(e) {
+    el.innerHTML = `<div class="empty"><div class="empty-msg">Error loading suggestions</div></div>`;
+  }
+}
+
+function renderSuggestion(s) {
+  const isPending = s.status === 'pending';
+  return `
+  <div class="suggestion-card sev-${s.severity}" id="sug-${s.id}">
+    <div class="sug-sev">${s.severity}</div>
+    <div class="sug-body">
+      <div class="sug-system">${esc(s.target_system)}</div>
+      <div class="sug-title">${esc(s.title)}</div>
+      <div class="sug-desc">${esc(s.description)}</div>
+      ${s.proposed_fix ? `<div class="sug-fix">${esc(s.proposed_fix)}</div>` : ''}
+      <div class="sug-actions">
+        ${isPending
+          ? `<button class="btn-approve" onclick="decideSuggestion('${s.id}','approve')">✓ APPROVE &amp; SEND TO SELF-IMPROVE</button>
+             <button class="btn-reject" onclick="decideSuggestion('${s.id}','reject')">✗ REJECT</button>`
+          : `<span class="sug-status-tag tag-${s.status}">${s.status.toUpperCase()}</span>`
+        }
+        <span style="margin-left:auto;font-size:10px;color:var(--text-dim)">${timeAgo(s.created_at)}</span>
+      </div>
+    </div>
+  </div>`;
+}
+
+async function decideSuggestion(id, action) {
+  const card = document.getElementById(`sug-${id}`);
+  if (!card) return;
+  const btns = card.querySelectorAll('button');
+  btns.forEach(b => b.disabled = true);
+  try {
+    const r = await fetch(`${API}/suggestions/${id}/${action}`, {method: 'POST'});
+    const d = await r.json();
+    if (d.ok) {
+      toast(action === 'approve' ? '✓ Approved — Self-Improvement agent notified' : 'Rejected', action === 'approve' ? 'success' : 'info');
+      // Fade out card and reload
+      card.style.transition = 'opacity 0.5s';
+      card.style.opacity = '0';
+      setTimeout(() => { card.remove(); loadSuggestions(currentFilter); }, 500);
+    } else {
+      toast(d.message || 'Error', 'error');
+      btns.forEach(b => b.disabled = false);
+    }
+  } catch(e) {
+    toast('Network error', 'error');
+    btns.forEach(b => b.disabled = false);
+  }
+}
+
+// ── Filter buttons ────────────────────────────────────────────────────────────
+function setFilter(filter, btn) {
+  currentFilter = filter;
+  document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  loadSuggestions(filter);
+}
+
+// ── Run check ─────────────────────────────────────────────────────────────────
+async function triggerCheck() {
+  if (checkRunning) return;
+  const btn = document.getElementById('run-check-btn');
+  btn.disabled = true;
+  btn.textContent = '⟳ RUNNING…';
+  checkRunning = true;
+  toast('Health check started. Results in ~60s.', 'info');
+  try {
+    await fetch(`${API}/run-check`, {method: 'POST'});
+    // Poll until done
+    const poll = setInterval(async () => {
+      const r = await fetch(`${API}/run-check/status`);
+      const d = await r.json();
+      if (!d.running) {
+        clearInterval(poll);
+        checkRunning = false;
+        btn.disabled = false;
+        btn.textContent = '▶ RUN CHECK';
+        toast('Health check complete. Dashboard refreshed.', 'success');
+        await loadAll();
+      }
+    }, 5000);
+    // Safety timeout
+    setTimeout(() => {
+      clearInterval(poll);
+      checkRunning = false;
+      btn.disabled = false;
+      btn.textContent = '▶ RUN CHECK';
+    }, 330000);
+  } catch(e) {
+    checkRunning = false;
+    btn.disabled = false;
+    btn.textContent = '▶ RUN CHECK';
+    toast('Failed to start check', 'error');
+  }
+}
+
+// ── Load pending count for stat ───────────────────────────────────────────────
+async function loadPendingCount() {
+  try {
+    const r = await fetch(`${API}/suggestions?status=pending&limit=1`);
+    if (!r.ok) return;
+    // count is in the response length but we just use total from suggestions load
+  } catch {}
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function esc(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g,'&amp;')
+    .replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;');
+}
+
+// ── Bootstrap ─────────────────────────────────────────────────────────────────
+async function loadAll() {
+  await Promise.all([
+    loadStatus(),
+    loadReports(),
+    loadSuggestions(currentFilter),
+  ]);
+}
+
+// Load initially
+loadAll();
+
+// Auto-refresh every 30s
+setInterval(loadAll, 30000);
+</script>
+</body>
+</html>

@@ -1,0 +1,55 @@
+name: Daily System Health Check
+
+on:
+  schedule:
+    # 07:00 UTC daily — after overnight workflows have run
+    - cron: '0 7 * * *'
+  workflow_dispatch:
+    inputs:
+      run_type:
+        description: 'Run type label'
+        required: false
+        default: 'manual'
+
+jobs:
+  health-check:
+    name: Run system health monitor
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install --quiet httpx psycopg2-binary
+
+      - name: Run health monitor
+        env:
+          DATABASE_URL:          ${{ secrets.DATABASE_URL }}
+          N8N_BASE_URL:          ${{ secrets.N8N_BASE_URL }}
+          N8N_API_KEY:           ${{ secrets.N8N_API_KEY }}
+          CLI_WORKER_URL:        ${{ secrets.CLI_WORKER_URL }}
+          SUPER_AGENT_URL:       ${{ secrets.SUPER_AGENT_URL }}
+          CHIEF_OF_STAFF_WF_ID:  ${{ secrets.CHIEF_OF_STAFF_WF_ID }}
+          GITHUB_TOKEN:          ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPO:           ${{ github.repository }}
+          RUN_TYPE:              ${{ github.event.inputs.run_type || 'scheduled' }}
+          NO_COLOR:              '1'
+        run: python scripts/system_health_monitor.py
+
+      - name: Upload result summary
+        if: always()
+        run: |
+          echo "## Health Check Result" >> $GITHUB_STEP_SUMMARY
+          echo "Run type: ${RUN_TYPE:-scheduled}" >> $GITHUB_STEP_SUMMARY
+          echo "Completed at: $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
+        env:
+          RUN_TYPE: ${{ github.event.inputs.run_type || 'scheduled' }}

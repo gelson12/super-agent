@@ -26,6 +26,7 @@ from slowapi.errors import RateLimitExceeded
 import anthropic as _anthropic
 
 from .routing.dispatcher import dispatch
+from .monitoring_api import router as _monitoring_router
 from .memory.session import append_exchange, get_messages, clear_session
 from .activity_log import bg_log, recent_lines as _activity_recent_lines, ACTIVITY_LOG
 from .storage.cloudinary_manager import get_storage_status, upload_file
@@ -60,7 +61,7 @@ def _sanitize_error(text: str) -> str:
 # If UI_PASSWORD is not set, auth is disabled.
 
 _OPEN_PATHS = {"/", "/health", "/auth", "/credits/pro-status", "/credits/pro-reset", "/agents", "/dashboard", "/observability", "/intelligence", "/spend", "/stats", "/stats/report", "/admin/infrastructure-info"}
-_OPEN_PREFIXES = ("/static", "/downloads", "/webhook", "/n8n/connection-info", "/activity", "/dashboard/", "/stats/", "/metrics/")  # token-in-URL or public info
+_OPEN_PREFIXES = ("/static", "/downloads", "/webhook", "/n8n/connection-info", "/activity", "/dashboard/", "/stats/", "/metrics/", "/monitoring")  # token-in-URL or public info
 # NOTE: /chat, /chat/stream, /chat/direct, and /install-guide are intentionally
 # NOT in _OPEN_PATHS/_OPEN_PREFIXES — they require X-Token when UI_PASSWORD is set.
 # /install-guide has its own inline token check (see endpoint definition below).
@@ -865,6 +866,8 @@ class UploadRequest(BaseModel):
 _static_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "static")
 if os.path.isdir(_static_dir):
     app.mount("/static", StaticFiles(directory=_static_dir), name="static")
+
+app.include_router(_monitoring_router)
 
 @app.get("/", include_in_schema=False)
 def root():
