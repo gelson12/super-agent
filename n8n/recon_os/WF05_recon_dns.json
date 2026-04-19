@@ -151,12 +151,12 @@
   "connections": {
     "Webhook": { "main": [[{ "node": "Normalize Input", "type": "main", "index": 0 }]] },
     "Normalize Input": { "main": [[{ "node": "Create Scan Job", "type": "main", "index": 0 }]] },
-    "Create Scan Job": { "main": [
-      [{ "node": "DNS A Records", "type": "main", "index": 0 }],
-      [{ "node": "DNS MX Records", "type": "main", "index": 0 }],
-      [{ "node": "DNS TXT Records", "type": "main", "index": 0 }],
-      [{ "node": "Certificate Transparency", "type": "main", "index": 0 }]
-    ]},
+    "Create Scan Job": { "main": [[
+      { "node": "DNS A Records", "type": "main", "index": 0 },
+      { "node": "DNS MX Records", "type": "main", "index": 0 },
+      { "node": "DNS TXT Records", "type": "main", "index": 0 },
+      { "node": "Certificate Transparency", "type": "main", "index": 0 }
+    ]]},
     "DNS A Records": { "main": [[{ "node": "Parse DNS Results", "type": "main", "index": 0 }]] },
     "DNS MX Records": { "main": [[{ "node": "Parse DNS Results", "type": "main", "index": 0 }]] },
     "DNS TXT Records": { "main": [[{ "node": "Parse DNS Results", "type": "main", "index": 0 }]] },

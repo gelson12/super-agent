@@ -201,7 +201,7 @@ CREATE TABLE IF NOT EXISTS normalized_findings (
     remediation_updated_at  TIMESTAMPTZ,
     business_impact         TEXT,
     remediation_guidance    TEXT,
-    references              TEXT[] DEFAULT '{}',
+    ext_references          TEXT[] DEFAULT '{}',
     evidence_summary        TEXT,
     dedup_fingerprint       TEXT,
     occurrence_count        INT DEFAULT 1,
@@ -361,7 +361,7 @@ CREATE TABLE IF NOT EXISTS finding_templates (
     summary_template        TEXT,
     impact_template         TEXT,
     remediation_template    TEXT,
-    references              TEXT[] DEFAULT '{}',
+    ext_references          TEXT[] DEFAULT '{}',
     created_by              TEXT DEFAULT 'system',
     created_at              TIMESTAMPTZ DEFAULT NOW(),
     is_active               BOOLEAN DEFAULT TRUE
