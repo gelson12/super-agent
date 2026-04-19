@@ -60,7 +60,7 @@ def _sanitize_error(text: str) -> str:
 # Protected paths require header: X-Token: <UI_PASSWORD>
 # If UI_PASSWORD is not set, auth is disabled.
 
-_OPEN_PATHS = {"/", "/health", "/auth", "/credits/pro-status", "/credits/pro-reset", "/agents", "/dashboard", "/observability", "/intelligence", "/spend", "/stats", "/stats/report", "/admin/infrastructure-info"}
+_OPEN_PATHS = {"/", "/health", "/auth", "/credits/pro-status", "/credits/pro-reset", "/agents", "/dashboard", "/observability", "/intelligence", "/spend", "/crypto", "/stats", "/stats/report", "/admin/infrastructure-info"}
 _OPEN_PREFIXES = ("/static", "/downloads", "/webhook", "/n8n/connection-info", "/activity", "/dashboard/", "/stats/", "/metrics/", "/monitoring")  # token-in-URL or public info
 # NOTE: /chat, /chat/stream, /chat/direct, and /install-guide are intentionally
 # NOT in _OPEN_PATHS/_OPEN_PREFIXES — they require X-Token when UI_PASSWORD is set.
@@ -2221,6 +2221,40 @@ def spend_dashboard():
     if os.path.isfile(path):
         return FileResponse(path)
     return {"error": "spend.html not found in static/"}
+
+
+@app.get("/crypto", include_in_schema=False)
+def crypto_dashboard():
+    """Proxy the n8n crypto trading dashboard, serving it as text/html."""
+    import urllib.request
+    from fastapi.responses import HTMLResponse
+    n8n_url = "https://outstanding-blessing-production-1d4b.up.railway.app/webhook/crypto-dashboard"
+    try:
+        req = urllib.request.Request(n8n_url, headers={"Accept": "text/html,application/xhtml+xml,*/*"})
+        with urllib.request.urlopen(req, timeout=15) as r:
+            body = r.read().decode("utf-8", errors="replace")
+        # If n8n returns JSON (dashboard still being built), render a friendly page
+        if body.strip().startswith("{") or body.strip().startswith("["):
+            import json as _json
+            data = _json.loads(body)
+            formatted = _json.dumps(data, indent=2)
+            body = f"""<!DOCTYPE html><html><head><meta charset="utf-8">
+<title>Crypto Dashboard</title>
+<style>body{{background:#050510;color:#00d4ff;font-family:monospace;padding:40px}}
+pre{{background:#0a0a1e;border:1px solid rgba(0,212,255,0.2);padding:20px;border-radius:8px;overflow:auto}}
+h2{{letter-spacing:3px}}</style></head><body>
+<h2>📈 CRYPTO TRADING DASHBOARD</h2>
+<p style="color:#888">Live signal data from n8n workflow:</p>
+<pre>{formatted}</pre></body></html>"""
+        return HTMLResponse(content=body)
+    except Exception as exc:
+        from fastapi.responses import HTMLResponse
+        return HTMLResponse(
+            content=f"""<!DOCTYPE html><html><head><meta charset="utf-8"><title>Crypto Dashboard</title>
+<style>body{{background:#050510;color:#ff4444;font-family:monospace;padding:40px}}</style></head>
+<body><h2>⚠ Crypto Dashboard Unavailable</h2><p>{exc}</p></body></html>""",
+            status_code=503
+        )
 
 
 @app.get("/metrics/intelligence", tags=["meta"])

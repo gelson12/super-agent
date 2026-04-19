@@ -47,6 +47,19 @@
       font-size: 0.85rem;
     }
 
+    .dash-nav {
+      display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+      margin-bottom: 20px; padding-bottom: 16px;
+      border-bottom: 1px solid #2a2a2a;
+    }
+    .dash-nav a {
+      color: #888; font-size: 0.78rem; text-decoration: none;
+      padding: 5px 12px; border: 1px solid #2a2a2a; border-radius: 6px;
+      transition: all 0.2s; white-space: nowrap;
+    }
+    .dash-nav a:hover { color: #6cb4ff; border-color: #6cb4ff; background: rgba(108,180,255,0.06); text-decoration: none; }
+    .dash-nav a.active { color: #fff; border-color: #555; background: #1a1a1a; }
+
     /* ── Cards grid ──────────────────────────────────────────────────── */
     .cards {
       display: grid;
@@ -228,7 +241,16 @@
 </head>
 <body>
 
-<a href="/" class="back-link">&larr; Back to chat</a>
+<nav class="dash-nav">
+  <a href="/">← Chat</a>
+  <a href="/dashboard" class="active">📋 Reports</a>
+  <a href="/observability">📊 Observability</a>
+  <a href="/agents">🤖 Agents</a>
+  <a href="/intelligence">🧠 Intelligence</a>
+  <a href="/spend">💸 Spend</a>
+  <a href="/monitoring">🔬 Monitor</a>
+  <a href="/crypto">📈 Crypto</a>
+</nav>
 <h1>Improvement Dashboard</h1>
 <p class="subtitle" id="generated-at">Loading...</p>
 

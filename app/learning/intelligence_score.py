@@ -20,11 +20,19 @@ Combo multiplier (consecutive correct predictions):
 import threading
 import time
 
-# Level thresholds (cumulative XP to reach that level) — each step is ~2-3× the previous span
-_LEVEL_THRESHOLDS = [0, 300, 800, 1800, 3300, 5500, 8500, 12500, 18000, 25000]
+# Level thresholds (cumulative XP). 20 levels; early tiers come quickly, later tiers are aspirational.
+# At ~300 XP/week: L5 ≈ 11 weeks, L10 ≈ 1.5 years, L15 ≈ 6.5 years, L20 ≈ mythical.
+_LEVEL_THRESHOLDS = [
+    0, 300, 800, 1800, 3300,          # L1-5  (days → months)
+    5500, 8500, 12500, 18000, 25000,  # L6-10 (months → 1-2 years)
+    35000, 48000, 65000, 87000, 115000, # L11-15 (years)
+    150000, 195000, 250000, 320000, 400000, # L16-20 (aspirational)
+]
 _LEVEL_NAMES = [
     "NEWBORN", "AWARE", "LEARNING", "ADAPTING", "PERCEPTIVE",
-    "INTUITIVE", "PREDICTIVE", "PRESCIENT", "ORACLE", "OMNISCIENT",
+    "INTUITIVE", "ANALYTICAL", "STRATEGIC", "PREDICTIVE", "PRESCIENT",
+    "SAGE", "ENLIGHTENED", "MASTERFUL", "VISIONARY", "TRANSCENDENT",
+    "LEGENDARY", "MYTHIC", "DIVINE", "ORACLE", "OMNISCIENT",
 ]
 
 XP_REWARDS = {
@@ -50,7 +58,9 @@ ALL_ACHIEVEMENTS = {
     "accuracy_75":         {"name": "CLAIRVOYANT",        "desc": "75%+ prediction accuracy (30+ samples)", "icon": "✨", "xp": 200},
     "level_5":             {"name": "PERCEPTIVE",         "desc": "Reached Level 5",                        "icon": "⭐", "xp": 150},
     "level_8":             {"name": "PRESCIENT",          "desc": "Reached Level 8",                        "icon": "🌟", "xp": 250},
-    "omniscient":          {"name": "OMNISCIENT",         "desc": "Reached maximum Level 10",               "icon": "👑", "xp": 500},
+    "level_10":            {"name": "MASTERFUL",          "desc": "Reached Level 10",                       "icon": "💎", "xp": 400},
+    "level_15":            {"name": "TRANSCENDENT",       "desc": "Reached Level 15",                       "icon": "🌌", "xp": 600},
+    "omniscient":          {"name": "OMNISCIENT",         "desc": "Reached maximum Level 20",               "icon": "👑", "xp": 1000},
     # Combo achievements
     "combo_5":             {"name": "ON FIRE",            "desc": "8× prediction combo streak",             "icon": "🔥", "xp": 75},
     "combo_10":            {"name": "UNSTOPPABLE",        "desc": "15× prediction combo streak",            "icon": "💥", "xp": 150},
@@ -109,17 +119,17 @@ def get_level_info() -> dict:
     for i, threshold in enumerate(_LEVEL_THRESHOLDS):
         if xp >= threshold:
             level = i + 1
-    level = min(level, 10)
+    level = min(level, 20)
     name = _LEVEL_NAMES[level - 1]
     current_floor = _LEVEL_THRESHOLDS[level - 1]
-    is_max = level == 10
+    is_max = level == 20
     if is_max:
         # Keep accumulating XP beyond max; show as overflow prestige XP
         xp_in_level = xp - current_floor
         xp_span     = 0
         pct         = 100
     else:
-        next_ceiling = _LEVEL_THRESHOLDS[level]
+        next_ceiling = _LEVEL_THRESHOLDS[level]  # index = level (0-based) = next level's threshold
         xp_in_level  = xp - current_floor
         xp_span      = next_ceiling - current_floor
         pct          = min(100, round(xp_in_level / xp_span * 100, 1))
@@ -247,7 +257,9 @@ def _check_achievements() -> None:
     lvl = get_level_info()["level"]
     if lvl >= 5:  _unlock("level_5")
     if lvl >= 8:  _unlock("level_8")
-    if lvl >= 10: _unlock("omniscient")
+    if lvl >= 10: _unlock("level_10")
+    if lvl >= 15: _unlock("level_15")
+    if lvl >= 20: _unlock("omniscient")
 
 
 # ── Stats for API ─────────────────────────────────────────────────────────────
