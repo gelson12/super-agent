@@ -480,21 +480,7 @@ async function loadStatus() {
   try {
     const r = await fetch(`${API}/status`);
     const d = await r.json();
-    if (d.status === 'no_data') {
-      ['n8n', 'agent', 'crypto'].forEach(cat => {
-        const el = document.getElementById(`checks-${cat}`);
-        if (el && el.querySelector('.spinner'))
-          el.innerHTML = '<div class="empty" style="padding:16px"><div class="empty-msg">No data — click ▶ RUN CHECK to start</div></div>';
-      });
-      ['l2-status','l3-status','l4-status'].forEach(id => {
-        const el = document.getElementById(id);
-        if (el) { el.textContent = 'PENDING'; el.className = 'layer-status ls-skip'; }
-      });
-      const badge = document.getElementById('overall-badge');
-      badge.textContent = 'NO DATA';
-      badge.className = 'badge-unknown';
-      return;
-    }
+    if (d.status === 'no_data') return;
 
     // Update badge
     const badge = document.getElementById('overall-badge');
@@ -774,9 +760,9 @@ async function loadAll() {
 // Load initially, then auto-trigger a check if no data exists
 async function boot() {
   await loadAll();
-  // If still no data after first load, auto-trigger a check after 1.5s
-  const badge = document.getElementById('overall-badge');
-  if (badge && badge.textContent === 'NO DATA' && !checkRunning) {
+  // If no checks have ever run, auto-trigger one after 1.5s
+  const timeline = document.getElementById('timeline');
+  if (timeline && timeline.querySelector('.empty') && !checkRunning) {
     setTimeout(() => {
       toast('No data found — auto-triggering first health check…', 'info');
       triggerCheck();
