@@ -1,0 +1,781 @@
+﻿{
+    "updatedAt":  "2026-04-19T07:27:27.270Z",
+    "createdAt":  "2026-04-19T03:30:09.639Z",
+    "id":  "NfYhQcYQ9lwHu2hk",
+    "name":  "RECON OS - WF-16 Retest Validator",
+    "description":  null,
+    "active":  true,
+    "isArchived":  false,
+    "nodes":  [
+                  {
+                      "parameters":  {
+                                         "httpMethod":  "POST",
+                                         "path":  "recon-os/internal/retest-validate",
+                                         "responseMode":  "lastNode",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "wh-rv",
+                      "name":  "Webhook",
+                      "type":  "n8n-nodes-base.webhook",
+                      "typeVersion":  2,
+                      "position":  [
+                                       240,
+                                       300
+                                   ],
+                      "webhookId":  "recon-os-internal-retest-validate"
+                  },
+                  {
+                      "parameters":  {
+                                         "inputSource":  "passthrough"
+                                     },
+                      "id":  "wf-trigger",
+                      "name":  "Execute Workflow Trigger",
+                      "type":  "n8n-nodes-base.executeWorkflowTrigger",
+                      "typeVersion":  1.1,
+                      "position":  [
+                                       240,
+                                       500
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "SELECT rr.id as retest_id, rr.finding_id, rr.engagement_id, nf.severity, nf.reopen_count, nf.title\nFROM retest_records rr\nJOIN normalized_findings nf ON rr.finding_id = nf.id\nWHERE rr.id = \u0027{{ ($input.first().json.body || $input.first().json).retest_id }}\u0027",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "pg-get-retest",
+                      "name":  "Get Retest Record",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       460,
+                                       300
+                                   ],
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "oHS3dvjMW1h1PkMp",
+                                                           "name":  "RECON OS PostgreSQL"
+                                                       }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "const retest = $(\u0027Get Retest Record\u0027).first().json;\nconst input = $(\u0027Execute Workflow Trigger\u0027).first()?.json || $(\u0027Webhook\u0027).first()?.json?.body || {};\nconst inputData = input.body || input;\nreturn [{ json: {\n  retest_id: retest.retest_id,\n  finding_id: retest.finding_id,\n  engagement_id: retest.engagement_id,\n  severity: retest.severity,\n  reopen_count: parseInt(retest.reopen_count || 0),\n  result: inputData.result,\n  retest_evidence: inputData.retest_evidence || \u0027\u0027,\n  retested_by: inputData.retested_by || \u0027analyst\u0027,\n  notes: inputData.notes || \u0027\u0027\n} }];"
+                                     },
+                      "id":  "merge-data",
+                      "name":  "Merge Retest Data",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       680,
+                                       300
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "UPDATE retest_records SET\n  result = \u0027{{ $json.result }}\u0027,\n  retest_evidence = \u0027{{ $json.retest_evidence.replace(/\u0027/g,\"\u0027\u0027\") }}\u0027,\n  retested_by = \u0027{{ $json.retested_by }}\u0027,\n  notes = \u0027{{ $json.notes.replace(/\u0027/g,\"\u0027\u0027\") }}\u0027,\n  completed_at = NOW()\nWHERE id = \u0027{{ $json.retest_id }}\u0027;",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "pg-update-retest",
+                      "name":  "Update Retest Record",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       900,
+                                       300
+                                   ],
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "oHS3dvjMW1h1PkMp",
+                                                           "name":  "RECON OS PostgreSQL"
+                                                       }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "rules":  {
+                                                       "values":  [
+                                                                      {
+                                                                          "conditions":  {
+                                                                                             "options":  {
+                                                                                                             "caseSensitive":  true
+                                                                                                         },
+                                                                                             "conditions":  [
+                                                                                                                {
+                                                                                                                    "id":  "c1",
+                                                                                                                    "leftValue":  "={{ $json.result }}",
+                                                                                                                    "rightValue":  "pass",
+                                                                                                                    "operator":  {
+                                                                                                                                     "type":  "string",
+                                                                                                                                     "operation":  "equals"
+                                                                                                                                 }
+                                                                                                                }
+                                                                                                            ],
+                                                                                             "combinator":  "and"
+                                                                                         }
+                                                                      },
+                                                                      {
+                                                                          "conditions":  {
+                                                                                             "options":  {
+                                                                                                             "caseSensitive":  true
+                                                                                                         },
+                                                                                             "conditions":  [
+                                                                                                                {
+                                                                                                                    "id":  "c2",
+                                                                                                                    "leftValue":  "={{ $json.result }}",
+                                                                                                                    "rightValue":  "fail",
+                                                                                                                    "operator":  {
+                                                                                                                                     "type":  "string",
+                                                                                                                                     "operation":  "equals"
+                                                                                                                                 }
+                                                                                                                }
+                                                                                                            ],
+                                                                                             "combinator":  "and"
+                                                                                         }
+                                                                      }
+                                                                  ]
+                                                   },
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "switch-result",
+                      "name":  "Switch Result",
+                      "type":  "n8n-nodes-base.switch",
+                      "typeVersion":  3,
+                      "position":  [
+                                       1120,
+                                       300
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "UPDATE normalized_findings SET\n  validation_status = \u0027verified_fixed\u0027,\n  remediation_status = \u0027verified_fixed\u0027,\n  closed_at = NOW()\nWHERE id = \u0027{{ $json.finding_id }}\u0027;\nUPDATE engagement_metrics SET\n  verified_fixed = verified_fixed + 1,\n  avg_mttr_days = (\n    SELECT ROUND(AVG(EXTRACT(EPOCH FROM (closed_at - first_seen))/86400),2)\n    FROM normalized_findings\n    WHERE engagement_id = \u0027{{ $json.engagement_id }}\u0027 AND closed_at IS NOT NULL\n  ),\n  updated_at = NOW()\nWHERE engagement_id = \u0027{{ $json.engagement_id }}\u0027;",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "pg-close-finding",
+                      "name":  "Close Finding",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       1340,
+                                       200
+                                   ],
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "oHS3dvjMW1h1PkMp",
+                                                           "name":  "RECON OS PostgreSQL"
+                                                       }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "UPDATE normalized_findings SET\n  validation_status = \u0027validated\u0027,\n  remediation_status = \u0027reopened\u0027,\n  reopen_count = reopen_count + 1\nWHERE id = \u0027{{ $json.finding_id }}\u0027;\nINSERT INTO audit_logs (event_type, actor, entity_type, entity_id, payload)\nVALUES (\u0027retest_failed\u0027,\u0027wf16\u0027,\u0027finding\u0027,\u0027{{ $json.finding_id }}\u0027,\u0027{\"reopen_count\":{{ $json.reopen_count + 1 }},\"severity\":\"{{ $json.severity }}\"}\u0027::jsonb);",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "pg-reopen",
+                      "name":  "Reopen Finding",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       1340,
+                                       400
+                                   ],
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "oHS3dvjMW1h1PkMp",
+                                                           "name":  "RECON OS PostgreSQL"
+                                                       }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "UPDATE normalized_findings SET remediation_status = \u0027partially_fixed\u0027 WHERE id = \u0027{{ $json.finding_id }}\u0027;",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "pg-partial",
+                      "name":  "Mark Partially Fixed",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       1340,
+                                       560
+                                   ],
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "oHS3dvjMW1h1PkMp",
+                                                           "name":  "RECON OS PostgreSQL"
+                                                       }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "method":  "POST",
+                                         "url":  "={{ $env.RECON_OS_SLACK_WEBHOOK || \u0027https://hooks.slack.com/services/PLACEHOLDER\u0027 }}",
+                                         "sendBody":  true,
+                                         "specifyBody":  "json",
+                                         "jsonBody":  "={{ JSON.stringify({ text: ($(\u0027Merge Retest Data\u0027).first().json.result === \u0027pass\u0027 ? \u0027? *RECON OS - Finding Closed*\\n\u0027 : ($(\u0027Merge Retest Data\u0027).first().json.result === \u0027fail\u0027 ? \u0027? *RECON OS - Retest FAILED - Finding Reopened*\\n\u0027 : \u0027?? *RECON OS - Partially Fixed*\\n\u0027)) + \u0027Finding ID: \u0027 + $(\u0027Merge Retest Data\u0027).first().json.finding_id + \u0027\\nResult: \u0027 + $(\u0027Merge Retest Data\u0027).first().json.result.toUpperCase(), username: \u0027RECON OS\u0027, icon_emoji: \u0027:white_check_mark:\u0027 }) }}",
+                                         "options":  {
+                                                         "timeout":  10000
+                                                     }
+                                     },
+                      "id":  "notify-slack",
+                      "name":  "Notify Slack",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.2,
+                      "position":  [
+                                       1560,
+                                       380
+                                   ]
+                  }
+              ],
+    "connections":  {
+                        "Webhook":  {
+                                        "main":  [
+                                                     [
+                                                         {
+                                                             "node":  "Get Retest Record",
+                                                             "type":  "main",
+                                                             "index":  0
+                                                         }
+                                                     ]
+                                                 ]
+                                    },
+                        "Execute Workflow Trigger":  {
+                                                         "main":  [
+                                                                      [
+                                                                          {
+                                                                              "node":  "Get Retest Record",
+                                                                              "type":  "main",
+                                                                              "index":  0
+                                                                          }
+                                                                      ]
+                                                                  ]
+                                                     },
+                        "Get Retest Record":  {
+                                                  "main":  [
+                                                               [
+                                                                   {
+                                                                       "node":  "Merge Retest Data",
+                                                                       "type":  "main",
+                                                                       "index":  0
+                                                                   }
+                                                               ]
+                                                           ]
+                                              },
+                        "Merge Retest Data":  {
+                                                  "main":  [
+                                                               [
+                                                                   {
+                                                                       "node":  "Update Retest Record",
+                                                                       "type":  "main",
+                                                                       "index":  0
+                                                                   }
+                                                               ]
+                                                           ]
+                                              },
+                        "Update Retest Record":  {
+                                                     "main":  [
+                                                                  [
+                                                                      {
+                                                                          "node":  "Switch Result",
+                                                                          "type":  "main",
+                                                                          "index":  0
+                                                                      }
+                                                                  ]
+                                                              ]
+                                                 },
+                        "Switch Result":  {
+                                              "main":  [
+                                                           [
+                                                               {
+                                                                   "node":  "Close Finding",
+                                                                   "type":  "main",
+                                                                   "index":  0
+                                                               }
+                                                           ],
+                                                           [
+                                                               {
+                                                                   "node":  "Reopen Finding",
+                                                                   "type":  "main",
+                                                                   "index":  0
+                                                               }
+                                                           ],
+                                                           [
+                                                               {
+                                                                   "node":  "Mark Partially Fixed",
+                                                                   "type":  "main",
+                                                                   "index":  0
+                                                               }
+                                                           ]
+                                                       ]
+                                          },
+                        "Close Finding":  {
+                                              "main":  [
+                                                           [
+                                                               {
+                                                                   "node":  "Notify Slack",
+                                                                   "type":  "main",
+                                                                   "index":  0
+                                                               }
+                                                           ]
+                                                       ]
+                                          },
+                        "Reopen Finding":  {
+                                               "main":  [
+                                                            [
+                                                                {
+                                                                    "node":  "Notify Slack",
+                                                                    "type":  "main",
+                                                                    "index":  0
+                                                                }
+                                                            ]
+                                                        ]
+                                           },
+                        "Mark Partially Fixed":  {
+                                                     "main":  [
+                                                                  [
+                                                                      {
+                                                                          "node":  "Notify Slack",
+                                                                          "type":  "main",
+                                                                          "index":  0
+                                                                      }
+                                                                  ]
+                                                              ]
+                                                 }
+                    },
+    "settings":  {
+                     "executionOrder":  "v1",
+                     "saveManualExecutions":  true,
+                     "saveExecutionProgress":  true,
+                     "callerPolicy":  "workflowsFromSameOwner",
+                     "availableInMCP":  false
+                 },
+    "staticData":  null,
+    "meta":  null,
+    "pinData":  null,
+    "versionId":  "6c6f1014-3c67-4d6e-b9c6-2698199aaefd",
+    "activeVersionId":  "6c6f1014-3c67-4d6e-b9c6-2698199aaefd",
+    "versionCounter":  6,
+    "triggerCount":  1,
+    "shared":  [
+                   {
+                       "updatedAt":  "2026-04-19T03:30:09.639Z",
+                       "createdAt":  "2026-04-19T03:30:09.639Z",
+                       "role":  "workflow:owner",
+                       "workflowId":  "NfYhQcYQ9lwHu2hk",
+                       "projectId":  "Lrgt6JR85OZiVLcX",
+                       "project":  {
+                                       "updatedAt":  "2026-03-31T09:07:31.366Z",
+                                       "createdAt":  "2026-03-31T08:57:43.789Z",
+                                       "id":  "Lrgt6JR85OZiVLcX",
+                                       "name":  "gelson mascarenhas \u003cgelson_m@hotmail.com\u003e",
+                                       "type":  "personal",
+                                       "icon":  null,
+                                       "description":  null,
+                                       "creatorId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                   }
+                   }
+               ],
+    "tags":  [
+
+             ],
+    "activeVersion":  {
+                          "updatedAt":  "2026-04-19T07:27:27.272Z",
+                          "createdAt":  "2026-04-19T07:27:27.272Z",
+                          "versionId":  "6c6f1014-3c67-4d6e-b9c6-2698199aaefd",
+                          "workflowId":  "NfYhQcYQ9lwHu2hk",
+                          "nodes":  [
+                                        {
+                                            "parameters":  {
+                                                               "httpMethod":  "POST",
+                                                               "path":  "recon-os/internal/retest-validate",
+                                                               "responseMode":  "lastNode",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "wh-rv",
+                                            "name":  "Webhook",
+                                            "type":  "n8n-nodes-base.webhook",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             240,
+                                                             300
+                                                         ],
+                                            "webhookId":  "recon-os-internal-retest-validate"
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "inputSource":  "passthrough"
+                                                           },
+                                            "id":  "wf-trigger",
+                                            "name":  "Execute Workflow Trigger",
+                                            "type":  "n8n-nodes-base.executeWorkflowTrigger",
+                                            "typeVersion":  1.1,
+                                            "position":  [
+                                                             240,
+                                                             500
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "operation":  "executeQuery",
+                                                               "query":  "SELECT rr.id as retest_id, rr.finding_id, rr.engagement_id, nf.severity, nf.reopen_count, nf.title\nFROM retest_records rr\nJOIN normalized_findings nf ON rr.finding_id = nf.id\nWHERE rr.id = \u0027{{ ($input.first().json.body || $input.first().json).retest_id }}\u0027",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "pg-get-retest",
+                                            "name":  "Get Retest Record",
+                                            "type":  "n8n-nodes-base.postgres",
+                                            "typeVersion":  2.5,
+                                            "position":  [
+                                                             460,
+                                                             300
+                                                         ],
+                                            "credentials":  {
+                                                                "postgres":  {
+                                                                                 "id":  "oHS3dvjMW1h1PkMp",
+                                                                                 "name":  "RECON OS PostgreSQL"
+                                                                             }
+                                                            }
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "jsCode":  "const retest = $(\u0027Get Retest Record\u0027).first().json;\nconst input = $(\u0027Execute Workflow Trigger\u0027).first()?.json || $(\u0027Webhook\u0027).first()?.json?.body || {};\nconst inputData = input.body || input;\nreturn [{ json: {\n  retest_id: retest.retest_id,\n  finding_id: retest.finding_id,\n  engagement_id: retest.engagement_id,\n  severity: retest.severity,\n  reopen_count: parseInt(retest.reopen_count || 0),\n  result: inputData.result,\n  retest_evidence: inputData.retest_evidence || \u0027\u0027,\n  retested_by: inputData.retested_by || \u0027analyst\u0027,\n  notes: inputData.notes || \u0027\u0027\n} }];"
+                                                           },
+                                            "id":  "merge-data",
+                                            "name":  "Merge Retest Data",
+                                            "type":  "n8n-nodes-base.code",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             680,
+                                                             300
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "operation":  "executeQuery",
+                                                               "query":  "UPDATE retest_records SET\n  result = \u0027{{ $json.result }}\u0027,\n  retest_evidence = \u0027{{ $json.retest_evidence.replace(/\u0027/g,\"\u0027\u0027\") }}\u0027,\n  retested_by = \u0027{{ $json.retested_by }}\u0027,\n  notes = \u0027{{ $json.notes.replace(/\u0027/g,\"\u0027\u0027\") }}\u0027,\n  completed_at = NOW()\nWHERE id = \u0027{{ $json.retest_id }}\u0027;",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "pg-update-retest",
+                                            "name":  "Update Retest Record",
+                                            "type":  "n8n-nodes-base.postgres",
+                                            "typeVersion":  2.5,
+                                            "position":  [
+                                                             900,
+                                                             300
+                                                         ],
+                                            "credentials":  {
+                                                                "postgres":  {
+                                                                                 "id":  "oHS3dvjMW1h1PkMp",
+                                                                                 "name":  "RECON OS PostgreSQL"
+                                                                             }
+                                                            }
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "rules":  {
+                                                                             "values":  [
+                                                                                            {
+                                                                                                "conditions":  {
+                                                                                                                   "options":  {
+                                                                                                                                   "caseSensitive":  true
+                                                                                                                               },
+                                                                                                                   "conditions":  [
+                                                                                                                                      {
+                                                                                                                                          "id":  "c1",
+                                                                                                                                          "leftValue":  "={{ $json.result }}",
+                                                                                                                                          "rightValue":  "pass",
+                                                                                                                                          "operator":  {
+                                                                                                                                                           "type":  "string",
+                                                                                                                                                           "operation":  "equals"
+                                                                                                                                                       }
+                                                                                                                                      }
+                                                                                                                                  ],
+                                                                                                                   "combinator":  "and"
+                                                                                                               }
+                                                                                            },
+                                                                                            {
+                                                                                                "conditions":  {
+                                                                                                                   "options":  {
+                                                                                                                                   "caseSensitive":  true
+                                                                                                                               },
+                                                                                                                   "conditions":  [
+                                                                                                                                      {
+                                                                                                                                          "id":  "c2",
+                                                                                                                                          "leftValue":  "={{ $json.result }}",
+                                                                                                                                          "rightValue":  "fail",
+                                                                                                                                          "operator":  {
+                                                                                                                                                           "type":  "string",
+                                                                                                                                                           "operation":  "equals"
+                                                                                                                                                       }
+                                                                                                                                      }
+                                                                                                                                  ],
+                                                                                                                   "combinator":  "and"
+                                                                                                               }
+                                                                                            }
+                                                                                        ]
+                                                                         },
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "switch-result",
+                                            "name":  "Switch Result",
+                                            "type":  "n8n-nodes-base.switch",
+                                            "typeVersion":  3,
+                                            "position":  [
+                                                             1120,
+                                                             300
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "operation":  "executeQuery",
+                                                               "query":  "UPDATE normalized_findings SET\n  validation_status = \u0027verified_fixed\u0027,\n  remediation_status = \u0027verified_fixed\u0027,\n  closed_at = NOW()\nWHERE id = \u0027{{ $json.finding_id }}\u0027;\nUPDATE engagement_metrics SET\n  verified_fixed = verified_fixed + 1,\n  avg_mttr_days = (\n    SELECT ROUND(AVG(EXTRACT(EPOCH FROM (closed_at - first_seen))/86400),2)\n    FROM normalized_findings\n    WHERE engagement_id = \u0027{{ $json.engagement_id }}\u0027 AND closed_at IS NOT NULL\n  ),\n  updated_at = NOW()\nWHERE engagement_id = \u0027{{ $json.engagement_id }}\u0027;",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "pg-close-finding",
+                                            "name":  "Close Finding",
+                                            "type":  "n8n-nodes-base.postgres",
+                                            "typeVersion":  2.5,
+                                            "position":  [
+                                                             1340,
+                                                             200
+                                                         ],
+                                            "credentials":  {
+                                                                "postgres":  {
+                                                                                 "id":  "oHS3dvjMW1h1PkMp",
+                                                                                 "name":  "RECON OS PostgreSQL"
+                                                                             }
+                                                            }
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "operation":  "executeQuery",
+                                                               "query":  "UPDATE normalized_findings SET\n  validation_status = \u0027validated\u0027,\n  remediation_status = \u0027reopened\u0027,\n  reopen_count = reopen_count + 1\nWHERE id = \u0027{{ $json.finding_id }}\u0027;\nINSERT INTO audit_logs (event_type, actor, entity_type, entity_id, payload)\nVALUES (\u0027retest_failed\u0027,\u0027wf16\u0027,\u0027finding\u0027,\u0027{{ $json.finding_id }}\u0027,\u0027{\"reopen_count\":{{ $json.reopen_count + 1 }},\"severity\":\"{{ $json.severity }}\"}\u0027::jsonb);",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "pg-reopen",
+                                            "name":  "Reopen Finding",
+                                            "type":  "n8n-nodes-base.postgres",
+                                            "typeVersion":  2.5,
+                                            "position":  [
+                                                             1340,
+                                                             400
+                                                         ],
+                                            "credentials":  {
+                                                                "postgres":  {
+                                                                                 "id":  "oHS3dvjMW1h1PkMp",
+                                                                                 "name":  "RECON OS PostgreSQL"
+                                                                             }
+                                                            }
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "operation":  "executeQuery",
+                                                               "query":  "UPDATE normalized_findings SET remediation_status = \u0027partially_fixed\u0027 WHERE id = \u0027{{ $json.finding_id }}\u0027;",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "pg-partial",
+                                            "name":  "Mark Partially Fixed",
+                                            "type":  "n8n-nodes-base.postgres",
+                                            "typeVersion":  2.5,
+                                            "position":  [
+                                                             1340,
+                                                             560
+                                                         ],
+                                            "credentials":  {
+                                                                "postgres":  {
+                                                                                 "id":  "oHS3dvjMW1h1PkMp",
+                                                                                 "name":  "RECON OS PostgreSQL"
+                                                                             }
+                                                            }
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "method":  "POST",
+                                                               "url":  "={{ $env.RECON_OS_SLACK_WEBHOOK || \u0027https://hooks.slack.com/services/PLACEHOLDER\u0027 }}",
+                                                               "sendBody":  true,
+                                                               "specifyBody":  "json",
+                                                               "jsonBody":  "={{ JSON.stringify({ text: ($(\u0027Merge Retest Data\u0027).first().json.result === \u0027pass\u0027 ? \u0027? *RECON OS - Finding Closed*\\n\u0027 : ($(\u0027Merge Retest Data\u0027).first().json.result === \u0027fail\u0027 ? \u0027? *RECON OS - Retest FAILED - Finding Reopened*\\n\u0027 : \u0027?? *RECON OS - Partially Fixed*\\n\u0027)) + \u0027Finding ID: \u0027 + $(\u0027Merge Retest Data\u0027).first().json.finding_id + \u0027\\nResult: \u0027 + $(\u0027Merge Retest Data\u0027).first().json.result.toUpperCase(), username: \u0027RECON OS\u0027, icon_emoji: \u0027:white_check_mark:\u0027 }) }}",
+                                                               "options":  {
+                                                                               "timeout":  10000
+                                                                           }
+                                                           },
+                                            "id":  "notify-slack",
+                                            "name":  "Notify Slack",
+                                            "type":  "n8n-nodes-base.httpRequest",
+                                            "typeVersion":  4.2,
+                                            "position":  [
+                                                             1560,
+                                                             380
+                                                         ]
+                                        }
+                                    ],
+                          "connections":  {
+                                              "Webhook":  {
+                                                              "main":  [
+                                                                           [
+                                                                               {
+                                                                                   "node":  "Get Retest Record",
+                                                                                   "type":  "main",
+                                                                                   "index":  0
+                                                                               }
+                                                                           ]
+                                                                       ]
+                                                          },
+                                              "Execute Workflow Trigger":  {
+                                                                               "main":  [
+                                                                                            [
+                                                                                                {
+                                                                                                    "node":  "Get Retest Record",
+                                                                                                    "type":  "main",
+                                                                                                    "index":  0
+                                                                                                }
+                                                                                            ]
+                                                                                        ]
+                                                                           },
+                                              "Get Retest Record":  {
+                                                                        "main":  [
+                                                                                     [
+                                                                                         {
+                                                                                             "node":  "Merge Retest Data",
+                                                                                             "type":  "main",
+                                                                                             "index":  0
+                                                                                         }
+                                                                                     ]
+                                                                                 ]
+                                                                    },
+                                              "Merge Retest Data":  {
+                                                                        "main":  [
+                                                                                     [
+                                                                                         {
+                                                                                             "node":  "Update Retest Record",
+                                                                                             "type":  "main",
+                                                                                             "index":  0
+                                                                                         }
+                                                                                     ]
+                                                                                 ]
+                                                                    },
+                                              "Update Retest Record":  {
+                                                                           "main":  [
+                                                                                        [
+                                                                                            {
+                                                                                                "node":  "Switch Result",
+                                                                                                "type":  "main",
+                                                                                                "index":  0
+                                                                                            }
+                                                                                        ]
+                                                                                    ]
+                                                                       },
+                                              "Switch Result":  {
+                                                                    "main":  [
+                                                                                 [
+                                                                                     {
+                                                                                         "node":  "Close Finding",
+                                                                                         "type":  "main",
+                                                                                         "index":  0
+                                                                                     }
+                                                                                 ],
+                                                                                 [
+                                                                                     {
+                                                                                         "node":  "Reopen Finding",
+                                                                                         "type":  "main",
+                                                                                         "index":  0
+                                                                                     }
+                                                                                 ],
+                                                                                 [
+                                                                                     {
+                                                                                         "node":  "Mark Partially Fixed",
+                                                                                         "type":  "main",
+                                                                                         "index":  0
+                                                                                     }
+                                                                                 ]
+                                                                             ]
+                                                                },
+                                              "Close Finding":  {
+                                                                    "main":  [
+                                                                                 [
+                                                                                     {
+                                                                                         "node":  "Notify Slack",
+                                                                                         "type":  "main",
+                                                                                         "index":  0
+                                                                                     }
+                                                                                 ]
+                                                                             ]
+                                                                },
+                                              "Reopen Finding":  {
+                                                                     "main":  [
+                                                                                  [
+                                                                                      {
+                                                                                          "node":  "Notify Slack",
+                                                                                          "type":  "main",
+                                                                                          "index":  0
+                                                                                      }
+                                                                                  ]
+                                                                              ]
+                                                                 },
+                                              "Mark Partially Fixed":  {
+                                                                           "main":  [
+                                                                                        [
+                                                                                            {
+                                                                                                "node":  "Notify Slack",
+                                                                                                "type":  "main",
+                                                                                                "index":  0
+                                                                                            }
+                                                                                        ]
+                                                                                    ]
+                                                                       }
+                                          },
+                          "authors":  "gelson mascarenhas",
+                          "name":  null,
+                          "description":  null,
+                          "autosaved":  false,
+                          "workflowPublishHistory":  [
+                                                         {
+                                                             "createdAt":  "2026-04-19T07:27:27.336Z",
+                                                             "id":  541,
+                                                             "workflowId":  "NfYhQcYQ9lwHu2hk",
+                                                             "versionId":  "6c6f1014-3c67-4d6e-b9c6-2698199aaefd",
+                                                             "event":  "deactivated",
+                                                             "userId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                                         },
+                                                         {
+                                                             "createdAt":  "2026-04-19T07:27:27.356Z",
+                                                             "id":  542,
+                                                             "workflowId":  "NfYhQcYQ9lwHu2hk",
+                                                             "versionId":  "6c6f1014-3c67-4d6e-b9c6-2698199aaefd",
+                                                             "event":  "activated",
+                                                             "userId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                                         }
+                                                     ]
+                      }
+}

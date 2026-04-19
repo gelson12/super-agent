@@ -1,0 +1,152 @@
+{
+  "name": "RECON OS — WF-06 Recon HTTP",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "recon-os/recon/http",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wh-http",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "recon-os-recon-http"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body || $input.first().json;\nconst val = body.asset_value || '';\nconst url = val.startsWith('http') ? val : 'https://' + val;\nreturn [{ json: { asset_id: body.asset_id, asset_value: val, target_url: url, engagement_id: body.engagement_id } }];"
+      },
+      "id": "normalize",
+      "name": "Normalize Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO scan_jobs (engagement_id, asset_id, tool, profile, status, started_at)\nVALUES ('{{ $json.engagement_id }}','{{ $json.asset_id }}','http_probe','passive','running',NOW())\nRETURNING id;",
+        "options": {}
+      },
+      "id": "pg-scan-job",
+      "name": "Create Scan Job",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [680, 300],
+      "credentials": { "postgres": { "id": "RECON_OS_PG_CRED", "name": "RECON OS PostgreSQL" } }
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Normalize Input').first().json.target_url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "User-Agent", "value": "RECON-OS-Scanner/1.0 (Authorized Security Assessment)" }
+          ]
+        },
+        "options": { "timeout": 15000, "redirect": { "redirect": { "followRedirects": true, "maxRedirects": 3 } }, "response": { "response": { "fullResponse": true } } }
+      },
+      "id": "http-probe",
+      "name": "HTTP Probe",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const probe = $input.first().json;\nconst assetVal = $('Normalize Input').first().json.asset_value;\nconst assetId = $('Normalize Input').first().json.asset_id;\nconst engId = $('Normalize Input').first().json.engagement_id;\nconst scanJobId = $('Create Scan Job').first().json.id;\n\nconst headers = probe.headers || {};\nconst statusCode = probe.statusCode || 0;\nconst body = (probe.body || '').substring(0, 2000);\n\n// Security header checks\nconst secHeaders = [\n  'strict-transport-security','content-security-policy','x-frame-options',\n  'x-content-type-options','referrer-policy','permissions-policy'\n];\nconst missingHeaders = secHeaders.filter(h => !headers[h] && !headers[h.toLowerCase()]);\nconst presentHeaders = secHeaders.filter(h => headers[h] || headers[h.toLowerCase()]);\n\n// Server version disclosure\nconst serverHeader = headers['server'] || headers['Server'] || '';\nconst xPoweredBy = headers['x-powered-by'] || headers['X-Powered-By'] || '';\nconst versionDisclosure = /\\d+\\.\\d+/.test(serverHeader) || /\\d+\\.\\d+/.test(xPoweredBy);\n\n// Tech detection from headers\nconst techStack = [];\nif (/nginx/i.test(serverHeader)) techStack.push('nginx');\nif (/apache/i.test(serverHeader)) techStack.push('apache');\nif (/iis/i.test(serverHeader)) techStack.push('IIS');\nif (/express/i.test(xPoweredBy)) techStack.push('Express.js');\nif (/php/i.test(xPoweredBy)) techStack.push('PHP');\nif (/asp\\.net/i.test(xPoweredBy)) techStack.push('ASP.NET');\nif (/wordpress/i.test(body)) techStack.push('WordPress');\n\nconst findings = [];\nif (missingHeaders.length > 0) {\n  findings.push({ type: 'missing_security_headers', headers: missingHeaders, severity: missingHeaders.includes('content-security-policy') ? 'medium' : 'low' });\n}\nif (versionDisclosure) {\n  findings.push({ type: 'version_disclosure', server: serverHeader, x_powered_by: xPoweredBy, severity: 'informational' });\n}\n\nreturn [{ json: {\n  asset_id: assetId,\n  asset_value: assetVal,\n  engagement_id: engId,\n  scan_job_id: scanJobId,\n  status_code: statusCode,\n  server_header: serverHeader,\n  x_powered_by: xPoweredBy,\n  tech_stack: techStack,\n  missing_security_headers: missingHeaders,\n  present_security_headers: presentHeaders,\n  version_disclosure: versionDisclosure,\n  findings,\n  has_findings: findings.length > 0\n} }];"
+      },
+      "id": "analyze-response",
+      "name": "Analyze Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE assets SET\n  http_status = {{ $json.status_code }},\n  tech_stack = ARRAY[{{ $json.tech_stack.map(t => \"'\" + t + \"'\").join(',') || \"'unknown'\" }}],\n  last_tested = NOW()\nWHERE id = '{{ $json.asset_id }}';",
+        "options": {}
+      },
+      "id": "pg-update-asset",
+      "name": "Update Asset",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1340, 300],
+      "credentials": { "postgres": { "id": "RECON_OS_PG_CRED", "name": "RECON OS PostgreSQL" } }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [{ "id": "cond-findings", "leftValue": "={{ $('Analyze Response').first().json.has_findings }}", "rightValue": true, "operator": { "type": "boolean", "operation": "true" } }],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-findings",
+      "name": "IF Has Findings?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1560, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $('Analyze Response').first().json;\nreturn data.findings.map(f => ({ json: {\n  engagement_id: data.engagement_id,\n  asset_id: data.asset_id,\n  source_tool: 'recon_http',\n  title: f.type === 'missing_security_headers'\n    ? `Missing Security Headers: ${f.headers.join(', ')}`\n    : 'Server Version Disclosure',\n  raw_severity: f.severity,\n  raw_evidence: JSON.stringify(f),\n  raw_data: f\n} }));"
+      },
+      "id": "prepare-findings",
+      "name": "Prepare Finding Payloads",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1780, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://outstanding-blessing-production-1d4b.up.railway.app/webhook/recon-os/findings/submit",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": { "timeout": 10000 }
+      },
+      "id": "submit-finding",
+      "name": "Submit Finding",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2000, 200]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO discovery_records (engagement_id, asset_id, source, record_type, record_value, raw_data)\nVALUES ('{{ $('Analyze Response').first().json.engagement_id }}','{{ $('Analyze Response').first().json.asset_id }}','recon_http','http_probe','{{ $('Analyze Response').first().json.status_code }}','{\"status_code\":{{ $('Analyze Response').first().json.status_code }},\"tech_stack\":{{ JSON.stringify($('Analyze Response').first().json.tech_stack) }},\"missing_headers\":{{ JSON.stringify($('Analyze Response').first().json.missing_security_headers) }}}'::jsonb);\nUPDATE scan_jobs SET status='completed', completed_at=NOW() WHERE id='{{ $('Create Scan Job').first().json.id }}';",
+        "options": {}
+      },
+      "id": "pg-finalize",
+      "name": "Store Discovery + Complete Job",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1780, 400],
+      "credentials": { "postgres": { "id": "RECON_OS_PG_CRED", "name": "RECON OS PostgreSQL" } }
+    }
+  ],
+  "connections": {
+    "Webhook": { "main": [[{ "node": "Normalize Input", "type": "main", "index": 0 }]] },
+    "Normalize Input": { "main": [[{ "node": "Create Scan Job", "type": "main", "index": 0 }]] },
+    "Create Scan Job": { "main": [[{ "node": "HTTP Probe", "type": "main", "index": 0 }]] },
+    "HTTP Probe": { "main": [[{ "node": "Analyze Response", "type": "main", "index": 0 }]] },
+    "Analyze Response": { "main": [[{ "node": "Update Asset", "type": "main", "index": 0 }]] },
+    "Update Asset": { "main": [[{ "node": "IF Has Findings?", "type": "main", "index": 0 }]] },
+    "IF Has Findings?": { "main": [
+      [{ "node": "Prepare Finding Payloads", "type": "main", "index": 0 }],
+      [{ "node": "Store Discovery + Complete Job", "type": "main", "index": 0 }]
+    ]},
+    "Prepare Finding Payloads": { "main": [[{ "node": "Submit Finding", "type": "main", "index": 0 }]] },
+    "Submit Finding": { "main": [[{ "node": "Store Discovery + Complete Job", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1", "saveManualExecutions": true, "saveExecutionProgress": true },
+  "meta": { "description": "RECON OS WF-06: HTTP Recon — probes authorized assets for security headers, TLS info, tech stack, and version disclosure. Safe, single-request, rate-limited. Flags findings to WF-08." }
+}

@@ -1,0 +1,863 @@
+﻿{
+    "updatedAt":  "2026-04-19T07:27:32.197Z",
+    "createdAt":  "2026-04-19T03:30:17.513Z",
+    "id":  "0Vsei8jFkRnHwog3",
+    "name":  "RECON OS - WF-12 Report Assembler",
+    "description":  null,
+    "active":  true,
+    "isArchived":  false,
+    "nodes":  [
+                  {
+                      "parameters":  {
+                                         "httpMethod":  "POST",
+                                         "path":  "recon-os/reports/generate",
+                                         "responseMode":  "responseNode",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "wh-report",
+                      "name":  "Webhook",
+                      "type":  "n8n-nodes-base.webhook",
+                      "typeVersion":  2,
+                      "position":  [
+                                       240,
+                                       300
+                                   ],
+                      "webhookId":  "recon-os-reports-generate"
+                  },
+                  {
+                      "parameters":  {
+                                         "httpMethod":  "POST",
+                                         "path":  "recon-os/reports/approve",
+                                         "responseMode":  "responseNode",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "wh-approve",
+                      "name":  "Webhook Approve",
+                      "type":  "n8n-nodes-base.webhook",
+                      "typeVersion":  2,
+                      "position":  [
+                                       240,
+                                       500
+                                   ],
+                      "webhookId":  "recon-os-reports-approve"
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "const body = $input.first().json.body || $input.first().json;\nconst reportId = body.report_id;\nreturn [{ json: { report_id: reportId, approved_by: body.approved_by || \u0027analyst\u0027 } }];"
+                                     },
+                      "id":  "prepare-approve",
+                      "name":  "Prepare Approval",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       460,
+                                       500
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "UPDATE reports SET status=\u0027approved\u0027, approved_by=\u0027{{ $json.approved_by }}\u0027, approved_at=NOW() WHERE id=\u0027{{ $json.report_id }}\u0027 RETURNING id, status;",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "pg-approve-report",
+                      "name":  "Approve Report",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       680,
+                                       500
+                                   ],
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "oHS3dvjMW1h1PkMp",
+                                                           "name":  "RECON OS PostgreSQL"
+                                                       }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "respondWith":  "json",
+                                         "responseBody":  "={{ JSON.stringify({ ok: true, report_id: $json.id, status: \u0027approved\u0027, message: \u0027Report approved. Ready for delivery.\u0027 }) }}",
+                                         "options":  {
+                                                         "responseCode":  200
+                                                     }
+                                     },
+                      "id":  "respond-approved",
+                      "name":  "Respond Approved",
+                      "type":  "n8n-nodes-base.respondToWebhook",
+                      "typeVersion":  1.1,
+                      "position":  [
+                                       900,
+                                       500
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "const body = $input.first().json.body || $input.first().json;\nreturn [{ json: {\n  engagement_id: body.engagement_id,\n  report_type: body.report_type || \u0027technical\u0027\n} }];"
+                                     },
+                      "id":  "normalize-request",
+                      "name":  "Normalize Request",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       460,
+                                       300
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "SELECT e.id, e.name as engagement_name, e.type, e.testing_window_start, e.testing_window_end,\n       c.name as client_name, c.contact_name, c.contact_email,\n       em.total_assets, em.assets_tested, em.total_findings, em.validated_findings, em.coverage_pct\nFROM engagements e\nJOIN clients c ON e.client_id = c.id\nLEFT JOIN engagement_metrics em ON em.engagement_id = e.id\nWHERE e.id = \u0027{{ $json.engagement_id }}\u0027;",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "pg-get-engagement",
+                      "name":  "Get Engagement",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       680,
+                                       300
+                                   ],
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "oHS3dvjMW1h1PkMp",
+                                                           "name":  "RECON OS PostgreSQL"
+                                                       }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "SELECT nf.id, nf.title, nf.severity, nf.recon_score, nf.priority_bucket,\n       nf.category, nf.cwe_id, nf.owasp_category, nf.validation_status,\n       nf.business_impact, nf.remediation_guidance, nf.evidence_summary,\n       nf.score_explanation, nf.analyst_notes, nf.is_recurring, nf.references,\n       nf.first_seen, nf.last_seen,\n       a.asset_value, a.asset_type, a.environment\nFROM normalized_findings nf\nJOIN assets a ON nf.asset_id = a.id\nWHERE nf.engagement_id = \u0027{{ $(\u0027Normalize Request\u0027).first().json.engagement_id }}\u0027\n  AND nf.validation_status IN (\u0027validated\u0027,\u0027analyst_reviewed\u0027)\n  AND nf.priority_bucket != \u0027likely_false_positive\u0027\nORDER BY nf.recon_score DESC;",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "pg-get-findings",
+                      "name":  "Get Validated Findings",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       900,
+                                       300
+                                   ],
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "oHS3dvjMW1h1PkMp",
+                                                           "name":  "RECON OS PostgreSQL"
+                                                       }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "const eng = $(\u0027Get Engagement\u0027).first().json;\nconst findings = $input.all().map(i =\u003e i.json);\nconst engId = $(\u0027Normalize Request\u0027).first().json.engagement_id;\nconst reportType = $(\u0027Normalize Request\u0027).first().json.report_type;\n\n// Severity counts\nconst sevCount = { critical:0, high:0, medium:0, low:0, informational:0 };\nfindings.forEach(f =\u003e { sevCount[f.severity] = (sevCount[f.severity]||0)+1; });\n\n// OWASP breakdown\nconst owaspBreakdown = {};\nfindings.forEach(f =\u003e {\n  if (f.owasp_category) owaspBreakdown[f.owasp_category] = (owaspBreakdown[f.owasp_category]||0)+1;\n});\n\n// Build finding sections\nconst sections = findings.map((f, idx) =\u003e ({\n  sort_order: idx,\n  section_type: \u0027finding\u0027,\n  content: {\n    id: f.id,\n    title: f.title,\n    severity: f.severity,\n    recon_score: f.recon_score,\n    priority_bucket: f.priority_bucket,\n    affected_asset: f.asset_value,\n    asset_type: f.asset_type,\n    environment: f.environment,\n    category: f.category,\n    cwe_id: f.cwe_id,\n    owasp_category: f.owasp_category,\n    validation_status: f.validation_status,\n    summary: f.evidence_summary || \u0027See evidence reference.\u0027,\n    business_impact: f.business_impact || \u0027Business impact assessment required.\u0027,\n    remediation: f.remediation_guidance || \u0027Remediation guidance required.\u0027,\n    score_rationale: f.score_explanation,\n    analyst_notes: f.analyst_notes,\n    is_recurring: f.is_recurring,\n    references: f.references || [],\n    first_seen: f.first_seen,\n    retest_required: f.severity !== \u0027informational\u0027\n  }\n}));\n\n// Summary section\nconst summarySection = {\n  sort_order: -1,\n  section_type: \u0027engagement_summary\u0027,\n  content: {\n    client_name: eng.client_name,\n    engagement_name: eng.engagement_name,\n    engagement_type: eng.type,\n    testing_period: `${eng.testing_window_start} - ${eng.testing_window_end}`,\n    report_generated_at: new Date().toISOString(),\n    report_type: reportType,\n    asset_coverage: { total: eng.total_assets, tested: eng.assets_tested, coverage_pct: eng.coverage_pct },\n    findings_summary: { ...sevCount, total: findings.length },\n    owasp_breakdown: owaspBreakdown,\n    top_5_findings: findings.slice(0,5).map(f =\u003e ({ title: f.title, severity: f.severity, score: f.recon_score, asset: f.asset_value }))\n  }\n};\n\nreturn [{ json: {\n  engagement_id: engId,\n  report_type: reportType,\n  sections: [summarySection, ...sections],\n  finding_count: findings.length,\n  sev_count: sevCount\n} }];"
+                                     },
+                      "id":  "assemble-report",
+                      "name":  "Assemble Report",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       1120,
+                                       300
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "INSERT INTO reports (engagement_id, report_type, status)\nVALUES (\u0027{{ $json.engagement_id }}\u0027,\u0027{{ $json.report_type }}\u0027,\u0027draft\u0027)\nRETURNING id;",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "pg-create-report",
+                      "name":  "Create Report Record",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       1340,
+                                       300
+                                   ],
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "oHS3dvjMW1h1PkMp",
+                                                           "name":  "RECON OS PostgreSQL"
+                                                       }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "const reportId = $(\u0027Create Report Record\u0027).first().json.id;\nconst sections = $(\u0027Assemble Report\u0027).first().json.sections;\nreturn sections.map(s =\u003e ({ json: {\n  report_id: reportId,\n  finding_id: s.content.id || null,\n  section_type: s.section_type,\n  content: s.content,\n  sort_order: s.sort_order\n} }));"
+                                     },
+                      "id":  "split-sections",
+                      "name":  "Split Sections",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       1560,
+                                       300
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "INSERT INTO report_sections (report_id, finding_id, section_type, content, sort_order)\nVALUES (\n  \u0027{{ $json.report_id }}\u0027,\n  {{ $json.finding_id ? \"\u0027\" + $json.finding_id + \"\u0027\" : \u0027NULL\u0027 }},\n  \u0027{{ $json.section_type }}\u0027,\n  \u0027{{ JSON.stringify($json.content).replace(/\u0027/g,\"\u0027\u0027\") }}\u0027::jsonb,\n  {{ $json.sort_order }}\n);",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "pg-insert-sections",
+                      "name":  "Insert Report Sections",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       1780,
+                                       300
+                                   ],
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "oHS3dvjMW1h1PkMp",
+                                                           "name":  "RECON OS PostgreSQL"
+                                                       }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "method":  "POST",
+                                         "url":  "={{ $env.RECON_OS_SLACK_WEBHOOK || \u0027https://hooks.slack.com/services/PLACEHOLDER\u0027 }}",
+                                         "sendBody":  true,
+                                         "specifyBody":  "json",
+                                         "jsonBody":  "={{ JSON.stringify({ text: \u0027?? *RECON OS Report Ready for Review*\\nReport ID: \u0027 + $(\u0027Create Report Record\u0027).first().json.id + \u0027\\nFindings: \u0027 + $(\u0027Assemble Report\u0027).first().json.finding_count + \u0027\\nApprove: POST /webhook/recon-os/reports/approve\\n{\"report_id\":\"\u0027 + $(\u0027Create Report Record\u0027).first().json.id + \u0027\",\"approved_by\":\"your_name\"}\u0027, username: \u0027RECON OS\u0027 }) }}",
+                                         "options":  {
+                                                         "timeout":  10000
+                                                     }
+                                     },
+                      "id":  "notify-analyst",
+                      "name":  "Notify Analyst",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.2,
+                      "position":  [
+                                       2000,
+                                       300
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "respondWith":  "json",
+                                         "responseBody":  "={{ JSON.stringify({ ok: true, report_id: $(\u0027Create Report Record\u0027).first().json.id, finding_count: $(\u0027Assemble Report\u0027).first().json.finding_count, status: \u0027draft\u0027, message: \u0027Report draft created. Awaiting analyst approval at POST /webhook/recon-os/reports/approve\u0027 }) }}",
+                                         "options":  {
+                                                         "responseCode":  201
+                                                     }
+                                     },
+                      "id":  "respond-201",
+                      "name":  "Respond 201",
+                      "type":  "n8n-nodes-base.respondToWebhook",
+                      "typeVersion":  1.1,
+                      "position":  [
+                                       2220,
+                                       300
+                                   ]
+                  }
+              ],
+    "connections":  {
+                        "Webhook":  {
+                                        "main":  [
+                                                     [
+                                                         {
+                                                             "node":  "Normalize Request",
+                                                             "type":  "main",
+                                                             "index":  0
+                                                         }
+                                                     ]
+                                                 ]
+                                    },
+                        "Webhook Approve":  {
+                                                "main":  [
+                                                             [
+                                                                 {
+                                                                     "node":  "Prepare Approval",
+                                                                     "type":  "main",
+                                                                     "index":  0
+                                                                 }
+                                                             ]
+                                                         ]
+                                            },
+                        "Prepare Approval":  {
+                                                 "main":  [
+                                                              [
+                                                                  {
+                                                                      "node":  "Approve Report",
+                                                                      "type":  "main",
+                                                                      "index":  0
+                                                                  }
+                                                              ]
+                                                          ]
+                                             },
+                        "Approve Report":  {
+                                               "main":  [
+                                                            [
+                                                                {
+                                                                    "node":  "Respond Approved",
+                                                                    "type":  "main",
+                                                                    "index":  0
+                                                                }
+                                                            ]
+                                                        ]
+                                           },
+                        "Normalize Request":  {
+                                                  "main":  [
+                                                               [
+                                                                   {
+                                                                       "node":  "Get Engagement",
+                                                                       "type":  "main",
+                                                                       "index":  0
+                                                                   }
+                                                               ]
+                                                           ]
+                                              },
+                        "Get Engagement":  {
+                                               "main":  [
+                                                            [
+                                                                {
+                                                                    "node":  "Get Validated Findings",
+                                                                    "type":  "main",
+                                                                    "index":  0
+                                                                }
+                                                            ]
+                                                        ]
+                                           },
+                        "Get Validated Findings":  {
+                                                       "main":  [
+                                                                    [
+                                                                        {
+                                                                            "node":  "Assemble Report",
+                                                                            "type":  "main",
+                                                                            "index":  0
+                                                                        }
+                                                                    ]
+                                                                ]
+                                                   },
+                        "Assemble Report":  {
+                                                "main":  [
+                                                             [
+                                                                 {
+                                                                     "node":  "Create Report Record",
+                                                                     "type":  "main",
+                                                                     "index":  0
+                                                                 }
+                                                             ]
+                                                         ]
+                                            },
+                        "Create Report Record":  {
+                                                     "main":  [
+                                                                  [
+                                                                      {
+                                                                          "node":  "Split Sections",
+                                                                          "type":  "main",
+                                                                          "index":  0
+                                                                      }
+                                                                  ]
+                                                              ]
+                                                 },
+                        "Split Sections":  {
+                                               "main":  [
+                                                            [
+                                                                {
+                                                                    "node":  "Insert Report Sections",
+                                                                    "type":  "main",
+                                                                    "index":  0
+                                                                }
+                                                            ]
+                                                        ]
+                                           },
+                        "Insert Report Sections":  {
+                                                       "main":  [
+                                                                    [
+                                                                        {
+                                                                            "node":  "Notify Analyst",
+                                                                            "type":  "main",
+                                                                            "index":  0
+                                                                        }
+                                                                    ]
+                                                                ]
+                                                   },
+                        "Notify Analyst":  {
+                                               "main":  [
+                                                            [
+                                                                {
+                                                                    "node":  "Respond 201",
+                                                                    "type":  "main",
+                                                                    "index":  0
+                                                                }
+                                                            ]
+                                                        ]
+                                           }
+                    },
+    "settings":  {
+                     "executionOrder":  "v1",
+                     "saveManualExecutions":  true,
+                     "saveExecutionProgress":  true,
+                     "callerPolicy":  "workflowsFromSameOwner",
+                     "availableInMCP":  false
+                 },
+    "staticData":  null,
+    "meta":  null,
+    "pinData":  null,
+    "versionId":  "d557660e-061e-4641-81c8-cb7ea81782f5",
+    "activeVersionId":  "d557660e-061e-4641-81c8-cb7ea81782f5",
+    "versionCounter":  6,
+    "triggerCount":  2,
+    "shared":  [
+                   {
+                       "updatedAt":  "2026-04-19T03:30:17.513Z",
+                       "createdAt":  "2026-04-19T03:30:17.513Z",
+                       "role":  "workflow:owner",
+                       "workflowId":  "0Vsei8jFkRnHwog3",
+                       "projectId":  "Lrgt6JR85OZiVLcX",
+                       "project":  {
+                                       "updatedAt":  "2026-03-31T09:07:31.366Z",
+                                       "createdAt":  "2026-03-31T08:57:43.789Z",
+                                       "id":  "Lrgt6JR85OZiVLcX",
+                                       "name":  "gelson mascarenhas \u003cgelson_m@hotmail.com\u003e",
+                                       "type":  "personal",
+                                       "icon":  null,
+                                       "description":  null,
+                                       "creatorId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                   }
+                   }
+               ],
+    "tags":  [
+
+             ],
+    "activeVersion":  {
+                          "updatedAt":  "2026-04-19T07:27:32.199Z",
+                          "createdAt":  "2026-04-19T07:27:32.199Z",
+                          "versionId":  "d557660e-061e-4641-81c8-cb7ea81782f5",
+                          "workflowId":  "0Vsei8jFkRnHwog3",
+                          "nodes":  [
+                                        {
+                                            "parameters":  {
+                                                               "httpMethod":  "POST",
+                                                               "path":  "recon-os/reports/generate",
+                                                               "responseMode":  "responseNode",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "wh-report",
+                                            "name":  "Webhook",
+                                            "type":  "n8n-nodes-base.webhook",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             240,
+                                                             300
+                                                         ],
+                                            "webhookId":  "recon-os-reports-generate"
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "httpMethod":  "POST",
+                                                               "path":  "recon-os/reports/approve",
+                                                               "responseMode":  "responseNode",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "wh-approve",
+                                            "name":  "Webhook Approve",
+                                            "type":  "n8n-nodes-base.webhook",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             240,
+                                                             500
+                                                         ],
+                                            "webhookId":  "recon-os-reports-approve"
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "jsCode":  "const body = $input.first().json.body || $input.first().json;\nconst reportId = body.report_id;\nreturn [{ json: { report_id: reportId, approved_by: body.approved_by || \u0027analyst\u0027 } }];"
+                                                           },
+                                            "id":  "prepare-approve",
+                                            "name":  "Prepare Approval",
+                                            "type":  "n8n-nodes-base.code",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             460,
+                                                             500
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "operation":  "executeQuery",
+                                                               "query":  "UPDATE reports SET status=\u0027approved\u0027, approved_by=\u0027{{ $json.approved_by }}\u0027, approved_at=NOW() WHERE id=\u0027{{ $json.report_id }}\u0027 RETURNING id, status;",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "pg-approve-report",
+                                            "name":  "Approve Report",
+                                            "type":  "n8n-nodes-base.postgres",
+                                            "typeVersion":  2.5,
+                                            "position":  [
+                                                             680,
+                                                             500
+                                                         ],
+                                            "credentials":  {
+                                                                "postgres":  {
+                                                                                 "id":  "oHS3dvjMW1h1PkMp",
+                                                                                 "name":  "RECON OS PostgreSQL"
+                                                                             }
+                                                            }
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "respondWith":  "json",
+                                                               "responseBody":  "={{ JSON.stringify({ ok: true, report_id: $json.id, status: \u0027approved\u0027, message: \u0027Report approved. Ready for delivery.\u0027 }) }}",
+                                                               "options":  {
+                                                                               "responseCode":  200
+                                                                           }
+                                                           },
+                                            "id":  "respond-approved",
+                                            "name":  "Respond Approved",
+                                            "type":  "n8n-nodes-base.respondToWebhook",
+                                            "typeVersion":  1.1,
+                                            "position":  [
+                                                             900,
+                                                             500
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "jsCode":  "const body = $input.first().json.body || $input.first().json;\nreturn [{ json: {\n  engagement_id: body.engagement_id,\n  report_type: body.report_type || \u0027technical\u0027\n} }];"
+                                                           },
+                                            "id":  "normalize-request",
+                                            "name":  "Normalize Request",
+                                            "type":  "n8n-nodes-base.code",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             460,
+                                                             300
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "operation":  "executeQuery",
+                                                               "query":  "SELECT e.id, e.name as engagement_name, e.type, e.testing_window_start, e.testing_window_end,\n       c.name as client_name, c.contact_name, c.contact_email,\n       em.total_assets, em.assets_tested, em.total_findings, em.validated_findings, em.coverage_pct\nFROM engagements e\nJOIN clients c ON e.client_id = c.id\nLEFT JOIN engagement_metrics em ON em.engagement_id = e.id\nWHERE e.id = \u0027{{ $json.engagement_id }}\u0027;",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "pg-get-engagement",
+                                            "name":  "Get Engagement",
+                                            "type":  "n8n-nodes-base.postgres",
+                                            "typeVersion":  2.5,
+                                            "position":  [
+                                                             680,
+                                                             300
+                                                         ],
+                                            "credentials":  {
+                                                                "postgres":  {
+                                                                                 "id":  "oHS3dvjMW1h1PkMp",
+                                                                                 "name":  "RECON OS PostgreSQL"
+                                                                             }
+                                                            }
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "operation":  "executeQuery",
+                                                               "query":  "SELECT nf.id, nf.title, nf.severity, nf.recon_score, nf.priority_bucket,\n       nf.category, nf.cwe_id, nf.owasp_category, nf.validation_status,\n       nf.business_impact, nf.remediation_guidance, nf.evidence_summary,\n       nf.score_explanation, nf.analyst_notes, nf.is_recurring, nf.references,\n       nf.first_seen, nf.last_seen,\n       a.asset_value, a.asset_type, a.environment\nFROM normalized_findings nf\nJOIN assets a ON nf.asset_id = a.id\nWHERE nf.engagement_id = \u0027{{ $(\u0027Normalize Request\u0027).first().json.engagement_id }}\u0027\n  AND nf.validation_status IN (\u0027validated\u0027,\u0027analyst_reviewed\u0027)\n  AND nf.priority_bucket != \u0027likely_false_positive\u0027\nORDER BY nf.recon_score DESC;",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "pg-get-findings",
+                                            "name":  "Get Validated Findings",
+                                            "type":  "n8n-nodes-base.postgres",
+                                            "typeVersion":  2.5,
+                                            "position":  [
+                                                             900,
+                                                             300
+                                                         ],
+                                            "credentials":  {
+                                                                "postgres":  {
+                                                                                 "id":  "oHS3dvjMW1h1PkMp",
+                                                                                 "name":  "RECON OS PostgreSQL"
+                                                                             }
+                                                            }
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "jsCode":  "const eng = $(\u0027Get Engagement\u0027).first().json;\nconst findings = $input.all().map(i =\u003e i.json);\nconst engId = $(\u0027Normalize Request\u0027).first().json.engagement_id;\nconst reportType = $(\u0027Normalize Request\u0027).first().json.report_type;\n\n// Severity counts\nconst sevCount = { critical:0, high:0, medium:0, low:0, informational:0 };\nfindings.forEach(f =\u003e { sevCount[f.severity] = (sevCount[f.severity]||0)+1; });\n\n// OWASP breakdown\nconst owaspBreakdown = {};\nfindings.forEach(f =\u003e {\n  if (f.owasp_category) owaspBreakdown[f.owasp_category] = (owaspBreakdown[f.owasp_category]||0)+1;\n});\n\n// Build finding sections\nconst sections = findings.map((f, idx) =\u003e ({\n  sort_order: idx,\n  section_type: \u0027finding\u0027,\n  content: {\n    id: f.id,\n    title: f.title,\n    severity: f.severity,\n    recon_score: f.recon_score,\n    priority_bucket: f.priority_bucket,\n    affected_asset: f.asset_value,\n    asset_type: f.asset_type,\n    environment: f.environment,\n    category: f.category,\n    cwe_id: f.cwe_id,\n    owasp_category: f.owasp_category,\n    validation_status: f.validation_status,\n    summary: f.evidence_summary || \u0027See evidence reference.\u0027,\n    business_impact: f.business_impact || \u0027Business impact assessment required.\u0027,\n    remediation: f.remediation_guidance || \u0027Remediation guidance required.\u0027,\n    score_rationale: f.score_explanation,\n    analyst_notes: f.analyst_notes,\n    is_recurring: f.is_recurring,\n    references: f.references || [],\n    first_seen: f.first_seen,\n    retest_required: f.severity !== \u0027informational\u0027\n  }\n}));\n\n// Summary section\nconst summarySection = {\n  sort_order: -1,\n  section_type: \u0027engagement_summary\u0027,\n  content: {\n    client_name: eng.client_name,\n    engagement_name: eng.engagement_name,\n    engagement_type: eng.type,\n    testing_period: `${eng.testing_window_start} - ${eng.testing_window_end}`,\n    report_generated_at: new Date().toISOString(),\n    report_type: reportType,\n    asset_coverage: { total: eng.total_assets, tested: eng.assets_tested, coverage_pct: eng.coverage_pct },\n    findings_summary: { ...sevCount, total: findings.length },\n    owasp_breakdown: owaspBreakdown,\n    top_5_findings: findings.slice(0,5).map(f =\u003e ({ title: f.title, severity: f.severity, score: f.recon_score, asset: f.asset_value }))\n  }\n};\n\nreturn [{ json: {\n  engagement_id: engId,\n  report_type: reportType,\n  sections: [summarySection, ...sections],\n  finding_count: findings.length,\n  sev_count: sevCount\n} }];"
+                                                           },
+                                            "id":  "assemble-report",
+                                            "name":  "Assemble Report",
+                                            "type":  "n8n-nodes-base.code",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             1120,
+                                                             300
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "operation":  "executeQuery",
+                                                               "query":  "INSERT INTO reports (engagement_id, report_type, status)\nVALUES (\u0027{{ $json.engagement_id }}\u0027,\u0027{{ $json.report_type }}\u0027,\u0027draft\u0027)\nRETURNING id;",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "pg-create-report",
+                                            "name":  "Create Report Record",
+                                            "type":  "n8n-nodes-base.postgres",
+                                            "typeVersion":  2.5,
+                                            "position":  [
+                                                             1340,
+                                                             300
+                                                         ],
+                                            "credentials":  {
+                                                                "postgres":  {
+                                                                                 "id":  "oHS3dvjMW1h1PkMp",
+                                                                                 "name":  "RECON OS PostgreSQL"
+                                                                             }
+                                                            }
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "jsCode":  "const reportId = $(\u0027Create Report Record\u0027).first().json.id;\nconst sections = $(\u0027Assemble Report\u0027).first().json.sections;\nreturn sections.map(s =\u003e ({ json: {\n  report_id: reportId,\n  finding_id: s.content.id || null,\n  section_type: s.section_type,\n  content: s.content,\n  sort_order: s.sort_order\n} }));"
+                                                           },
+                                            "id":  "split-sections",
+                                            "name":  "Split Sections",
+                                            "type":  "n8n-nodes-base.code",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             1560,
+                                                             300
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "operation":  "executeQuery",
+                                                               "query":  "INSERT INTO report_sections (report_id, finding_id, section_type, content, sort_order)\nVALUES (\n  \u0027{{ $json.report_id }}\u0027,\n  {{ $json.finding_id ? \"\u0027\" + $json.finding_id + \"\u0027\" : \u0027NULL\u0027 }},\n  \u0027{{ $json.section_type }}\u0027,\n  \u0027{{ JSON.stringify($json.content).replace(/\u0027/g,\"\u0027\u0027\") }}\u0027::jsonb,\n  {{ $json.sort_order }}\n);",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "pg-insert-sections",
+                                            "name":  "Insert Report Sections",
+                                            "type":  "n8n-nodes-base.postgres",
+                                            "typeVersion":  2.5,
+                                            "position":  [
+                                                             1780,
+                                                             300
+                                                         ],
+                                            "credentials":  {
+                                                                "postgres":  {
+                                                                                 "id":  "oHS3dvjMW1h1PkMp",
+                                                                                 "name":  "RECON OS PostgreSQL"
+                                                                             }
+                                                            }
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "method":  "POST",
+                                                               "url":  "={{ $env.RECON_OS_SLACK_WEBHOOK || \u0027https://hooks.slack.com/services/PLACEHOLDER\u0027 }}",
+                                                               "sendBody":  true,
+                                                               "specifyBody":  "json",
+                                                               "jsonBody":  "={{ JSON.stringify({ text: \u0027?? *RECON OS Report Ready for Review*\\nReport ID: \u0027 + $(\u0027Create Report Record\u0027).first().json.id + \u0027\\nFindings: \u0027 + $(\u0027Assemble Report\u0027).first().json.finding_count + \u0027\\nApprove: POST /webhook/recon-os/reports/approve\\n{\"report_id\":\"\u0027 + $(\u0027Create Report Record\u0027).first().json.id + \u0027\",\"approved_by\":\"your_name\"}\u0027, username: \u0027RECON OS\u0027 }) }}",
+                                                               "options":  {
+                                                                               "timeout":  10000
+                                                                           }
+                                                           },
+                                            "id":  "notify-analyst",
+                                            "name":  "Notify Analyst",
+                                            "type":  "n8n-nodes-base.httpRequest",
+                                            "typeVersion":  4.2,
+                                            "position":  [
+                                                             2000,
+                                                             300
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "respondWith":  "json",
+                                                               "responseBody":  "={{ JSON.stringify({ ok: true, report_id: $(\u0027Create Report Record\u0027).first().json.id, finding_count: $(\u0027Assemble Report\u0027).first().json.finding_count, status: \u0027draft\u0027, message: \u0027Report draft created. Awaiting analyst approval at POST /webhook/recon-os/reports/approve\u0027 }) }}",
+                                                               "options":  {
+                                                                               "responseCode":  201
+                                                                           }
+                                                           },
+                                            "id":  "respond-201",
+                                            "name":  "Respond 201",
+                                            "type":  "n8n-nodes-base.respondToWebhook",
+                                            "typeVersion":  1.1,
+                                            "position":  [
+                                                             2220,
+                                                             300
+                                                         ]
+                                        }
+                                    ],
+                          "connections":  {
+                                              "Webhook":  {
+                                                              "main":  [
+                                                                           [
+                                                                               {
+                                                                                   "node":  "Normalize Request",
+                                                                                   "type":  "main",
+                                                                                   "index":  0
+                                                                               }
+                                                                           ]
+                                                                       ]
+                                                          },
+                                              "Webhook Approve":  {
+                                                                      "main":  [
+                                                                                   [
+                                                                                       {
+                                                                                           "node":  "Prepare Approval",
+                                                                                           "type":  "main",
+                                                                                           "index":  0
+                                                                                       }
+                                                                                   ]
+                                                                               ]
+                                                                  },
+                                              "Prepare Approval":  {
+                                                                       "main":  [
+                                                                                    [
+                                                                                        {
+                                                                                            "node":  "Approve Report",
+                                                                                            "type":  "main",
+                                                                                            "index":  0
+                                                                                        }
+                                                                                    ]
+                                                                                ]
+                                                                   },
+                                              "Approve Report":  {
+                                                                     "main":  [
+                                                                                  [
+                                                                                      {
+                                                                                          "node":  "Respond Approved",
+                                                                                          "type":  "main",
+                                                                                          "index":  0
+                                                                                      }
+                                                                                  ]
+                                                                              ]
+                                                                 },
+                                              "Normalize Request":  {
+                                                                        "main":  [
+                                                                                     [
+                                                                                         {
+                                                                                             "node":  "Get Engagement",
+                                                                                             "type":  "main",
+                                                                                             "index":  0
+                                                                                         }
+                                                                                     ]
+                                                                                 ]
+                                                                    },
+                                              "Get Engagement":  {
+                                                                     "main":  [
+                                                                                  [
+                                                                                      {
+                                                                                          "node":  "Get Validated Findings",
+                                                                                          "type":  "main",
+                                                                                          "index":  0
+                                                                                      }
+                                                                                  ]
+                                                                              ]
+                                                                 },
+                                              "Get Validated Findings":  {
+                                                                             "main":  [
+                                                                                          [
+                                                                                              {
+                                                                                                  "node":  "Assemble Report",
+                                                                                                  "type":  "main",
+                                                                                                  "index":  0
+                                                                                              }
+                                                                                          ]
+                                                                                      ]
+                                                                         },
+                                              "Assemble Report":  {
+                                                                      "main":  [
+                                                                                   [
+                                                                                       {
+                                                                                           "node":  "Create Report Record",
+                                                                                           "type":  "main",
+                                                                                           "index":  0
+                                                                                       }
+                                                                                   ]
+                                                                               ]
+                                                                  },
+                                              "Create Report Record":  {
+                                                                           "main":  [
+                                                                                        [
+                                                                                            {
+                                                                                                "node":  "Split Sections",
+                                                                                                "type":  "main",
+                                                                                                "index":  0
+                                                                                            }
+                                                                                        ]
+                                                                                    ]
+                                                                       },
+                                              "Split Sections":  {
+                                                                     "main":  [
+                                                                                  [
+                                                                                      {
+                                                                                          "node":  "Insert Report Sections",
+                                                                                          "type":  "main",
+                                                                                          "index":  0
+                                                                                      }
+                                                                                  ]
+                                                                              ]
+                                                                 },
+                                              "Insert Report Sections":  {
+                                                                             "main":  [
+                                                                                          [
+                                                                                              {
+                                                                                                  "node":  "Notify Analyst",
+                                                                                                  "type":  "main",
+                                                                                                  "index":  0
+                                                                                              }
+                                                                                          ]
+                                                                                      ]
+                                                                         },
+                                              "Notify Analyst":  {
+                                                                     "main":  [
+                                                                                  [
+                                                                                      {
+                                                                                          "node":  "Respond 201",
+                                                                                          "type":  "main",
+                                                                                          "index":  0
+                                                                                      }
+                                                                                  ]
+                                                                              ]
+                                                                 }
+                                          },
+                          "authors":  "gelson mascarenhas",
+                          "name":  null,
+                          "description":  null,
+                          "autosaved":  false,
+                          "workflowPublishHistory":  [
+                                                         {
+                                                             "createdAt":  "2026-04-19T07:27:32.250Z",
+                                                             "id":  559,
+                                                             "workflowId":  "0Vsei8jFkRnHwog3",
+                                                             "versionId":  "d557660e-061e-4641-81c8-cb7ea81782f5",
+                                                             "event":  "deactivated",
+                                                             "userId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                                         },
+                                                         {
+                                                             "createdAt":  "2026-04-19T07:27:32.275Z",
+                                                             "id":  560,
+                                                             "workflowId":  "0Vsei8jFkRnHwog3",
+                                                             "versionId":  "d557660e-061e-4641-81c8-cb7ea81782f5",
+                                                             "event":  "activated",
+                                                             "userId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                                         }
+                                                     ]
+                      }
+}

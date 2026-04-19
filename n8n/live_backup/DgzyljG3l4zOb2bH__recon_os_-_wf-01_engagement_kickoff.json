@@ -1,0 +1,797 @@
+﻿{
+    "updatedAt":  "2026-04-19T07:27:29.380Z",
+    "createdAt":  "2026-04-19T03:30:23.281Z",
+    "id":  "DgzyljG3l4zOb2bH",
+    "name":  "RECON OS - WF-01 Engagement Kickoff",
+    "description":  null,
+    "active":  true,
+    "isArchived":  false,
+    "nodes":  [
+                  {
+                      "parameters":  {
+                                         "httpMethod":  "POST",
+                                         "path":  "recon-os/engagement/new",
+                                         "responseMode":  "responseNode",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "wh-kickoff",
+                      "name":  "Webhook",
+                      "type":  "n8n-nodes-base.webhook",
+                      "typeVersion":  2,
+                      "position":  [
+                                       240,
+                                       300
+                                   ],
+                      "webhookId":  "recon-os-engagement-new"
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "const body = $input.first().json.body || $input.first().json;\nconst required = [\u0027client_name\u0027,\u0027engagement_name\u0027,\u0027authorized_targets\u0027,\u0027testing_window_start\u0027,\u0027testing_window_end\u0027];\nconst missing = required.filter(f =\u003e !body[f]);\nif (missing.length \u003e 0) return [{ json: { valid: false, missing, body } }];\nif (!Array.isArray(body.authorized_targets) || body.authorized_targets.length === 0)\n  return [{ json: { valid: false, missing: [\u0027authorized_targets must be non-empty array\u0027], body } }];\nreturn [{ json: { valid: true, body } }];"
+                                     },
+                      "id":  "validate-fields",
+                      "name":  "Validate Fields",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       460,
+                                       300
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "conditions":  {
+                                                            "options":  {
+                                                                            "caseSensitive":  true,
+                                                                            "leftValue":  "",
+                                                                            "typeValidation":  "strict"
+                                                                        },
+                                                            "conditions":  [
+                                                                               {
+                                                                                   "id":  "cond-valid",
+                                                                                   "leftValue":  "={{ $json.valid }}",
+                                                                                   "rightValue":  true,
+                                                                                   "operator":  {
+                                                                                                    "type":  "boolean",
+                                                                                                    "operation":  "true"
+                                                                                                }
+                                                                               }
+                                                                           ],
+                                                            "combinator":  "and"
+                                                        },
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "if-valid",
+                      "name":  "IF Valid?",
+                      "type":  "n8n-nodes-base.if",
+                      "typeVersion":  2.2,
+                      "position":  [
+                                       680,
+                                       300
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "respondWith":  "json",
+                                         "responseBody":  "={{ JSON.stringify({ ok: false, errors: $json.missing }) }}",
+                                         "options":  {
+                                                         "responseCode":  400
+                                                     }
+                                     },
+                      "id":  "respond-400",
+                      "name":  "Respond 400",
+                      "type":  "n8n-nodes-base.respondToWebhook",
+                      "typeVersion":  1.1,
+                      "position":  [
+                                       900,
+                                       500
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "INSERT INTO clients (name, contact_name, contact_email)\nVALUES (\u0027{{ $json.body.client_name.replace(/\u0027/g, \"\u0027\u0027\") }}\u0027,\n        \u0027{{ ($json.body.contact_name || \u0027\u0027).replace(/\u0027/g, \"\u0027\u0027\") }}\u0027,\n        \u0027{{ ($json.body.contact_email || \u0027\u0027).replace(/\u0027/g, \"\u0027\u0027\") }}\u0027)\nON CONFLICT (name) DO UPDATE SET contact_name = EXCLUDED.contact_name, contact_email = EXCLUDED.contact_email\nRETURNING id, name;",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "pg-upsert-client",
+                      "name":  "Upsert Client",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       900,
+                                       300
+                                   ],
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "oHS3dvjMW1h1PkMp",
+                                                           "name":  "RECON OS PostgreSQL"
+                                                       }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "const client = $(\u0027Upsert Client\u0027).first().json;\nconst body = $(\u0027Validate Fields\u0027).first().json.body;\nconst prohibitedJson = JSON.stringify(body.prohibited_actions || []).replace(/\u0027/g, \"\u0027\u0027\");\nreturn [{ json: {\n  client_id: client.id,\n  engagement_name: body.engagement_name,\n  type: body.type || \u0027web_app\u0027,\n  testing_window_start: body.testing_window_start,\n  testing_window_end: body.testing_window_end,\n  rate_limit_profile: body.rate_limit_profile || \u0027standard\u0027,\n  prohibited_actions: prohibitedJson,\n  roe_document_url: body.roe_document_url || null,\n  evidence_handling_notes: body.evidence_handling_notes || null,\n  emergency_contact: (body.contacts || [])[0]?.email || \u0027\u0027,\n  authorized_targets: body.authorized_targets\n} }];"
+                                     },
+                      "id":  "prepare-engagement",
+                      "name":  "Prepare Engagement",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       1120,
+                                       300
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "INSERT INTO engagements (client_id, name, type, testing_window_start, testing_window_end, rate_limit_profile, prohibited_actions, evidence_handling_notes, emergency_contact)\nVALUES (\n  \u0027{{ $json.client_id }}\u0027,\n  \u0027{{ $json.engagement_name.replace(/\u0027/g, \"\u0027\u0027\") }}\u0027,\n  \u0027{{ $json.type }}\u0027,\n  \u0027{{ $json.testing_window_start }}\u0027::timestamptz,\n  \u0027{{ $json.testing_window_end }}\u0027::timestamptz,\n  \u0027{{ $json.rate_limit_profile }}\u0027,\n  \u0027[{{ $json.prohibited_actions }}]\u0027::jsonb,\n  {{ $json.evidence_handling_notes ? \"\u0027\" + $json.evidence_handling_notes + \"\u0027\" : \u0027NULL\u0027 }},\n  \u0027{{ $json.emergency_contact }}\u0027\n)\nRETURNING id;",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "pg-insert-engagement",
+                      "name":  "Insert Engagement",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       1340,
+                                       300
+                                   ],
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "oHS3dvjMW1h1PkMp",
+                                                           "name":  "RECON OS PostgreSQL"
+                                                       }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "const engId = $(\u0027Insert Engagement\u0027).first().json.id;\nconst targets = $(\u0027Prepare Engagement\u0027).first().json.authorized_targets;\nconst rows = targets.map(t =\u003e\n  `(\u0027${engId}\u0027, \u0027${t.value.replace(/\u0027/g,\"\u0027\u0027\")}\u0027, \u0027${t.scope_type}\u0027, true, \u0027${(t.notes||\u0027\u0027).replace(/\u0027/g,\"\u0027\u0027\")}\u0027)`\n).join(\u0027,\\n\u0027);\nreturn [{ json: { engagement_id: engId, insert_sql: rows } }];"
+                                     },
+                      "id":  "prepare-scope",
+                      "name":  "Prepare Scope SQL",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       1560,
+                                       300
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "INSERT INTO scope_rules (engagement_id, value, scope_type, in_scope, notes)\nVALUES {{ $json.insert_sql }}\nRETURNING id;",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "pg-insert-scope",
+                      "name":  "Insert Scope Rules",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       1780,
+                                       300
+                                   ],
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "oHS3dvjMW1h1PkMp",
+                                                           "name":  "RECON OS PostgreSQL"
+                                                       }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "INSERT INTO engagement_metrics (engagement_id) VALUES (\u0027{{ $(\u0027Prepare Scope SQL\u0027).first().json.engagement_id }}\u0027) ON CONFLICT (engagement_id) DO NOTHING;",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "pg-init-metrics",
+                      "name":  "Init Metrics Row",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       2000,
+                                       300
+                                   ],
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "oHS3dvjMW1h1PkMp",
+                                                           "name":  "RECON OS PostgreSQL"
+                                                       }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "INSERT INTO audit_logs (event_type, actor, engagement_id, entity_type, entity_id, payload)\nVALUES (\u0027engagement_created\u0027, \u0027api\u0027, \u0027{{ $(\u0027Prepare Scope SQL\u0027).first().json.engagement_id }}\u0027, \u0027engagement\u0027, \u0027{{ $(\u0027Prepare Scope SQL\u0027).first().json.engagement_id }}\u0027, \u0027{\"source\":\"WF01\"}\u0027::jsonb);",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "pg-audit",
+                      "name":  "Audit Log",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       2220,
+                                       300
+                                   ],
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "oHS3dvjMW1h1PkMp",
+                                                           "name":  "RECON OS PostgreSQL"
+                                                       }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "respondWith":  "json",
+                                         "responseBody":  "={{ JSON.stringify({ ok: true, engagement_id: $(\u0027Prepare Scope SQL\u0027).first().json.engagement_id, message: \u0027Engagement created. Scope rules loaded. Recon will begin at next scheduled window.\u0027 }) }}",
+                                         "options":  {
+                                                         "responseCode":  201
+                                                     }
+                                     },
+                      "id":  "respond-201",
+                      "name":  "Respond 201",
+                      "type":  "n8n-nodes-base.respondToWebhook",
+                      "typeVersion":  1.1,
+                      "position":  [
+                                       2440,
+                                       300
+                                   ]
+                  }
+              ],
+    "connections":  {
+                        "Webhook":  {
+                                        "main":  [
+                                                     [
+                                                         {
+                                                             "node":  "Validate Fields",
+                                                             "type":  "main",
+                                                             "index":  0
+                                                         }
+                                                     ]
+                                                 ]
+                                    },
+                        "Validate Fields":  {
+                                                "main":  [
+                                                             [
+                                                                 {
+                                                                     "node":  "IF Valid?",
+                                                                     "type":  "main",
+                                                                     "index":  0
+                                                                 }
+                                                             ]
+                                                         ]
+                                            },
+                        "IF Valid?":  {
+                                          "main":  [
+                                                       [
+                                                           {
+                                                               "node":  "Upsert Client",
+                                                               "type":  "main",
+                                                               "index":  0
+                                                           }
+                                                       ],
+                                                       [
+                                                           {
+                                                               "node":  "Respond 400",
+                                                               "type":  "main",
+                                                               "index":  0
+                                                           }
+                                                       ]
+                                                   ]
+                                      },
+                        "Upsert Client":  {
+                                              "main":  [
+                                                           [
+                                                               {
+                                                                   "node":  "Prepare Engagement",
+                                                                   "type":  "main",
+                                                                   "index":  0
+                                                               }
+                                                           ]
+                                                       ]
+                                          },
+                        "Prepare Engagement":  {
+                                                   "main":  [
+                                                                [
+                                                                    {
+                                                                        "node":  "Insert Engagement",
+                                                                        "type":  "main",
+                                                                        "index":  0
+                                                                    }
+                                                                ]
+                                                            ]
+                                               },
+                        "Insert Engagement":  {
+                                                  "main":  [
+                                                               [
+                                                                   {
+                                                                       "node":  "Prepare Scope SQL",
+                                                                       "type":  "main",
+                                                                       "index":  0
+                                                                   }
+                                                               ]
+                                                           ]
+                                              },
+                        "Prepare Scope SQL":  {
+                                                  "main":  [
+                                                               [
+                                                                   {
+                                                                       "node":  "Insert Scope Rules",
+                                                                       "type":  "main",
+                                                                       "index":  0
+                                                                   }
+                                                               ]
+                                                           ]
+                                              },
+                        "Insert Scope Rules":  {
+                                                   "main":  [
+                                                                [
+                                                                    {
+                                                                        "node":  "Init Metrics Row",
+                                                                        "type":  "main",
+                                                                        "index":  0
+                                                                    }
+                                                                ]
+                                                            ]
+                                               },
+                        "Init Metrics Row":  {
+                                                 "main":  [
+                                                              [
+                                                                  {
+                                                                      "node":  "Audit Log",
+                                                                      "type":  "main",
+                                                                      "index":  0
+                                                                  }
+                                                              ]
+                                                          ]
+                                             },
+                        "Audit Log":  {
+                                          "main":  [
+                                                       [
+                                                           {
+                                                               "node":  "Respond 201",
+                                                               "type":  "main",
+                                                               "index":  0
+                                                           }
+                                                       ]
+                                                   ]
+                                      }
+                    },
+    "settings":  {
+                     "executionOrder":  "v1",
+                     "saveManualExecutions":  true,
+                     "saveExecutionProgress":  true,
+                     "callerPolicy":  "workflowsFromSameOwner",
+                     "availableInMCP":  false
+                 },
+    "staticData":  null,
+    "meta":  null,
+    "pinData":  null,
+    "versionId":  "7da72735-65f7-4d65-a2a1-912e7c40ab7a",
+    "activeVersionId":  "7da72735-65f7-4d65-a2a1-912e7c40ab7a",
+    "versionCounter":  6,
+    "triggerCount":  1,
+    "shared":  [
+                   {
+                       "updatedAt":  "2026-04-19T03:30:23.281Z",
+                       "createdAt":  "2026-04-19T03:30:23.281Z",
+                       "role":  "workflow:owner",
+                       "workflowId":  "DgzyljG3l4zOb2bH",
+                       "projectId":  "Lrgt6JR85OZiVLcX",
+                       "project":  {
+                                       "updatedAt":  "2026-03-31T09:07:31.366Z",
+                                       "createdAt":  "2026-03-31T08:57:43.789Z",
+                                       "id":  "Lrgt6JR85OZiVLcX",
+                                       "name":  "gelson mascarenhas \u003cgelson_m@hotmail.com\u003e",
+                                       "type":  "personal",
+                                       "icon":  null,
+                                       "description":  null,
+                                       "creatorId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                   }
+                   }
+               ],
+    "tags":  [
+
+             ],
+    "activeVersion":  {
+                          "updatedAt":  "2026-04-19T07:27:29.382Z",
+                          "createdAt":  "2026-04-19T07:27:29.382Z",
+                          "versionId":  "7da72735-65f7-4d65-a2a1-912e7c40ab7a",
+                          "workflowId":  "DgzyljG3l4zOb2bH",
+                          "nodes":  [
+                                        {
+                                            "parameters":  {
+                                                               "httpMethod":  "POST",
+                                                               "path":  "recon-os/engagement/new",
+                                                               "responseMode":  "responseNode",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "wh-kickoff",
+                                            "name":  "Webhook",
+                                            "type":  "n8n-nodes-base.webhook",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             240,
+                                                             300
+                                                         ],
+                                            "webhookId":  "recon-os-engagement-new"
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "jsCode":  "const body = $input.first().json.body || $input.first().json;\nconst required = [\u0027client_name\u0027,\u0027engagement_name\u0027,\u0027authorized_targets\u0027,\u0027testing_window_start\u0027,\u0027testing_window_end\u0027];\nconst missing = required.filter(f =\u003e !body[f]);\nif (missing.length \u003e 0) return [{ json: { valid: false, missing, body } }];\nif (!Array.isArray(body.authorized_targets) || body.authorized_targets.length === 0)\n  return [{ json: { valid: false, missing: [\u0027authorized_targets must be non-empty array\u0027], body } }];\nreturn [{ json: { valid: true, body } }];"
+                                                           },
+                                            "id":  "validate-fields",
+                                            "name":  "Validate Fields",
+                                            "type":  "n8n-nodes-base.code",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             460,
+                                                             300
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "conditions":  {
+                                                                                  "options":  {
+                                                                                                  "caseSensitive":  true,
+                                                                                                  "leftValue":  "",
+                                                                                                  "typeValidation":  "strict"
+                                                                                              },
+                                                                                  "conditions":  [
+                                                                                                     {
+                                                                                                         "id":  "cond-valid",
+                                                                                                         "leftValue":  "={{ $json.valid }}",
+                                                                                                         "rightValue":  true,
+                                                                                                         "operator":  {
+                                                                                                                          "type":  "boolean",
+                                                                                                                          "operation":  "true"
+                                                                                                                      }
+                                                                                                     }
+                                                                                                 ],
+                                                                                  "combinator":  "and"
+                                                                              },
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "if-valid",
+                                            "name":  "IF Valid?",
+                                            "type":  "n8n-nodes-base.if",
+                                            "typeVersion":  2.2,
+                                            "position":  [
+                                                             680,
+                                                             300
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "respondWith":  "json",
+                                                               "responseBody":  "={{ JSON.stringify({ ok: false, errors: $json.missing }) }}",
+                                                               "options":  {
+                                                                               "responseCode":  400
+                                                                           }
+                                                           },
+                                            "id":  "respond-400",
+                                            "name":  "Respond 400",
+                                            "type":  "n8n-nodes-base.respondToWebhook",
+                                            "typeVersion":  1.1,
+                                            "position":  [
+                                                             900,
+                                                             500
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "operation":  "executeQuery",
+                                                               "query":  "INSERT INTO clients (name, contact_name, contact_email)\nVALUES (\u0027{{ $json.body.client_name.replace(/\u0027/g, \"\u0027\u0027\") }}\u0027,\n        \u0027{{ ($json.body.contact_name || \u0027\u0027).replace(/\u0027/g, \"\u0027\u0027\") }}\u0027,\n        \u0027{{ ($json.body.contact_email || \u0027\u0027).replace(/\u0027/g, \"\u0027\u0027\") }}\u0027)\nON CONFLICT (name) DO UPDATE SET contact_name = EXCLUDED.contact_name, contact_email = EXCLUDED.contact_email\nRETURNING id, name;",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "pg-upsert-client",
+                                            "name":  "Upsert Client",
+                                            "type":  "n8n-nodes-base.postgres",
+                                            "typeVersion":  2.5,
+                                            "position":  [
+                                                             900,
+                                                             300
+                                                         ],
+                                            "credentials":  {
+                                                                "postgres":  {
+                                                                                 "id":  "oHS3dvjMW1h1PkMp",
+                                                                                 "name":  "RECON OS PostgreSQL"
+                                                                             }
+                                                            }
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "jsCode":  "const client = $(\u0027Upsert Client\u0027).first().json;\nconst body = $(\u0027Validate Fields\u0027).first().json.body;\nconst prohibitedJson = JSON.stringify(body.prohibited_actions || []).replace(/\u0027/g, \"\u0027\u0027\");\nreturn [{ json: {\n  client_id: client.id,\n  engagement_name: body.engagement_name,\n  type: body.type || \u0027web_app\u0027,\n  testing_window_start: body.testing_window_start,\n  testing_window_end: body.testing_window_end,\n  rate_limit_profile: body.rate_limit_profile || \u0027standard\u0027,\n  prohibited_actions: prohibitedJson,\n  roe_document_url: body.roe_document_url || null,\n  evidence_handling_notes: body.evidence_handling_notes || null,\n  emergency_contact: (body.contacts || [])[0]?.email || \u0027\u0027,\n  authorized_targets: body.authorized_targets\n} }];"
+                                                           },
+                                            "id":  "prepare-engagement",
+                                            "name":  "Prepare Engagement",
+                                            "type":  "n8n-nodes-base.code",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             1120,
+                                                             300
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "operation":  "executeQuery",
+                                                               "query":  "INSERT INTO engagements (client_id, name, type, testing_window_start, testing_window_end, rate_limit_profile, prohibited_actions, evidence_handling_notes, emergency_contact)\nVALUES (\n  \u0027{{ $json.client_id }}\u0027,\n  \u0027{{ $json.engagement_name.replace(/\u0027/g, \"\u0027\u0027\") }}\u0027,\n  \u0027{{ $json.type }}\u0027,\n  \u0027{{ $json.testing_window_start }}\u0027::timestamptz,\n  \u0027{{ $json.testing_window_end }}\u0027::timestamptz,\n  \u0027{{ $json.rate_limit_profile }}\u0027,\n  \u0027[{{ $json.prohibited_actions }}]\u0027::jsonb,\n  {{ $json.evidence_handling_notes ? \"\u0027\" + $json.evidence_handling_notes + \"\u0027\" : \u0027NULL\u0027 }},\n  \u0027{{ $json.emergency_contact }}\u0027\n)\nRETURNING id;",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "pg-insert-engagement",
+                                            "name":  "Insert Engagement",
+                                            "type":  "n8n-nodes-base.postgres",
+                                            "typeVersion":  2.5,
+                                            "position":  [
+                                                             1340,
+                                                             300
+                                                         ],
+                                            "credentials":  {
+                                                                "postgres":  {
+                                                                                 "id":  "oHS3dvjMW1h1PkMp",
+                                                                                 "name":  "RECON OS PostgreSQL"
+                                                                             }
+                                                            }
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "jsCode":  "const engId = $(\u0027Insert Engagement\u0027).first().json.id;\nconst targets = $(\u0027Prepare Engagement\u0027).first().json.authorized_targets;\nconst rows = targets.map(t =\u003e\n  `(\u0027${engId}\u0027, \u0027${t.value.replace(/\u0027/g,\"\u0027\u0027\")}\u0027, \u0027${t.scope_type}\u0027, true, \u0027${(t.notes||\u0027\u0027).replace(/\u0027/g,\"\u0027\u0027\")}\u0027)`\n).join(\u0027,\\n\u0027);\nreturn [{ json: { engagement_id: engId, insert_sql: rows } }];"
+                                                           },
+                                            "id":  "prepare-scope",
+                                            "name":  "Prepare Scope SQL",
+                                            "type":  "n8n-nodes-base.code",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             1560,
+                                                             300
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "operation":  "executeQuery",
+                                                               "query":  "INSERT INTO scope_rules (engagement_id, value, scope_type, in_scope, notes)\nVALUES {{ $json.insert_sql }}\nRETURNING id;",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "pg-insert-scope",
+                                            "name":  "Insert Scope Rules",
+                                            "type":  "n8n-nodes-base.postgres",
+                                            "typeVersion":  2.5,
+                                            "position":  [
+                                                             1780,
+                                                             300
+                                                         ],
+                                            "credentials":  {
+                                                                "postgres":  {
+                                                                                 "id":  "oHS3dvjMW1h1PkMp",
+                                                                                 "name":  "RECON OS PostgreSQL"
+                                                                             }
+                                                            }
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "operation":  "executeQuery",
+                                                               "query":  "INSERT INTO engagement_metrics (engagement_id) VALUES (\u0027{{ $(\u0027Prepare Scope SQL\u0027).first().json.engagement_id }}\u0027) ON CONFLICT (engagement_id) DO NOTHING;",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "pg-init-metrics",
+                                            "name":  "Init Metrics Row",
+                                            "type":  "n8n-nodes-base.postgres",
+                                            "typeVersion":  2.5,
+                                            "position":  [
+                                                             2000,
+                                                             300
+                                                         ],
+                                            "credentials":  {
+                                                                "postgres":  {
+                                                                                 "id":  "oHS3dvjMW1h1PkMp",
+                                                                                 "name":  "RECON OS PostgreSQL"
+                                                                             }
+                                                            }
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "operation":  "executeQuery",
+                                                               "query":  "INSERT INTO audit_logs (event_type, actor, engagement_id, entity_type, entity_id, payload)\nVALUES (\u0027engagement_created\u0027, \u0027api\u0027, \u0027{{ $(\u0027Prepare Scope SQL\u0027).first().json.engagement_id }}\u0027, \u0027engagement\u0027, \u0027{{ $(\u0027Prepare Scope SQL\u0027).first().json.engagement_id }}\u0027, \u0027{\"source\":\"WF01\"}\u0027::jsonb);",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "pg-audit",
+                                            "name":  "Audit Log",
+                                            "type":  "n8n-nodes-base.postgres",
+                                            "typeVersion":  2.5,
+                                            "position":  [
+                                                             2220,
+                                                             300
+                                                         ],
+                                            "credentials":  {
+                                                                "postgres":  {
+                                                                                 "id":  "oHS3dvjMW1h1PkMp",
+                                                                                 "name":  "RECON OS PostgreSQL"
+                                                                             }
+                                                            }
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "respondWith":  "json",
+                                                               "responseBody":  "={{ JSON.stringify({ ok: true, engagement_id: $(\u0027Prepare Scope SQL\u0027).first().json.engagement_id, message: \u0027Engagement created. Scope rules loaded. Recon will begin at next scheduled window.\u0027 }) }}",
+                                                               "options":  {
+                                                                               "responseCode":  201
+                                                                           }
+                                                           },
+                                            "id":  "respond-201",
+                                            "name":  "Respond 201",
+                                            "type":  "n8n-nodes-base.respondToWebhook",
+                                            "typeVersion":  1.1,
+                                            "position":  [
+                                                             2440,
+                                                             300
+                                                         ]
+                                        }
+                                    ],
+                          "connections":  {
+                                              "Webhook":  {
+                                                              "main":  [
+                                                                           [
+                                                                               {
+                                                                                   "node":  "Validate Fields",
+                                                                                   "type":  "main",
+                                                                                   "index":  0
+                                                                               }
+                                                                           ]
+                                                                       ]
+                                                          },
+                                              "Validate Fields":  {
+                                                                      "main":  [
+                                                                                   [
+                                                                                       {
+                                                                                           "node":  "IF Valid?",
+                                                                                           "type":  "main",
+                                                                                           "index":  0
+                                                                                       }
+                                                                                   ]
+                                                                               ]
+                                                                  },
+                                              "IF Valid?":  {
+                                                                "main":  [
+                                                                             [
+                                                                                 {
+                                                                                     "node":  "Upsert Client",
+                                                                                     "type":  "main",
+                                                                                     "index":  0
+                                                                                 }
+                                                                             ],
+                                                                             [
+                                                                                 {
+                                                                                     "node":  "Respond 400",
+                                                                                     "type":  "main",
+                                                                                     "index":  0
+                                                                                 }
+                                                                             ]
+                                                                         ]
+                                                            },
+                                              "Upsert Client":  {
+                                                                    "main":  [
+                                                                                 [
+                                                                                     {
+                                                                                         "node":  "Prepare Engagement",
+                                                                                         "type":  "main",
+                                                                                         "index":  0
+                                                                                     }
+                                                                                 ]
+                                                                             ]
+                                                                },
+                                              "Prepare Engagement":  {
+                                                                         "main":  [
+                                                                                      [
+                                                                                          {
+                                                                                              "node":  "Insert Engagement",
+                                                                                              "type":  "main",
+                                                                                              "index":  0
+                                                                                          }
+                                                                                      ]
+                                                                                  ]
+                                                                     },
+                                              "Insert Engagement":  {
+                                                                        "main":  [
+                                                                                     [
+                                                                                         {
+                                                                                             "node":  "Prepare Scope SQL",
+                                                                                             "type":  "main",
+                                                                                             "index":  0
+                                                                                         }
+                                                                                     ]
+                                                                                 ]
+                                                                    },
+                                              "Prepare Scope SQL":  {
+                                                                        "main":  [
+                                                                                     [
+                                                                                         {
+                                                                                             "node":  "Insert Scope Rules",
+                                                                                             "type":  "main",
+                                                                                             "index":  0
+                                                                                         }
+                                                                                     ]
+                                                                                 ]
+                                                                    },
+                                              "Insert Scope Rules":  {
+                                                                         "main":  [
+                                                                                      [
+                                                                                          {
+                                                                                              "node":  "Init Metrics Row",
+                                                                                              "type":  "main",
+                                                                                              "index":  0
+                                                                                          }
+                                                                                      ]
+                                                                                  ]
+                                                                     },
+                                              "Init Metrics Row":  {
+                                                                       "main":  [
+                                                                                    [
+                                                                                        {
+                                                                                            "node":  "Audit Log",
+                                                                                            "type":  "main",
+                                                                                            "index":  0
+                                                                                        }
+                                                                                    ]
+                                                                                ]
+                                                                   },
+                                              "Audit Log":  {
+                                                                "main":  [
+                                                                             [
+                                                                                 {
+                                                                                     "node":  "Respond 201",
+                                                                                     "type":  "main",
+                                                                                     "index":  0
+                                                                                 }
+                                                                             ]
+                                                                         ]
+                                                            }
+                                          },
+                          "authors":  "gelson mascarenhas",
+                          "name":  null,
+                          "description":  null,
+                          "autosaved":  false,
+                          "workflowPublishHistory":  [
+                                                         {
+                                                             "createdAt":  "2026-04-19T07:27:29.436Z",
+                                                             "id":  547,
+                                                             "workflowId":  "DgzyljG3l4zOb2bH",
+                                                             "versionId":  "7da72735-65f7-4d65-a2a1-912e7c40ab7a",
+                                                             "event":  "deactivated",
+                                                             "userId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                                         },
+                                                         {
+                                                             "createdAt":  "2026-04-19T07:27:29.460Z",
+                                                             "id":  548,
+                                                             "workflowId":  "DgzyljG3l4zOb2bH",
+                                                             "versionId":  "7da72735-65f7-4d65-a2a1-912e7c40ab7a",
+                                                             "event":  "activated",
+                                                             "userId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                                         }
+                                                     ]
+                      }
+}

@@ -1,0 +1,378 @@
+﻿{
+    "updatedAt":  "2026-04-19T07:27:31.073Z",
+    "createdAt":  "2026-04-19T03:30:14.396Z",
+    "id":  "ItcWwqu5rIcDn6R7",
+    "name":  "RECON OS - WF-03 Asset Discovery",
+    "description":  null,
+    "active":  false,
+    "isArchived":  false,
+    "nodes":  [
+                  {
+                      "parameters":  {
+                                         "httpMethod":  "POST",
+                                         "path":  "recon-os/assets/submit",
+                                         "responseMode":  "responseNode",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "wh-asset",
+                      "name":  "Webhook",
+                      "type":  "n8n-nodes-base.webhook",
+                      "typeVersion":  2,
+                      "position":  [
+                                       240,
+                                       300
+                                   ],
+                      "webhookId":  "recon-os-assets-submit"
+                  },
+                  {
+                      "parameters":  {
+                                         "inputSource":  "passthrough"
+                                     },
+                      "id":  "wf-trigger",
+                      "name":  "Execute Workflow Trigger",
+                      "type":  "n8n-nodes-base.executeWorkflowTrigger",
+                      "typeVersion":  1.1,
+                      "position":  [
+                                       240,
+                                       500
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "const item = $input.first().json;\nconst body = item.body || item;\nreturn [{ json: {\n  engagement_id: body.engagement_id,\n  asset_value: (body.asset_value || \u0027\u0027).toLowerCase().trim(),\n  asset_type: body.asset_type || \u0027domain\u0027,\n  owner_team: body.owner_team || null,\n  business_criticality: body.business_criticality || \u0027medium\u0027,\n  environment: body.environment || \u0027unknown\u0027,\n  notes: body.notes || null\n} }];"
+                                     },
+                      "id":  "normalize-input",
+                      "name":  "Normalize Input",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       460,
+                                       300
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "workflowId":  {
+                                                            "__rl":  true,
+                                                            "value":  "PLACEHOLDER_WF02_SCOPE_GUARDIAN_ID",
+                                                            "mode":  "id"
+                                                        },
+                                         "workflowInputs":  {
+                                                                "mappingMode":  "defineBelow",
+                                                                "value":  {
+                                                                              "asset_value":  "={{ $json.asset_value }}",
+                                                                              "engagement_id":  "={{ $json.engagement_id }}"
+                                                                          }
+                                                            },
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "exec-scope-guardian",
+                      "name":  "Scope Guardian",
+                      "type":  "n8n-nodes-base.executeWorkflow",
+                      "typeVersion":  1.1,
+                      "position":  [
+                                       680,
+                                       300
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "conditions":  {
+                                                            "options":  {
+                                                                            "caseSensitive":  true,
+                                                                            "leftValue":  "",
+                                                                            "typeValidation":  "strict"
+                                                                        },
+                                                            "conditions":  [
+                                                                               {
+                                                                                   "id":  "cond-allowed",
+                                                                                   "leftValue":  "={{ $json.allowed }}",
+                                                                                   "rightValue":  true,
+                                                                                   "operator":  {
+                                                                                                    "type":  "boolean",
+                                                                                                    "operation":  "true"
+                                                                                                }
+                                                                               }
+                                                                           ],
+                                                            "combinator":  "and"
+                                                        },
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "if-allowed",
+                      "name":  "IF In Scope?",
+                      "type":  "n8n-nodes-base.if",
+                      "typeVersion":  2.2,
+                      "position":  [
+                                       900,
+                                       300
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "respondWith":  "json",
+                                         "responseBody":  "={{ JSON.stringify({ ok: false, reason: $json.reason, asset_value: $json.asset_value }) }}",
+                                         "options":  {
+                                                         "responseCode":  403
+                                                     }
+                                     },
+                      "id":  "respond-blocked",
+                      "name":  "Respond Blocked",
+                      "type":  "n8n-nodes-base.respondToWebhook",
+                      "typeVersion":  1.1,
+                      "position":  [
+                                       1120,
+                                       500
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "const assetValue = $(\u0027Normalize Input\u0027).first().json.asset_value;\nlet assetType = $(\u0027Normalize Input\u0027).first().json.asset_type;\nif (!assetType || assetType === \u0027auto\u0027) {\n  if (/^\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}/.test(assetValue)) assetType = \u0027ip\u0027;\n  else if (/\\//.test(assetValue) \u0026\u0026 !/^http/.test(assetValue)) assetType = \u0027api\u0027;\n  else if (/^http/.test(assetValue)) assetType = \u0027web_app\u0027;\n  else if ((assetValue.match(/\\./g)||[]).length \u003e= 2) assetType = \u0027subdomain\u0027;\n  else assetType = \u0027domain\u0027;\n}\nreturn [{ json: { ...$(\u0027Normalize Input\u0027).first().json, asset_type: assetType } }];"
+                                     },
+                      "id":  "classify-asset",
+                      "name":  "Classify Asset",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       1120,
+                                       300
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "INSERT INTO assets (engagement_id, asset_value, asset_type, scope_status, owner_team, business_criticality, environment, notes)\nVALUES (\n  \u0027{{ $json.engagement_id }}\u0027,\n  \u0027{{ $json.asset_value.replace(/\u0027/g,\"\u0027\u0027\") }}\u0027,\n  \u0027{{ $json.asset_type }}\u0027,\n  \u0027in_scope\u0027,\n  {{ $json.owner_team ? \"\u0027\" + $json.owner_team + \"\u0027\" : \u0027NULL\u0027 }},\n  \u0027{{ $json.business_criticality }}\u0027,\n  \u0027{{ $json.environment }}\u0027,\n  {{ $json.notes ? \"\u0027\" + $json.notes.replace(/\u0027/g,\"\u0027\u0027\") + \"\u0027\" : \u0027NULL\u0027 }}\n)\nON CONFLICT (engagement_id, asset_value) DO UPDATE\n  SET last_discovered = NOW(), asset_type = EXCLUDED.asset_type\nRETURNING id, (xmax = 0) AS is_new;",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "pg-upsert-asset",
+                      "name":  "Upsert Asset",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       1340,
+                                       300
+                                   ],
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "oHS3dvjMW1h1PkMp",
+                                                           "name":  "RECON OS PostgreSQL"
+                                                       }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "UPDATE engagement_metrics\nSET total_assets = (SELECT COUNT(*) FROM assets WHERE engagement_id = \u0027{{ $(\u0027Normalize Input\u0027).first().json.engagement_id }}\u0027),\n    updated_at = NOW()\nWHERE engagement_id = \u0027{{ $(\u0027Normalize Input\u0027).first().json.engagement_id }}\u0027;",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "pg-update-metrics",
+                      "name":  "Update Metrics",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       1560,
+                                       300
+                                   ],
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "oHS3dvjMW1h1PkMp",
+                                                           "name":  "RECON OS PostgreSQL"
+                                                       }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "INSERT INTO audit_logs (event_type, actor, engagement_id, entity_type, entity_id, payload)\nVALUES (\u0027asset_discovered\u0027, \u0027wf03\u0027, \u0027{{ $(\u0027Normalize Input\u0027).first().json.engagement_id }}\u0027, \u0027asset\u0027, \u0027{{ $(\u0027Upsert Asset\u0027).first().json.id }}\u0027, \u0027{\"asset_value\":\"{{ $(\u0027Normalize Input\u0027).first().json.asset_value }}\",\"asset_type\":\"{{ $(\u0027Classify Asset\u0027).first().json.asset_type }}\"}\u0027::jsonb);",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "pg-audit",
+                      "name":  "Audit Log",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       1780,
+                                       300
+                                   ],
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "oHS3dvjMW1h1PkMp",
+                                                           "name":  "RECON OS PostgreSQL"
+                                                       }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "respondWith":  "json",
+                                         "responseBody":  "={{ JSON.stringify({ ok: true, asset_id: $(\u0027Upsert Asset\u0027).first().json.id, is_new: $(\u0027Upsert Asset\u0027).first().json.is_new }) }}",
+                                         "options":  {
+                                                         "responseCode":  200
+                                                     }
+                                     },
+                      "id":  "respond-ok",
+                      "name":  "Respond OK",
+                      "type":  "n8n-nodes-base.respondToWebhook",
+                      "typeVersion":  1.1,
+                      "position":  [
+                                       2000,
+                                       300
+                                   ]
+                  }
+              ],
+    "connections":  {
+                        "Webhook":  {
+                                        "main":  [
+                                                     [
+                                                         {
+                                                             "node":  "Normalize Input",
+                                                             "type":  "main",
+                                                             "index":  0
+                                                         }
+                                                     ]
+                                                 ]
+                                    },
+                        "Execute Workflow Trigger":  {
+                                                         "main":  [
+                                                                      [
+                                                                          {
+                                                                              "node":  "Normalize Input",
+                                                                              "type":  "main",
+                                                                              "index":  0
+                                                                          }
+                                                                      ]
+                                                                  ]
+                                                     },
+                        "Normalize Input":  {
+                                                "main":  [
+                                                             [
+                                                                 {
+                                                                     "node":  "Scope Guardian",
+                                                                     "type":  "main",
+                                                                     "index":  0
+                                                                 }
+                                                             ]
+                                                         ]
+                                            },
+                        "Scope Guardian":  {
+                                               "main":  [
+                                                            [
+                                                                {
+                                                                    "node":  "IF In Scope?",
+                                                                    "type":  "main",
+                                                                    "index":  0
+                                                                }
+                                                            ]
+                                                        ]
+                                           },
+                        "IF In Scope?":  {
+                                             "main":  [
+                                                          [
+                                                              {
+                                                                  "node":  "Classify Asset",
+                                                                  "type":  "main",
+                                                                  "index":  0
+                                                              }
+                                                          ],
+                                                          [
+                                                              {
+                                                                  "node":  "Respond Blocked",
+                                                                  "type":  "main",
+                                                                  "index":  0
+                                                              }
+                                                          ]
+                                                      ]
+                                         },
+                        "Classify Asset":  {
+                                               "main":  [
+                                                            [
+                                                                {
+                                                                    "node":  "Upsert Asset",
+                                                                    "type":  "main",
+                                                                    "index":  0
+                                                                }
+                                                            ]
+                                                        ]
+                                           },
+                        "Upsert Asset":  {
+                                             "main":  [
+                                                          [
+                                                              {
+                                                                  "node":  "Update Metrics",
+                                                                  "type":  "main",
+                                                                  "index":  0
+                                                              }
+                                                          ]
+                                                      ]
+                                         },
+                        "Update Metrics":  {
+                                               "main":  [
+                                                            [
+                                                                {
+                                                                    "node":  "Audit Log",
+                                                                    "type":  "main",
+                                                                    "index":  0
+                                                                }
+                                                            ]
+                                                        ]
+                                           },
+                        "Audit Log":  {
+                                          "main":  [
+                                                       [
+                                                           {
+                                                               "node":  "Respond OK",
+                                                               "type":  "main",
+                                                               "index":  0
+                                                           }
+                                                       ]
+                                                   ]
+                                      }
+                    },
+    "settings":  {
+                     "executionOrder":  "v1",
+                     "saveManualExecutions":  true,
+                     "saveExecutionProgress":  true,
+                     "callerPolicy":  "workflowsFromSameOwner",
+                     "availableInMCP":  false
+                 },
+    "staticData":  null,
+    "meta":  null,
+    "pinData":  null,
+    "versionId":  "b0257db5-f31e-4e8f-b7a7-bcc5e9aab744",
+    "activeVersionId":  null,
+    "versionCounter":  2,
+    "triggerCount":  0,
+    "shared":  [
+                   {
+                       "updatedAt":  "2026-04-19T03:30:14.396Z",
+                       "createdAt":  "2026-04-19T03:30:14.396Z",
+                       "role":  "workflow:owner",
+                       "workflowId":  "ItcWwqu5rIcDn6R7",
+                       "projectId":  "Lrgt6JR85OZiVLcX",
+                       "project":  {
+                                       "updatedAt":  "2026-03-31T09:07:31.366Z",
+                                       "createdAt":  "2026-03-31T08:57:43.789Z",
+                                       "id":  "Lrgt6JR85OZiVLcX",
+                                       "name":  "gelson mascarenhas \u003cgelson_m@hotmail.com\u003e",
+                                       "type":  "personal",
+                                       "icon":  null,
+                                       "description":  null,
+                                       "creatorId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                   }
+                   }
+               ],
+    "tags":  [
+
+             ],
+    "activeVersion":  null
+}

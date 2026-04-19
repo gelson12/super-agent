@@ -1,6 +1,7 @@
 {
   "name": "Finance Operations Controller",
   "nodes": [
+<<<<<<< HEAD
     {
       "parameters": { "updates": ["messages"], "options": {} },
       "id": "whatsapp-trigger",
@@ -90,16 +91,53 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [500, 950]
+=======
+    { "parameters": { "updates": ["messages"], "options": {} }, "id": "whatsapp-trigger", "name": "WhatsApp Trigger", "type": "n8n-nodes-base.whatsAppTrigger", "typeVersion": 1, "position": [200, 200], "webhookId": "9b1af47e-04b8-49d7-b394-53453087ac81", "credentials": { "whatsAppTriggerApi": { "id": "qWl5Z2MKku7htFew", "name": "WhatsApp OAuth account" } } },
+    { "parameters": { "updates": ["message"], "additionalFields": {} }, "id": "telegram-trigger", "name": "Telegram Trigger", "type": "n8n-nodes-base.telegramTrigger", "typeVersion": 1.1, "position": [200, 450], "webhookId": "finance-telegram-webhook-001", "credentials": { "telegramApi": { "id": "vaWr2cxS1Q9HsYd4", "name": "Telegram account" } } },
+    { "parameters": { "pollTimes": { "item": [{ "mode": "everyMinute" }] }, "simple": false, "filters": { "q": "subject:(invoice OR receipt OR tax OR VAT OR HMRC OR statement OR remittance OR PAYE OR P60 OR P45) OR has:attachment", "readStatus": "unread" }, "options": { "dataPropertyAttachmentsPrefixName": "attachment_", "downloadAttachments": true } }, "id": "gmail-trigger", "name": "Gmail Finance Monitor", "type": "n8n-nodes-base.gmailTrigger", "typeVersion": 1.3, "position": [200, 700], "credentials": { "gmailOAuth2": { "id": "DL39Lr8wENjvFtij", "name": "Gmail account" } } },
+    { "parameters": { "pollTimes": { "item": [{ "mode": "everyMinute" }] }, "filters": {}, "options": { "downloadAttachments": true, "attachmentsBinaryProperty": "attachment_" } }, "id": "outlook-trigger", "name": "Outlook / Hotmail Monitor", "type": "n8n-nodes-base.microsoftOutlookTrigger", "typeVersion": 1, "position": [200, 950], "credentials": { "microsoftOutlookOAuth2Api": { "id": "9paQ8IJLgiLbjEYI", "name": "Microsoft Outlook account" } } },
+    { "parameters": { "jsCode": "const d=$input.first().json;const body=d.body||d;const msgType=body.type||'text';const hasDoc=['document','image','audio','video'].includes(msgType);return[{json:{source_channel:'whatsapp',sender_id:body.from||'unknown',sender_email:null,has_document:hasDoc,text:body.text?.body||body.caption||'',subject:'WhatsApp message',filename:body.document?.filename||body.image?.filename||null,media_id:body.document?.id||body.image?.id||null,attachment_key:hasDoc?'attachment_0':null,raw:d},binary:$input.first().binary||{}}];" }, "id": "normalize-whatsapp", "name": "Normalize WhatsApp", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [500, 200] },
+    { "parameters": { "jsCode": "const d=$input.first().json;const msg=d.message||d;const hasDoc=!!(msg.document||msg.photo);return[{json:{source_channel:'telegram',sender_id:String(msg.from?.id||msg.chat?.id||'unknown'),sender_email:null,has_document:hasDoc,text:msg.text||msg.caption||'',subject:'Telegram from '+(msg.from?.username||msg.from?.first_name||'unknown'),filename:msg.document?.file_name||(msg.photo?'photo.jpg':null),file_id:msg.document?.file_id||(msg.photo&&msg.photo[msg.photo.length-1]?.file_id)||null,attachment_key:hasDoc?'attachment_0':null,raw:d},binary:$input.first().binary||{}}];" }, "id": "normalize-telegram", "name": "Normalize Telegram", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [500, 450] },
+    { "parameters": { "jsCode": "const d=$input.first().json;const b=$input.first().binary||{};const attachKey=Object.keys(d).find(k=>k.startsWith('attachment_'))||Object.keys(b).find(k=>k.startsWith('attachment_'))||null;const hasDoc=!!attachKey;return[{json:{source_channel:'gmail',sender_id:d.from||'unknown',sender_email:d.from||null,has_document:hasDoc,text:d.text||d.snippet||'',subject:d.subject||'',filename:(attachKey&&b[attachKey])?b[attachKey].fileName:null,attachment_key:attachKey,raw:d},binary:b}];" }, "id": "normalize-gmail", "name": "Normalize Gmail", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [500, 700] },
+    { "parameters": { "jsCode": "const d=$input.first().json;const b=$input.first().binary||{};const attachKey=Object.keys(b).find(k=>k.startsWith('attachment_'))||null;const hasDoc=d.hasAttachments===true||!!attachKey;const senderEmail=d.from?.emailAddress?.address||d.sender?.emailAddress?.address||String(d.from||'unknown');return[{json:{source_channel:'outlook',sender_id:senderEmail,sender_email:senderEmail,has_document:hasDoc,text:d.bodyPreview||'',subject:d.subject||'',filename:(attachKey&&b[attachKey])?b[attachKey].fileName:null,attachment_key:attachKey,raw:d},binary:b}];" }, "id": "normalize-outlook", "name": "Normalize Outlook", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [500, 950] },
+    { "parameters": { "conditions": { "options": { "typeValidation": "loose" }, "conditions": [{ "id": "c1", "leftValue": "={{ $json.has_document }}", "operator": { "type": "boolean", "operation": "true" } }], "combinator": "and" }, "options": {} }, "id": "has-document", "name": "Has Document?", "type": "n8n-nodes-base.if", "typeVersion": 2.3, "position": [800, 580] },
+    { "parameters": { "method": "POST", "url": "https://super-agent-production.up.railway.app/chat", "sendHeaders": true, "headerParameters": { "parameters": [{ "name": "Content-Type", "value": "application/json" }, { "name": "X-Token", "value": "={{ $env.SUPER_AGENT_PASSWORD }}" }] }, "sendBody": true, "specifyBody": "json", "jsonBody": "={{ JSON.stringify({ message: 'You are the Finance Operations Controller for Bridge Digital. You handle invoices, tax letters, VAT, expenses, bookkeeping, cash flow, and financial reporting. You also know UK tax deadlines (VAT quarters, Self Assessment Jan 31, PAYE monthly). Answer clearly and concisely: ' + $json.text, session_id: $json.source_channel + '_qa_' + $json.sender_id }) }}", "options": { "timeout": 60000 } }, "id": "finance-qa", "name": "Finance Q&A - Super Agent", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [1100, 320] },
+    { "parameters": { "jsCode": "const resp=$input.first().json.response||'No response from finance assistant.';const orig=$('Has Document?').item.json;return[{json:{...orig,ai_response:resp}}];" }, "id": "merge-qa", "name": "Merge Q&A Response", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [1400, 320] },
+    { "parameters": { "mode": "rules", "rules": { "values": [ { "conditions": { "options": { "caseSensitive": false, "typeValidation": "loose" }, "combinator": "and", "conditions": [{ "id": "rq1", "leftValue": "={{ $json.source_channel }}", "rightValue": "whatsapp", "operator": { "type": "string", "operation": "equals" } }] }, "renameOutput": true, "outputKey": "whatsapp" }, { "conditions": { "options": { "caseSensitive": false, "typeValidation": "loose" }, "combinator": "and", "conditions": [{ "id": "rq2", "leftValue": "={{ $json.source_channel }}", "rightValue": "telegram", "operator": { "type": "string", "operation": "equals" } }] }, "renameOutput": true, "outputKey": "telegram" } ] }, "options": {} }, "id": "route-qa", "name": "Route Q&A by Channel", "type": "n8n-nodes-base.switch", "typeVersion": 3, "position": [1700, 320] },
+    { "parameters": { "operation": "send", "phoneNumberId": "1028630140342045", "recipientPhoneNumber": "={{ $json.sender_id }}", "textBody": "={{ $json.ai_response }}", "additionalFields": {} }, "id": "send-whatsapp-qa", "name": "Send WhatsApp Reply", "type": "n8n-nodes-base.whatsApp", "typeVersion": 1.1, "position": [2000, 220], "credentials": { "whatsAppApi": { "id": "cO8ewwCrbB15ov3L", "name": "WhatsApp account" } } },
+    { "parameters": { "resource": "message", "operation": "sendMessage", "chatId": "={{ $json.sender_id }}", "text": "={{ $json.ai_response }}", "additionalFields": {} }, "id": "send-telegram-qa", "name": "Send Telegram Reply", "type": "n8n-nodes-base.telegram", "typeVersion": 1.2, "position": [2000, 420], "credentials": { "telegramApi": { "id": "vaWr2cxS1Q9HsYd4", "name": "Telegram account" } } },
+    { "parameters": { "jsCode": "const d=$json;const filename=(d.filename||'').toLowerCase();const subject=(d.subject||d.text||'').toLowerCase();let doc_type='invoice';if(subject.includes('tax')||subject.includes('hmrc')||subject.includes('irs')||subject.includes('self assessment')||subject.includes('paye')||subject.includes('p60')||subject.includes('p45')||subject.includes('corporation tax')||filename.includes('tax')||filename.includes('hmrc')){doc_type='tax_letter';}else if(filename.endsWith('.csv')||filename.endsWith('.xlsx')||filename.endsWith('.xls')||filename.endsWith('.ods')||subject.includes('bank statement')||subject.includes('reconciliation')||subject.includes('statement of account')){doc_type='table';}else if(subject.includes('invoice')||subject.includes('receipt')||subject.includes('remittance')||filename.includes('invoice')||filename.includes('receipt')){doc_type='invoice';}const useOcr=!filename||filename.endsWith('.pdf')||filename.endsWith('.jpg')||filename.endsWith('.jpeg')||filename.endsWith('.png')||filename.endsWith('.tiff')||filename.endsWith('.tif')||doc_type!=='table';return[{json:{...d,doc_type,use_ocr:useOcr}}];" }, "id": "detect-doc-type", "name": "Detect Document Type", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [1100, 840] },
+    { "parameters": { "mode": "rules", "rules": { "values": [ { "conditions": { "options": { "typeValidation": "loose" }, "combinator": "and", "conditions": [{ "id": "rd1", "leftValue": "={{ $json.use_ocr }}", "rightValue": true, "operator": { "type": "boolean", "operation": "true" } }] }, "renameOutput": true, "outputKey": "image_ocr" } ] }, "fallbackOutput": 1, "options": {} }, "id": "route-doc-type", "name": "Route by Doc Type", "type": "n8n-nodes-base.switch", "typeVersion": 3, "position": [1400, 840] },
+    { "parameters": { "resource": "invoice", "binaryPropertyName": "={{ $json.attachment_key || 'attachment_0' }}" }, "id": "mindee-ocr", "name": "Mindee OCR", "type": "n8n-nodes-base.mindee", "typeVersion": 3, "position": [1700, 700], "credentials": { "mindeeInvoiceApi": { "id": "ShycnKUWIqZZrzsd", "name": "Mindee Invoice account" } } },
+    { "parameters": { "jsCode": "const mindee=$input.first().json;let orig={};try{orig=$('Detect Document Type').item.json;}catch(e){}return[{json:{vendor:mindee.supplier_name||mindee.vendor||'Unknown',document_type:orig.doc_type||'invoice',reference_number:mindee.invoice_number||mindee.reference||'N/A',date:mindee.date||new Date().toISOString().split('T')[0],due_date:mindee.due_date||null,amount:parseFloat(mindee.total_amount||mindee.amount||0),tax_amount:parseFloat(mindee.total_tax||mindee.tax_amount||0),currency:mindee.locale?.currency||'GBP',description:'Document from '+(orig.sender_email||orig.sender_id||'unknown'),key_details:JSON.stringify(mindee),line_items:mindee.line_items||[],source_channel:orig.source_channel||'unknown',sender_id:orig.sender_id||'unknown',sender_email:orig.sender_email||null,doc_type:orig.doc_type||'invoice',subject:orig.subject||''}}];" }, "id": "normalize-mindee", "name": "Normalize Mindee Output", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [2000, 700] },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT COUNT(*) as duplicate_count FROM expenses WHERE LOWER(vendor) = LOWER($1) AND ABS(amount - $2::numeric) < 0.50 AND date = $3 AND processed_date >= NOW() - INTERVAL '30 days'",
+        "options": { "queryReplacement": "={{ [$json.vendor||'', $json.amount||0, $json.date||new Date().toISOString().split('T')[0]] }}" }
+      },
+      "id": "duplicate-check-sql",
+      "name": "Duplicate Check SQL",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [2900, 950],
+      "credentials": { "postgres": { "id": "Ae3yvuqjgMnVRrCo", "name": "Postgres account" } }
+>>>>>>> master
     },
     {
       "parameters": {
         "conditions": {
           "options": { "typeValidation": "loose" },
+<<<<<<< HEAD
           "conditions": [{ "id": "c1", "leftValue": "={{ $json.has_document }}", "operator": { "type": "boolean", "operation": "true" } }],
+=======
+          "conditions": [{ "id": "dup1", "leftValue": "={{ $json.duplicate_count }}", "operator": { "type": "number", "operation": "gt" }, "rightValue": 0 }],
+>>>>>>> master
           "combinator": "and"
         },
         "options": {}
       },
+<<<<<<< HEAD
       "id": "has-document",
       "name": "Has Document?",
       "type": "n8n-nodes-base.if",
@@ -167,11 +205,34 @@
       "typeVersion": 1.1,
       "position": [2000, 220],
       "credentials": { "whatsAppApi": { "id": "cO8ewwCrbB15ov3L", "name": "WhatsApp account" } }
+=======
+      "id": "is-duplicate",
+      "name": "Is Duplicate Invoice?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [3150, 950]
+    },
+    {
+      "parameters": {
+        "sendTo": "bridge.digital.solution@gmail.com",
+        "subject": "=🔁 Duplicate Invoice Blocked: {{ $('Parse Enhanced Extraction').item.json.vendor }} — £{{ $('Parse Enhanced Extraction').item.json.amount }}",
+        "emailType": "html",
+        "message": "=<h2 style='color:#e67e22'>Duplicate Invoice Detected — Processing Stopped</h2><p>A document matching an existing record was received and <strong>not stored</strong> to prevent duplication.</p><table border='1' cellpadding='8' style='border-collapse:collapse'><tr><td><b>Vendor</b></td><td>{{ $('Parse Enhanced Extraction').item.json.vendor }}</td></tr><tr><td><b>Amount</b></td><td>{{ $('Parse Enhanced Extraction').item.json.currency }} {{ $('Parse Enhanced Extraction').item.json.amount }}</td></tr><tr><td><b>Date</b></td><td>{{ $('Parse Enhanced Extraction').item.json.date }}</td></tr><tr><td><b>Source</b></td><td>{{ $('Parse Enhanced Extraction').item.json.source_channel }} — {{ $('Parse Enhanced Extraction').item.json.sender_id }}</td></tr></table><p>If this is a legitimate new invoice, check the expenses log and re-submit with a different invoice number.</p>",
+        "options": {}
+      },
+      "id": "duplicate-alert-email",
+      "name": "Duplicate Alert Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [3400, 850],
+      "credentials": { "gmailOAuth2": { "id": "DL39Lr8wENjvFtij", "name": "Gmail account" } }
+>>>>>>> master
     },
     {
       "parameters": {
         "resource": "message",
         "operation": "sendMessage",
+<<<<<<< HEAD
         "chatId": "={{ $json.sender_id }}",
         "text": "={{ $json.ai_response }}",
         "additionalFields": {}
@@ -332,16 +393,73 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [3250, 950]
+=======
+        "chatId": "={{ $env.TELEGRAM_ADMIN_CHAT_ID }}",
+        "text": "=🔁 Duplicate Invoice Blocked\n\nVendor: {{ $('Parse Enhanced Extraction').item.json.vendor }}\nAmount: {{ $('Parse Enhanced Extraction').item.json.currency }} {{ $('Parse Enhanced Extraction').item.json.amount }}\nDate: {{ $('Parse Enhanced Extraction').item.json.date }}\nSource: {{ $('Parse Enhanced Extraction').item.json.source_channel }}\n\nThis invoice matched an existing record and was NOT stored.",
+        "additionalFields": {}
+      },
+      "id": "duplicate-alert-telegram",
+      "name": "Duplicate Alert Telegram",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [3400, 1050],
+      "credentials": { "telegramApi": { "id": "vaWr2cxS1Q9HsYd4", "name": "Telegram account" } }
+    },
+    { "parameters": { "conditions": { "options": { "typeValidation": "loose" }, "conditions": [{ "id": "c2", "leftValue": "={{ $json.anomaly_flag }}", "operator": { "type": "boolean", "operation": "true" } }], "combinator": "and" }, "options": {} }, "id": "check-anomalies", "name": "Anomaly Detected?", "type": "n8n-nodes-base.if", "typeVersion": 2.3, "position": [4200, 1250] },
+    {"id":"store-expense","name":"Store in Database","type":"n8n-nodes-base.postgres","typeVersion":2.5,"position":[4450,1050],"parameters":{"operation":"executeQuery","query":"INSERT INTO expenses (category, subcategory, vendor, amount, date, due_date, description, anomaly_flag, anomaly_severity, anomaly_reason, anomaly_recommendations, confidence_score, budget_line, source_channel, sender_id, doc_type, priority, action_required, processed_date) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)","options":{"queryReplacement":"={{ [$json.category||\u0027Uncategorized\u0027, $json.subcategory||\u0027\u0027, $json.vendor||\u0027Unknown\u0027, $json.amount||0, $json.date||new Date().toISOString().split(\u0027T\u0027)[0], $json.due_date||null, $json.description||\u0027\u0027, $json.anomaly_flag||false, $json.anomaly_severity||\u0027none\u0027, $json.anomaly_reason||\u0027\u0027, $json.anomaly_recommendations||\u0027\u0027, $json.confidence_score||0, $json.budget_line||\u0027\u0027, $json.source_channel||\u0027unknown\u0027, $json.sender_id||\u0027unknown\u0027, $json.doc_type||\u0027invoice\u0027, $json.priority||\u0027low\u0027, $json.action_required||\u0027\u0027, $json.processed_date||new Date().toISOString()] }}"}},"credentials":{"postgres":{"id":"Ae3yvuqjgMnVRrCo","name":"Postgres account"}}},
+    { "parameters": { "sendTo": "bridge.digital.solution@gmail.com", "subject": "={{ '⚠️ Finance Alert [' + ($json.anomaly_severity||'UNKNOWN').toUpperCase() + ']: ' + $json.vendor + ' — £' + $json.amount }}", "emailType": "html", "message": "=<h2 style='color:#c0392b'>Finance Anomaly Detected</h2><table border='1' cellpadding='8' cellspacing='0' style='border-collapse:collapse;font-family:Arial'><tr><td><b>Source Channel</b></td><td>{{ $json.source_channel }} ({{ $json.sender_id }})</td></tr><tr><td><b>Document Type</b></td><td>{{ $json.doc_type }}</td></tr><tr><td><b>Vendor</b></td><td>{{ $json.vendor }}</td></tr><tr><td><b>Amount</b></td><td>{{ $json.currency }} {{ $json.amount }}</td></tr><tr><td><b>Category</b></td><td>{{ $json.category }} / {{ $json.subcategory }}</td></tr><tr><td><b>Date</b></td><td>{{ $json.date }}</td></tr><tr><td><b>Due Date</b></td><td>{{ $json.due_date || 'N/A' }}</td></tr><tr><td><b>Severity</b></td><td style='color:#c0392b'><b>{{ $json.anomaly_severity }}</b></td></tr><tr><td><b>Reason</b></td><td>{{ $json.anomaly_reason }}</td></tr><tr><td><b>Recommendations</b></td><td>{{ $json.anomaly_recommendations }}</td></tr><tr><td><b>Priority</b></td><td>{{ $json.priority }}</td></tr><tr><td><b>Action Required</b></td><td>{{ $json.action_required }}</td></tr></table>", "options": {} }, "id": "alert-gmail", "name": "Alert via Gmail", "type": "n8n-nodes-base.gmail", "typeVersion": 2.2, "position": [4450, 1200], "credentials": { "gmailOAuth2": { "id": "DL39Lr8wENjvFtij", "name": "Gmail account" } } },
+    { "parameters": { "resource": "message", "operation": "sendMessage", "chatId": "={{ $env.TELEGRAM_ADMIN_CHAT_ID }}", "text": "=⚠️ Finance Alert [{{ ($json.anomaly_severity||'UNKNOWN').toUpperCase() }}]\n\nSource: {{ $json.source_channel }}\nVendor: {{ $json.vendor }}\nAmount: {{ $json.currency }} {{ $json.amount }}\nType: {{ $json.doc_type }}\nReason: {{ $json.anomaly_reason }}\nPriority: {{ $json.priority }}\nAction: {{ $json.action_required }}", "additionalFields": {} }, "id": "alert-telegram", "name": "Alert via Telegram", "type": "n8n-nodes-base.telegram", "typeVersion": 1.2, "position": [4450, 1370], "credentials": { "telegramApi": { "id": "vaWr2cxS1Q9HsYd4", "name": "Telegram account" } } },
+    { "parameters": { "jsCode": "const d=$input.first().json;const icon=d.anomaly_flag?'⚠️':'✅';const status=d.anomaly_flag?'Flagged for review: '+d.anomaly_reason:'No anomalies — processed successfully';const text=icon+' Document Processed\\n\\nVendor: '+(d.vendor||'Unknown')+'\\nAmount: '+(d.currency||'GBP')+' '+(d.amount||0)+'\\nType: '+(d.doc_type||'document')+'\\nCategory: '+(d.category||'Uncategorized')+'\\nDate: '+(d.date||'N/A')+'\\n\\n'+status;return[{json:{...d,confirmation_text:text}}];" }, "id": "build-confirmation", "name": "Build Confirmation", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [4450, 1540] },
+    { "parameters": { "mode": "rules", "rules": { "values": [ { "conditions": { "options": { "caseSensitive": false, "typeValidation": "loose" }, "combinator": "and", "conditions": [{ "id": "rc1", "leftValue": "={{ $json.source_channel }}", "rightValue": "whatsapp", "operator": { "type": "string", "operation": "equals" } }] }, "renameOutput": true, "outputKey": "whatsapp" }, { "conditions": { "options": { "caseSensitive": false, "typeValidation": "loose" }, "combinator": "and", "conditions": [{ "id": "rc2", "leftValue": "={{ $json.source_channel }}", "rightValue": "telegram", "operator": { "type": "string", "operation": "equals" } }] }, "renameOutput": true, "outputKey": "telegram" } ] }, "options": {} }, "id": "route-confirmation", "name": "Route Confirmation", "type": "n8n-nodes-base.switch", "typeVersion": 3, "position": [4700, 1540] },
+    { "parameters": { "operation": "send", "phoneNumberId": "1028630140342045", "recipientPhoneNumber": "={{ $json.sender_id }}", "textBody": "={{ $json.confirmation_text }}", "additionalFields": {} }, "id": "whatsapp-confirm", "name": "WhatsApp Confirmation", "type": "n8n-nodes-base.whatsApp", "typeVersion": 1.1, "position": [4950, 1450], "credentials": { "whatsAppApi": { "id": "cO8ewwCrbB15ov3L", "name": "WhatsApp account" } } },
+    { "parameters": { "resource": "message", "operation": "sendMessage", "chatId": "={{ $json.sender_id }}", "text": "={{ $json.confirmation_text }}", "additionalFields": {} }, "id": "telegram-confirm", "name": "Telegram Confirmation", "type": "n8n-nodes-base.telegram", "typeVersion": 1.2, "position": [4950, 1630], "credentials": { "telegramApi": { "id": "vaWr2cxS1Q9HsYd4", "name": "Telegram account" } } },
+    { "parameters": { "rule": { "interval": [{ "field": "weeks", "triggerAtDay": [1], "triggerAtHour": 9 }] } }, "id": "weekly-schedule", "name": "Weekly Summary Schedule", "type": "n8n-nodes-base.scheduleTrigger", "typeVersion": 1.3, "position": [200, 1850] },
+    { "parameters": { "operation": "executeQuery", "query": "SELECT category, subcategory, vendor, amount, currency, date, doc_type, source_channel, anomaly_flag, anomaly_severity, priority, processed_date FROM expenses WHERE processed_date >= NOW() - INTERVAL '7 days' ORDER BY processed_date DESC", "options": {} }, "id": "fetch-weekly", "name": "Fetch Weekly Expenses", "type": "n8n-nodes-base.postgres", "typeVersion": 2.5, "position": [500, 1850], "credentials": { "postgres": { "id": "Ae3yvuqjgMnVRrCo", "name": "Postgres account" } } },
+    { "parameters": { "aggregate": "aggregateAllItemData", "options": {} }, "id": "aggregate-weekly", "name": "Aggregate Weekly Data", "type": "n8n-nodes-base.aggregate", "typeVersion": 1, "position": [800, 1850] },
+    { "parameters": { "method": "POST", "url": "https://super-agent-production.up.railway.app/chat", "sendHeaders": true, "headerParameters": { "parameters": [{ "name": "Content-Type", "value": "application/json" }, { "name": "X-Token", "value": "={{ $env.SUPER_AGENT_PASSWORD }}" }] }, "sendBody": true, "specifyBody": "json", "jsonBody": "={{ JSON.stringify({ message: 'You are Finance Operations Controller for Bridge Digital. Generate the weekly finance report. Include: (1) FINANCIAL HEALTH SCORE (0-100): rate overall financial health based on anomaly rate, spend patterns, category balance — show score prominently with brief explanation. (2) Total spend this week. (3) Spend by category HTML table. (4) Channel intake breakdown (Gmail/Outlook/WhatsApp/Telegram). (5) Anomalies flagged. (6) Top 5 vendors by spend. (7) CASH FLOW SIGNAL: based on this week\\'s patterns, indicate if cash flow looks healthy/strained/neutral. (8) 3 actionable recommendations. Provide TWO formats: [EMAIL_FORMAT]full HTML report with tables and styled health score badge[/EMAIL_FORMAT] and [MSG_FORMAT]concise plain text with emojis (max 800 chars)[/MSG_FORMAT]. Data: ' + JSON.stringify($json), session_id: 'weekly_summary' }) }}", "options": { "timeout": 90000 } }, "id": "weekly-ai", "name": "Weekly Summary - Super Agent", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [1100, 1850] },
+    { "parameters": { "jsCode": "const resp=$input.first().json.response||'';const emailMatch=resp.match(/\\[EMAIL_FORMAT\\]([\\s\\S]*?)\\[\\/EMAIL_FORMAT\\]/);const msgMatch=resp.match(/\\[MSG_FORMAT\\]([\\s\\S]*?)\\[\\/MSG_FORMAT\\]/);const emailContent=emailMatch?emailMatch[1].trim():resp;const msgContent=msgMatch?msgMatch[1].trim():resp.substring(0,800);return[{json:{email_content:emailContent,msg_content:msgContent}}];" }, "id": "split-weekly", "name": "Split Weekly Response", "type": "n8n-nodes-base.code", "typeVersion": 2, "position": [1400, 1850] },
+    { "parameters": { "sendTo": "bridge.digital.solution@gmail.com", "subject": "={{ '📊 Weekly Finance Report + Health Score — ' + $now.format('DD MMM YYYY') }}", "emailType": "html", "message": "={{ $json.email_content }}", "options": {} }, "id": "email-weekly", "name": "Email Weekly Summary", "type": "n8n-nodes-base.gmail", "typeVersion": 2.2, "position": [1700, 1750], "credentials": { "gmailOAuth2": { "id": "DL39Lr8wENjvFtij", "name": "Gmail account" } } },
+    { "parameters": { "operation": "send", "phoneNumberId": "1028630140342045", "recipientPhoneNumber": "+447345787028", "textBody": "={{ '📊 Weekly Finance Report\\n\\n' + $json.msg_content }}", "additionalFields": {} }, "id": "whatsapp-weekly", "name": "WhatsApp Weekly Summary", "type": "n8n-nodes-base.whatsApp", "typeVersion": 1.1, "position": [1700, 1900], "credentials": { "whatsAppApi": { "id": "cO8ewwCrbB15ov3L", "name": "WhatsApp account" } } },
+    { "parameters": { "resource": "message", "operation": "sendMessage", "chatId": "={{ $env.TELEGRAM_ADMIN_CHAT_ID }}", "text": "={{ '📊 Weekly Finance Report\\n\\n' + $json.msg_content }}", "additionalFields": {} }, "id": "telegram-weekly", "name": "Telegram Weekly Summary", "type": "n8n-nodes-base.telegram", "typeVersion": 1.2, "position": [1700, 2050], "credentials": { "telegramApi": { "id": "vaWr2cxS1Q9HsYd4", "name": "Telegram account" } } },
+    { "parameters": { "rule": { "interval": [{ "field": "months", "triggerAtDay": 28, "triggerAtHour": 17, "triggerAtMinute": 0 }] } }, "id": "monthly-schedule", "name": "Monthly Pack Schedule", "type": "n8n-nodes-base.scheduleTrigger", "typeVersion": 1.2, "position": [200, 2350] },
+    { "parameters": { "operation": "executeQuery", "query": "SELECT * FROM expenses WHERE processed_date >= NOW() - INTERVAL '30 days' ORDER BY processed_date DESC", "options": {} }, "id": "fetch-monthly", "name": "Fetch Monthly Expenses", "type": "n8n-nodes-base.postgres", "typeVersion": 2.5, "position": [500, 2350], "credentials": { "postgres": { "id": "Ae3yvuqjgMnVRrCo", "name": "Postgres account" } } },
+    { "parameters": { "aggregate": "aggregateAllItemData", "options": {} }, "id": "aggregate-monthly", "name": "Aggregate Monthly Data", "type": "n8n-nodes-base.aggregate", "typeVersion": 1, "position": [800, 2350] },
+    { "parameters": { "method": "POST", "url": "https://super-agent-production.up.railway.app/chat", "sendHeaders": true, "headerParameters": { "parameters": [{ "name": "Content-Type", "value": "application/json" }, { "name": "X-Token", "value": "={{ $env.SUPER_AGENT_PASSWORD }}" }] }, "sendBody": true, "specifyBody": "json", "jsonBody": "={{ JSON.stringify({ message: 'You are Finance Operations Controller for Bridge Digital. Generate the month-end financial pack for accountant review. HTML-formatted professional report with these sections: (1) Executive Summary with Financial Health Score, (2) Total Expenses by Category table, (3) P&L Overview, (4) VAT/Tax Summary — what is owed/paid this month, (5) CASH FLOW PROJECTION — project next 60 days based on historical patterns from data, (6) Channel Intake Breakdown (Gmail/Outlook/WhatsApp/Telegram), (7) Anomalies and Duplicate Attempts Log, (8) Top Vendors by spend, (9) Outstanding invoices (due_date approaching), (10) Month-over-Month Comparison, (11) Recommendations for cost reduction and compliance. Data: ' + JSON.stringify($json), session_id: 'monthly_pack' }) }}", "options": { "timeout": 120000 } }, "id": "monthly-ai", "name": "Month-End Pack - Super Agent", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [1100, 2350] },
+    { "parameters": { "sendTo": "bridge.digital.solution@gmail.com", "subject": "={{ '📋 Month-End Financial Pack — ' + $now.format('MMMM YYYY') }}", "emailType": "html", "message": "={{ $json.response }}", "options": {} }, "id": "email-monthly", "name": "Email Month-End Pack", "type": "n8n-nodes-base.gmail", "typeVersion": 2.2, "position": [1400, 2250], "credentials": { "gmailOAuth2": { "id": "DL39Lr8wENjvFtij", "name": "Gmail account" } } },
+    { "parameters": { "resource": "message", "operation": "sendMessage", "chatId": "={{ $env.TELEGRAM_ADMIN_CHAT_ID }}", "text": "={{ '📋 Month-End Financial Pack Ready\\n\\nThe ' + $now.format('MMMM YYYY') + ' pack has been sent to bridge.digital.solution@gmail.com\\n\\nCheck your email for the full report including cash flow projection.' }}", "additionalFields": {} }, "id": "telegram-monthly", "name": "Telegram Monthly Notification", "type": "n8n-nodes-base.telegram", "typeVersion": 1.2, "position": [1400, 2450], "credentials": { "telegramApi": { "id": "vaWr2cxS1Q9HsYd4", "name": "Telegram account" } } },
+    {
+      "parameters": { "rule": { "interval": [{ "field": "days", "triggerAtHour": 8, "triggerAtMinute": 0 }] } },
+      "id": "tax-schedule",
+      "name": "Tax Deadline Check",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [200, 2650]
+    },
+    {
+      "parameters": {
+        "jsCode": "const now = new Date();\nconst y = now.getFullYear();\nconst deadlines = [\n  { name: 'Self Assessment Tax Return + Payment', date: new Date(y, 0, 31), category: 'HMRC', urgency: 'critical', detail: 'Online Self Assessment filing AND any tax owed must be paid today.' },\n  { name: 'VAT Return — Q1 (Oct-Dec)', date: new Date(y, 0, 31), category: 'VAT', urgency: 'high', detail: 'Submit and pay VAT for Oct-Dec quarter.' },\n  { name: 'Corporation Tax Payment', date: new Date(y, 8, 30), category: 'HMRC', urgency: 'high', detail: 'Check your specific accounting year end — this is an approximation.' },\n  { name: 'VAT Return — Q2 (Jan-Mar)', date: new Date(y, 3, 30), category: 'VAT', urgency: 'high', detail: 'Submit and pay VAT for Jan-Mar quarter.' },\n  { name: 'VAT Return — Q3 (Apr-Jun)', date: new Date(y, 6, 31), category: 'VAT', urgency: 'high', detail: 'Submit and pay VAT for Apr-Jun quarter.' },\n  { name: 'Second Payment on Account', date: new Date(y, 6, 31), category: 'HMRC', urgency: 'high', detail: 'Second payment on account for Self Assessment.' },\n  { name: 'VAT Return — Q4 (Jul-Sep)', date: new Date(y, 9, 31), category: 'VAT', urgency: 'high', detail: 'Submit and pay VAT for Jul-Sep quarter.' },\n  { name: 'PAYE Monthly Payment', date: new Date(y, now.getMonth(), 19), category: 'PAYE', urgency: 'medium', detail: 'Monthly PAYE and NI payment to HMRC.' },\n  { name: 'PAYE Next Month', date: new Date(y, now.getMonth()+1, 19), category: 'PAYE', urgency: 'medium', detail: 'Next monthly PAYE and NI payment to HMRC.' },\n  { name: 'Self Assessment Registration', date: new Date(y, 9, 5), category: 'HMRC', urgency: 'medium', detail: 'Deadline to register for Self Assessment if new to it.' }\n];\nconst upcoming = deadlines.filter(d => {\n  const days = Math.floor((d.date - now) / (1000*60*60*24));\n  return days >= 0 && days <= 14;\n}).map(d => ({ ...d, date: d.date.toISOString().split('T')[0], days_until: Math.floor((d.date - now) / (1000*60*60*24)) }));\nif (upcoming.length === 0) return [];\nconst summary = upcoming.map(d => `• ${d.name} (${d.days_until}d) — ${d.detail}`).join('\\n');\nreturn [{ json: { deadlines: upcoming, count: upcoming.length, summary, urgent_count: upcoming.filter(d=>d.urgency==='critical').length } }];"
+      },
+      "id": "calc-deadlines",
+      "name": "Calculate UK Tax Deadlines",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [500, 2650]
+>>>>>>> master
     },
     {
       "parameters": {
         "conditions": {
           "options": { "typeValidation": "loose" },
+<<<<<<< HEAD
           "conditions": [{ "id": "c2", "leftValue": "={{ $json.anomaly_flag }}", "operator": { "type": "boolean", "operation": "true" } }],
+=======
+          "conditions": [{ "id": "td1", "leftValue": "={{ $json.count }}", "operator": { "type": "number", "operation": "gt" }, "rightValue": 0 }],
+>>>>>>> master
           "combinator": "and"
         },
         "options": {}
       },
+<<<<<<< HEAD
       "id": "check-anomalies",
       "name": "Anomaly Detected?",
       "type": "n8n-nodes-base.if",
@@ -362,10 +480,18 @@
       "typeVersion": 2.5,
       "position": [3850, 780],
       "credentials": { "postgres": { "id": "Ae3yvuqjgMnVRrCo", "name": "Postgres account" } }
+=======
+      "id": "has-deadline",
+      "name": "Has Upcoming Deadline?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [800, 2650]
+>>>>>>> master
     },
     {
       "parameters": {
         "sendTo": "bridge.digital.solution@gmail.com",
+<<<<<<< HEAD
         "subject": "={{ '⚠️ Finance Alert [' + ($json.anomaly_severity || 'UNKNOWN').toUpperCase() + ']: ' + $json.vendor + ' — £' + $json.amount }}",
         "emailType": "html",
         "message": "=<h2 style='color:#c0392b'>Finance Anomaly Detected</h2><table border='1' cellpadding='8' cellspacing='0' style='border-collapse:collapse;font-family:Arial'><tr><td><b>Source Channel</b></td><td>{{ $json.source_channel }} ({{ $json.sender_id }})</td></tr><tr><td><b>Document Type</b></td><td>{{ $json.doc_type }}</td></tr><tr><td><b>Vendor</b></td><td>{{ $json.vendor }}</td></tr><tr><td><b>Amount</b></td><td>{{ $json.currency }} {{ $json.amount }}</td></tr><tr><td><b>Category</b></td><td>{{ $json.category }} / {{ $json.subcategory }}</td></tr><tr><td><b>Date</b></td><td>{{ $json.date }}</td></tr><tr><td><b>Severity</b></td><td style='color:#c0392b'><b>{{ $json.anomaly_severity }}</b></td></tr><tr><td><b>Reason</b></td><td>{{ $json.anomaly_reason }}</td></tr><tr><td><b>Recommendations</b></td><td>{{ $json.anomaly_recommendations }}</td></tr><tr><td><b>Priority</b></td><td>{{ $json.priority }}</td></tr><tr><td><b>Action Required</b></td><td>{{ $json.action_required }}</td></tr><tr><td><b>Confidence Score</b></td><td>{{ $json.confidence_score }}%</td></tr></table>",
@@ -376,6 +502,18 @@
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2.2,
       "position": [3850, 950],
+=======
+        "subject": "={{ '🗓️ UK Tax Deadline Alert — ' + $json.count + ' deadline(s) within 14 days' }}",
+        "emailType": "html",
+        "message": "=<h2 style='color:#8e44ad'>Upcoming UK Tax Deadlines</h2><p>The following tax deadlines are approaching. Please ensure all submissions and payments are made on time to avoid penalties.</p><table border='1' cellpadding='8' style='border-collapse:collapse;font-family:Arial;width:100%'><tr style='background:#8e44ad;color:white'><th>Deadline</th><th>Category</th><th>Days Left</th><th>Urgency</th><th>Details</th></tr>{{ $json.deadlines.map(d => '<tr><td><b>' + d.name + '</b></td><td>' + d.category + '</td><td style=\"text-align:center\"><b>' + d.days_until + '</b></td><td>' + d.urgency.toUpperCase() + '</td><td>' + d.detail + '</td></tr>').join('') }}</table><br><p><i>Powered by Bridge Digital Finance Operations Controller</i></p>",
+        "options": {}
+      },
+      "id": "tax-email",
+      "name": "Tax Deadline Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [1100, 2550],
+>>>>>>> master
       "credentials": { "gmailOAuth2": { "id": "DL39Lr8wENjvFtij", "name": "Gmail account" } }
     },
     {
@@ -383,6 +521,7 @@
         "resource": "message",
         "operation": "sendMessage",
         "chatId": "={{ $env.TELEGRAM_ADMIN_CHAT_ID }}",
+<<<<<<< HEAD
         "text": "=⚠️ Finance Alert [{{ ($json.anomaly_severity || 'UNKNOWN').toUpperCase() }}]\n\nSource: {{ $json.source_channel }}\nVendor: {{ $json.vendor }}\nAmount: {{ $json.currency }} {{ $json.amount }}\nType: {{ $json.doc_type }}\nReason: {{ $json.anomaly_reason }}\nPriority: {{ $json.priority }}\nAction: {{ $json.action_required }}",
         "additionalFields": {}
       },
@@ -508,10 +647,76 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [1400, 1650]
+=======
+        "text": "=🗓️ UK Tax Deadline Alert — {{ $json.count }} deadline(s) in the next 14 days\n\n{{ $json.summary }}\n\nCheck your email for the full breakdown.",
+        "additionalFields": {}
+      },
+      "id": "tax-telegram",
+      "name": "Tax Deadline Telegram",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1100, 2750],
+      "credentials": { "telegramApi": { "id": "vaWr2cxS1Q9HsYd4", "name": "Telegram account" } }
+    },
+    {
+      "parameters": { "rule": { "interval": [{ "field": "days", "triggerAtHour": 9, "triggerAtMinute": 0 }] } },
+      "id": "overdue-schedule",
+      "name": "Overdue Invoice Check",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [200, 3000]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, vendor, amount, currency, date, due_date, source_channel, sender_id FROM expenses WHERE due_date IS NOT NULL AND due_date <> '' AND due_date::date < CURRENT_DATE AND doc_type = 'invoice' ORDER BY due_date ASC LIMIT 25",
+        "options": {}
+      },
+      "id": "fetch-overdue",
+      "name": "Fetch Overdue Invoices",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [500, 3000],
+      "credentials": { "postgres": { "id": "Ae3yvuqjgMnVRrCo", "name": "Postgres account" } }
+    },
+    {
+      "parameters": { "aggregate": "aggregateAllItemData", "options": {} },
+      "id": "aggregate-overdue",
+      "name": "Aggregate Overdue Data",
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [800, 3000]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "typeValidation": "loose" },
+          "conditions": [{ "id": "ov1", "leftValue": "={{ Array.isArray($json.data) ? $json.data.length : 0 }}", "operator": { "type": "number", "operation": "gt" }, "rightValue": 0 }],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "has-overdue",
+      "name": "Has Overdue Invoices?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [1100, 3000]
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $json.data || [];\nconst total = items.reduce((s, i) => s + parseFloat(i.amount || 0), 0);\nconst lines = items.map(i => `• ${i.vendor} — ${i.currency||'GBP'} ${i.amount} (due ${i.due_date})`);\nconst emailRows = items.map(i => `<tr><td>${i.vendor}</td><td>${i.currency||'GBP'} ${i.amount}</td><td>${i.date}</td><td style='color:red'>${i.due_date}</td><td>${i.source_channel}</td></tr>`).join('');\nreturn [{ json: { count: items.length, total: total.toFixed(2), lines: lines.join('\\n'), emailRows, items } }];"
+      },
+      "id": "format-overdue",
+      "name": "Format Overdue Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1400, 3000]
+>>>>>>> master
     },
     {
       "parameters": {
         "sendTo": "bridge.digital.solution@gmail.com",
+<<<<<<< HEAD
         "subject": "={{ '📊 Weekly Finance Report — ' + $now.format('DD MMM YYYY') }}",
         "emailType": "html",
         "message": "={{ $json.email_content }}",
@@ -616,6 +821,18 @@
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2.2,
       "position": [1400, 2050],
+=======
+        "subject": "={{ '🔴 ' + $json.count + ' Overdue Invoice(s) — Total Outstanding: £' + $json.total }}",
+        "emailType": "html",
+        "message": "=<h2 style='color:#c0392b'>Overdue Invoices Alert</h2><p><strong>{{ $json.count }} invoice(s)</strong> are past their due date, totalling <strong>£{{ $json.total }}</strong>.</p><table border='1' cellpadding='8' style='border-collapse:collapse;font-family:Arial;width:100%'><tr style='background:#c0392b;color:white'><th>Vendor</th><th>Amount</th><th>Invoice Date</th><th>Due Date</th><th>Source</th></tr>{{ $json.emailRows }}</table><p>Please chase payment or update records accordingly.</p>",
+        "options": {}
+      },
+      "id": "overdue-email",
+      "name": "Overdue Alert Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [1700, 2900],
+>>>>>>> master
       "credentials": { "gmailOAuth2": { "id": "DL39Lr8wENjvFtij", "name": "Gmail account" } }
     },
     {
@@ -623,6 +840,7 @@
         "resource": "message",
         "operation": "sendMessage",
         "chatId": "={{ $env.TELEGRAM_ADMIN_CHAT_ID }}",
+<<<<<<< HEAD
         "text": "={{ '📋 Month-End Financial Pack Ready\\n\\nThe ' + $now.format('MMMM YYYY') + ' pack has been sent to bridge.digital.solution@gmail.com\\n\\nCheck your email for the full report.' }}",
         "additionalFields": {}
       },
@@ -631,22 +849,66 @@
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
       "position": [1400, 2250],
+=======
+        "text": "=🔴 {{ $json.count }} Overdue Invoice(s) — Total: £{{ $json.total }}\n\n{{ $json.lines }}\n\nCheck email for full breakdown.",
+        "additionalFields": {}
+      },
+      "id": "overdue-telegram",
+      "name": "Overdue Alert Telegram",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1700, 3100],
+>>>>>>> master
       "credentials": { "telegramApi": { "id": "vaWr2cxS1Q9HsYd4", "name": "Telegram account" } }
     },
     {
       "parameters": {
         "operation": "executeQuery",
+<<<<<<< HEAD
         "query": "CREATE TABLE IF NOT EXISTS expenses (\n  id SERIAL PRIMARY KEY,\n  category VARCHAR(100),\n  subcategory VARCHAR(100),\n  vendor VARCHAR(255),\n  amount DECIMAL(12,2),\n  date VARCHAR(50),\n  description TEXT,\n  anomaly_flag BOOLEAN DEFAULT false,\n  anomaly_severity VARCHAR(20) DEFAULT 'none',\n  anomaly_reason TEXT,\n  anomaly_recommendations TEXT,\n  confidence_score INTEGER,\n  budget_line VARCHAR(100),\n  source_channel VARCHAR(50),\n  sender_id VARCHAR(255),\n  doc_type VARCHAR(50) DEFAULT 'invoice',\n  priority VARCHAR(20) DEFAULT 'low',\n  action_required TEXT,\n  tax_verified BOOLEAN DEFAULT false,\n  line_items_verified BOOLEAN DEFAULT false,\n  processed_date TIMESTAMPTZ DEFAULT NOW()\n)",
+=======
+        "query": "CREATE TABLE IF NOT EXISTS expenses (\n  id SERIAL PRIMARY KEY,\n  category VARCHAR(100),\n  subcategory VARCHAR(100),\n  vendor VARCHAR(255),\n  amount DECIMAL(12,2),\n  date VARCHAR(50),\n  due_date VARCHAR(50),\n  description TEXT,\n  anomaly_flag BOOLEAN DEFAULT false,\n  anomaly_severity VARCHAR(20) DEFAULT 'none',\n  anomaly_reason TEXT,\n  anomaly_recommendations TEXT,\n  confidence_score INTEGER,\n  budget_line VARCHAR(100),\n  source_channel VARCHAR(50),\n  sender_id VARCHAR(255),\n  doc_type VARCHAR(50) DEFAULT 'invoice',\n  priority VARCHAR(20) DEFAULT 'low',\n  action_required TEXT,\n  is_paid BOOLEAN DEFAULT false,\n  paid_date TIMESTAMPTZ,\n  tax_verified BOOLEAN DEFAULT false,\n  line_items_verified BOOLEAN DEFAULT false,\n  processed_date TIMESTAMPTZ DEFAULT NOW()\n);\nCREATE INDEX IF NOT EXISTS idx_expenses_vendor ON expenses(LOWER(vendor));\nCREATE INDEX IF NOT EXISTS idx_expenses_date ON expenses(date);\nCREATE INDEX IF NOT EXISTS idx_expenses_due_date ON expenses(due_date);\nCREATE INDEX IF NOT EXISTS idx_expenses_channel ON expenses(source_channel);",
+>>>>>>> master
         "options": {}
       },
       "id": "init-table",
       "name": "Init Expenses Table",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.5,
+<<<<<<< HEAD
       "position": [200, 2600],
       "credentials": { "postgres": { "id": "Ae3yvuqjgMnVRrCo", "name": "Postgres account" } },
       "notes": "Run once manually to create the expenses table, then disable."
     }
+=======
+      "position": [200, 3350],
+      "credentials": { "postgres": { "id": "Ae3yvuqjgMnVRrCo", "name": "Postgres account" } }
+    },
+    {"id":"daily-schedule","name":"Daily Morning Briefing","type":"n8n-nodes-base.scheduleTrigger","typeVersion":1.2,"position":[200,3700],"parameters":{"rule":{"interval":[{"field":"days","triggerAtMinute":30,"triggerAtHour":7}]}}},
+    {"id":"fetch-daily-summary","name":"Fetch Daily Summary","type":"n8n-nodes-base.postgres","typeVersion":2.5,"position":[500,3700],"parameters":{"operation":"executeQuery","query":"SELECT COUNT(*) as doc_count, COALESCE(SUM(amount),0) as total_amount, COUNT(CASE WHEN anomaly_flag=true THEN 1 END) as anomaly_count, COUNT(CASE WHEN doc_type=\u0027invoice\u0027 THEN 1 END) as invoice_count, COUNT(CASE WHEN source_channel=\u0027gmail\u0027 THEN 1 END) as from_gmail, COUNT(CASE WHEN source_channel=\u0027telegram\u0027 THEN 1 END) as from_telegram, COUNT(CASE WHEN source_channel=\u0027whatsapp\u0027 THEN 1 END) as from_whatsapp, COUNT(CASE WHEN source_channel=\u0027outlook\u0027 THEN 1 END) as from_outlook, (SELECT COUNT(*) FROM expenses WHERE due_date IS NOT NULL AND due_date \u003c\u003e \u0027\u0027 AND due_date::date=CURRENT_DATE) as due_today FROM expenses WHERE processed_date\u003e=NOW()-INTERVAL \u002724 hours\u0027","options":{}},"credentials":{"postgres":{"id":"Ae3yvuqjgMnVRrCo","name":"Postgres account"}}},
+    {"id":"daily-briefing-ai","name":"Daily Briefing AI","type":"n8n-nodes-base.httpRequest","typeVersion":4.2,"position":[800,3700],"parameters":{"method":"POST","url":"https://super-agent-production.up.railway.app/chat","sendHeaders":true,"headerParameters":{"parameters":[{"value":"application/json","name":"Content-Type"},{"value":"={{ $env.SUPER_AGENT_PASSWORD }}","name":"X-Token"}]},"sendBody":true,"specifyBody":"json","jsonBody":"={{ JSON.stringify({ message: \"Finance Operations Controller morning brief: yesterday \" + $json.doc_count + \" docs processed, GBP \" + $json.total_amount + \" spend, \" + $json.anomaly_count + \" anomaly flags, \" + $json.invoice_count + \" invoices. Channels: Gmail=\" + $json.from_gmail + \" Outlook=\" + $json.from_outlook + \" WhatsApp=\" + $json.from_whatsapp + \" Telegram=\" + $json.from_telegram + \". Payments due today: \" + $json.due_today + \". Generate [EMAIL]styled HTML briefing with key metrics table, health traffic-light badge (green/amber/red), top 3 action items for today[/EMAIL] and [MSG]emoji 3-line summary max 200 chars[/MSG]\", session_id: \"daily_brief\" }) }}","options":{"timeout":60000}}},
+    {"id":"split-daily","name":"Split Daily Response","type":"n8n-nodes-base.code","typeVersion":2,"position":[1100,3700],"parameters":{"jsCode":"const r=$input.first().json.response||\"\";const em=r.match(/\\[EMAIL\\]([\\s\\S]*?)\\[\\/EMAIL\\]/);const mm=r.match(/\\[MSG\\]([\\s\\S]*?)\\[\\/MSG\\]/);const ec=em?em[1].trim():r;const mc=mm?mm[1].trim():r.substring(0,200);return[{json:{email_content:ec,msg_content:mc}}];"}},
+    {"id":"daily-brief-email","name":"Daily Briefing Email","type":"n8n-nodes-base.gmail","typeVersion":2.2,"position":[1400,3550],"parameters":{"sendTo":"bridge.digital.solution@gmail.com","subject":"={{ \"Good Morning â€” Finance Briefing \" + $now.format(\"ddd DD MMM YYYY\") }}","emailType":"html","message":"={{ $json.email_content }}","options":{}},"credentials":{"gmailOAuth2":{"id":"DL39Lr8wENjvFtij","name":"Gmail account"}}},
+    {"id":"daily-brief-telegram","name":"Daily Briefing Telegram","type":"n8n-nodes-base.telegram","typeVersion":1.2,"position":[1400,3700],"parameters":{"resource":"message","operation":"sendMessage","chatId":"={{ $env.TELEGRAM_ADMIN_CHAT_ID }}","text":"={{ \"â˜€ï¸ Morning Finance Brief\\n\\n\" + $json.msg_content }}","additionalFields":{}},"credentials":{"telegramApi":{"id":"vaWr2cxS1Q9HsYd4","name":"Telegram account"}}},
+    {"id":"daily-brief-whatsapp","name":"Daily Briefing WhatsApp","type":"n8n-nodes-base.whatsApp","typeVersion":1.1,"position":[1400,3850],"parameters":{"operation":"send","phoneNumberId":"1028630140342045","recipientPhoneNumber":"+447345787028","textBody":"={{ \"â˜€ï¸ Morning Finance Brief\\n\\n\" + $json.msg_content }}","additionalFields":{}},"credentials":{"whatsAppApi":{"id":"cO8ewwCrbB15ov3L","name":"WhatsApp account"}}},
+    {"id":"sheets-expense","name":"Log to Google Sheets","type":"n8n-nodes-base.googleSheets","typeVersion":4.2,"position":[4450,1450],"parameters":{"operation":"appendOrUpdate","documentId":{"value":"={{ $env.FINANCE_SPREADSHEET_ID || \"1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms\" }}","mode":"url"},"sheetName":{"value":"Expenses","mode":"name"},"columns":{"mappingMode":"autoMapInputData","value":{},"schema":[]},"options":{}},"credentials":{"googleSheetsOAuth2Api":{"id":"UBmW7qQSryyRihQ3","name":"Google Sheets account"}}},
+    {"id":"approval-gate","name":"High-Value Expense?","type":"n8n-nodes-base.if","typeVersion":2.3,"position":[4450,1650],"parameters":{"conditions":{"options":{"typeValidation":"loose"},"conditions":[{"operator":{"type":"number","operation":"gte"},"rightValue":500,"id":"hv1","leftValue":"={{ $json.amount }}"}],"combinator":"and"},"options":{}}},
+    {"id":"approval-telegram","name":"Approval Request Telegram","type":"n8n-nodes-base.telegram","typeVersion":1.2,"position":[4750,1550],"parameters":{"resource":"message","operation":"sendMessage","chatId":"={{ $env.TELEGRAM_ADMIN_CHAT_ID }}","text":"={{ \"ðŸ”” HIGH-VALUE EXPENSE â€” REVIEW REQUIRED\\n\\nAmount: GBP \" + $json.amount + \"\\nVendor: \" + $json.vendor + \"\\nCategory: \" + $json.category + \"\\nType: \" + $json.doc_type + \"\\nSource: \" + $json.source_channel + \"\\nPriority: \" + $json.priority + \"\\nAction: \" + $json.action_required + \"\\n\\nReview in your finance dashboard.\" }}","additionalFields":{}},"credentials":{"telegramApi":{"id":"vaWr2cxS1Q9HsYd4","name":"Telegram account"}}},
+    {"id":"approval-whatsapp","name":"Approval Request WhatsApp","type":"n8n-nodes-base.whatsApp","typeVersion":1.1,"position":[4750,1700],"parameters":{"operation":"send","phoneNumberId":"1028630140342045","recipientPhoneNumber":"+447345787028","textBody":"={{ \"ðŸ”” HIGH-VALUE EXPENSE\\nAmount: GBP \" + $json.amount + \"\\nVendor: \" + $json.vendor + \"\\nCategory: \" + $json.category + \"\\nReview required.\" }}","additionalFields":{}},"credentials":{"whatsAppApi":{"id":"cO8ewwCrbB15ov3L","name":"WhatsApp account"}}},
+    {"id":"critical-bot","name":"Critical Alert â€” Content Bot","type":"n8n-nodes-base.telegram","typeVersion":1.2,"position":[4750,1200],"parameters":{"resource":"message","operation":"sendMessage","chatId":"={{ $env.TELEGRAM_ADMIN_CHAT_ID }}","text":"={{ \"CRITICAL FINANCE ANOMALY\\n\\nSeverity: \" + ($json.anomaly_severity||\"\").toUpperCase() + \"\\nVendor: \" + $json.vendor + \"\\nAmount: GBP \" + $json.amount + \"\\nReason: \" + $json.anomaly_reason + \"\\nRecommendations: \" + $json.anomaly_recommendations + \"\\nAction: \" + $json.action_required }}","additionalFields":{}},"credentials":{"telegramApi":{"id":"SYXQZLJBjTuMbspG","name":"Telegram Content Analyst Bot"}}},
+    {"id":"whatsapp-monthly","name":"WhatsApp Monthly Summary","type":"n8n-nodes-base.whatsApp","typeVersion":1.1,"position":[1700,2650],"parameters":{"operation":"send","phoneNumberId":"1028630140342045","recipientPhoneNumber":"+447345787028","textBody":"={{ \"ðŸ“‹ Month-End Pack Ready\\n\\nThe \" + $now.format(\"MMMM YYYY\") + \" financial pack has been sent to your email. Check for P\u0026L, cash flow projection, and recommendations.\" }}","additionalFields":{}},"credentials":{"whatsAppApi":{"id":"cO8ewwCrbB15ov3L","name":"WhatsApp account"}}},
+    {"id":"outlook-monthly","name":"Outlook Monthly Report","type":"n8n-nodes-base.microsoftOutlook","typeVersion":2,"position":[1700,2800],"parameters":{"resource":"message","operation":"send","subject":"={{ \"ðŸ“‹ Month-End Financial Pack â€” \" + $now.format(\"MMMM YYYY\") }}","bodyContent":"={{ $json.response }}","bodyContentType":"html","toRecipients":"gelson_m@hotmail.com","additionalFields":{}},"credentials":{"microsoftOutlookOAuth2Api":{"id":"9paQ8IJLgiLbjEYI","name":"Microsoft Outlook account"}}},
+    {"id":"budget-schedule","name":"Monthly Budget Check","type":"n8n-nodes-base.scheduleTrigger","typeVersion":1.2,"position":[200,4150],"parameters":{"rule":{"interval":[{"field":"months","triggerAtMinute":0,"triggerAtDay":1,"triggerAtHour":8}]}}},
+    {"id":"fetch-budget-data","name":"Fetch Budget Data","type":"n8n-nodes-base.postgres","typeVersion":2.5,"position":[500,4150],"parameters":{"operation":"executeQuery","query":"SELECT category, ROUND(SUM(amount)::numeric,2) as total FROM expenses WHERE processed_date \u003e= DATE_TRUNC(\u0027month\u0027, NOW()) GROUP BY category ORDER BY total DESC","options":{}},"credentials":{"postgres":{"id":"Ae3yvuqjgMnVRrCo","name":"Postgres account"}}},
+    {"id":"aggregate-budget","name":"Aggregate Budget Data","type":"n8n-nodes-base.aggregate","typeVersion":1,"position":[800,4150],"parameters":{"aggregate":"aggregateAllItemData","options":{}}},
+    {"id":"budget-ai","name":"Budget Analysis AI","type":"n8n-nodes-base.httpRequest","typeVersion":4.2,"position":[1100,4150],"parameters":{"method":"POST","url":"https://super-agent-production.up.railway.app/chat","sendHeaders":true,"headerParameters":{"parameters":[{"value":"application/json","name":"Content-Type"},{"value":"={{ $env.SUPER_AGENT_PASSWORD }}","name":"X-Token"}]},"sendBody":true,"specifyBody":"json","jsonBody":"={{ JSON.stringify({ message: \"You are Finance Operations Controller. Analyse this month-to-date spend by category: \" + JSON.stringify($json) + \". Compare against typical SME monthly budgets: Office Â£500, Travel Â£1000, Marketing Â£2000, Software/SaaS Â£800, Professional Services Â£3000, Utilities Â£400, Payroll (exclude), Tax/HMRC (exclude), Other Â£500. Flag over-budget categories. Give [EMAIL]HTML table with budget vs actual, % used, RAG status[/EMAIL] and [MSG]3-line emoji alert max 200 chars[/MSG]\", session_id: \"budget_check\" }) }}","options":{"timeout":60000}}},
+    {"id":"split-budget","name":"Split Budget Response","type":"n8n-nodes-base.code","typeVersion":2,"position":[1400,4150],"parameters":{"jsCode":"const r=$input.first().json.response||\"\";const em=r.match(/\\[EMAIL\\]([\\s\\S]*?)\\[\\/EMAIL\\]/);const mm=r.match(/\\[MSG\\]([\\s\\S]*?)\\[\\/MSG\\]/);const ec=em?em[1].trim():r;const mc=mm?mm[1].trim():r.substring(0,400);return[{json:{email_content:ec,msg_content:mc}}];"}},
+    {"id":"budget-alert-email","name":"Budget Alert Email","type":"n8n-nodes-base.gmail","typeVersion":2.2,"position":[1700,4050],"parameters":{"sendTo":"bridge.digital.solution@gmail.com","subject":"={{ \"ðŸ“Š Monthly Budget vs Actual â€” \" + $now.format(\"MMMM YYYY\") }}","emailType":"html","message":"={{ $json.email_content }}","options":{}},"credentials":{"gmailOAuth2":{"id":"DL39Lr8wENjvFtij","name":"Gmail account"}}},
+    {"id":"budget-alert-telegram","name":"Budget Alert Telegram","type":"n8n-nodes-base.telegram","typeVersion":1.2,"position":[1700,4200],"parameters":{"resource":"message","operation":"sendMessage","chatId":"={{ $env.TELEGRAM_ADMIN_CHAT_ID }}","text":"={{ $json.msg_content }}","additionalFields":{}},"credentials":{"telegramApi":{"id":"vaWr2cxS1Q9HsYd4","name":"Telegram account"}}},
+    {"id":"master-finance-ai","name":"Master Finance AI","type":"n8n-nodes-base.httpRequest","typeVersion":4.2,"position":[2350,950],"parameters":{"method":"POST","url":"https://super-agent-production.up.railway.app/chat","sendHeaders":true,"headerParameters":{"parameters":[{"value":"application/json","name":"Content-Type"},{"value":"={{ $env.SUPER_AGENT_PASSWORD }}","name":"X-Token"}]},"sendBody":true,"specifyBody":"json","jsonBody":"={{ JSON.stringify({ message: \"You are a senior finance analyst and compliance officer for a UK SME. Analyse this financial document/message and return complete structured intelligence in a SINGLE JSON response.\\n\\nFULL ANALYSIS REQUIRED:\\n1. EXTRACTION: vendor name, amount (number), currency (GBP/EUR/USD/other), date (YYYY-MM-DD), due_date (YYYY-MM-DD or null), description, reference_number\\n2. DOCUMENT TYPE: invoice / receipt / tax_letter / statement / payroll / bank_statement / credit_note / other\\n3. CATEGORISATION: category from [Office Supplies, Travel, Marketing, Software/SaaS, Professional Services, Utilities, Rent, Payroll, Tax/HMRC, Insurance, Equipment, Training, Subscriptions, Other], subcategory, budget_line\\n4. VAT ANALYSIS: vat_amount (number or null), vat_rate (number % or null), vat_reclaimable (boolean)\\n5. ANOMALY DETECTION: anomaly_flag (boolean), anomaly_severity (none/low/medium/high/critical), anomaly_reason (string), anomaly_recommendations (array of strings), confidence_score (0-100)\\n6. BUSINESS INTELLIGENCE: priority (low/medium/high/urgent), action_required (string), is_recurring (boolean), payment_urgency (low/medium/high)\\n\\nIf Mindee OCR data is present in the input, use it to improve extraction accuracy.\\nReturn ONLY compact valid JSON Ã¢â‚¬â€ no markdown, no explanation, no code blocks.\\n\\nDocument data: \" + JSON.stringify($json), session_id: \"master_finance\" }) }}","options":{"timeout":90000}}},
+    {"id":"parse-master","name":"Parse Master Response","type":"n8n-nodes-base.code","typeVersion":2,"position":[2650,950],"parameters":{"jsCode":"const resp=$input.first().json.response||\u0027{}\u0027;\nconst orig=$input.first().json;\nlet parsed;\ntry {\n  const match=resp.match(/\\{[\\s\\S]*\\}/);\n  parsed=JSON.parse(match?match[0]:resp);\n} catch(e) {\n  parsed={\n    category:\u0027Uncategorized\u0027,vendor:orig.vendor||\u0027Unknown\u0027,amount:orig.amount||0,\n    doc_type:orig.doc_type||\u0027invoice\u0027,anomaly_flag:true,anomaly_severity:\u0027high\u0027,\n    anomaly_reason:\u0027AI parse failure Ã¢â‚¬â€ manual review required\u0027,\n    anomaly_recommendations:[\u0027Manual review required\u0027],confidence_score:0,\n    priority:\u0027high\u0027,action_required:\u0027Manual review needed\u0027\n  };\n}\nconst recs=Array.isArray(parsed.anomaly_recommendations)?parsed.anomaly_recommendations.join(\u0027; \u0027):(parsed.anomaly_recommendations||\u0027\u0027);\nreturn [{json:{\n  ...orig,...parsed,\n  category:parsed.category||orig.category||\u0027Uncategorized\u0027,\n  vendor:parsed.vendor||orig.vendor||\u0027Unknown\u0027,\n  amount:parseFloat(parsed.amount||orig.amount||0),\n  currency:parsed.currency||orig.currency||\u0027GBP\u0027,\n  date:parsed.date||orig.date||new Date().toISOString().split(\u0027T\u0027)[0],\n  due_date:parsed.due_date||orig.due_date||null,\n  doc_type:parsed.doc_type||orig.doc_type||\u0027invoice\u0027,\n  vat_amount:parseFloat(parsed.vat_amount||0)||null,\n  vat_reclaimable:parsed.vat_reclaimable||false,\n  is_recurring:parsed.is_recurring||false,\n  source_channel:orig.source_channel||\u0027unknown\u0027,\n  sender_id:orig.sender_id||\u0027unknown\u0027,\n  anomaly_recommendations:recs,\n  processed_date:new Date().toISOString()\n}}];"}},
+    {"id":"sheets-anomaly","name":"Log Anomaly to Sheets","type":"n8n-nodes-base.googleSheets","typeVersion":4.2,"position":[4750,1200],"parameters":{"operation":"appendOrUpdate","documentId":{"value":"={{ $env.FINANCE_SPREADSHEET_ID || \"1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms\" }}","mode":"url"},"sheetName":{"value":"Anomalies","mode":"name"},"columns":{"mappingMode":"autoMapInputData","value":{},"schema":[]},"options":{}},"credentials":{"googleSheetsOAuth2Api":{"id":"UBmW7qQSryyRihQ3","name":"Google Sheets account"}}}
+>>>>>>> master
   ],
   "pinData": {},
   "connections": {
@@ -658,6 +920,7 @@
     "Normalize Telegram":          { "main": [[{ "node": "Has Document?",               "type": "main", "index": 0 }]] },
     "Normalize Gmail":             { "main": [[{ "node": "Has Document?",               "type": "main", "index": 0 }]] },
     "Normalize Outlook":           { "main": [[{ "node": "Has Document?",               "type": "main", "index": 0 }]] },
+<<<<<<< HEAD
     "Has Document?": {
       "main": [
         [{ "node": "Detect Document Type",        "type": "main", "index": 0 }],
@@ -710,10 +973,37 @@
         [{ "node": "Telegram Confirmation",       "type": "main", "index": 0 }]
       ]
     },
+=======
+    "Has Document?":               { "main": [[{ "node": "Detect Document Type", "type": "main", "index": 0 }],[{ "node": "Finance Q&A - Super Agent", "type": "main", "index": 0 }]] },
+    "Finance Q&A - Super Agent":   { "main": [[{ "node": "Merge Q&A Response",          "type": "main", "index": 0 }]] },
+    "Merge Q&A Response":          { "main": [[{ "node": "Route Q&A by Channel",        "type": "main", "index": 0 }]] },
+    "Route Q&A by Channel":        { "main": [[{ "node": "Send WhatsApp Reply",         "type": "main", "index": 0 }],[{ "node": "Send Telegram Reply", "type": "main", "index": 0 }]] },
+    "Detect Document Type":        { "main": [[{ "node": "Route by Doc Type",           "type": "main", "index": 0 }]] },
+    "Route by Doc Type":           { "main": [[{ "node": "Mindee OCR",                  "type": "main", "index": 0 }],[{ "node": "Master Finance AI",   "type": "main", "index": 0 }]] },
+    "Mindee OCR":                  { "main": [[{ "node": "Normalize Mindee Output",     "type": "main", "index": 0 }]] },
+    "Normalize Mindee Output":     { "main": [[{ "node": "Master Finance AI",           "type": "main", "index": 0 }]] },
+    "Master Finance AI":           { "main": [[{ "node": "Parse Master Response",       "type": "main", "index": 0 }]] },
+    "Parse Master Response":       { "main": [[{ "node": "Duplicate Check SQL",         "type": "main", "index": 0 }]] },
+    "Duplicate Check SQL":         { "main": [[{ "node": "Is Duplicate Invoice?",       "type": "main", "index": 0 }]] },
+    "Is Duplicate Invoice?":       { "main": [[{ "node": "Duplicate Alert Email", "type": "main", "index": 0 },{ "node": "Duplicate Alert Telegram", "type": "main", "index": 0 }],[{ "node": "Anomaly Detected?", "type": "main", "index": 0 }]] },
+    "Anomaly Detected?": {
+      "main": [
+        [{ "node": "Store in Database",              "type": "main", "index": 0 },{ "node": "Alert via Gmail", "type": "main", "index": 0 },{ "node": "Alert via Telegram", "type": "main", "index": 0 },{ "node": "Build Confirmation", "type": "main", "index": 0 },{ "node": "Log to Google Sheets", "type": "main", "index": 0 },{ "node": "High-Value Expense?", "type": "main", "index": 0 },{ "node": "Critical Alert Ã¢â‚¬â€ Content Bot", "type": "main", "index": 0 },{ "node": "Log Anomaly to Sheets", "type": "main", "index": 0 }],
+        [{ "node": "Store in Database",              "type": "main", "index": 0 },{ "node": "Build Confirmation", "type": "main", "index": 0 },{ "node": "Log to Google Sheets", "type": "main", "index": 0 },{ "node": "High-Value Expense?", "type": "main", "index": 0 }]
+      ]
+    },
+    "Store in Database":           { "main": [[]] },
+    "Log to Google Sheets":        { "main": [[]] },
+    "Log Anomaly to Sheets":       { "main": [[]] },
+    "High-Value Expense?":         { "main": [[{ "node": "Approval Request Telegram", "type": "main", "index": 0 },{ "node": "Approval Request WhatsApp", "type": "main", "index": 0 }],[]] },
+    "Build Confirmation":          { "main": [[{ "node": "Route Confirmation",          "type": "main", "index": 0 }]] },
+    "Route Confirmation":          { "main": [[{ "node": "WhatsApp Confirmation",       "type": "main", "index": 0 }],[{ "node": "Telegram Confirmation", "type": "main", "index": 0 }]] },
+>>>>>>> master
     "Weekly Summary Schedule":     { "main": [[{ "node": "Fetch Weekly Expenses",       "type": "main", "index": 0 }]] },
     "Fetch Weekly Expenses":       { "main": [[{ "node": "Aggregate Weekly Data",       "type": "main", "index": 0 }]] },
     "Aggregate Weekly Data":       { "main": [[{ "node": "Weekly Summary - Super Agent", "type": "main", "index": 0 }]] },
     "Weekly Summary - Super Agent": { "main": [[{ "node": "Split Weekly Response",     "type": "main", "index": 0 }]] },
+<<<<<<< HEAD
     "Split Weekly Response": {
       "main": [[
         { "node": "Email Weekly Summary",         "type": "main", "index": 0 },
@@ -730,6 +1020,30 @@
         { "node": "Telegram Monthly Notification", "type": "main", "index": 0 }
       ]]
     }
+=======
+    "Split Weekly Response":       { "main": [[{ "node": "Email Weekly Summary", "type": "main", "index": 0 },{ "node": "WhatsApp Weekly Summary", "type": "main", "index": 0 },{ "node": "Telegram Weekly Summary", "type": "main", "index": 0 }]] },
+    "Monthly Pack Schedule":       { "main": [[{ "node": "Fetch Monthly Expenses",     "type": "main", "index": 0 }]] },
+    "Fetch Monthly Expenses":      { "main": [[{ "node": "Aggregate Monthly Data",     "type": "main", "index": 0 }]] },
+    "Aggregate Monthly Data":      { "main": [[{ "node": "Month-End Pack - Super Agent", "type": "main", "index": 0 }]] },
+    "Month-End Pack - Super Agent": { "main": [[{ "node": "Email Month-End Pack", "type": "main", "index": 0 },{ "node": "Telegram Monthly Notification", "type": "main", "index": 0 },{ "node": "WhatsApp Monthly Summary", "type": "main", "index": 0 },{ "node": "Outlook Monthly Report", "type": "main", "index": 0 }]] },
+    "Tax Deadline Check":          { "main": [[{ "node": "Calculate UK Tax Deadlines", "type": "main", "index": 0 }]] },
+    "Calculate UK Tax Deadlines":  { "main": [[{ "node": "Has Upcoming Deadline?",     "type": "main", "index": 0 }]] },
+    "Has Upcoming Deadline?":      { "main": [[{ "node": "Tax Deadline Email", "type": "main", "index": 0 },{ "node": "Tax Deadline Telegram", "type": "main", "index": 0 }],[]] },
+    "Overdue Invoice Check":       { "main": [[{ "node": "Fetch Overdue Invoices",     "type": "main", "index": 0 }]] },
+    "Fetch Overdue Invoices":      { "main": [[{ "node": "Aggregate Overdue Data",     "type": "main", "index": 0 }]] },
+    "Aggregate Overdue Data":      { "main": [[{ "node": "Has Overdue Invoices?",      "type": "main", "index": 0 }]] },
+    "Has Overdue Invoices?":       { "main": [[{ "node": "Format Overdue Report",      "type": "main", "index": 0 }],[]] },
+    "Format Overdue Report":       { "main": [[{ "node": "Overdue Alert Email", "type": "main", "index": 0 },{ "node": "Overdue Alert Telegram", "type": "main", "index": 0 }]] },
+    "Daily Morning Briefing":      { "main": [[{ "node": "Fetch Daily Summary",        "type": "main", "index": 0 }]] },
+    "Fetch Daily Summary":         { "main": [[{ "node": "Daily Briefing AI",          "type": "main", "index": 0 }]] },
+    "Daily Briefing AI":           { "main": [[{ "node": "Split Daily Response",       "type": "main", "index": 0 }]] },
+    "Split Daily Response":        { "main": [[{ "node": "Daily Briefing Email", "type": "main", "index": 0 },{ "node": "Daily Briefing Telegram", "type": "main", "index": 0 },{ "node": "Daily Briefing WhatsApp", "type": "main", "index": 0 }]] },
+    "Monthly Budget Check":        { "main": [[{ "node": "Fetch Budget Data",          "type": "main", "index": 0 }]] },
+    "Fetch Budget Data":           { "main": [[{ "node": "Aggregate Budget Data",      "type": "main", "index": 0 }]] },
+    "Aggregate Budget Data":       { "main": [[{ "node": "Budget Analysis AI",         "type": "main", "index": 0 }]] },
+    "Budget Analysis AI":          { "main": [[{ "node": "Split Budget Response",      "type": "main", "index": 0 }]] },
+    "Split Budget Response":       { "main": [[{ "node": "Budget Alert Email", "type": "main", "index": 0 },{ "node": "Budget Alert Telegram", "type": "main", "index": 0 }]] }
+>>>>>>> master
   },
   "settings": { "executionOrder": "v1" }
 }

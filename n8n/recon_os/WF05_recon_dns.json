@@ -1,0 +1,171 @@
+{
+  "name": "RECON OS — WF-05 Recon DNS",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "recon-os/recon/dns",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wh-dns",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "recon-os-recon-dns"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body || $input.first().json;\nreturn [{ json: {\n  asset_id: body.asset_id,\n  asset_value: (body.asset_value || '').toLowerCase().trim(),\n  engagement_id: body.engagement_id\n} }];"
+      },
+      "id": "normalize",
+      "name": "Normalize Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO scan_jobs (engagement_id, asset_id, tool, profile, status, started_at)\nVALUES ('{{ $json.engagement_id }}','{{ $json.asset_id }}','dns_enum','passive','running',NOW())\nRETURNING id;",
+        "options": {}
+      },
+      "id": "pg-scan-job",
+      "name": "Create Scan Job",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [680, 300],
+      "credentials": { "postgres": { "id": "RECON_OS_PG_CRED", "name": "RECON OS PostgreSQL" } }
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://dns.google/resolve?name={{ $('Normalize Input').first().json.asset_value }}&type=A",
+        "options": { "timeout": 10000 }
+      },
+      "id": "dns-a-record",
+      "name": "DNS A Records",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 200]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://dns.google/resolve?name={{ $('Normalize Input').first().json.asset_value }}&type=MX",
+        "options": { "timeout": 10000 }
+      },
+      "id": "dns-mx-record",
+      "name": "DNS MX Records",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 340]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://dns.google/resolve?name={{ $('Normalize Input').first().json.asset_value }}&type=TXT",
+        "options": { "timeout": 10000 }
+      },
+      "id": "dns-txt-record",
+      "name": "DNS TXT Records",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 480]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://crt.sh/?q=%25.{{ $('Normalize Input').first().json.asset_value }}&output=json",
+        "options": { "timeout": 15000 }
+      },
+      "id": "crtsh",
+      "name": "Certificate Transparency",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 620]
+    },
+    {
+      "parameters": {
+        "jsCode": "const domain = $('Normalize Input').first().json.asset_value;\nconst engId = $('Normalize Input').first().json.engagement_id;\nconst assetId = $('Normalize Input').first().json.asset_id;\nconst scanJobId = $('Create Scan Job').first().json.id;\n\n// Parse A records\nlet aRecords = [];\ntry {\n  const aData = $('DNS A Records').first().json;\n  aRecords = (aData.Answer || []).filter(r => r.type === 1).map(r => r.data);\n} catch(e) {}\n\n// Parse MX records\nlet mxRecords = [];\ntry {\n  const mxData = $('DNS MX Records').first().json;\n  mxRecords = (mxData.Answer || []).filter(r => r.type === 15).map(r => r.data);\n} catch(e) {}\n\n// Parse TXT records\nlet txtRecords = [];\ntry {\n  const txtData = $('DNS TXT Records').first().json;\n  txtRecords = (txtData.Answer || []).filter(r => r.type === 16).map(r => r.data);\n} catch(e) {}\n\n// Parse crt.sh subdomains\nlet subdomains = new Set();\ntry {\n  const crtData = $('Certificate Transparency').first().json;\n  if (Array.isArray(crtData)) {\n    crtData.forEach(entry => {\n      const names = (entry.name_value || '').split('\\n');\n      names.forEach(n => {\n        const clean = n.trim().replace(/^\\*\\./, '').toLowerCase();\n        if (clean && clean !== domain && clean.endsWith('.' + domain)) {\n          subdomains.add(clean);\n        }\n      });\n    });\n  }\n} catch(e) {}\n\nreturn [{ json: {\n  domain,\n  engagement_id: engId,\n  asset_id: assetId,\n  scan_job_id: scanJobId,\n  a_records: aRecords,\n  mx_records: mxRecords,\n  txt_records: txtRecords,\n  discovered_subdomains: Array.from(subdomains).slice(0, 100),\n  discovery_count: subdomains.size\n} }];"
+      },
+      "id": "parse-dns",
+      "name": "Parse DNS Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nconst subdomains = data.discovered_subdomains || [];\nreturn subdomains.map(sub => ({ json: {\n  asset_value: sub,\n  asset_type: 'subdomain',\n  engagement_id: data.engagement_id,\n  notes: 'Discovered via crt.sh CT log'\n} }));"
+      },
+      "id": "split-subdomains",
+      "name": "Split Subdomains",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://outstanding-blessing-production-1d4b.up.railway.app/webhook/recon-os/assets/submit",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": { "timeout": 10000 }
+      },
+      "id": "submit-subdomain",
+      "name": "Submit Subdomain as Asset",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1560, 400]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO discovery_records (engagement_id, asset_id, source, record_type, record_value, raw_data)\nVALUES\n('{{ $('Normalize Input').first().json.engagement_id }}','{{ $('Normalize Input').first().json.asset_id }}','dns_enum','a_records','{{ ($('Parse DNS Results').first().json.a_records||[]).join(',').replace(/'/g,\"''\") }}','{\"a\":{{ JSON.stringify($('Parse DNS Results').first().json.a_records) }},\"mx\":{{ JSON.stringify($('Parse DNS Results').first().json.mx_records) }},\"txt\":{{ JSON.stringify($('Parse DNS Results').first().json.txt_records) }},\"subdomains_found\":{{ $('Parse DNS Results').first().json.discovery_count }}}'::jsonb);",
+        "options": {}
+      },
+      "id": "pg-store-discovery",
+      "name": "Store Discovery Record",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1780, 300],
+      "credentials": { "postgres": { "id": "RECON_OS_PG_CRED", "name": "RECON OS PostgreSQL" } }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE scan_jobs SET status='completed', completed_at=NOW() WHERE id='{{ $('Create Scan Job').first().json.id }}';",
+        "options": {}
+      },
+      "id": "pg-complete-job",
+      "name": "Complete Scan Job",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [2000, 300],
+      "credentials": { "postgres": { "id": "RECON_OS_PG_CRED", "name": "RECON OS PostgreSQL" } }
+    }
+  ],
+  "connections": {
+    "Webhook": { "main": [[{ "node": "Normalize Input", "type": "main", "index": 0 }]] },
+    "Normalize Input": { "main": [[{ "node": "Create Scan Job", "type": "main", "index": 0 }]] },
+    "Create Scan Job": { "main": [[
+      { "node": "DNS A Records", "type": "main", "index": 0 },
+      { "node": "DNS MX Records", "type": "main", "index": 0 },
+      { "node": "DNS TXT Records", "type": "main", "index": 0 },
+      { "node": "Certificate Transparency", "type": "main", "index": 0 }
+    ]]},
+    "DNS A Records": { "main": [[{ "node": "Parse DNS Results", "type": "main", "index": 0 }]] },
+    "DNS MX Records": { "main": [[{ "node": "Parse DNS Results", "type": "main", "index": 0 }]] },
+    "DNS TXT Records": { "main": [[{ "node": "Parse DNS Results", "type": "main", "index": 0 }]] },
+    "Certificate Transparency": { "main": [[{ "node": "Parse DNS Results", "type": "main", "index": 0 }]] },
+    "Parse DNS Results": { "main": [[{ "node": "Split Subdomains", "type": "main", "index": 0 }]] },
+    "Split Subdomains": { "main": [[{ "node": "Submit Subdomain as Asset", "type": "main", "index": 0 }]] },
+    "Submit Subdomain as Asset": { "main": [[{ "node": "Store Discovery Record", "type": "main", "index": 0 }]] },
+    "Store Discovery Record": { "main": [[{ "node": "Complete Scan Job", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1", "saveManualExecutions": true, "saveExecutionProgress": true },
+  "meta": { "description": "RECON OS WF-05: DNS Recon — passive DNS enumeration using DNS-over-HTTPS (Google) and Certificate Transparency (crt.sh). Discovers and registers subdomains. Safe, rate-limited, no brute force." }
+}

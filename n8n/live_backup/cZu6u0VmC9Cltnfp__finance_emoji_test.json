@@ -1,0 +1,110 @@
+﻿{
+    "updatedAt":  "2026-04-19T03:22:23.143Z",
+    "createdAt":  "2026-04-19T03:22:23.143Z",
+    "id":  "cZu6u0VmC9Cltnfp",
+    "name":  "Finance Emoji Test",
+    "description":  null,
+    "active":  false,
+    "isArchived":  false,
+    "nodes":  [
+                  {
+                      "parameters":  {
+                                         "updates":  [
+                                                         "messages"
+                                                     ],
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "wt1",
+                      "name":  "WA Trigger",
+                      "type":  "n8n-nodes-base.whatsAppTrigger",
+                      "typeVersion":  1,
+                      "position":  [
+                                       200,
+                                       200
+                                   ],
+                      "webhookId":  "test-emoji-001",
+                      "credentials":  {
+                                          "whatsAppTriggerApi":  {
+                                                                     "id":  "qWl5Z2MKku7htFew",
+                                                                     "name":  "WhatsApp OAuth account"
+                                                                 }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "sendTo":  "test@test.com",
+                                         "subject":  "=⚠️ Test Alert",
+                                         "emailType":  "html",
+                                         "message":  "Test",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "gmail1",
+                      "name":  "Gmail Alert",
+                      "type":  "n8n-nodes-base.gmail",
+                      "typeVersion":  2.2,
+                      "position":  [
+                                       500,
+                                       200
+                                   ],
+                      "credentials":  {
+                                          "gmailOAuth2":  {
+                                                              "id":  "DL39Lr8wENjvFtij",
+                                                              "name":  "Gmail account"
+                                                          }
+                                      },
+                      "webhookId":  "3dc5609e-85a6-4b13-b0bb-1130278b528c"
+                  }
+              ],
+    "connections":  {
+                        "WA Trigger":  {
+                                           "main":  [
+                                                        [
+                                                            {
+                                                                "node":  "Gmail Alert",
+                                                                "type":  "main",
+                                                                "index":  0
+                                                            }
+                                                        ]
+                                                    ]
+                                       }
+                    },
+    "settings":  {
+                     "executionOrder":  "v1",
+                     "callerPolicy":  "workflowsFromSameOwner",
+                     "availableInMCP":  false
+                 },
+    "staticData":  null,
+    "meta":  null,
+    "pinData":  null,
+    "versionId":  "a49f0756-552d-41e8-aac0-9e08d0fbb8ef",
+    "activeVersionId":  null,
+    "versionCounter":  1,
+    "triggerCount":  0,
+    "shared":  [
+                   {
+                       "updatedAt":  "2026-04-19T03:22:23.143Z",
+                       "createdAt":  "2026-04-19T03:22:23.143Z",
+                       "role":  "workflow:owner",
+                       "workflowId":  "cZu6u0VmC9Cltnfp",
+                       "projectId":  "Lrgt6JR85OZiVLcX",
+                       "project":  {
+                                       "updatedAt":  "2026-03-31T09:07:31.366Z",
+                                       "createdAt":  "2026-03-31T08:57:43.789Z",
+                                       "id":  "Lrgt6JR85OZiVLcX",
+                                       "name":  "gelson mascarenhas \u003cgelson_m@hotmail.com\u003e",
+                                       "type":  "personal",
+                                       "icon":  null,
+                                       "description":  null,
+                                       "creatorId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                   }
+                   }
+               ],
+    "tags":  [
+
+             ],
+    "activeVersion":  null
+}

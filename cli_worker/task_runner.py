@@ -113,12 +113,37 @@ _AUTH_ERROR_PHRASES = (
     "invalid api key",
     "credit balance is too low",
     "unauthenticated",
-    "401",
+    "401 unauthorized",        # narrowed: avoid matching "HTTP 401" in MCP error context
     "session expired",
     "token expired",
-    "oauth",
+    # "oauth" removed — too broad, matches MCP OAuth URLs and Claude error messages
+    #   about third-party auth without any relation to CLI session expiry.
     "login required",
-    "no credentials",
+    "no credentials found",    # narrowed: avoids "no credentials for <tool>" MCP errors
+    "claude.ai/login",         # direct login redirect URL — unambiguous auth failure
+)
+
+# Phrases in the first 200 chars of output that indicate the response is
+# a genuine Claude content response, not a bare CLI auth-error banner.
+# If Claude has already started generating prose, the auth phrases above
+# matched somewhere in the body are task-content, not session errors.
+_NOT_AUTH_ERROR_PREFIXES = (
+    "i cannot",
+    "i can't",
+    "i don't",
+    "i'm unable",
+    "i am unable",
+    "sorry,",
+    "unfortunately,",
+    "let me",
+    "here is",
+    "here's",
+    "based on",
+    "to complete",
+    "the task",
+    "the claude.md",
+    "the obsidian",
+    "mcp",
 )
 
 _MCP_PERMISSION_PHRASES = (
@@ -257,9 +282,17 @@ def _dispatch(task_type: str, payload: dict, timeout: int) -> str:
 
         # cwd = repo root so CLAUDE.md is auto-loaded by Claude CLI on every call
         result = _run_subprocess(["claude", "-p", payload.get("prompt", "")], _repo_cwd(), timeout)
-        # Detect expired session — kick off recovery in background so next task succeeds
-        _lower = result.lower()
-        if any(p in _lower for p in _AUTH_ERROR_PHRASES):
+        # Detect expired session — kick off recovery in background so next task succeeds.
+        # Guard: genuine CLI auth errors are short banners (< 400 chars) that don't start
+        # with prose. If Claude already generated a substantive response that happens to
+        # contain an auth-related word (e.g. "oauth" in an MCP error URL, or "401" from
+        # a failed tool call), do NOT mis-classify it as a session expiry.
+        _lower = result.lower().lstrip()
+        _is_substantive = (
+            len(result) > 400
+            or any(_lower.startswith(p) for p in _NOT_AUTH_ERROR_PREFIXES)
+        )
+        if not _is_substantive and any(p in _lower for p in _AUTH_ERROR_PHRASES):
             print(f"[task_runner] Auth error detected in claude_pro output — triggering recovery. "
                   f"Preview: {result[:120]}", flush=True)
             _trigger_recovery_bg()

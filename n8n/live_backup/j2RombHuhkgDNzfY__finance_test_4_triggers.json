@@ -1,0 +1,162 @@
+﻿{
+    "updatedAt":  "2026-04-19T03:21:49.709Z",
+    "createdAt":  "2026-04-19T03:21:49.709Z",
+    "id":  "j2RombHuhkgDNzfY",
+    "name":  "Finance Test 4 Triggers",
+    "description":  null,
+    "active":  false,
+    "isArchived":  false,
+    "nodes":  [
+                  {
+                      "parameters":  {
+                                         "updates":  [
+                                                         "messages"
+                                                     ],
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "whatsapp-trigger",
+                      "name":  "WhatsApp Trigger",
+                      "type":  "n8n-nodes-base.whatsAppTrigger",
+                      "typeVersion":  1,
+                      "position":  [
+                                       200,
+                                       200
+                                   ],
+                      "webhookId":  "test-wh-001",
+                      "credentials":  {
+                                          "whatsAppTriggerApi":  {
+                                                                     "id":  "qWl5Z2MKku7htFew",
+                                                                     "name":  "WhatsApp OAuth account"
+                                                                 }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "updates":  [
+                                                         "message"
+                                                     ],
+                                         "additionalFields":  {
+
+                                                              }
+                                     },
+                      "id":  "telegram-trigger",
+                      "name":  "Telegram Trigger",
+                      "type":  "n8n-nodes-base.telegramTrigger",
+                      "typeVersion":  1.1,
+                      "position":  [
+                                       200,
+                                       450
+                                   ],
+                      "webhookId":  "test-wh-002",
+                      "credentials":  {
+                                          "telegramApi":  {
+                                                              "id":  "vaWr2cxS1Q9HsYd4",
+                                                              "name":  "Telegram account"
+                                                          }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "pollTimes":  {
+                                                           "item":  [
+                                                                        {
+                                                                            "mode":  "everyMinute"
+                                                                        }
+                                                                    ]
+                                                       },
+                                         "simple":  false,
+                                         "filters":  {
+                                                         "q":  "test"
+                                                     },
+                                         "options":  {
+                                                         "downloadAttachments":  true
+                                                     }
+                                     },
+                      "id":  "gmail-trigger",
+                      "name":  "Gmail Monitor",
+                      "type":  "n8n-nodes-base.gmailTrigger",
+                      "typeVersion":  1.3,
+                      "position":  [
+                                       200,
+                                       700
+                                   ],
+                      "credentials":  {
+                                          "gmailOAuth2":  {
+                                                              "id":  "DL39Lr8wENjvFtij",
+                                                              "name":  "Gmail account"
+                                                          }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "pollTimes":  {
+                                                           "item":  [
+                                                                        {
+                                                                            "mode":  "everyMinute"
+                                                                        }
+                                                                    ]
+                                                       },
+                                         "filters":  {
+
+                                                     },
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "outlook-trigger",
+                      "name":  "Outlook Monitor",
+                      "type":  "n8n-nodes-base.microsoftOutlookTrigger",
+                      "typeVersion":  1,
+                      "position":  [
+                                       200,
+                                       950
+                                   ],
+                      "credentials":  {
+                                          "microsoftOutlookOAuth2Api":  {
+                                                                            "id":  "9paQ8IJLgiLbjEYI",
+                                                                            "name":  "Microsoft Outlook account"
+                                                                        }
+                                      }
+                  }
+              ],
+    "connections":  {
+
+                    },
+    "settings":  {
+                     "executionOrder":  "v1",
+                     "callerPolicy":  "workflowsFromSameOwner",
+                     "availableInMCP":  false
+                 },
+    "staticData":  null,
+    "meta":  null,
+    "pinData":  null,
+    "versionId":  "238711ef-b482-4cd1-88b4-1096a30bb6eb",
+    "activeVersionId":  null,
+    "versionCounter":  1,
+    "triggerCount":  0,
+    "shared":  [
+                   {
+                       "updatedAt":  "2026-04-19T03:21:49.709Z",
+                       "createdAt":  "2026-04-19T03:21:49.709Z",
+                       "role":  "workflow:owner",
+                       "workflowId":  "j2RombHuhkgDNzfY",
+                       "projectId":  "Lrgt6JR85OZiVLcX",
+                       "project":  {
+                                       "updatedAt":  "2026-03-31T09:07:31.366Z",
+                                       "createdAt":  "2026-03-31T08:57:43.789Z",
+                                       "id":  "Lrgt6JR85OZiVLcX",
+                                       "name":  "gelson mascarenhas \u003cgelson_m@hotmail.com\u003e",
+                                       "type":  "personal",
+                                       "icon":  null,
+                                       "description":  null,
+                                       "creatorId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                   }
+                   }
+               ],
+    "tags":  [
+
+             ],
+    "activeVersion":  null
+}

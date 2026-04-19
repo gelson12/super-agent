@@ -1,5 +1,5 @@
 ﻿{
-    "updatedAt":  "2026-04-18T18:36:23.451Z",
+    "updatedAt":  "2026-04-19T03:02:48.106Z",
     "createdAt":  "2026-04-18T18:32:30.200Z",
     "id":  "vTkmtypLZykHXIX9",
     "name":  "Social Media SEO Orchestrator",
@@ -202,13 +202,17 @@
                                                                                      {
                                                                                          "value":  "application/json",
                                                                                          "name":  "Content-Type"
+                                                                                     },
+                                                                                     {
+                                                                                         "value":  "={{ $env.SUPER_AGENT_PASSWORD }}",
+                                                                                         "name":  "X-Token"
                                                                                      }
                                                                                  ]
                                                               },
                                          "method":  "POST",
                                          "specifyBody":  "json",
                                          "jsonBody":  "={\"message\":\"You are an SEO copywriter for Bridge Digital Solution. Generate platform-optimised content for: {{ $json.brief }}. Return JSON only: {instagram:{caption,hashtags,seo_keywords,cta},facebook:{caption,hashtags,cta},tiktok:{caption,hashtags,hook},optimal_times:{instagram,facebook,tiktok}}\",\"session_id\":\"smo-{{ $now.toMillis() }}\"}",
-                                         "url":  "={{ $env.SUPER_AGENT_BASE_URL }}/webhook/superagent-chat",
+                                         "url":  "https://super-agent-production.up.railway.app/chat",
                                          "sendHeaders":  true,
                                          "options":  {
                                                          "timeout":  60000
@@ -226,7 +230,7 @@
                                        160
                                    ],
                       "parameters":  {
-                                         "jsCode":  null
+                                         "jsCode":  "const raw=$json.response||$json.message||$json.output||\"\"; let c; try { const m=raw.match(/\\{[\\s\\S]*\\}/); c=JSON.parse(m?m[0]:raw); } catch(e) { c={parse_error:true}; } const inp=$(\"Flatten Body\").first().json; return [{ json: { brand: inp.brand||\"Bridge Digital Solution\", brief: inp.brief||\"\", platform: inp.platform||\"all\", image_url: inp.image_url||null, video_url: inp.video_url||null, ig_caption: c.instagram\u0026\u0026c.instagram.caption||\"\", ig_hashtags: JSON.stringify(c.instagram\u0026\u0026c.instagram.hashtags||[]), fb_caption: c.facebook\u0026\u0026c.facebook.caption||\"\", fb_hashtags: JSON.stringify(c.facebook\u0026\u0026c.facebook.hashtags||[]), tt_caption: c.tiktok\u0026\u0026c.tiktok.caption||\"\", tt_hashtags: JSON.stringify(c.tiktok\u0026\u0026c.tiktok.hashtags||[]), tt_hook: c.tiktok\u0026\u0026c.tiktok.hook||\"\", optimal_times: JSON.stringify(c.optimal_times||{instagram:\"18:00\",facebook:\"13:00\",tiktok:\"20:00\"}), generated_at: new Date().toISOString() } }];"
                                      },
                       "typeVersion":  2
                   },
@@ -245,10 +249,44 @@
                                        160
                                    ],
                       "parameters":  {
-                                         "query":  "INSERT INTO content_drafts (brand,brief,platform,ig_caption,ig_hashtags,fb_caption,fb_hashtags,tt_caption,tt_hashtags,tt_hook,image_url,video_url,optimal_times,status,created_at) VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7::jsonb,$8,$9::jsonb,$10,$11,$12,$13::jsonb,\u0027draft\u0027,NOW()) RETURNING id,status,created_at",
-                                         "operation":  "executeQuery",
+                                         "operation":  "insert",
+                                         "schema":  {
+                                                        "__rl":  true,
+                                                        "value":  "public",
+                                                        "mode":  "name"
+                                                    },
+                                         "table":  {
+                                                       "__rl":  true,
+                                                       "value":  "content_drafts",
+                                                       "mode":  "name"
+                                                   },
+                                         "columns":  {
+                                                         "mappingMode":  "defineBelow",
+                                                         "value":  {
+                                                                       "brand":  "={{ $json.brand }}",
+                                                                       "brief":  "={{ $json.brief }}",
+                                                                       "platform":  "={{ $json.platform }}",
+                                                                       "ig_caption":  "={{ $json.ig_caption }}",
+                                                                       "ig_hashtags":  "={{ $json.ig_hashtags }}",
+                                                                       "fb_caption":  "={{ $json.fb_caption }}",
+                                                                       "fb_hashtags":  "={{ $json.fb_hashtags }}",
+                                                                       "tt_caption":  "={{ $json.tt_caption }}",
+                                                                       "tt_hashtags":  "={{ $json.tt_hashtags }}",
+                                                                       "tt_hook":  "={{ $json.tt_hook }}",
+                                                                       "image_url":  "={{ $json.image_url }}",
+                                                                       "video_url":  "={{ $json.video_url }}",
+                                                                       "optimal_times":  "={{ $json.optimal_times }}",
+                                                                       "status":  "draft"
+                                                                   },
+                                                         "matchingColumns":  [
+
+                                                                             ],
+                                                         "schema":  [
+
+                                                                    ]
+                                                     },
                                          "options":  {
-                                                         "queryParameters":  "={{ $json.brand }},={{ $json.brief }},={{ $json.platform }},={{ $json.ig_caption }},={{ $json.ig_hashtags }},={{ $json.fb_caption }},={{ $json.fb_hashtags }},={{ $json.tt_caption }},={{ $json.tt_hashtags }},={{ $json.tt_hook }},={{ $json.image_url }},={{ $json.video_url }},={{ $json.optimal_times }}"
+
                                                      }
                                      },
                       "typeVersion":  2.5
@@ -616,13 +654,17 @@
                                                                                      {
                                                                                          "value":  "application/json",
                                                                                          "name":  "Content-Type"
+                                                                                     },
+                                                                                     {
+                                                                                         "value":  "={{ $env.SUPER_AGENT_PASSWORD }}",
+                                                                                         "name":  "X-Token"
                                                                                      }
                                                                                  ]
                                                               },
                                          "method":  "POST",
                                          "specifyBody":  "json",
                                          "jsonBody":  "={\"message\":\"SEO audit for Bridge Digital Solution. Analytics: {{ JSON.stringify($json) }}. Return JSON: {ig_seo_score,fb_seo_score,tt_seo_score,top_issues,trending_hashtags,quick_wins}\",\"session_id\":\"smo-seo-{{ $now.toMillis() }}\"}",
-                                         "url":  "={{ $env.SUPER_AGENT_BASE_URL }}/webhook/superagent-chat",
+                                         "url":  "https://super-agent-production.up.railway.app/chat",
                                          "sendHeaders":  true,
                                          "options":  {
                                                          "timeout":  60000
@@ -740,13 +782,17 @@
                                                                                      {
                                                                                          "value":  "application/json",
                                                                                          "name":  "Content-Type"
+                                                                                     },
+                                                                                     {
+                                                                                         "value":  "={{ $env.SUPER_AGENT_PASSWORD }}",
+                                                                                         "name":  "X-Token"
                                                                                      }
                                                                                  ]
                                                               },
                                          "method":  "POST",
                                          "specifyBody":  "json",
-                                         "jsonBody":  "={\"to\":\"bridge.digital.solution@gmail.com\",\"subject\":\"{{ $json.subject }}\",\"html_body\":\"{{ $json.html_report }}\"}",
-                                         "url":  "={{ $env.SUPER_AGENT_BASE_URL }}/webhook/gmail-digest",
+                                         "jsonBody":  "={\"message\":\"Weekly social media report ready. {{ $json.subject }}\",\"session_id\":\"smo-weekly-report\"}",
+                                         "url":  "https://super-agent-production.up.railway.app/chat",
                                          "sendHeaders":  true,
                                          "options":  {
                                                          "timeout":  30000
@@ -756,34 +802,17 @@
                       "typeVersion":  4.2
                   },
                   {
-                      "id":  "smo-resp-b",
-                      "name":  "Build Response",
+                      "id":  "smo-flatten",
+                      "name":  "Flatten Body",
                       "type":  "n8n-nodes-base.code",
                       "position":  [
-                                       1800,
+                                       360,
                                        300
                                    ],
                       "parameters":  {
-                                         "jsCode":  null
+                                         "jsCode":  "return [{ json: $json.body }];"
                                      },
                       "typeVersion":  2
-                  },
-                  {
-                      "id":  "smo-respond",
-                      "name":  "Return Response",
-                      "type":  "n8n-nodes-base.respondToWebhook",
-                      "position":  [
-                                       2040,
-                                       300
-                                   ],
-                      "parameters":  {
-                                         "responseBody":  "={{ JSON.stringify($json) }}",
-                                         "respondWith":  "json",
-                                         "options":  {
-
-                                                     }
-                                     },
-                      "typeVersion":  1.1
                   }
               ],
     "connections":  {
@@ -798,11 +827,11 @@
                                                                     ]
                                                                 ]
                                                    },
-                        "Store Draft in DB":  {
+                        "Log Metrics to DB":  {
                                                   "main":  [
                                                                [
                                                                    {
-                                                                       "node":  "Build Response",
+                                                                       "node":  "SEO Audit Agent",
                                                                        "type":  "main",
                                                                        "index":  0
                                                                    }
@@ -824,24 +853,13 @@
                                               "main":  [
                                                            [
                                                                {
-                                                                   "node":  "Action Router",
+                                                                   "node":  "Flatten Body",
                                                                    "type":  "main",
                                                                    "index":  0
                                                                }
                                                            ]
                                                        ]
                                           },
-                        "Log Metrics to DB":  {
-                                                  "main":  [
-                                                               [
-                                                                   {
-                                                                       "node":  "SEO Audit Agent",
-                                                                       "type":  "main",
-                                                                       "index":  0
-                                                                   }
-                                                               ]
-                                                           ]
-                                              },
                         "AI Content Generator":  {
                                                      "main":  [
                                                                   [
@@ -853,6 +871,17 @@
                                                                   ]
                                                               ]
                                                  },
+                        "Daily Publish 08:00":  {
+                                                    "main":  [
+                                                                 [
+                                                                     {
+                                                                         "node":  "Fetch Today Queue",
+                                                                         "type":  "main",
+                                                                         "index":  0
+                                                                     }
+                                                                 ]
+                                                             ]
+                                                },
                         "Action Router":  {
                                               "main":  [
                                                            [
@@ -923,39 +952,20 @@
                                                                     ]
                                                                 ]
                                                    },
-                        "Daily Publish 08:00":  {
-                                                    "main":  [
-                                                                 [
-                                                                     {
-                                                                         "node":  "Fetch Today Queue",
-                                                                         "type":  "main",
-                                                                         "index":  0
-                                                                     }
-                                                                 ]
-                                                             ]
-                                                },
                         "Build Response":  {
                                                "main":  [
                                                             [
-                                                                {
-                                                                    "node":  "Return Response",
-                                                                    "type":  "main",
-                                                                    "index":  0
-                                                                }
+
                                                             ]
                                                         ]
                                            },
-                        "Merge Platform Results":  {
-                                                       "main":  [
-                                                                    [
-                                                                        {
-                                                                            "node":  "Log Workflow Run",
-                                                                            "type":  "main",
-                                                                            "index":  0
-                                                                        }
-                                                                    ]
-                                                                ]
-                                                   },
+                        "Store Draft in DB":  {
+                                                  "main":  [
+                                                               [
+
+                                                               ]
+                                                           ]
+                                              },
                         "FB Post to Page":  {
                                                 "main":  [
                                                              [
@@ -1025,33 +1035,43 @@
                         "Save Scheduled Post":  {
                                                     "main":  [
                                                                  [
-                                                                     {
-                                                                         "node":  "Build Response",
-                                                                         "type":  "main",
-                                                                         "index":  0
-                                                                     }
+
                                                                  ]
                                                              ]
                                                 },
+                        "Flatten Body":  {
+                                             "main":  [
+                                                          [
+                                                              {
+                                                                  "node":  "Action Router",
+                                                                  "type":  "main",
+                                                                  "index":  0
+                                                              }
+                                                          ]
+                                                      ]
+                                         },
                         "SEO Audit Agent":  {
                                                 "main":  [
                                                              [
-                                                                 {
-                                                                     "node":  "Build Response",
-                                                                     "type":  "main",
-                                                                     "index":  0
-                                                                 }
+
                                                              ]
                                                          ]
                                             },
+                        "Merge Platform Results":  {
+                                                       "main":  [
+                                                                    [
+                                                                        {
+                                                                            "node":  "Log Workflow Run",
+                                                                            "type":  "main",
+                                                                            "index":  0
+                                                                        }
+                                                                    ]
+                                                                ]
+                                                   },
                         "Log Workflow Run":  {
                                                  "main":  [
                                                               [
-                                                                  {
-                                                                      "node":  "Build Response",
-                                                                      "type":  "main",
-                                                                      "index":  0
-                                                                  }
+
                                                               ]
                                                           ]
                                              },
@@ -1163,9 +1183,9 @@
                    },
     "meta":  null,
     "pinData":  null,
-    "versionId":  "f72faa6d-6962-444b-90f4-545b37161b0c",
-    "activeVersionId":  "f72faa6d-6962-444b-90f4-545b37161b0c",
-    "versionCounter":  5,
+    "versionId":  "9f482d47-33fa-4002-b16a-c55021051cc4",
+    "activeVersionId":  "9f482d47-33fa-4002-b16a-c55021051cc4",
+    "versionCounter":  49,
     "triggerCount":  3,
     "shared":  [
                    {
@@ -1190,9 +1210,9 @@
 
              ],
     "activeVersion":  {
-                          "updatedAt":  "2026-04-18T18:32:30.214Z",
-                          "createdAt":  "2026-04-18T18:32:30.214Z",
-                          "versionId":  "f72faa6d-6962-444b-90f4-545b37161b0c",
+                          "updatedAt":  "2026-04-19T03:02:48.109Z",
+                          "createdAt":  "2026-04-19T03:02:48.109Z",
+                          "versionId":  "9f482d47-33fa-4002-b16a-c55021051cc4",
                           "workflowId":  "vTkmtypLZykHXIX9",
                           "nodes":  [
                                         {
@@ -1390,13 +1410,17 @@
                                                                                                            {
                                                                                                                "value":  "application/json",
                                                                                                                "name":  "Content-Type"
+                                                                                                           },
+                                                                                                           {
+                                                                                                               "value":  "={{ $env.SUPER_AGENT_PASSWORD }}",
+                                                                                                               "name":  "X-Token"
                                                                                                            }
                                                                                                        ]
                                                                                     },
                                                                "method":  "POST",
                                                                "specifyBody":  "json",
                                                                "jsonBody":  "={\"message\":\"You are an SEO copywriter for Bridge Digital Solution. Generate platform-optimised content for: {{ $json.brief }}. Return JSON only: {instagram:{caption,hashtags,seo_keywords,cta},facebook:{caption,hashtags,cta},tiktok:{caption,hashtags,hook},optimal_times:{instagram,facebook,tiktok}}\",\"session_id\":\"smo-{{ $now.toMillis() }}\"}",
-                                                               "url":  "={{ $env.SUPER_AGENT_BASE_URL }}/webhook/superagent-chat",
+                                                               "url":  "https://super-agent-production.up.railway.app/chat",
                                                                "sendHeaders":  true,
                                                                "options":  {
                                                                                "timeout":  60000
@@ -1414,7 +1438,7 @@
                                                              160
                                                          ],
                                             "parameters":  {
-                                                               "jsCode":  null
+                                                               "jsCode":  "const raw=$json.response||$json.message||$json.output||\"\"; let c; try { const m=raw.match(/\\{[\\s\\S]*\\}/); c=JSON.parse(m?m[0]:raw); } catch(e) { c={parse_error:true}; } const inp=$(\"Flatten Body\").first().json; return [{ json: { brand: inp.brand||\"Bridge Digital Solution\", brief: inp.brief||\"\", platform: inp.platform||\"all\", image_url: inp.image_url||null, video_url: inp.video_url||null, ig_caption: c.instagram\u0026\u0026c.instagram.caption||\"\", ig_hashtags: JSON.stringify(c.instagram\u0026\u0026c.instagram.hashtags||[]), fb_caption: c.facebook\u0026\u0026c.facebook.caption||\"\", fb_hashtags: JSON.stringify(c.facebook\u0026\u0026c.facebook.hashtags||[]), tt_caption: c.tiktok\u0026\u0026c.tiktok.caption||\"\", tt_hashtags: JSON.stringify(c.tiktok\u0026\u0026c.tiktok.hashtags||[]), tt_hook: c.tiktok\u0026\u0026c.tiktok.hook||\"\", optimal_times: JSON.stringify(c.optimal_times||{instagram:\"18:00\",facebook:\"13:00\",tiktok:\"20:00\"}), generated_at: new Date().toISOString() } }];"
                                                            },
                                             "typeVersion":  2
                                         },
@@ -1433,10 +1457,44 @@
                                                              160
                                                          ],
                                             "parameters":  {
-                                                               "query":  "INSERT INTO content_drafts (brand,brief,platform,ig_caption,ig_hashtags,fb_caption,fb_hashtags,tt_caption,tt_hashtags,tt_hook,image_url,video_url,optimal_times,status,created_at) VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7::jsonb,$8,$9::jsonb,$10,$11,$12,$13::jsonb,\u0027draft\u0027,NOW()) RETURNING id,status,created_at",
-                                                               "operation":  "executeQuery",
+                                                               "operation":  "insert",
+                                                               "schema":  {
+                                                                              "__rl":  true,
+                                                                              "value":  "public",
+                                                                              "mode":  "name"
+                                                                          },
+                                                               "table":  {
+                                                                             "__rl":  true,
+                                                                             "value":  "content_drafts",
+                                                                             "mode":  "name"
+                                                                         },
+                                                               "columns":  {
+                                                                               "mappingMode":  "defineBelow",
+                                                                               "value":  {
+                                                                                             "brand":  "={{ $json.brand }}",
+                                                                                             "brief":  "={{ $json.brief }}",
+                                                                                             "platform":  "={{ $json.platform }}",
+                                                                                             "ig_caption":  "={{ $json.ig_caption }}",
+                                                                                             "ig_hashtags":  "={{ $json.ig_hashtags }}",
+                                                                                             "fb_caption":  "={{ $json.fb_caption }}",
+                                                                                             "fb_hashtags":  "={{ $json.fb_hashtags }}",
+                                                                                             "tt_caption":  "={{ $json.tt_caption }}",
+                                                                                             "tt_hashtags":  "={{ $json.tt_hashtags }}",
+                                                                                             "tt_hook":  "={{ $json.tt_hook }}",
+                                                                                             "image_url":  "={{ $json.image_url }}",
+                                                                                             "video_url":  "={{ $json.video_url }}",
+                                                                                             "optimal_times":  "={{ $json.optimal_times }}",
+                                                                                             "status":  "draft"
+                                                                                         },
+                                                                               "matchingColumns":  [
+
+                                                                                                   ],
+                                                                               "schema":  [
+
+                                                                                          ]
+                                                                           },
                                                                "options":  {
-                                                                               "queryParameters":  "={{ $json.brand }},={{ $json.brief }},={{ $json.platform }},={{ $json.ig_caption }},={{ $json.ig_hashtags }},={{ $json.fb_caption }},={{ $json.fb_hashtags }},={{ $json.tt_caption }},={{ $json.tt_hashtags }},={{ $json.tt_hook }},={{ $json.image_url }},={{ $json.video_url }},={{ $json.optimal_times }}"
+
                                                                            }
                                                            },
                                             "typeVersion":  2.5
@@ -1804,13 +1862,17 @@
                                                                                                            {
                                                                                                                "value":  "application/json",
                                                                                                                "name":  "Content-Type"
+                                                                                                           },
+                                                                                                           {
+                                                                                                               "value":  "={{ $env.SUPER_AGENT_PASSWORD }}",
+                                                                                                               "name":  "X-Token"
                                                                                                            }
                                                                                                        ]
                                                                                     },
                                                                "method":  "POST",
                                                                "specifyBody":  "json",
                                                                "jsonBody":  "={\"message\":\"SEO audit for Bridge Digital Solution. Analytics: {{ JSON.stringify($json) }}. Return JSON: {ig_seo_score,fb_seo_score,tt_seo_score,top_issues,trending_hashtags,quick_wins}\",\"session_id\":\"smo-seo-{{ $now.toMillis() }}\"}",
-                                                               "url":  "={{ $env.SUPER_AGENT_BASE_URL }}/webhook/superagent-chat",
+                                                               "url":  "https://super-agent-production.up.railway.app/chat",
                                                                "sendHeaders":  true,
                                                                "options":  {
                                                                                "timeout":  60000
@@ -1928,13 +1990,17 @@
                                                                                                            {
                                                                                                                "value":  "application/json",
                                                                                                                "name":  "Content-Type"
+                                                                                                           },
+                                                                                                           {
+                                                                                                               "value":  "={{ $env.SUPER_AGENT_PASSWORD }}",
+                                                                                                               "name":  "X-Token"
                                                                                                            }
                                                                                                        ]
                                                                                     },
                                                                "method":  "POST",
                                                                "specifyBody":  "json",
-                                                               "jsonBody":  "={\"to\":\"bridge.digital.solution@gmail.com\",\"subject\":\"{{ $json.subject }}\",\"html_body\":\"{{ $json.html_report }}\"}",
-                                                               "url":  "={{ $env.SUPER_AGENT_BASE_URL }}/webhook/gmail-digest",
+                                                               "jsonBody":  "={\"message\":\"Weekly social media report ready. {{ $json.subject }}\",\"session_id\":\"smo-weekly-report\"}",
+                                                               "url":  "https://super-agent-production.up.railway.app/chat",
                                                                "sendHeaders":  true,
                                                                "options":  {
                                                                                "timeout":  30000
@@ -1944,34 +2010,17 @@
                                             "typeVersion":  4.2
                                         },
                                         {
-                                            "id":  "smo-resp-b",
-                                            "name":  "Build Response",
+                                            "id":  "smo-flatten",
+                                            "name":  "Flatten Body",
                                             "type":  "n8n-nodes-base.code",
                                             "position":  [
-                                                             1800,
+                                                             360,
                                                              300
                                                          ],
                                             "parameters":  {
-                                                               "jsCode":  null
+                                                               "jsCode":  "return [{ json: $json.body }];"
                                                            },
                                             "typeVersion":  2
-                                        },
-                                        {
-                                            "id":  "smo-respond",
-                                            "name":  "Return Response",
-                                            "type":  "n8n-nodes-base.respondToWebhook",
-                                            "position":  [
-                                                             2040,
-                                                             300
-                                                         ],
-                                            "parameters":  {
-                                                               "responseBody":  "={{ JSON.stringify($json) }}",
-                                                               "respondWith":  "json",
-                                                               "options":  {
-
-                                                                           }
-                                                           },
-                                            "typeVersion":  1.1
                                         }
                                     ],
                           "connections":  {
@@ -1986,11 +2035,11 @@
                                                                                           ]
                                                                                       ]
                                                                          },
-                                              "Store Draft in DB":  {
+                                              "Log Metrics to DB":  {
                                                                         "main":  [
                                                                                      [
                                                                                          {
-                                                                                             "node":  "Build Response",
+                                                                                             "node":  "SEO Audit Agent",
                                                                                              "type":  "main",
                                                                                              "index":  0
                                                                                          }
@@ -2012,24 +2061,13 @@
                                                                     "main":  [
                                                                                  [
                                                                                      {
-                                                                                         "node":  "Action Router",
+                                                                                         "node":  "Flatten Body",
                                                                                          "type":  "main",
                                                                                          "index":  0
                                                                                      }
                                                                                  ]
                                                                              ]
                                                                 },
-                                              "Log Metrics to DB":  {
-                                                                        "main":  [
-                                                                                     [
-                                                                                         {
-                                                                                             "node":  "SEO Audit Agent",
-                                                                                             "type":  "main",
-                                                                                             "index":  0
-                                                                                         }
-                                                                                     ]
-                                                                                 ]
-                                                                    },
                                               "AI Content Generator":  {
                                                                            "main":  [
                                                                                         [
@@ -2041,6 +2079,17 @@
                                                                                         ]
                                                                                     ]
                                                                        },
+                                              "Daily Publish 08:00":  {
+                                                                          "main":  [
+                                                                                       [
+                                                                                           {
+                                                                                               "node":  "Fetch Today Queue",
+                                                                                               "type":  "main",
+                                                                                               "index":  0
+                                                                                           }
+                                                                                       ]
+                                                                                   ]
+                                                                      },
                                               "Action Router":  {
                                                                     "main":  [
                                                                                  [
@@ -2111,39 +2160,20 @@
                                                                                           ]
                                                                                       ]
                                                                          },
-                                              "Daily Publish 08:00":  {
-                                                                          "main":  [
-                                                                                       [
-                                                                                           {
-                                                                                               "node":  "Fetch Today Queue",
-                                                                                               "type":  "main",
-                                                                                               "index":  0
-                                                                                           }
-                                                                                       ]
-                                                                                   ]
-                                                                      },
                                               "Build Response":  {
                                                                      "main":  [
                                                                                   [
-                                                                                      {
-                                                                                          "node":  "Return Response",
-                                                                                          "type":  "main",
-                                                                                          "index":  0
-                                                                                      }
+
                                                                                   ]
                                                                               ]
                                                                  },
-                                              "Merge Platform Results":  {
-                                                                             "main":  [
-                                                                                          [
-                                                                                              {
-                                                                                                  "node":  "Log Workflow Run",
-                                                                                                  "type":  "main",
-                                                                                                  "index":  0
-                                                                                              }
-                                                                                          ]
-                                                                                      ]
-                                                                         },
+                                              "Store Draft in DB":  {
+                                                                        "main":  [
+                                                                                     [
+
+                                                                                     ]
+                                                                                 ]
+                                                                    },
                                               "FB Post to Page":  {
                                                                       "main":  [
                                                                                    [
@@ -2213,33 +2243,43 @@
                                               "Save Scheduled Post":  {
                                                                           "main":  [
                                                                                        [
-                                                                                           {
-                                                                                               "node":  "Build Response",
-                                                                                               "type":  "main",
-                                                                                               "index":  0
-                                                                                           }
+
                                                                                        ]
                                                                                    ]
                                                                       },
+                                              "Flatten Body":  {
+                                                                   "main":  [
+                                                                                [
+                                                                                    {
+                                                                                        "node":  "Action Router",
+                                                                                        "type":  "main",
+                                                                                        "index":  0
+                                                                                    }
+                                                                                ]
+                                                                            ]
+                                                               },
                                               "SEO Audit Agent":  {
                                                                       "main":  [
                                                                                    [
-                                                                                       {
-                                                                                           "node":  "Build Response",
-                                                                                           "type":  "main",
-                                                                                           "index":  0
-                                                                                       }
+
                                                                                    ]
                                                                                ]
                                                                   },
+                                              "Merge Platform Results":  {
+                                                                             "main":  [
+                                                                                          [
+                                                                                              {
+                                                                                                  "node":  "Log Workflow Run",
+                                                                                                  "type":  "main",
+                                                                                                  "index":  0
+                                                                                              }
+                                                                                          ]
+                                                                                      ]
+                                                                         },
                                               "Log Workflow Run":  {
                                                                        "main":  [
                                                                                     [
-                                                                                        {
-                                                                                            "node":  "Build Response",
-                                                                                            "type":  "main",
-                                                                                            "index":  0
-                                                                                        }
+
                                                                                     ]
                                                                                 ]
                                                                    },
@@ -2336,10 +2376,18 @@
                           "autosaved":  false,
                           "workflowPublishHistory":  [
                                                          {
-                                                             "createdAt":  "2026-04-18T18:38:43.433Z",
-                                                             "id":  421,
+                                                             "createdAt":  "2026-04-19T03:02:48.179Z",
+                                                             "id":  471,
                                                              "workflowId":  "vTkmtypLZykHXIX9",
-                                                             "versionId":  "f72faa6d-6962-444b-90f4-545b37161b0c",
+                                                             "versionId":  "9f482d47-33fa-4002-b16a-c55021051cc4",
+                                                             "event":  "deactivated",
+                                                             "userId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                                         },
+                                                         {
+                                                             "createdAt":  "2026-04-19T03:02:48.212Z",
+                                                             "id":  472,
+                                                             "workflowId":  "vTkmtypLZykHXIX9",
+                                                             "versionId":  "9f482d47-33fa-4002-b16a-c55021051cc4",
                                                              "event":  "activated",
                                                              "userId":  "09977cda-9140-4e68-a948-e88d1f400c18"
                                                          }

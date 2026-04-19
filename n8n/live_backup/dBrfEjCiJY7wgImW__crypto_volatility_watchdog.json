@@ -1,5 +1,5 @@
 ﻿{
-    "updatedAt":  "2026-04-18T18:34:04.865Z",
+    "updatedAt":  "2026-04-19T06:21:25.210Z",
     "createdAt":  "2026-04-18T18:34:04.865Z",
     "id":  "dBrfEjCiJY7wgImW",
     "name":  "Crypto Volatility Watchdog",
@@ -8,104 +8,99 @@
     "isArchived":  false,
     "nodes":  [
                   {
-                      "type":  "n8n-nodes-base.scheduleTrigger",
-                      "typeVersion":  1.2,
                       "parameters":  {
                                          "rule":  {
                                                       "interval":  [
                                                                        {
-                                                                           "minutesInterval":  1,
-                                                                           "field":  "minutes"
+                                                                           "field":  "minutes",
+                                                                           "minutesInterval":  1
                                                                        }
                                                                    ]
                                                   }
                                      },
+                      "typeVersion":  1.2,
+                      "type":  "n8n-nodes-base.scheduleTrigger",
+                      "name":  "Schedule Every 1 Min",
                       "position":  [
                                        0,
                                        300
                                    ],
-                      "id":  "vw01",
-                      "name":  "Schedule Every 1 Min"
+                      "id":  "vw01"
                   },
                   {
-                      "typeVersion":  4.2,
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "name":  "Fetch 1M Ticker",
                       "id":  "vw02",
-                      "onError":  "continueRegularOutput",
                       "position":  [
                                        200,
                                        300
                                    ],
+                      "typeVersion":  4.2,
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "name":  "Fetch 1M Ticker",
                       "parameters":  {
                                          "url":  "https://api.kraken.com/0/public/Ticker?pair=XBTUSD",
                                          "options":  {
 
                                                      },
                                          "method":  "GET"
-                                     }
+                                     },
+                      "onError":  "continueRegularOutput"
                   },
                   {
-                      "type":  "n8n-nodes-base.code",
-                      "typeVersion":  2,
-                      "name":  "Check Spike",
-                      "parameters":  {
-                                         "jsCode":  "const raw = $(\"Fetch 1M Ticker\").first().json;\nconst result = raw \u0026\u0026 raw.result ? raw.result : {};\nconst key = Object.keys(result)[0];\nconst ticker = result[key] || {};\nconst price = ticker.c ? parseFloat(ticker.c[0]) : 0;\nconst high24 = ticker.h ? parseFloat(ticker.h[0]) : price;\nconst low24 = ticker.l ? parseFloat(ticker.l[0]) : price;\nconst open24 = ticker.o ? parseFloat(ticker.o[1]) : price;\n\n// ATR proxy: (high - low) / open as % â crude but instant\nconst atrPct = open24 \u003e 0 ? ((high24 - low24) / open24) * 100 : 0;\n\n// Price move from open in past 24h\nconst priceMove = open24 \u003e 0 ? Math.abs((price - open24) / open24) * 100 : 0;\n\n// Spike thresholds\nconst ATR_SPIKE = 4.0;   // 4% high-low range = elevated vol\nconst PRICE_SPIKE = 3.0; // 3% move from open = significant\n\nconst triggered = atrPct \u003e ATR_SPIKE || priceMove \u003e PRICE_SPIKE;\nconst reason = [];\nif (atrPct \u003e ATR_SPIKE) reason.push(`ATR ${atrPct.toFixed(2)}% \u003e ${ATR_SPIKE}%`);\nif (priceMove \u003e PRICE_SPIKE) reason.push(`Move ${priceMove.toFixed(2)}% \u003e ${PRICE_SPIKE}%`);\n\nreturn [{ json: { triggered, price, atrPct: Math.round(atrPct * 100) / 100, priceMove: Math.round(priceMove * 100) / 100, reason: reason.join(\" | \"), ts: new Date().toISOString() } }];"
-                                     },
+                      "id":  "vw03",
                       "position":  [
                                        400,
                                        300
                                    ],
-                      "id":  "vw03"
+                      "name":  "Check Spike",
+                      "typeVersion":  2,
+                      "type":  "n8n-nodes-base.code",
+                      "parameters":  {
+                                         "jsCode":  "// ââ Volatility Watchdog + Telegram message ââââââââââââââââââââââââââââââââââââ\nconst raw    = $(\"Fetch 1M Ticker\").first().json;\nconst result = raw \u0026\u0026 raw.result ? raw.result : {};\nconst key    = Object.keys(result)[0];\nconst ticker = result[key] || {};\nconst price  = ticker.c ? parseFloat(ticker.c[0]) : 0;\nif (!price) {\n  return [{ json: { triggered: false, reason: \u0027No price data\u0027, price: 0, ts: new Date().toISOString(), telegramMsg: \u0027\u0027 } }];\n}\n\n// Kraken ticker: index [0]=today, [1]=24h rolling\nconst high24    = ticker.h ? parseFloat(ticker.h[1]) : price;\nconst low24     = ticker.l ? parseFloat(ticker.l[1]) : price;\nconst open24    = ticker.o ? parseFloat(ticker.o[1]) : price;\nconst vwap24    = ticker.p ? parseFloat(ticker.p[1]) : price;\nconst highToday = ticker.h ? parseFloat(ticker.h[0]) : price;\nconst lowToday  = ticker.l ? parseFloat(ticker.l[0]) : price;\n\nconst range24pct = open24 \u003e 0 ? ((high24 - low24) / open24) * 100 : 0;\nconst rangeToday = open24 \u003e 0 ? ((highToday - lowToday) / open24) * 100 : 0;\nconst vwapDev    = vwap24 \u003e 0 ? ((price - vwap24) / vwap24) * 100 : 0;\nconst vwapDevAbs = Math.abs(vwapDev);\nconst priceMove  = open24 \u003e 0 ? Math.abs((price - open24) / open24) * 100 : 0;\nconst rangePos   = (high24 \u003e low24) ? (price - low24) / (high24 - low24) : 0.5;\nconst atExtreme  = rangePos \u003e 0.95 || rangePos \u003c 0.05;\n\nconst RANGE_SPIKE_PCT = 6.0;\nconst PRICE_MOVE_PCT  = 3.0;\nconst VWAP_DEV_PCT    = 2.0;\n\nconst rangeSpike   = range24pct \u003e RANGE_SPIKE_PCT;\nconst priceSpike   = priceMove  \u003e PRICE_MOVE_PCT;\nconst vwapSpike    = vwapDevAbs \u003e VWAP_DEV_PCT;\nconst breakoutSpike = atExtreme \u0026\u0026 rangeToday \u003e 2.0;\n\nconst triggered = rangeSpike || priceSpike || vwapSpike || breakoutSpike;\n\nconst reason = [];\nif (rangeSpike)    reason.push(\u002724H range \u0027 + range24pct.toFixed(2) + \u0027% \u003e \u0027 + RANGE_SPIKE_PCT + \u0027%\u0027);\nif (priceSpike)    reason.push(\u0027Price move \u0027 + priceMove.toFixed(2) + \u0027% from open\u0027);\nif (vwapSpike)     reason.push(\u0027VWAP dev \u0027 + vwapDevAbs.toFixed(2) + \u0027% (\u0027 + (vwapDev \u003e 0 ? \u0027above\u0027 : \u0027below\u0027) + \u0027)\u0027);\nif (breakoutSpike) reason.push(\u0027Range extreme (\u0027 + (rangePos * 100).toFixed(0) + \u0027%) + intraday \u0027 + rangeToday.toFixed(2) + \u0027%\u0027);\n\nconst ts = new Date().toISOString();\n\n// ââ Build Telegram Message (only sent when triggered=true) ââââââââââââââââââââ\nconst HR = \u0027\\u2501\u0027.repeat(20);\nconst spikeType  = rangeSpike || priceSpike ? \u0027HIGH\u0027 : \u0027MODERATE\u0027;\nconst spikeEmoji = spikeType === \u0027HIGH\u0027 ? \u0027\\uD83D\\uDEA8\\uD83D\\uDEA8\u0027 : \u0027\\u26A1\\u26A1\u0027;\nconst priceDir   = price \u003e open24 ? \u0027\\uD83D\\uDE80 ABOVE open\u0027 : \u0027\\uD83D\\uDD3B BELOW open\u0027;\nconst vwapDir    = vwapDev \u003e 0 ? \u0027\\uD83D\\uDFE2 above VWAP\u0027 : \u0027\\uD83D\\uDD34 below VWAP\u0027;\nconst extremeLabel = rangePos \u003e 0.95 ? \u0027\\uD83D\\uDFE2 near day HIGH \\u2014 breakout zone\u0027 : rangePos \u003c 0.05 ? \u0027\\uD83D\\uDD34 near day LOW \\u2014 breakdown zone\u0027 : \u0027\\uD83D\\uDFE1 mid-range\u0027;\n\nconst telegramMsg = [\n  spikeEmoji + \u0027 \u003cb\u003eVOLATILITY SPIKE DETECTED\u003c/b\u003e \u0027 + spikeEmoji,\n  \u0027\\uD83D\\uDDD3 \u0027 + ts.replace(\u0027T\u0027, \u0027 \u0027).slice(0, 19) + \u0027 UTC\u0027,\n  \u0027\u0027,\n  HR,\n  \u0027\\uD83D\\uDCB0 BTC/USD: \u003cb\u003e$\u0027 + Math.round(price).toLocaleString(\u0027en-US\u0027) + \u0027\u003c/b\u003e  \\u00B7  \u0027 + priceDir,\n  \u0027\\uD83D\\uDCC8 24H Range: \u003cb\u003e\u0027 + range24pct.toFixed(2) + \u0027%\u003c/b\u003e\u0027 + (rangeSpike ? \u0027 \\u26A0\\uFE0F SPIKE\u0027 : \u0027\u0027),\n  \u0027\\uD83D\\uDCD0 Intraday Range: \u003cb\u003e\u0027 + rangeToday.toFixed(2) + \u0027%\u003c/b\u003e\u0027,\n  \u0027\\uD83C\\uDFAF VWAP Dev: \u003cb\u003e\u0027 + (vwapDev \u003e= 0 ? \u0027+\u0027 : \u0027\u0027) + vwapDev.toFixed(2) + \u0027%\u003c/b\u003e  \\u00B7  \u0027 + vwapDir,\n  \u0027\\uD83D\\uDCCD Range Position: \u003cb\u003e\u0027 + (rangePos * 100).toFixed(0) + \u0027%\u003c/b\u003e  \\u00B7  \u0027 + extremeLabel,\n  \u0027\u0027,\n  HR,\n  \u0027\\uD83D\\uDD0D \u003cb\u003eTrigger reasons:\u003c/b\u003e\u0027,\n  reason.map(r =\u003e \u0027\\u2022 \u0027 + r).join(\u0027\\n\u0027) || \u0027\\u2022 Composite spike score\u0027,\n  \u0027\u0027,\n  \u0027\\uD83D\\uDD04 \u003cb\u003eAction:\u003c/b\u003e Extra analysis scan triggered outside 5-min schedule\u0027,\n  \u0027\u0027,\n  \u0027\u003ci\u003e\\u23F1 Normal schedule resumes in 5 min  \\u00B7  v3-super\u003c/i\u003e\u0027\n].join(\u0027\\n\u0027);\n\nreturn [{ json: {\n  triggered,\n  price,\n  range24pct:  Math.round(range24pct  * 100) / 100,\n  rangeToday:  Math.round(rangeToday  * 100) / 100,\n  priceMove:   Math.round(priceMove   * 100) / 100,\n  vwapDev:     Math.round(vwapDev     * 100) / 100,\n  rangePos:    Math.round(rangePos    * 100) / 100,\n  atExtreme,\n  reason: reason.join(\u0027 | \u0027) || \u0027normal vol\u0027,\n  ts,\n  telegramMsg: triggered ? telegramMsg : \u0027\u0027\n}}];\n"
+                                     }
                   },
                   {
-                      "typeVersion":  2,
-                      "type":  "n8n-nodes-base.if",
-                      "id":  "vw04",
                       "position":  [
                                        600,
                                        300
                                    ],
+                      "id":  "vw04",
+                      "typeVersion":  2,
+                      "type":  "n8n-nodes-base.if",
+                      "name":  "Is Spike?",
                       "parameters":  {
                                          "conditions":  {
-                                                            "conditions":  [
-                                                                               {
-                                                                                   "leftValue":  "={{ $json.triggered }}",
-                                                                                   "id":  "spike-check",
-                                                                                   "operator":  {
-                                                                                                    "type":  "boolean",
-                                                                                                    "operation":  "true"
-                                                                                                },
-                                                                                   "rightValue":  true
-                                                                               }
-                                                                           ],
                                                             "options":  {
                                                                             "caseSensitive":  true,
                                                                             "typeValidation":  "strict"
                                                                         },
+                                                            "conditions":  [
+                                                                               {
+                                                                                   "rightValue":  true,
+                                                                                   "id":  "spike-check",
+                                                                                   "leftValue":  "={{ $json.triggered }}",
+                                                                                   "operator":  {
+                                                                                                    "type":  "boolean",
+                                                                                                    "operation":  "true"
+                                                                                                }
+                                                                               }
+                                                                           ],
                                                             "combinator":  "and"
                                                         }
-                                     },
-                      "name":  "Is Spike?"
+                                     }
                   },
                   {
+                      "position":  [
+                                       800,
+                                       200
+                                   ],
+                      "id":  "vw05",
                       "typeVersion":  4.2,
                       "type":  "n8n-nodes-base.httpRequest",
                       "name":  "Trigger Main Workflow",
-                      "onError":  "continueRegularOutput",
-                      "id":  "vw05",
                       "parameters":  {
-                                         "bodyParameters":  {
-                                                                "parameters":  [
-                                                                                   {
-                                                                                       "value":  "[]",
-                                                                                       "name":  "startNodes"
-                                                                                   }
-                                                                               ]
-                                                            },
-                                         "sendBody":  true,
-                                         "method":  "POST",
-                                         "sendHeaders":  true,
+                                         "options":  {
+
+                                                     },
                                          "headerParameters":  {
                                                                   "parameters":  [
                                                                                      {
@@ -114,15 +109,20 @@
                                                                                      }
                                                                                  ]
                                                               },
+                                         "sendBody":  true,
+                                         "bodyParameters":  {
+                                                                "parameters":  [
+                                                                                   {
+                                                                                       "name":  "startNodes",
+                                                                                       "value":  "[]"
+                                                                                   }
+                                                                               ]
+                                                            },
                                          "url":  "https://outstanding-blessing-production-1d4b.up.railway.app/api/v1/workflows/7onbBjeUwHkSsuyc/run",
-                                         "options":  {
-
-                                                     }
+                                         "method":  "POST",
+                                         "sendHeaders":  true
                                      },
-                      "position":  [
-                                       800,
-                                       200
-                                   ]
+                      "onError":  "continueRegularOutput"
                   },
                   {
                       "credentials":  {
@@ -131,19 +131,19 @@
                                                               "name":  "Telegram account"
                                                           }
                                       },
-                      "typeVersion":  1.2,
-                      "type":  "n8n-nodes-base.telegram",
-                      "name":  "Telegram Spike Alert",
-                      "id":  "vw06",
                       "parameters":  {
+                                         "chatId":  "6275020593",
+                                         "operation":  "sendMessage",
                                          "additionalFields":  {
                                                                   "parse_mode":  "HTML"
                                                               },
                                          "resource":  "message",
-                                         "operation":  "sendMessage",
-                                         "chatId":  "6275020593",
-                                         "text":  "={{ \u0027\u003cb\u003eâ¡ VOLATILITY SPIKE DETECTED\u003c/b\u003e\\n\\nBTC: $\u0027 + Math.round($json.price) + \u0027\\nReason: \u0027 + $json.reason + \u0027\\n\\n\u003ci\u003eExtra scan triggered outside 5-min schedule\u003c/i\u003e\u0027 }}"
+                                         "text":  "={{ $json.telegramMsg }}"
                                      },
+                      "name":  "Telegram Spike Alert",
+                      "typeVersion":  1.2,
+                      "type":  "n8n-nodes-base.telegram",
+                      "id":  "vw06",
                       "position":  [
                                        800,
                                        400
@@ -152,23 +152,31 @@
                   }
               ],
     "connections":  {
-                        "Fetch 1M Ticker":  {
-                                                "main":  [
-                                                             [
-                                                                 {
-                                                                     "type":  "main",
-                                                                     "index":  0,
-                                                                     "node":  "Check Spike"
-                                                                 }
-                                                             ]
-                                                         ]
-                                            },
+                        "Is Spike?":  {
+                                          "main":  [
+                                                       [
+                                                           {
+                                                               "type":  "main",
+                                                               "node":  "Trigger Main Workflow",
+                                                               "index":  0
+                                                           },
+                                                           {
+                                                               "node":  "Telegram Spike Alert",
+                                                               "type":  "main",
+                                                               "index":  0
+                                                           }
+                                                       ],
+                                                       [
+
+                                                       ]
+                                                   ]
+                                      },
                         "Schedule Every 1 Min":  {
                                                      "main":  [
                                                                   [
                                                                       {
-                                                                          "type":  "main",
                                                                           "node":  "Fetch 1M Ticker",
+                                                                          "type":  "main",
                                                                           "index":  0
                                                                       }
                                                                   ]
@@ -178,32 +186,24 @@
                                             "main":  [
                                                          [
                                                              {
-                                                                 "type":  "main",
                                                                  "node":  "Is Spike?",
+                                                                 "type":  "main",
                                                                  "index":  0
                                                              }
                                                          ]
                                                      ]
                                         },
-                        "Is Spike?":  {
-                                          "main":  [
-                                                       [
-                                                           {
-                                                               "node":  "Trigger Main Workflow",
-                                                               "index":  0,
-                                                               "type":  "main"
-                                                           },
-                                                           {
-                                                               "type":  "main",
-                                                               "node":  "Telegram Spike Alert",
-                                                               "index":  0
-                                                           }
-                                                       ],
-                                                       [
-
-                                                       ]
-                                                   ]
-                                      }
+                        "Fetch 1M Ticker":  {
+                                                "main":  [
+                                                             [
+                                                                 {
+                                                                     "index":  0,
+                                                                     "node":  "Check Spike",
+                                                                     "type":  "main"
+                                                                 }
+                                                             ]
+                                                         ]
+                                            }
                     },
     "settings":  {
                      "executionOrder":  "v1",
@@ -219,9 +219,9 @@
                    },
     "meta":  null,
     "pinData":  null,
-    "versionId":  "641ce16c-30bb-40ff-905c-6b8a28e41ac8",
-    "activeVersionId":  "641ce16c-30bb-40ff-905c-6b8a28e41ac8",
-    "versionCounter":  4,
+    "versionId":  "d0a7bb3e-88e2-4642-8770-690ad2fdbf82",
+    "activeVersionId":  "d0a7bb3e-88e2-4642-8770-690ad2fdbf82",
+    "versionCounter":  21,
     "triggerCount":  1,
     "shared":  [
                    {
@@ -246,110 +246,105 @@
 
              ],
     "activeVersion":  {
-                          "updatedAt":  "2026-04-18T18:34:04.875Z",
-                          "createdAt":  "2026-04-18T18:34:04.875Z",
-                          "versionId":  "641ce16c-30bb-40ff-905c-6b8a28e41ac8",
+                          "updatedAt":  "2026-04-19T06:21:25.212Z",
+                          "createdAt":  "2026-04-19T06:21:25.212Z",
+                          "versionId":  "d0a7bb3e-88e2-4642-8770-690ad2fdbf82",
                           "workflowId":  "dBrfEjCiJY7wgImW",
                           "nodes":  [
                                         {
-                                            "type":  "n8n-nodes-base.scheduleTrigger",
-                                            "typeVersion":  1.2,
                                             "parameters":  {
                                                                "rule":  {
                                                                             "interval":  [
                                                                                              {
-                                                                                                 "minutesInterval":  1,
-                                                                                                 "field":  "minutes"
+                                                                                                 "field":  "minutes",
+                                                                                                 "minutesInterval":  1
                                                                                              }
                                                                                          ]
                                                                         }
                                                            },
+                                            "typeVersion":  1.2,
+                                            "type":  "n8n-nodes-base.scheduleTrigger",
+                                            "name":  "Schedule Every 1 Min",
                                             "position":  [
                                                              0,
                                                              300
                                                          ],
-                                            "id":  "vw01",
-                                            "name":  "Schedule Every 1 Min"
+                                            "id":  "vw01"
                                         },
                                         {
-                                            "typeVersion":  4.2,
-                                            "type":  "n8n-nodes-base.httpRequest",
-                                            "name":  "Fetch 1M Ticker",
                                             "id":  "vw02",
-                                            "onError":  "continueRegularOutput",
                                             "position":  [
                                                              200,
                                                              300
                                                          ],
+                                            "typeVersion":  4.2,
+                                            "type":  "n8n-nodes-base.httpRequest",
+                                            "name":  "Fetch 1M Ticker",
                                             "parameters":  {
                                                                "url":  "https://api.kraken.com/0/public/Ticker?pair=XBTUSD",
                                                                "options":  {
 
                                                                            },
                                                                "method":  "GET"
-                                                           }
+                                                           },
+                                            "onError":  "continueRegularOutput"
                                         },
                                         {
-                                            "type":  "n8n-nodes-base.code",
-                                            "typeVersion":  2,
-                                            "name":  "Check Spike",
-                                            "parameters":  {
-                                                               "jsCode":  "const raw = $(\"Fetch 1M Ticker\").first().json;\nconst result = raw \u0026\u0026 raw.result ? raw.result : {};\nconst key = Object.keys(result)[0];\nconst ticker = result[key] || {};\nconst price = ticker.c ? parseFloat(ticker.c[0]) : 0;\nconst high24 = ticker.h ? parseFloat(ticker.h[0]) : price;\nconst low24 = ticker.l ? parseFloat(ticker.l[0]) : price;\nconst open24 = ticker.o ? parseFloat(ticker.o[1]) : price;\n\n// ATR proxy: (high - low) / open as % â crude but instant\nconst atrPct = open24 \u003e 0 ? ((high24 - low24) / open24) * 100 : 0;\n\n// Price move from open in past 24h\nconst priceMove = open24 \u003e 0 ? Math.abs((price - open24) / open24) * 100 : 0;\n\n// Spike thresholds\nconst ATR_SPIKE = 4.0;   // 4% high-low range = elevated vol\nconst PRICE_SPIKE = 3.0; // 3% move from open = significant\n\nconst triggered = atrPct \u003e ATR_SPIKE || priceMove \u003e PRICE_SPIKE;\nconst reason = [];\nif (atrPct \u003e ATR_SPIKE) reason.push(`ATR ${atrPct.toFixed(2)}% \u003e ${ATR_SPIKE}%`);\nif (priceMove \u003e PRICE_SPIKE) reason.push(`Move ${priceMove.toFixed(2)}% \u003e ${PRICE_SPIKE}%`);\n\nreturn [{ json: { triggered, price, atrPct: Math.round(atrPct * 100) / 100, priceMove: Math.round(priceMove * 100) / 100, reason: reason.join(\" | \"), ts: new Date().toISOString() } }];"
-                                                           },
+                                            "id":  "vw03",
                                             "position":  [
                                                              400,
                                                              300
                                                          ],
-                                            "id":  "vw03"
+                                            "name":  "Check Spike",
+                                            "typeVersion":  2,
+                                            "type":  "n8n-nodes-base.code",
+                                            "parameters":  {
+                                                               "jsCode":  "// ââ Volatility Watchdog + Telegram message ââââââââââââââââââââââââââââââââââââ\nconst raw    = $(\"Fetch 1M Ticker\").first().json;\nconst result = raw \u0026\u0026 raw.result ? raw.result : {};\nconst key    = Object.keys(result)[0];\nconst ticker = result[key] || {};\nconst price  = ticker.c ? parseFloat(ticker.c[0]) : 0;\nif (!price) {\n  return [{ json: { triggered: false, reason: \u0027No price data\u0027, price: 0, ts: new Date().toISOString(), telegramMsg: \u0027\u0027 } }];\n}\n\n// Kraken ticker: index [0]=today, [1]=24h rolling\nconst high24    = ticker.h ? parseFloat(ticker.h[1]) : price;\nconst low24     = ticker.l ? parseFloat(ticker.l[1]) : price;\nconst open24    = ticker.o ? parseFloat(ticker.o[1]) : price;\nconst vwap24    = ticker.p ? parseFloat(ticker.p[1]) : price;\nconst highToday = ticker.h ? parseFloat(ticker.h[0]) : price;\nconst lowToday  = ticker.l ? parseFloat(ticker.l[0]) : price;\n\nconst range24pct = open24 \u003e 0 ? ((high24 - low24) / open24) * 100 : 0;\nconst rangeToday = open24 \u003e 0 ? ((highToday - lowToday) / open24) * 100 : 0;\nconst vwapDev    = vwap24 \u003e 0 ? ((price - vwap24) / vwap24) * 100 : 0;\nconst vwapDevAbs = Math.abs(vwapDev);\nconst priceMove  = open24 \u003e 0 ? Math.abs((price - open24) / open24) * 100 : 0;\nconst rangePos   = (high24 \u003e low24) ? (price - low24) / (high24 - low24) : 0.5;\nconst atExtreme  = rangePos \u003e 0.95 || rangePos \u003c 0.05;\n\nconst RANGE_SPIKE_PCT = 6.0;\nconst PRICE_MOVE_PCT  = 3.0;\nconst VWAP_DEV_PCT    = 2.0;\n\nconst rangeSpike   = range24pct \u003e RANGE_SPIKE_PCT;\nconst priceSpike   = priceMove  \u003e PRICE_MOVE_PCT;\nconst vwapSpike    = vwapDevAbs \u003e VWAP_DEV_PCT;\nconst breakoutSpike = atExtreme \u0026\u0026 rangeToday \u003e 2.0;\n\nconst triggered = rangeSpike || priceSpike || vwapSpike || breakoutSpike;\n\nconst reason = [];\nif (rangeSpike)    reason.push(\u002724H range \u0027 + range24pct.toFixed(2) + \u0027% \u003e \u0027 + RANGE_SPIKE_PCT + \u0027%\u0027);\nif (priceSpike)    reason.push(\u0027Price move \u0027 + priceMove.toFixed(2) + \u0027% from open\u0027);\nif (vwapSpike)     reason.push(\u0027VWAP dev \u0027 + vwapDevAbs.toFixed(2) + \u0027% (\u0027 + (vwapDev \u003e 0 ? \u0027above\u0027 : \u0027below\u0027) + \u0027)\u0027);\nif (breakoutSpike) reason.push(\u0027Range extreme (\u0027 + (rangePos * 100).toFixed(0) + \u0027%) + intraday \u0027 + rangeToday.toFixed(2) + \u0027%\u0027);\n\nconst ts = new Date().toISOString();\n\n// ââ Build Telegram Message (only sent when triggered=true) ââââââââââââââââââââ\nconst HR = \u0027\\u2501\u0027.repeat(20);\nconst spikeType  = rangeSpike || priceSpike ? \u0027HIGH\u0027 : \u0027MODERATE\u0027;\nconst spikeEmoji = spikeType === \u0027HIGH\u0027 ? \u0027\\uD83D\\uDEA8\\uD83D\\uDEA8\u0027 : \u0027\\u26A1\\u26A1\u0027;\nconst priceDir   = price \u003e open24 ? \u0027\\uD83D\\uDE80 ABOVE open\u0027 : \u0027\\uD83D\\uDD3B BELOW open\u0027;\nconst vwapDir    = vwapDev \u003e 0 ? \u0027\\uD83D\\uDFE2 above VWAP\u0027 : \u0027\\uD83D\\uDD34 below VWAP\u0027;\nconst extremeLabel = rangePos \u003e 0.95 ? \u0027\\uD83D\\uDFE2 near day HIGH \\u2014 breakout zone\u0027 : rangePos \u003c 0.05 ? \u0027\\uD83D\\uDD34 near day LOW \\u2014 breakdown zone\u0027 : \u0027\\uD83D\\uDFE1 mid-range\u0027;\n\nconst telegramMsg = [\n  spikeEmoji + \u0027 \u003cb\u003eVOLATILITY SPIKE DETECTED\u003c/b\u003e \u0027 + spikeEmoji,\n  \u0027\\uD83D\\uDDD3 \u0027 + ts.replace(\u0027T\u0027, \u0027 \u0027).slice(0, 19) + \u0027 UTC\u0027,\n  \u0027\u0027,\n  HR,\n  \u0027\\uD83D\\uDCB0 BTC/USD: \u003cb\u003e$\u0027 + Math.round(price).toLocaleString(\u0027en-US\u0027) + \u0027\u003c/b\u003e  \\u00B7  \u0027 + priceDir,\n  \u0027\\uD83D\\uDCC8 24H Range: \u003cb\u003e\u0027 + range24pct.toFixed(2) + \u0027%\u003c/b\u003e\u0027 + (rangeSpike ? \u0027 \\u26A0\\uFE0F SPIKE\u0027 : \u0027\u0027),\n  \u0027\\uD83D\\uDCD0 Intraday Range: \u003cb\u003e\u0027 + rangeToday.toFixed(2) + \u0027%\u003c/b\u003e\u0027,\n  \u0027\\uD83C\\uDFAF VWAP Dev: \u003cb\u003e\u0027 + (vwapDev \u003e= 0 ? \u0027+\u0027 : \u0027\u0027) + vwapDev.toFixed(2) + \u0027%\u003c/b\u003e  \\u00B7  \u0027 + vwapDir,\n  \u0027\\uD83D\\uDCCD Range Position: \u003cb\u003e\u0027 + (rangePos * 100).toFixed(0) + \u0027%\u003c/b\u003e  \\u00B7  \u0027 + extremeLabel,\n  \u0027\u0027,\n  HR,\n  \u0027\\uD83D\\uDD0D \u003cb\u003eTrigger reasons:\u003c/b\u003e\u0027,\n  reason.map(r =\u003e \u0027\\u2022 \u0027 + r).join(\u0027\\n\u0027) || \u0027\\u2022 Composite spike score\u0027,\n  \u0027\u0027,\n  \u0027\\uD83D\\uDD04 \u003cb\u003eAction:\u003c/b\u003e Extra analysis scan triggered outside 5-min schedule\u0027,\n  \u0027\u0027,\n  \u0027\u003ci\u003e\\u23F1 Normal schedule resumes in 5 min  \\u00B7  v3-super\u003c/i\u003e\u0027\n].join(\u0027\\n\u0027);\n\nreturn [{ json: {\n  triggered,\n  price,\n  range24pct:  Math.round(range24pct  * 100) / 100,\n  rangeToday:  Math.round(rangeToday  * 100) / 100,\n  priceMove:   Math.round(priceMove   * 100) / 100,\n  vwapDev:     Math.round(vwapDev     * 100) / 100,\n  rangePos:    Math.round(rangePos    * 100) / 100,\n  atExtreme,\n  reason: reason.join(\u0027 | \u0027) || \u0027normal vol\u0027,\n  ts,\n  telegramMsg: triggered ? telegramMsg : \u0027\u0027\n}}];\n"
+                                                           }
                                         },
                                         {
-                                            "typeVersion":  2,
-                                            "type":  "n8n-nodes-base.if",
-                                            "id":  "vw04",
                                             "position":  [
                                                              600,
                                                              300
                                                          ],
+                                            "id":  "vw04",
+                                            "typeVersion":  2,
+                                            "type":  "n8n-nodes-base.if",
+                                            "name":  "Is Spike?",
                                             "parameters":  {
                                                                "conditions":  {
-                                                                                  "conditions":  [
-                                                                                                     {
-                                                                                                         "leftValue":  "={{ $json.triggered }}",
-                                                                                                         "id":  "spike-check",
-                                                                                                         "operator":  {
-                                                                                                                          "type":  "boolean",
-                                                                                                                          "operation":  "true"
-                                                                                                                      },
-                                                                                                         "rightValue":  true
-                                                                                                     }
-                                                                                                 ],
                                                                                   "options":  {
                                                                                                   "caseSensitive":  true,
                                                                                                   "typeValidation":  "strict"
                                                                                               },
+                                                                                  "conditions":  [
+                                                                                                     {
+                                                                                                         "rightValue":  true,
+                                                                                                         "id":  "spike-check",
+                                                                                                         "leftValue":  "={{ $json.triggered }}",
+                                                                                                         "operator":  {
+                                                                                                                          "type":  "boolean",
+                                                                                                                          "operation":  "true"
+                                                                                                                      }
+                                                                                                     }
+                                                                                                 ],
                                                                                   "combinator":  "and"
                                                                               }
-                                                           },
-                                            "name":  "Is Spike?"
+                                                           }
                                         },
                                         {
+                                            "position":  [
+                                                             800,
+                                                             200
+                                                         ],
+                                            "id":  "vw05",
                                             "typeVersion":  4.2,
                                             "type":  "n8n-nodes-base.httpRequest",
                                             "name":  "Trigger Main Workflow",
-                                            "onError":  "continueRegularOutput",
-                                            "id":  "vw05",
                                             "parameters":  {
-                                                               "bodyParameters":  {
-                                                                                      "parameters":  [
-                                                                                                         {
-                                                                                                             "value":  "[]",
-                                                                                                             "name":  "startNodes"
-                                                                                                         }
-                                                                                                     ]
-                                                                                  },
-                                                               "sendBody":  true,
-                                                               "method":  "POST",
-                                                               "sendHeaders":  true,
+                                                               "options":  {
+
+                                                                           },
                                                                "headerParameters":  {
                                                                                         "parameters":  [
                                                                                                            {
@@ -358,15 +353,20 @@
                                                                                                            }
                                                                                                        ]
                                                                                     },
+                                                               "sendBody":  true,
+                                                               "bodyParameters":  {
+                                                                                      "parameters":  [
+                                                                                                         {
+                                                                                                             "name":  "startNodes",
+                                                                                                             "value":  "[]"
+                                                                                                         }
+                                                                                                     ]
+                                                                                  },
                                                                "url":  "https://outstanding-blessing-production-1d4b.up.railway.app/api/v1/workflows/7onbBjeUwHkSsuyc/run",
-                                                               "options":  {
-
-                                                                           }
+                                                               "method":  "POST",
+                                                               "sendHeaders":  true
                                                            },
-                                            "position":  [
-                                                             800,
-                                                             200
-                                                         ]
+                                            "onError":  "continueRegularOutput"
                                         },
                                         {
                                             "credentials":  {
@@ -375,19 +375,19 @@
                                                                                     "name":  "Telegram account"
                                                                                 }
                                                             },
-                                            "typeVersion":  1.2,
-                                            "type":  "n8n-nodes-base.telegram",
-                                            "name":  "Telegram Spike Alert",
-                                            "id":  "vw06",
                                             "parameters":  {
+                                                               "chatId":  "6275020593",
+                                                               "operation":  "sendMessage",
                                                                "additionalFields":  {
                                                                                         "parse_mode":  "HTML"
                                                                                     },
                                                                "resource":  "message",
-                                                               "operation":  "sendMessage",
-                                                               "chatId":  "6275020593",
-                                                               "text":  "={{ \u0027\u003cb\u003eâ¡ VOLATILITY SPIKE DETECTED\u003c/b\u003e\\n\\nBTC: $\u0027 + Math.round($json.price) + \u0027\\nReason: \u0027 + $json.reason + \u0027\\n\\n\u003ci\u003eExtra scan triggered outside 5-min schedule\u003c/i\u003e\u0027 }}"
+                                                               "text":  "={{ $json.telegramMsg }}"
                                                            },
+                                            "name":  "Telegram Spike Alert",
+                                            "typeVersion":  1.2,
+                                            "type":  "n8n-nodes-base.telegram",
+                                            "id":  "vw06",
                                             "position":  [
                                                              800,
                                                              400
@@ -396,23 +396,31 @@
                                         }
                                     ],
                           "connections":  {
-                                              "Fetch 1M Ticker":  {
-                                                                      "main":  [
-                                                                                   [
-                                                                                       {
-                                                                                           "type":  "main",
-                                                                                           "index":  0,
-                                                                                           "node":  "Check Spike"
-                                                                                       }
-                                                                                   ]
-                                                                               ]
-                                                                  },
+                                              "Is Spike?":  {
+                                                                "main":  [
+                                                                             [
+                                                                                 {
+                                                                                     "type":  "main",
+                                                                                     "node":  "Trigger Main Workflow",
+                                                                                     "index":  0
+                                                                                 },
+                                                                                 {
+                                                                                     "node":  "Telegram Spike Alert",
+                                                                                     "type":  "main",
+                                                                                     "index":  0
+                                                                                 }
+                                                                             ],
+                                                                             [
+
+                                                                             ]
+                                                                         ]
+                                                            },
                                               "Schedule Every 1 Min":  {
                                                                            "main":  [
                                                                                         [
                                                                                             {
-                                                                                                "type":  "main",
                                                                                                 "node":  "Fetch 1M Ticker",
+                                                                                                "type":  "main",
                                                                                                 "index":  0
                                                                                             }
                                                                                         ]
@@ -422,32 +430,24 @@
                                                                   "main":  [
                                                                                [
                                                                                    {
-                                                                                       "type":  "main",
                                                                                        "node":  "Is Spike?",
+                                                                                       "type":  "main",
                                                                                        "index":  0
                                                                                    }
                                                                                ]
                                                                            ]
                                                               },
-                                              "Is Spike?":  {
-                                                                "main":  [
-                                                                             [
-                                                                                 {
-                                                                                     "node":  "Trigger Main Workflow",
-                                                                                     "index":  0,
-                                                                                     "type":  "main"
-                                                                                 },
-                                                                                 {
-                                                                                     "type":  "main",
-                                                                                     "node":  "Telegram Spike Alert",
-                                                                                     "index":  0
-                                                                                 }
-                                                                             ],
-                                                                             [
-
-                                                                             ]
-                                                                         ]
-                                                            }
+                                              "Fetch 1M Ticker":  {
+                                                                      "main":  [
+                                                                                   [
+                                                                                       {
+                                                                                           "index":  0,
+                                                                                           "node":  "Check Spike",
+                                                                                           "type":  "main"
+                                                                                       }
+                                                                                   ]
+                                                                               ]
+                                                                  }
                                           },
                           "authors":  "gelson mascarenhas",
                           "name":  null,
@@ -455,10 +455,10 @@
                           "autosaved":  false,
                           "workflowPublishHistory":  [
                                                          {
-                                                             "createdAt":  "2026-04-18T18:34:17.072Z",
-                                                             "id":  415,
+                                                             "createdAt":  "2026-04-19T06:21:25.550Z",
+                                                             "id":  525,
                                                              "workflowId":  "dBrfEjCiJY7wgImW",
-                                                             "versionId":  "641ce16c-30bb-40ff-905c-6b8a28e41ac8",
+                                                             "versionId":  "d0a7bb3e-88e2-4642-8770-690ad2fdbf82",
                                                              "event":  "activated",
                                                              "userId":  "09977cda-9140-4e68-a948-e88d1f400c18"
                                                          }

@@ -1,0 +1,97 @@
+{
+  "name": "RECON OS — WF-19 Audit Logger",
+  "nodes": [
+    {
+      "parameters": { "inputSource": "passthrough" },
+      "id": "wf-trigger",
+      "name": "Execute Workflow Trigger",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "recon-os/internal/audit",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wh-audit",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 500],
+      "webhookId": "recon-os-internal-audit"
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\nconst body = item.body || item;\nreturn [{ json: {\n  event_type: body.event_type || 'unknown_event',\n  actor: body.actor || 'system',\n  engagement_id: body.engagement_id || null,\n  entity_type: body.entity_type || null,\n  entity_id: body.entity_id || null,\n  payload: body.payload || {},\n  ip_address: body.ip_address || null\n} }];"
+      },
+      "id": "normalize",
+      "name": "Normalize Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO audit_logs (event_type, actor, engagement_id, entity_type, entity_id, payload)\nVALUES (\n  '{{ $json.event_type }}',\n  '{{ $json.actor }}',\n  {{ $json.engagement_id ? \"'\" + $json.engagement_id + \"'\" : 'NULL' }},\n  {{ $json.entity_type ? \"'\" + $json.entity_type + \"'\" : 'NULL' }},\n  {{ $json.entity_id ? \"'\" + $json.entity_id + \"'\" : 'NULL' }},\n  '{{ JSON.stringify($json.payload).replace(/'/g,\"''\") }}'::jsonb\n)\nRETURNING id, event_type, created_at;",
+        "options": {}
+      },
+      "id": "pg-insert-audit",
+      "name": "Insert Audit Log",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [680, 300],
+      "credentials": { "postgres": { "id": "RECON_OS_PG_CRED", "name": "RECON OS PostgreSQL" } }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [{
+            "id": "cond-critical",
+            "leftValue": "={{ $('Normalize Input').first().json.event_type }}",
+            "rightValue": "oos_attempt_blocked,scope_modified,report_approved,retest_failed,engagement_closed,finding_deleted",
+            "operator": { "type": "string", "operation": "contains" }
+          }],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-critical-event",
+      "name": "IF Critical Event?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.RECON_OS_SLACK_WEBHOOK || 'https://hooks.slack.com/services/PLACEHOLDER' }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  text: '🔒 *RECON OS — Critical Audit Event*\\nEvent: `' + $('Normalize Input').first().json.event_type + '`\\nActor: ' + $('Normalize Input').first().json.actor + '\\nEntity: ' + ($('Normalize Input').first().json.entity_type || 'N/A') + '/' + ($('Normalize Input').first().json.entity_id || 'N/A') + '\\nEngagement: ' + ($('Normalize Input').first().json.engagement_id || 'N/A'),\n  username: 'RECON OS Audit',\n  icon_emoji: ':lock:'\n}) }}",
+        "options": { "timeout": 10000 }
+      },
+      "id": "slack-critical",
+      "name": "Slack Critical Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1120, 200]
+    }
+  ],
+  "connections": {
+    "Execute Workflow Trigger": { "main": [[{ "node": "Normalize Input", "type": "main", "index": 0 }]] },
+    "Webhook": { "main": [[{ "node": "Normalize Input", "type": "main", "index": 0 }]] },
+    "Normalize Input": { "main": [[{ "node": "Insert Audit Log", "type": "main", "index": 0 }]] },
+    "Insert Audit Log": { "main": [[{ "node": "IF Critical Event?", "type": "main", "index": 0 }]] },
+    "IF Critical Event?": { "main": [
+      [{ "node": "Slack Critical Alert", "type": "main", "index": 0 }],
+      []
+    ]}
+  },
+  "settings": { "executionOrder": "v1", "saveManualExecutions": true, "saveExecutionProgress": true },
+  "meta": { "description": "RECON OS WF-19: Audit Logger — append-only audit trail for all RECON OS events. Critical events (OOS blocks, scope changes, retest failures) also alert to Slack. Never deletes records." }
+}

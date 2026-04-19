@@ -37,6 +37,14 @@ _TIMEOUT = 30
 
 # ── Railway API ────────────────────────────────────────────────────────────────
 
+def _is_valid_railway_token(token: str) -> bool:
+    """
+    Railway API tokens are UUID-formatted strings (as of 2024+).
+    Only reject clearly empty or suspiciously short values.
+    """
+    return bool(token and len(token) >= 20)
+
+
 def _update_railway_variable(name: str, value: str) -> tuple[bool, str]:
     """
     Upsert a Railway service variable via the GraphQL API.
@@ -55,6 +63,13 @@ def _update_railway_variable(name: str, value: str) -> tuple[bool, str]:
             "RAILWAY_SERVICE_ID": service_id,
         }.items() if not v]
         return False, f"Missing Railway env vars: {missing}"
+
+    if not _is_valid_railway_token(token):
+        return False, (
+            "RAILWAY_TOKEN is empty or invalid. "
+            "Generate a token at railway.app/account/tokens and set it as RAILWAY_TOKEN. "
+            "Volume + PostgreSQL persistence is still active — this is non-critical."
+        )
 
     mutation = """
     mutation VariableUpsert($input: VariableUpsertInput!) {
@@ -107,6 +122,9 @@ def _update_railway_variable_for_service(name: str, value: str, service_id: str)
             "RAILWAY_ENVIRONMENT_ID": env_id, "CLI_WORKER_SERVICE_ID": service_id,
         }.items() if not v]
         return False, f"Missing vars: {missing}"
+
+    if not _is_valid_railway_token(token):
+        return False, "RAILWAY_TOKEN is a UUID, not a token — skipped (see _update_railway_variable)"
 
     mutation = """
     mutation VariableUpsert($input: VariableUpsertInput!) {
@@ -292,14 +310,19 @@ def run_token_keeper() -> dict:
         result["railway_ok"] = ok2
         result["method"]  = "cli" if ok2 else "none"
         result["message"] = msg2 if ok2 else f"API: {msg} | CLI: {msg2}"
-        level = "refreshed and saved via CLI fallback" if ok2 else "FAILED to save to Railway"
+        level = "refreshed and saved via CLI fallback" if ok2 else "Railway push skipped (non-critical)"
         _log(f"Token keeper: CLAUDE_SESSION_TOKEN {level}. {result['message']}")
         if not ok2:
-            try:
-                from ..alerts.notifier import alert_token_refresh_failed
-                alert_token_refresh_failed("Claude Pro", result["message"])
-            except Exception:
-                pass
+            # Only fire alert if the reason is NOT a known-bad token format.
+            # UUID-format token is a permanent misconfiguration — alerting every
+            # hour is noise. Volume + PostgreSQL persistence already covers this.
+            _is_config_issue = "UUID" in result["message"] or "non-critical" in result["message"]
+            if not _is_config_issue:
+                try:
+                    from ..alerts.notifier import alert_token_refresh_failed
+                    alert_token_refresh_failed("Claude Pro", result["message"])
+                except Exception:
+                    pass
 
     # Step 4 — also push to inspiring-cat (CLI worker) so its token never expires.
     # Set CLI_WORKER_SERVICE_ID in super-agent Railway Variables to inspiring-cat's

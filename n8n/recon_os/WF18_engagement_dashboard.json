@@ -1,0 +1,89 @@
+{
+  "name": "RECON OS — WF-18 Engagement Dashboard",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "recon-os/dashboard",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wh-dashboard",
+      "name": "Webhook Dashboard",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "recon-os-dashboard"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT e.id, e.name, e.type, e.status, e.testing_window_start, e.testing_window_end,\n       c.name as client_name,\n       em.total_assets, em.assets_tested, em.coverage_pct,\n       em.total_findings, em.validated_findings, em.verified_fixed, em.avg_mttr_days,\n       em.criticals, em.highs, em.mediums, em.lows,\n       (NOW() BETWEEN e.testing_window_start AND e.testing_window_end) as is_in_window\nFROM engagements e\nJOIN clients c ON e.client_id = c.id\nLEFT JOIN engagement_metrics em ON em.engagement_id = e.id\nWHERE e.status IN ('active','completed')\nORDER BY e.created_at DESC\nLIMIT 10;",
+        "options": {}
+      },
+      "id": "pg-engagements",
+      "name": "Get Engagements",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [460, 300],
+      "credentials": { "postgres": { "id": "RECON_OS_PG_CRED", "name": "RECON OS PostgreSQL" } }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  (SELECT COUNT(*) FROM normalized_findings WHERE validation_status='pending_analyst') as global_pending_validation,\n  (SELECT COUNT(*) FROM normalized_findings WHERE priority_bucket='immediate_attention' AND remediation_status='open') as global_immediate,\n  (SELECT COUNT(*) FROM retest_records WHERE result IS NULL AND scheduled_at < NOW()) as global_overdue_retests,\n  (SELECT COUNT(*) FROM normalized_findings WHERE is_recurring=true) as global_recurring,\n  (SELECT COUNT(*) FROM engagements WHERE status='active') as active_engagements,\n  (SELECT COUNT(*) FROM clients) as total_clients,\n  (SELECT COUNT(*) FROM normalized_findings WHERE first_seen >= NOW() - INTERVAL '7 days') as new_findings_7d,\n  (SELECT ROUND(AVG(EXTRACT(EPOCH FROM (closed_at - first_seen))/86400),1) FROM normalized_findings WHERE closed_at IS NOT NULL) as global_avg_mttr;",
+        "options": {}
+      },
+      "id": "pg-global-stats",
+      "name": "Get Global Stats",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [680, 300],
+      "credentials": { "postgres": { "id": "RECON_OS_PG_CRED", "name": "RECON OS PostgreSQL" } }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT category, COUNT(*) as count, AVG(recon_score) as avg_score\nFROM normalized_findings\nWHERE validation_status IN ('validated','analyst_reviewed')\n  AND remediation_status NOT IN ('verified_fixed')\nGROUP BY category\nORDER BY count DESC\nLIMIT 8;",
+        "options": {}
+      },
+      "id": "pg-weakness-breakdown",
+      "name": "Get Weakness Breakdown",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [900, 300],
+      "credentials": { "postgres": { "id": "RECON_OS_PG_CRED", "name": "RECON OS PostgreSQL" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "const engagements = $('Get Engagements').all().map(i => i.json);\nconst global = $('Get Global Stats').first().json;\nconst weaknesses = $('Get Weakness Breakdown').all().map(i => i.json);\n\nconst dashboard = {\n  generated_at: new Date().toISOString(),\n  platform: 'RECON OS v1.0',\n  global_health: {\n    active_engagements: parseInt(global.active_engagements||0),\n    total_clients: parseInt(global.total_clients||0),\n    immediate_attention_open: parseInt(global.global_immediate||0),\n    pending_validation: parseInt(global.global_pending_validation||0),\n    overdue_retests: parseInt(global.global_overdue_retests||0),\n    recurring_findings: parseInt(global.global_recurring||0),\n    new_findings_7d: parseInt(global.new_findings_7d||0),\n    global_avg_mttr_days: parseFloat(global.global_avg_mttr||0)\n  },\n  engagements: engagements.map(e => ({\n    id: e.id,\n    name: e.name,\n    client: e.client_name,\n    type: e.type,\n    status: e.status,\n    is_in_window: e.is_in_window,\n    window: `${e.testing_window_start?.split('T')[0]} — ${e.testing_window_end?.split('T')[0]}`,\n    assets: { total: parseInt(e.total_assets||0), tested: parseInt(e.assets_tested||0), coverage_pct: parseFloat(e.coverage_pct||0) },\n    findings: {\n      total: parseInt(e.total_findings||0),\n      validated: parseInt(e.validated_findings||0),\n      fixed: parseInt(e.verified_fixed||0),\n      critical: parseInt(e.criticals||0),\n      high: parseInt(e.highs||0),\n      medium: parseInt(e.mediums||0),\n      low: parseInt(e.lows||0)\n    },\n    avg_mttr_days: parseFloat(e.avg_mttr_days||0)\n  })),\n  weakness_heatmap: weaknesses.map(w => ({\n    category: w.category,\n    open_findings: parseInt(w.count),\n    avg_risk_score: Math.round(parseFloat(w.avg_score||0)*100)/100\n  }))\n};\n\nreturn [{ json: { dashboard } }];"
+      },
+      "id": "build-dashboard",
+      "name": "Build Dashboard",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json.dashboard) }}",
+        "options": { "responseCode": 200 }
+      },
+      "id": "respond-ok",
+      "name": "Respond Dashboard",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1340, 300]
+    }
+  ],
+  "connections": {
+    "Webhook Dashboard": { "main": [[{ "node": "Get Engagements", "type": "main", "index": 0 }]] },
+    "Get Engagements": { "main": [[{ "node": "Get Global Stats", "type": "main", "index": 0 }]] },
+    "Get Global Stats": { "main": [[{ "node": "Get Weakness Breakdown", "type": "main", "index": 0 }]] },
+    "Get Weakness Breakdown": { "main": [[{ "node": "Build Dashboard", "type": "main", "index": 0 }]] },
+    "Build Dashboard": { "main": [[{ "node": "Respond Dashboard", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1", "saveManualExecutions": true, "saveExecutionProgress": true },
+  "meta": { "description": "RECON OS WF-18: Engagement Dashboard — GET /webhook/recon-os/dashboard returns real-time JSON with global health, all engagements, coverage, findings by severity, MTTR, and weakness heatmap." }
+}

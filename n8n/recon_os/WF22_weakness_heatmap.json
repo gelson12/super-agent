@@ -1,0 +1,114 @@
+{
+  "name": "RECON OS — WF-22 Weakness Heatmap",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": { "interval": [{ "field": "cronExpression", "expression": "0 6 * * 1" }] }
+      },
+      "id": "cron-weekly",
+      "name": "Cron Weekly Monday",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "recon-os/internal/heatmap",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wh-heatmap",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 500],
+      "webhookId": "recon-os-internal-heatmap"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  c.id as client_id,\n  c.name as client_name,\n  nf.category,\n  nf.cwe_id,\n  nf.owasp_category,\n  COUNT(nf.id) as occurrence_count,\n  COUNT(DISTINCT nf.engagement_id) as engagement_count,\n  MIN(nf.first_seen) as first_seen,\n  MAX(nf.last_seen) as last_seen,\n  AVG(nf.recon_score) as avg_score,\n  COUNT(nf.id) FILTER (WHERE nf.remediation_status = 'verified_fixed') as times_fixed,\n  COUNT(nf.id) FILTER (WHERE nf.reopen_count > 0) as times_reopened\nFROM normalized_findings nf\nJOIN engagements e ON nf.engagement_id = e.id\nJOIN clients c ON e.client_id = c.id\nWHERE nf.validation_status IN ('validated','analyst_reviewed','verified_fixed')\n  AND nf.cwe_id IS NOT NULL\nGROUP BY c.id, c.name, nf.category, nf.cwe_id, nf.owasp_category\nHAVING COUNT(DISTINCT nf.engagement_id) >= 1\nORDER BY c.id, occurrence_count DESC;",
+        "options": {}
+      },
+      "id": "pg-get-patterns",
+      "name": "Get Cross-Engagement Patterns",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [460, 300],
+      "credentials": { "postgres": { "id": "RECON_OS_PG_CRED", "name": "RECON OS PostgreSQL" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "const patterns = $input.all().map(i => i.json);\nconst results = [];\n\nfor (const p of patterns) {\n  const occurrences = parseInt(p.occurrence_count||0);\n  const engagements = parseInt(p.engagement_count||0);\n  const timesReopened = parseInt(p.times_reopened||0);\n  const timesFixed = parseInt(p.times_fixed||0);\n\n  // Determine pattern type\n  let patternType = 'recurring';\n  let narrative = '';\n\n  if (engagements >= 3 && timesFixed > 0 && timesReopened > 0) {\n    patternType = 'systemic';\n    narrative = `${p.cwe_id} (${p.category}) has appeared in ${engagements} engagements for ${p.client_name}. Despite ${timesFixed} fix attempt(s), it has reopened ${timesReopened} time(s), indicating a systemic weakness in the development process.`;\n  } else if (engagements >= 2) {\n    patternType = 'recurring';\n    narrative = `${p.cwe_id} (${p.category}) has recurred across ${engagements} engagements for ${p.client_name}. Pattern suggests this vulnerability class is not being addressed at root cause.`;\n  } else {\n    patternType = 'emerging';\n    narrative = `${p.cwe_id} (${p.category}) first detected for ${p.client_name}. Monitor for recurrence.`;\n  }\n\n  results.push({\n    client_id: p.client_id,\n    category: p.category,\n    cwe_id: p.cwe_id,\n    owasp_category: p.owasp_category,\n    occurrence_count: occurrences,\n    engagement_count: engagements,\n    first_seen: p.first_seen,\n    last_seen: p.last_seen,\n    pattern_type: patternType,\n    narrative\n  });\n}\n\n// Build summary for Slack\nconst systemic = results.filter(r => r.pattern_type === 'systemic');\nconst recurring = results.filter(r => r.pattern_type === 'recurring');\n\nconst slackSummary = [\n  `📊 *RECON OS — Weekly Weakness Heatmap*`,\n  `Date: ${new Date().toISOString().split('T')[0]}`,\n  `Patterns analyzed: ${results.length}`,\n  systemic.length > 0 ? `\\n🔴 *SYSTEMIC (${systemic.length})*:` : '',\n  ...systemic.slice(0,3).map(s => `  • ${s.cwe_id} — ${s.client_id} — ${s.engagement_count} engagements, reopened ${s.occurrence_count}×`),\n  recurring.length > 0 ? `\\n🟡 *RECURRING (${recurring.length})*:` : '',\n  ...recurring.slice(0,3).map(r => `  • ${r.cwe_id} (${r.category}) — ${r.engagement_count} engagements`)\n].filter(Boolean).join('\\n');\n\nreturn [{ json: { patterns: results, slack_summary: slackSummary, systemic_count: systemic.length, total: results.length } }];"
+      },
+      "id": "analyze-patterns",
+      "name": "Analyze Weakness Patterns",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const patterns = $input.first().json.patterns;\nreturn patterns.map(p => ({ json: p }));"
+      },
+      "id": "split-patterns",
+      "name": "Split Patterns",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO weakness_patterns (\n  client_id, category, cwe_id, owasp_category,\n  occurrence_count, engagement_count, first_seen, last_seen,\n  pattern_type, narrative, updated_at\n) VALUES (\n  '{{ $json.client_id }}',\n  '{{ $json.category }}',\n  '{{ $json.cwe_id }}',\n  {{ $json.owasp_category ? \"'\" + $json.owasp_category + \"'\" : 'NULL' }},\n  {{ $json.occurrence_count }},\n  {{ $json.engagement_count }},\n  '{{ $json.first_seen }}'::timestamptz,\n  '{{ $json.last_seen }}'::timestamptz,\n  '{{ $json.pattern_type }}',\n  '{{ $json.narrative.replace(/'/g,\"''\") }}',\n  NOW()\n)\nON CONFLICT (client_id, cwe_id) DO UPDATE SET\n  occurrence_count = EXCLUDED.occurrence_count,\n  engagement_count = EXCLUDED.engagement_count,\n  last_seen = EXCLUDED.last_seen,\n  pattern_type = EXCLUDED.pattern_type,\n  narrative = EXCLUDED.narrative,\n  updated_at = NOW();",
+        "options": {}
+      },
+      "id": "pg-upsert-patterns",
+      "name": "Upsert Weakness Patterns",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1120, 300],
+      "credentials": { "postgres": { "id": "RECON_OS_PG_CRED", "name": "RECON OS PostgreSQL" } }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.RECON_OS_SLACK_WEBHOOK || 'https://hooks.slack.com/services/PLACEHOLDER' }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ text: $('Analyze Weakness Patterns').first().json.slack_summary, username: 'RECON OS Heatmap', icon_emoji: ':fire:' }) }}",
+        "options": { "timeout": 10000 }
+      },
+      "id": "send-slack",
+      "name": "Send Slack Summary",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1340, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO audit_logs (event_type, actor, payload)\nVALUES ('heatmap_updated','wf22','{\"patterns_updated\":{{ $('Analyze Weakness Patterns').first().json.total }},\"systemic\":{{ $('Analyze Weakness Patterns').first().json.systemic_count }}}'::jsonb);",
+        "options": {}
+      },
+      "id": "pg-audit",
+      "name": "Audit Log",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1560, 300],
+      "credentials": { "postgres": { "id": "RECON_OS_PG_CRED", "name": "RECON OS PostgreSQL" } }
+    }
+  ],
+  "connections": {
+    "Cron Weekly Monday": { "main": [[{ "node": "Get Cross-Engagement Patterns", "type": "main", "index": 0 }]] },
+    "Webhook": { "main": [[{ "node": "Get Cross-Engagement Patterns", "type": "main", "index": 0 }]] },
+    "Get Cross-Engagement Patterns": { "main": [[{ "node": "Analyze Weakness Patterns", "type": "main", "index": 0 }]] },
+    "Analyze Weakness Patterns": { "main": [[{ "node": "Split Patterns", "type": "main", "index": 0 }]] },
+    "Split Patterns": { "main": [[{ "node": "Upsert Weakness Patterns", "type": "main", "index": 0 }]] },
+    "Upsert Weakness Patterns": { "main": [[{ "node": "Send Slack Summary", "type": "main", "index": 0 }]] },
+    "Send Slack Summary": { "main": [[{ "node": "Audit Log", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1", "saveManualExecutions": true, "saveExecutionProgress": true },
+  "meta": { "description": "RECON OS WF-22: Weakness Heatmap — weekly cross-engagement analysis detecting systemic, recurring, and emerging weakness patterns per client. Classifies patterns, generates narratives, Slacks summary." }
+}

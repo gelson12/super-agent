@@ -1,0 +1,147 @@
+{
+  "name": "RECON OS — WF-21 Engagement Close",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "recon-os/engagement/close",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wh-close",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "recon-os-engagement-close"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body || $input.first().json;\nif (!body.engagement_id) return [{ json: { valid: false, error: 'engagement_id required' } }];\nreturn [{ json: { valid: true, engagement_id: body.engagement_id, closed_by: body.closed_by || 'analyst', lessons_learned: body.lessons_learned || null } }];"
+      },
+      "id": "validate",
+      "name": "Validate Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [{ "id": "cv", "leftValue": "={{ $json.valid }}", "rightValue": true, "operator": { "type": "boolean", "operation": "true" } }],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-valid",
+      "name": "IF Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: false, error: $json.error }) }}",
+        "options": { "responseCode": 400 }
+      },
+      "id": "respond-400",
+      "name": "Respond 400",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [900, 500]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  e.id, e.name, e.status, c.name as client_name,\n  COUNT(nf.id) FILTER (WHERE nf.severity='critical' AND nf.remediation_status='open') as open_criticals,\n  COUNT(nf.id) FILTER (WHERE nf.severity='high' AND nf.remediation_status='open') as open_highs,\n  COUNT(nf.id) FILTER (WHERE nf.validation_status='pending_analyst') as pending_validation\nFROM engagements e\nJOIN clients c ON e.client_id = c.id\nLEFT JOIN normalized_findings nf ON nf.engagement_id = e.id\nWHERE e.id = '{{ $json.engagement_id }}'\nGROUP BY e.id, e.name, e.status, c.name;",
+        "options": {}
+      },
+      "id": "pg-pre-close-check",
+      "name": "Pre-Close Check",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [900, 300],
+      "credentials": { "postgres": { "id": "RECON_OS_PG_CRED", "name": "RECON OS PostgreSQL" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "const check = $input.first().json;\nconst warnings = [];\nif (parseInt(check.open_criticals||0) > 0) warnings.push(`${check.open_criticals} open critical finding(s) — recommend remediation before close`);\nif (parseInt(check.open_highs||0) > 0) warnings.push(`${check.open_highs} open high finding(s)`);\nif (parseInt(check.pending_validation||0) > 0) warnings.push(`${check.pending_validation} finding(s) still pending analyst validation`);\nreturn [{ json: {\n  ...check,\n  warnings,\n  can_close: check.status === 'active',\n  engagement_id: $('Validate Input').first().json.engagement_id\n} }];"
+      },
+      "id": "build-close-summary",
+      "name": "Build Close Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE engagements SET status='completed', closed_at=NOW() WHERE id='{{ $json.engagement_id }}';\nUPDATE engagement_metrics SET\n  total_findings = (SELECT COUNT(*) FROM normalized_findings WHERE engagement_id='{{ $json.engagement_id }}'),\n  validated_findings = (SELECT COUNT(*) FROM normalized_findings WHERE engagement_id='{{ $json.engagement_id }}' AND validation_status IN ('validated','analyst_reviewed')),\n  verified_fixed = (SELECT COUNT(*) FROM normalized_findings WHERE engagement_id='{{ $json.engagement_id }}' AND remediation_status='verified_fixed'),\n  false_positives = (SELECT COUNT(*) FROM normalized_findings WHERE engagement_id='{{ $json.engagement_id }}' AND validation_status='likely_false_positive'),\n  assets_tested = (SELECT COUNT(*) FROM assets WHERE engagement_id='{{ $json.engagement_id }}' AND last_tested IS NOT NULL),\n  coverage_pct = ROUND(100.0 * (SELECT COUNT(*) FROM assets WHERE engagement_id='{{ $json.engagement_id }}' AND last_tested IS NOT NULL) / NULLIF((SELECT COUNT(*) FROM assets WHERE engagement_id='{{ $json.engagement_id }}'),0), 2),\n  avg_mttr_days = (SELECT ROUND(AVG(EXTRACT(EPOCH FROM (closed_at - first_seen))/86400),2) FROM normalized_findings WHERE engagement_id='{{ $json.engagement_id }}' AND closed_at IS NOT NULL),\n  updated_at = NOW()\nWHERE engagement_id = '{{ $json.engagement_id }}';",
+        "options": {}
+      },
+      "id": "pg-close-engagement",
+      "name": "Close Engagement",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1340, 300],
+      "credentials": { "postgres": { "id": "RECON_OS_PG_CRED", "name": "RECON OS PostgreSQL" } }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://outstanding-blessing-production-1d4b.up.railway.app/webhook/recon-os/internal/heatmap",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ engagement_id: $('Validate Input').first().json.engagement_id }) }}",
+        "options": { "timeout": 30000 }
+      },
+      "id": "trigger-heatmap",
+      "name": "Trigger Weakness Heatmap",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1560, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO audit_logs (event_type, actor, engagement_id, payload)\nVALUES ('engagement_closed','{{ $('Validate Input').first().json.closed_by }}','{{ $('Validate Input').first().json.engagement_id }}','{\"warnings\":{{ JSON.stringify($('Build Close Summary').first().json.warnings) }},\"lessons_learned\":{{ $('Validate Input').first().json.lessons_learned ? \"'\" + $('Validate Input').first().json.lessons_learned.replace(/'/g,\"''\") + \"'\" : '\"none\"' }}}'::jsonb);",
+        "options": {}
+      },
+      "id": "pg-audit",
+      "name": "Audit Log",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1780, 300],
+      "credentials": { "postgres": { "id": "RECON_OS_PG_CRED", "name": "RECON OS PostgreSQL" } }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, engagement_id: $('Validate Input').first().json.engagement_id, status: 'completed', warnings: $('Build Close Summary').first().json.warnings, message: 'Engagement closed. Metrics finalized. Weakness heatmap triggered.' }) }}",
+        "options": { "responseCode": 200 }
+      },
+      "id": "respond-ok",
+      "name": "Respond OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2000, 300]
+    }
+  ],
+  "connections": {
+    "Webhook": { "main": [[{ "node": "Validate Input", "type": "main", "index": 0 }]] },
+    "Validate Input": { "main": [[{ "node": "IF Valid?", "type": "main", "index": 0 }]] },
+    "IF Valid?": { "main": [
+      [{ "node": "Pre-Close Check", "type": "main", "index": 0 }],
+      [{ "node": "Respond 400", "type": "main", "index": 0 }]
+    ]},
+    "Pre-Close Check": { "main": [[{ "node": "Build Close Summary", "type": "main", "index": 0 }]] },
+    "Build Close Summary": { "main": [[{ "node": "Close Engagement", "type": "main", "index": 0 }]] },
+    "Close Engagement": { "main": [[{ "node": "Trigger Weakness Heatmap", "type": "main", "index": 0 }]] },
+    "Trigger Weakness Heatmap": { "main": [[{ "node": "Audit Log", "type": "main", "index": 0 }]] },
+    "Audit Log": { "main": [[{ "node": "Respond OK", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1", "saveManualExecutions": true, "saveExecutionProgress": true },
+  "meta": { "description": "RECON OS WF-21: Engagement Close — archives engagement, finalizes metrics (MTTR, coverage, finding counts), warns on open criticals, triggers weakness heatmap analysis. POST /webhook/recon-os/engagement/close" }
+}

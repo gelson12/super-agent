@@ -1,0 +1,783 @@
+﻿{
+    "updatedAt":  "2026-04-19T07:27:33.380Z",
+    "createdAt":  "2026-04-19T03:30:16.230Z",
+    "id":  "RfIUUbwFZFWt3GNp",
+    "name":  "RECON OS - WF-04 Recon Orchestrator",
+    "description":  null,
+    "active":  true,
+    "isArchived":  false,
+    "nodes":  [
+                  {
+                      "parameters":  {
+                                         "rule":  {
+                                                      "interval":  [
+                                                                       {
+                                                                           "field":  "cronExpression",
+                                                                           "expression":  "0 0,6,12,18 * * *"
+                                                                       }
+                                                                   ]
+                                                  }
+                                     },
+                      "id":  "cron-trigger",
+                      "name":  "Cron Every 6h",
+                      "type":  "n8n-nodes-base.scheduleTrigger",
+                      "typeVersion":  1.2,
+                      "position":  [
+                                       240,
+                                       300
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "inputSource":  "passthrough"
+                                     },
+                      "id":  "wf-trigger",
+                      "name":  "Execute Workflow Trigger",
+                      "type":  "n8n-nodes-base.executeWorkflowTrigger",
+                      "typeVersion":  1.1,
+                      "position":  [
+                                       240,
+                                       500
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "SELECT id, client_id, name, rate_limit_profile, testing_window_start, testing_window_end\nFROM engagements\nWHERE status = \u0027active\u0027\n  AND NOW() BETWEEN testing_window_start AND testing_window_end\nORDER BY created_at;",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "pg-active-engagements",
+                      "name":  "Get Active Engagements",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       460,
+                                       300
+                                   ],
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "oHS3dvjMW1h1PkMp",
+                                                           "name":  "RECON OS PostgreSQL"
+                                                       }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "conditions":  {
+                                                            "options":  {
+                                                                            "caseSensitive":  true,
+                                                                            "leftValue":  "",
+                                                                            "typeValidation":  "strict"
+                                                                        },
+                                                            "conditions":  [
+                                                                               {
+                                                                                   "id":  "cond-eng",
+                                                                                   "leftValue":  "={{ $input.all().length }}",
+                                                                                   "rightValue":  0,
+                                                                                   "operator":  {
+                                                                                                    "type":  "number",
+                                                                                                    "operation":  "gt"
+                                                                                                }
+                                                                               }
+                                                                           ],
+                                                            "combinator":  "and"
+                                                        },
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "if-has-engagements",
+                      "name":  "IF Active Engagements?",
+                      "type":  "n8n-nodes-base.if",
+                      "typeVersion":  2.2,
+                      "position":  [
+                                       680,
+                                       300
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "SELECT a.id as asset_id, a.asset_value, a.asset_type, a.engagement_id, a.scope_status\nFROM assets a\nINNER JOIN engagements e ON a.engagement_id = e.id\nWHERE a.engagement_id = \u0027{{ $json.id }}\u0027\n  AND a.scope_status = \u0027in_scope\u0027\n  AND e.status = \u0027active\u0027\n  AND NOW() BETWEEN e.testing_window_start AND e.testing_window_end\n  AND (a.last_tested IS NULL OR a.last_tested \u003c NOW() - INTERVAL \u002724 hours\u0027)\nLIMIT 50;",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "pg-get-assets",
+                      "name":  "Get Untested Assets",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       900,
+                                       300
+                                   ],
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "oHS3dvjMW1h1PkMp",
+                                                           "name":  "RECON OS PostgreSQL"
+                                                       }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "batchSize":  5,
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "split-batches",
+                      "name":  "Split In Batches",
+                      "type":  "n8n-nodes-base.splitInBatches",
+                      "typeVersion":  3,
+                      "position":  [
+                                       1120,
+                                       300
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "const items = $input.all();\nconst results = [];\nfor (const item of items) {\n  const asset = item.json;\n  const subflows = [];\n  if ([\u0027domain\u0027,\u0027subdomain\u0027].includes(asset.asset_type)) subflows.push(\u0027dns\u0027, \u0027http\u0027);\n  if ([\u0027web_app\u0027,\u0027api\u0027].includes(asset.asset_type)) subflows.push(\u0027http\u0027, \u0027screenshot\u0027);\n  if (asset.asset_type === \u0027ip\u0027) subflows.push(\u0027http\u0027);\n  results.push({ json: { ...asset, subflows } });\n}\nreturn results;"
+                                     },
+                      "id":  "determine-subflows",
+                      "name":  "Determine Sub-Workflows",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       1340,
+                                       300
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "method":  "POST",
+                                         "url":  "={{ $(\u0027Get Active Engagements\u0027).first().json.rate_limit_profile === \u0027stealth\u0027 ? \u0027https://outstanding-blessing-production-1d4b.up.railway.app/webhook/recon-os/recon/dns\u0027 : \u0027https://outstanding-blessing-production-1d4b.up.railway.app/webhook/recon-os/recon/dns\u0027 }}",
+                                         "sendBody":  true,
+                                         "specifyBody":  "json",
+                                         "jsonBody":  "={{ JSON.stringify({ asset_id: $json.asset_id, asset_value: $json.asset_value, engagement_id: $json.engagement_id }) }}",
+                                         "options":  {
+                                                         "timeout":  30000
+                                                     }
+                                     },
+                      "id":  "call-recon-dns",
+                      "name":  "Trigger Recon DNS",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.2,
+                      "position":  [
+                                       1560,
+                                       200
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "method":  "POST",
+                                         "url":  "https://outstanding-blessing-production-1d4b.up.railway.app/webhook/recon-os/recon/http",
+                                         "sendBody":  true,
+                                         "specifyBody":  "json",
+                                         "jsonBody":  "={{ JSON.stringify({ asset_id: $json.asset_id, asset_value: $json.asset_value, engagement_id: $json.engagement_id }) }}",
+                                         "options":  {
+                                                         "timeout":  30000
+                                                     }
+                                     },
+                      "id":  "call-recon-http",
+                      "name":  "Trigger Recon HTTP",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.2,
+                      "position":  [
+                                       1560,
+                                       380
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "UPDATE assets SET last_tested = NOW() WHERE id = \u0027{{ $(\u0027Determine Sub-Workflows\u0027).first().json.asset_id }}\u0027;",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "pg-update-tested",
+                      "name":  "Mark Asset Tested",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       1780,
+                                       300
+                                   ],
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "oHS3dvjMW1h1PkMp",
+                                                           "name":  "RECON OS PostgreSQL"
+                                                       }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "INSERT INTO audit_logs (event_type, actor, engagement_id, payload)\nVALUES (\u0027recon_cycle_completed\u0027, \u0027wf04\u0027, \u0027{{ $(\u0027Determine Sub-Workflows\u0027).first().json.engagement_id }}\u0027, \u0027{\"assets_processed\":{{ $(\u0027Split In Batches\u0027).first().json ? 1 : 0 }}}\u0027::jsonb);",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "pg-audit",
+                      "name":  "Audit Log",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       2000,
+                                       300
+                                   ],
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "oHS3dvjMW1h1PkMp",
+                                                           "name":  "RECON OS PostgreSQL"
+                                                       }
+                                      }
+                  }
+              ],
+    "connections":  {
+                        "Cron Every 6h":  {
+                                              "main":  [
+                                                           [
+                                                               {
+                                                                   "node":  "Get Active Engagements",
+                                                                   "type":  "main",
+                                                                   "index":  0
+                                                               }
+                                                           ]
+                                                       ]
+                                          },
+                        "Execute Workflow Trigger":  {
+                                                         "main":  [
+                                                                      [
+                                                                          {
+                                                                              "node":  "Get Active Engagements",
+                                                                              "type":  "main",
+                                                                              "index":  0
+                                                                          }
+                                                                      ]
+                                                                  ]
+                                                     },
+                        "Get Active Engagements":  {
+                                                       "main":  [
+                                                                    [
+                                                                        {
+                                                                            "node":  "IF Active Engagements?",
+                                                                            "type":  "main",
+                                                                            "index":  0
+                                                                        }
+                                                                    ]
+                                                                ]
+                                                   },
+                        "IF Active Engagements?":  {
+                                                       "main":  [
+                                                                    [
+                                                                        {
+                                                                            "node":  "Get Untested Assets",
+                                                                            "type":  "main",
+                                                                            "index":  0
+                                                                        }
+                                                                    ],
+                                                                    [
+
+                                                                    ]
+                                                                ]
+                                                   },
+                        "Get Untested Assets":  {
+                                                    "main":  [
+                                                                 [
+                                                                     {
+                                                                         "node":  "Split In Batches",
+                                                                         "type":  "main",
+                                                                         "index":  0
+                                                                     }
+                                                                 ]
+                                                             ]
+                                                },
+                        "Split In Batches":  {
+                                                 "main":  [
+                                                              [
+                                                                  {
+                                                                      "node":  "Determine Sub-Workflows",
+                                                                      "type":  "main",
+                                                                      "index":  0
+                                                                  }
+                                                              ]
+                                                          ]
+                                             },
+                        "Determine Sub-Workflows":  {
+                                                        "main":  [
+                                                                     [
+                                                                         {
+                                                                             "node":  "Trigger Recon DNS",
+                                                                             "type":  "main",
+                                                                             "index":  0
+                                                                         }
+                                                                     ],
+                                                                     [
+                                                                         {
+                                                                             "node":  "Trigger Recon HTTP",
+                                                                             "type":  "main",
+                                                                             "index":  0
+                                                                         }
+                                                                     ]
+                                                                 ]
+                                                    },
+                        "Trigger Recon DNS":  {
+                                                  "main":  [
+                                                               [
+                                                                   {
+                                                                       "node":  "Mark Asset Tested",
+                                                                       "type":  "main",
+                                                                       "index":  0
+                                                                   }
+                                                               ]
+                                                           ]
+                                              },
+                        "Trigger Recon HTTP":  {
+                                                   "main":  [
+                                                                [
+                                                                    {
+                                                                        "node":  "Mark Asset Tested",
+                                                                        "type":  "main",
+                                                                        "index":  0
+                                                                    }
+                                                                ]
+                                                            ]
+                                               },
+                        "Mark Asset Tested":  {
+                                                  "main":  [
+                                                               [
+                                                                   {
+                                                                       "node":  "Audit Log",
+                                                                       "type":  "main",
+                                                                       "index":  0
+                                                                   }
+                                                               ]
+                                                           ]
+                                              }
+                    },
+    "settings":  {
+                     "executionOrder":  "v1",
+                     "saveManualExecutions":  true,
+                     "saveExecutionProgress":  true,
+                     "callerPolicy":  "workflowsFromSameOwner",
+                     "availableInMCP":  false
+                 },
+    "staticData":  {
+                       "node:Cron Every 6h":  {
+                                                  "recurrenceRules":  [
+
+                                                                      ]
+                                              }
+                   },
+    "meta":  null,
+    "pinData":  null,
+    "versionId":  "751e7cd7-86d4-4833-87e7-f2cd3704d3b5",
+    "activeVersionId":  "751e7cd7-86d4-4833-87e7-f2cd3704d3b5",
+    "versionCounter":  7,
+    "triggerCount":  1,
+    "shared":  [
+                   {
+                       "updatedAt":  "2026-04-19T03:30:16.230Z",
+                       "createdAt":  "2026-04-19T03:30:16.230Z",
+                       "role":  "workflow:owner",
+                       "workflowId":  "RfIUUbwFZFWt3GNp",
+                       "projectId":  "Lrgt6JR85OZiVLcX",
+                       "project":  {
+                                       "updatedAt":  "2026-03-31T09:07:31.366Z",
+                                       "createdAt":  "2026-03-31T08:57:43.789Z",
+                                       "id":  "Lrgt6JR85OZiVLcX",
+                                       "name":  "gelson mascarenhas \u003cgelson_m@hotmail.com\u003e",
+                                       "type":  "personal",
+                                       "icon":  null,
+                                       "description":  null,
+                                       "creatorId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                   }
+                   }
+               ],
+    "tags":  [
+
+             ],
+    "activeVersion":  {
+                          "updatedAt":  "2026-04-19T07:27:33.382Z",
+                          "createdAt":  "2026-04-19T07:27:33.382Z",
+                          "versionId":  "751e7cd7-86d4-4833-87e7-f2cd3704d3b5",
+                          "workflowId":  "RfIUUbwFZFWt3GNp",
+                          "nodes":  [
+                                        {
+                                            "parameters":  {
+                                                               "rule":  {
+                                                                            "interval":  [
+                                                                                             {
+                                                                                                 "field":  "cronExpression",
+                                                                                                 "expression":  "0 0,6,12,18 * * *"
+                                                                                             }
+                                                                                         ]
+                                                                        }
+                                                           },
+                                            "id":  "cron-trigger",
+                                            "name":  "Cron Every 6h",
+                                            "type":  "n8n-nodes-base.scheduleTrigger",
+                                            "typeVersion":  1.2,
+                                            "position":  [
+                                                             240,
+                                                             300
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "inputSource":  "passthrough"
+                                                           },
+                                            "id":  "wf-trigger",
+                                            "name":  "Execute Workflow Trigger",
+                                            "type":  "n8n-nodes-base.executeWorkflowTrigger",
+                                            "typeVersion":  1.1,
+                                            "position":  [
+                                                             240,
+                                                             500
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "operation":  "executeQuery",
+                                                               "query":  "SELECT id, client_id, name, rate_limit_profile, testing_window_start, testing_window_end\nFROM engagements\nWHERE status = \u0027active\u0027\n  AND NOW() BETWEEN testing_window_start AND testing_window_end\nORDER BY created_at;",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "pg-active-engagements",
+                                            "name":  "Get Active Engagements",
+                                            "type":  "n8n-nodes-base.postgres",
+                                            "typeVersion":  2.5,
+                                            "position":  [
+                                                             460,
+                                                             300
+                                                         ],
+                                            "credentials":  {
+                                                                "postgres":  {
+                                                                                 "id":  "oHS3dvjMW1h1PkMp",
+                                                                                 "name":  "RECON OS PostgreSQL"
+                                                                             }
+                                                            }
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "conditions":  {
+                                                                                  "options":  {
+                                                                                                  "caseSensitive":  true,
+                                                                                                  "leftValue":  "",
+                                                                                                  "typeValidation":  "strict"
+                                                                                              },
+                                                                                  "conditions":  [
+                                                                                                     {
+                                                                                                         "id":  "cond-eng",
+                                                                                                         "leftValue":  "={{ $input.all().length }}",
+                                                                                                         "rightValue":  0,
+                                                                                                         "operator":  {
+                                                                                                                          "type":  "number",
+                                                                                                                          "operation":  "gt"
+                                                                                                                      }
+                                                                                                     }
+                                                                                                 ],
+                                                                                  "combinator":  "and"
+                                                                              },
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "if-has-engagements",
+                                            "name":  "IF Active Engagements?",
+                                            "type":  "n8n-nodes-base.if",
+                                            "typeVersion":  2.2,
+                                            "position":  [
+                                                             680,
+                                                             300
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "operation":  "executeQuery",
+                                                               "query":  "SELECT a.id as asset_id, a.asset_value, a.asset_type, a.engagement_id, a.scope_status\nFROM assets a\nINNER JOIN engagements e ON a.engagement_id = e.id\nWHERE a.engagement_id = \u0027{{ $json.id }}\u0027\n  AND a.scope_status = \u0027in_scope\u0027\n  AND e.status = \u0027active\u0027\n  AND NOW() BETWEEN e.testing_window_start AND e.testing_window_end\n  AND (a.last_tested IS NULL OR a.last_tested \u003c NOW() - INTERVAL \u002724 hours\u0027)\nLIMIT 50;",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "pg-get-assets",
+                                            "name":  "Get Untested Assets",
+                                            "type":  "n8n-nodes-base.postgres",
+                                            "typeVersion":  2.5,
+                                            "position":  [
+                                                             900,
+                                                             300
+                                                         ],
+                                            "credentials":  {
+                                                                "postgres":  {
+                                                                                 "id":  "oHS3dvjMW1h1PkMp",
+                                                                                 "name":  "RECON OS PostgreSQL"
+                                                                             }
+                                                            }
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "batchSize":  5,
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "split-batches",
+                                            "name":  "Split In Batches",
+                                            "type":  "n8n-nodes-base.splitInBatches",
+                                            "typeVersion":  3,
+                                            "position":  [
+                                                             1120,
+                                                             300
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "jsCode":  "const items = $input.all();\nconst results = [];\nfor (const item of items) {\n  const asset = item.json;\n  const subflows = [];\n  if ([\u0027domain\u0027,\u0027subdomain\u0027].includes(asset.asset_type)) subflows.push(\u0027dns\u0027, \u0027http\u0027);\n  if ([\u0027web_app\u0027,\u0027api\u0027].includes(asset.asset_type)) subflows.push(\u0027http\u0027, \u0027screenshot\u0027);\n  if (asset.asset_type === \u0027ip\u0027) subflows.push(\u0027http\u0027);\n  results.push({ json: { ...asset, subflows } });\n}\nreturn results;"
+                                                           },
+                                            "id":  "determine-subflows",
+                                            "name":  "Determine Sub-Workflows",
+                                            "type":  "n8n-nodes-base.code",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             1340,
+                                                             300
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "method":  "POST",
+                                                               "url":  "={{ $(\u0027Get Active Engagements\u0027).first().json.rate_limit_profile === \u0027stealth\u0027 ? \u0027https://outstanding-blessing-production-1d4b.up.railway.app/webhook/recon-os/recon/dns\u0027 : \u0027https://outstanding-blessing-production-1d4b.up.railway.app/webhook/recon-os/recon/dns\u0027 }}",
+                                                               "sendBody":  true,
+                                                               "specifyBody":  "json",
+                                                               "jsonBody":  "={{ JSON.stringify({ asset_id: $json.asset_id, asset_value: $json.asset_value, engagement_id: $json.engagement_id }) }}",
+                                                               "options":  {
+                                                                               "timeout":  30000
+                                                                           }
+                                                           },
+                                            "id":  "call-recon-dns",
+                                            "name":  "Trigger Recon DNS",
+                                            "type":  "n8n-nodes-base.httpRequest",
+                                            "typeVersion":  4.2,
+                                            "position":  [
+                                                             1560,
+                                                             200
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "method":  "POST",
+                                                               "url":  "https://outstanding-blessing-production-1d4b.up.railway.app/webhook/recon-os/recon/http",
+                                                               "sendBody":  true,
+                                                               "specifyBody":  "json",
+                                                               "jsonBody":  "={{ JSON.stringify({ asset_id: $json.asset_id, asset_value: $json.asset_value, engagement_id: $json.engagement_id }) }}",
+                                                               "options":  {
+                                                                               "timeout":  30000
+                                                                           }
+                                                           },
+                                            "id":  "call-recon-http",
+                                            "name":  "Trigger Recon HTTP",
+                                            "type":  "n8n-nodes-base.httpRequest",
+                                            "typeVersion":  4.2,
+                                            "position":  [
+                                                             1560,
+                                                             380
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "operation":  "executeQuery",
+                                                               "query":  "UPDATE assets SET last_tested = NOW() WHERE id = \u0027{{ $(\u0027Determine Sub-Workflows\u0027).first().json.asset_id }}\u0027;",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "pg-update-tested",
+                                            "name":  "Mark Asset Tested",
+                                            "type":  "n8n-nodes-base.postgres",
+                                            "typeVersion":  2.5,
+                                            "position":  [
+                                                             1780,
+                                                             300
+                                                         ],
+                                            "credentials":  {
+                                                                "postgres":  {
+                                                                                 "id":  "oHS3dvjMW1h1PkMp",
+                                                                                 "name":  "RECON OS PostgreSQL"
+                                                                             }
+                                                            }
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "operation":  "executeQuery",
+                                                               "query":  "INSERT INTO audit_logs (event_type, actor, engagement_id, payload)\nVALUES (\u0027recon_cycle_completed\u0027, \u0027wf04\u0027, \u0027{{ $(\u0027Determine Sub-Workflows\u0027).first().json.engagement_id }}\u0027, \u0027{\"assets_processed\":{{ $(\u0027Split In Batches\u0027).first().json ? 1 : 0 }}}\u0027::jsonb);",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "pg-audit",
+                                            "name":  "Audit Log",
+                                            "type":  "n8n-nodes-base.postgres",
+                                            "typeVersion":  2.5,
+                                            "position":  [
+                                                             2000,
+                                                             300
+                                                         ],
+                                            "credentials":  {
+                                                                "postgres":  {
+                                                                                 "id":  "oHS3dvjMW1h1PkMp",
+                                                                                 "name":  "RECON OS PostgreSQL"
+                                                                             }
+                                                            }
+                                        }
+                                    ],
+                          "connections":  {
+                                              "Cron Every 6h":  {
+                                                                    "main":  [
+                                                                                 [
+                                                                                     {
+                                                                                         "node":  "Get Active Engagements",
+                                                                                         "type":  "main",
+                                                                                         "index":  0
+                                                                                     }
+                                                                                 ]
+                                                                             ]
+                                                                },
+                                              "Execute Workflow Trigger":  {
+                                                                               "main":  [
+                                                                                            [
+                                                                                                {
+                                                                                                    "node":  "Get Active Engagements",
+                                                                                                    "type":  "main",
+                                                                                                    "index":  0
+                                                                                                }
+                                                                                            ]
+                                                                                        ]
+                                                                           },
+                                              "Get Active Engagements":  {
+                                                                             "main":  [
+                                                                                          [
+                                                                                              {
+                                                                                                  "node":  "IF Active Engagements?",
+                                                                                                  "type":  "main",
+                                                                                                  "index":  0
+                                                                                              }
+                                                                                          ]
+                                                                                      ]
+                                                                         },
+                                              "IF Active Engagements?":  {
+                                                                             "main":  [
+                                                                                          [
+                                                                                              {
+                                                                                                  "node":  "Get Untested Assets",
+                                                                                                  "type":  "main",
+                                                                                                  "index":  0
+                                                                                              }
+                                                                                          ],
+                                                                                          [
+
+                                                                                          ]
+                                                                                      ]
+                                                                         },
+                                              "Get Untested Assets":  {
+                                                                          "main":  [
+                                                                                       [
+                                                                                           {
+                                                                                               "node":  "Split In Batches",
+                                                                                               "type":  "main",
+                                                                                               "index":  0
+                                                                                           }
+                                                                                       ]
+                                                                                   ]
+                                                                      },
+                                              "Split In Batches":  {
+                                                                       "main":  [
+                                                                                    [
+                                                                                        {
+                                                                                            "node":  "Determine Sub-Workflows",
+                                                                                            "type":  "main",
+                                                                                            "index":  0
+                                                                                        }
+                                                                                    ]
+                                                                                ]
+                                                                   },
+                                              "Determine Sub-Workflows":  {
+                                                                              "main":  [
+                                                                                           [
+                                                                                               {
+                                                                                                   "node":  "Trigger Recon DNS",
+                                                                                                   "type":  "main",
+                                                                                                   "index":  0
+                                                                                               }
+                                                                                           ],
+                                                                                           [
+                                                                                               {
+                                                                                                   "node":  "Trigger Recon HTTP",
+                                                                                                   "type":  "main",
+                                                                                                   "index":  0
+                                                                                               }
+                                                                                           ]
+                                                                                       ]
+                                                                          },
+                                              "Trigger Recon DNS":  {
+                                                                        "main":  [
+                                                                                     [
+                                                                                         {
+                                                                                             "node":  "Mark Asset Tested",
+                                                                                             "type":  "main",
+                                                                                             "index":  0
+                                                                                         }
+                                                                                     ]
+                                                                                 ]
+                                                                    },
+                                              "Trigger Recon HTTP":  {
+                                                                         "main":  [
+                                                                                      [
+                                                                                          {
+                                                                                              "node":  "Mark Asset Tested",
+                                                                                              "type":  "main",
+                                                                                              "index":  0
+                                                                                          }
+                                                                                      ]
+                                                                                  ]
+                                                                     },
+                                              "Mark Asset Tested":  {
+                                                                        "main":  [
+                                                                                     [
+                                                                                         {
+                                                                                             "node":  "Audit Log",
+                                                                                             "type":  "main",
+                                                                                             "index":  0
+                                                                                         }
+                                                                                     ]
+                                                                                 ]
+                                                                    }
+                                          },
+                          "authors":  "gelson mascarenhas",
+                          "name":  null,
+                          "description":  null,
+                          "autosaved":  false,
+                          "workflowPublishHistory":  [
+                                                         {
+                                                             "createdAt":  "2026-04-19T07:27:33.446Z",
+                                                             "id":  565,
+                                                             "workflowId":  "RfIUUbwFZFWt3GNp",
+                                                             "versionId":  "751e7cd7-86d4-4833-87e7-f2cd3704d3b5",
+                                                             "event":  "deactivated",
+                                                             "userId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                                         },
+                                                         {
+                                                             "createdAt":  "2026-04-19T07:27:33.470Z",
+                                                             "id":  566,
+                                                             "workflowId":  "RfIUUbwFZFWt3GNp",
+                                                             "versionId":  "751e7cd7-86d4-4833-87e7-f2cd3704d3b5",
+                                                             "event":  "activated",
+                                                             "userId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                                         }
+                                                     ]
+                      }
+}

@@ -1,5 +1,5 @@
 ﻿{
-    "updatedAt":  "2026-04-18T18:35:19.661Z",
+    "updatedAt":  "2026-04-19T06:21:22.949Z",
     "createdAt":  "2026-04-18T18:35:19.661Z",
     "id":  "rdjetGa1aegwIB4t",
     "name":  "Crypto Daily Performance Report",
@@ -8,7 +8,7 @@
     "isArchived":  false,
     "nodes":  [
                   {
-                      "id":  "dr01",
+                      "typeVersion":  1.2,
                       "parameters":  {
                                          "rule":  {
                                                       "interval":  [
@@ -19,57 +19,45 @@
                                                                    ]
                                                   }
                                      },
-                      "typeVersion":  1.2,
-                      "type":  "n8n-nodes-base.scheduleTrigger",
+                      "id":  "dr01",
                       "name":  "Daily 08:00 UTC",
                       "position":  [
                                        0,
                                        300
-                                   ]
+                                   ],
+                      "type":  "n8n-nodes-base.scheduleTrigger"
                   },
                   {
-                      "parameters":  {
-                                         "method":  "GET",
-                                         "url":  "https://api.kraken.com/0/public/Ticker?pair=XBTUSD",
-                                         "options":  {
-
-                                                     }
-                                     },
-                      "id":  "dr02",
-                      "onError":  "continueRegularOutput",
                       "typeVersion":  4.2,
                       "type":  "n8n-nodes-base.httpRequest",
                       "position":  [
                                        200,
                                        200
                                    ],
-                      "name":  "Fetch Price"
+                      "name":  "Fetch Price",
+                      "id":  "dr02",
+                      "parameters":  {
+                                         "url":  "https://api.kraken.com/0/public/Ticker?pair=XBTUSD",
+                                         "method":  "GET",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "onError":  "continueRegularOutput"
                   },
                   {
                       "typeVersion":  4.2,
-                      "name":  "Read 24H Signals",
+                      "onError":  "continueRegularOutput",
+                      "type":  "n8n-nodes-base.httpRequest",
                       "position":  [
                                        200,
                                        400
                                    ],
-                      "type":  "n8n-nodes-base.httpRequest",
+                      "name":  "Read 24H Signals",
                       "id":  "dr03",
                       "parameters":  {
-                                         "options":  {
-
-                                                     },
-                                         "headerParameters":  {
-                                                                  "parameters":  [
-                                                                                     {
-                                                                                         "value":  "2dc6c69574c14d615ce146e54640aa13030dade7aa86697c",
-                                                                                         "name":  "X-Vault-Secret"
-                                                                                     }
-                                                                                 ]
-                                                              },
-                                         "sendHeaders":  true,
                                          "sendQuery":  true,
                                          "url":  "https://super-agent-production.up.railway.app/memory/export",
-                                         "method":  "GET",
                                          "queryParameters":  {
                                                                  "parameters":  [
                                                                                     {
@@ -81,20 +69,34 @@
                                                                                         "value":  "crypto_signal"
                                                                                     }
                                                                                 ]
-                                                             }
-                                     },
-                      "onError":  "continueRegularOutput"
+                                                             },
+                                         "method":  "GET",
+                                         "sendHeaders":  true,
+                                         "headerParameters":  {
+                                                                  "parameters":  [
+                                                                                     {
+                                                                                         "value":  "2dc6c69574c14d615ce146e54640aa13030dade7aa86697c",
+                                                                                         "name":  "X-Vault-Secret"
+                                                                                     }
+                                                                                 ]
+                                                              },
+                                         "options":  {
+
+                                                     }
+                                     }
                   },
                   {
                       "typeVersion":  4.2,
+                      "onError":  "continueRegularOutput",
+                      "type":  "n8n-nodes-base.httpRequest",
                       "position":  [
                                        200,
                                        600
                                    ],
                       "name":  "Read Outcomes",
-                      "type":  "n8n-nodes-base.httpRequest",
+                      "id":  "dr04",
                       "parameters":  {
-                                         "method":  "GET",
+                                         "url":  "https://super-agent-production.up.railway.app/memory/export",
                                          "queryParameters":  {
                                                                  "parameters":  [
                                                                                     {
@@ -107,48 +109,36 @@
                                                                                     }
                                                                                 ]
                                                              },
-                                         "url":  "https://super-agent-production.up.railway.app/memory/export",
                                          "sendQuery":  true,
+                                         "method":  "GET",
+                                         "sendHeaders":  true,
                                          "headerParameters":  {
                                                                   "parameters":  [
                                                                                      {
-                                                                                         "name":  "X-Vault-Secret",
-                                                                                         "value":  "2dc6c69574c14d615ce146e54640aa13030dade7aa86697c"
+                                                                                         "value":  "2dc6c69574c14d615ce146e54640aa13030dade7aa86697c",
+                                                                                         "name":  "X-Vault-Secret"
                                                                                      }
                                                                                  ]
                                                               },
-                                         "sendHeaders":  true,
                                          "options":  {
 
                                                      }
-                                     },
-                      "id":  "dr04",
-                      "onError":  "continueRegularOutput"
+                                     }
                   },
                   {
-                      "parameters":  {
-                                         "jsCode":  "const vaultRaw = $(\"Read 24H Signals\").first().json;\nconst outcomeRaw = $(\"Read Outcomes\").first().json;\nconst tickerRaw = $(\"Fetch Price\").first().json;\n\nconst memories = (vaultRaw \u0026\u0026 vaultRaw.memories) ? vaultRaw.memories : [];\nconst outcomes = (outcomeRaw \u0026\u0026 outcomeRaw.memories) ? outcomeRaw.memories : [];\nconst tickerResult = tickerRaw \u0026\u0026 tickerRaw.result ? tickerRaw.result : {};\nconst tickerKey = Object.keys(tickerResult)[0];\nconst ticker = tickerResult[tickerKey] || {};\nconst price = ticker.c ? parseFloat(ticker.c[0]) : 0;\nconst open = ticker.o ? parseFloat(ticker.o[1]) : price;\nconst change24h = open \u003e 0 ? Math.round(((price - open) / open) * 10000) / 100 : 0;\n\n// Count signals from last 24h vault entries\nlet buys = 0, sells = 0, waits = 0;\nconst last24h = new Date(Date.now() - 86400000).toISOString();\nfor (const m of memories) {\n  if (m.created_at \u003c last24h) continue;\n  const c = m.content || \"\";\n  if (c.match(/TRADE SIGNAL.*?BUY/)) buys++;\n  else if (c.match(/TRADE SIGNAL.*?SELL/)) sells++;\n  else if (c.match(/TRADE SIGNAL.*?WAIT/)) waits++;\n}\n\n// Latest outcome report\nlet hitRate = \"N/A\", outcomeSummary = \"No outcome data\";\nfor (const o of outcomes) {\n  const c = o.content || \"\";\n  const hrMatch = c.match(/Hit Rate:\\s*(\\d+)%/);\n  if (hrMatch) {\n    hitRate = hrMatch[1] + \"%\";\n    outcomeSummary = c.split(\"\\n\").slice(0, 4).join(\" | \");\n    break;\n  }\n}\n\nconst totalSignals = buys + sells + waits;\nconst now = new Date();\nconst dateStr = now.toISOString().slice(0, 10);\nconst hour = now.getUTCHours();\n\nconst report = `DAILY CRYPTO REPORT â ${dateStr}\nBTC/USD: $${Math.round(price)} (${change24h \u003e= 0 ? \"+\" : \"\"}${change24h}% 24H)\n\nSIGNALS (last 24h): ${totalSignals} total\nâ¢ BUY: ${buys} | SELL: ${sells} | WAIT: ${waits}\n\nPERFORMANCE:\nHit Rate: ${hitRate}\n${outcomeSummary}\n\nStatus: ${hitRate !== \"N/A\" \u0026\u0026 parseInt(hitRate) \u003e= 55 ? \"â\u0085 ABOVE threshold (55%)\" : hitRate !== \"N/A\" ? \"â ï¸ BELOW threshold â paper trading only\" : \"ð Accumulating data\"}`;\n\nreturn [{ json: { report, price, change24h, buys, sells, waits, hitRate, dateStr } }];"
-                                     },
-                      "id":  "dr05",
                       "typeVersion":  2,
-                      "type":  "n8n-nodes-base.code",
                       "position":  [
                                        400,
                                        400
                                    ],
+                      "type":  "n8n-nodes-base.code",
+                      "parameters":  {
+                                         "jsCode":  "// ââ Build Daily Report + Telegram message âââââââââââââââââââââââââââââââââââââ\nconst vaultRaw   = $(\"Read 24H Signals\").first().json;\nconst outcomeRaw = $(\"Read Outcomes\").first().json;\nconst tickerRaw  = $(\"Fetch Price\").first().json;\n\nconst memories = (vaultRaw   \u0026\u0026 vaultRaw.memories)  ? vaultRaw.memories  : [];\nconst outcomes = (outcomeRaw \u0026\u0026 outcomeRaw.memories) ? outcomeRaw.memories : [];\nconst tickerResult = tickerRaw \u0026\u0026 tickerRaw.result ? tickerRaw.result : {};\nconst tickerKey = Object.keys(tickerResult)[0];\nconst ticker = tickerResult[tickerKey] || {};\nconst price     = ticker.c ? parseFloat(ticker.c[0]) : 0;\nconst open      = ticker.o ? parseFloat(ticker.o[1]) : price;\nconst change24h = open \u003e 0 ? Math.round(((price - open) / open) * 10000) / 100 : 0;\n\nconst dataOk       = price \u003e 0;\nconst signalDataOk = memories.length \u003e 0;\nconst outcomeDataOk = outcomes.length \u003e 0;\n\n// Count signals from last 24h\nlet buys = 0, sells = 0, waits = 0, totalConf = 0, confCount = 0;\nconst last24h = new Date(Date.now() - 86400000).toISOString();\nfor (const m of memories) {\n  if (!m.created_at || m.created_at \u003c last24h) continue;\n  const c = m.content || \u0027\u0027;\n  if (/TRADE SIGNAL[^:]*:\\s*BUY\\s+BTC/.test(c))  buys++;\n  else if (/TRADE SIGNAL[^:]*:\\s*SELL\\s+BTC/.test(c)) sells++;\n  else if (/TRADE SIGNAL[^:]*:\\s*WAIT\\s+BTC/.test(c)) waits++;\n  const cm = c.match(/Confidence:([\\d.]+)%/);\n  if (cm) { totalConf += parseFloat(cm[1]); confCount++; }\n}\n\n// Parse latest outcome report\nlet hitRate = \u0027N/A\u0027, correct = 0, incorrect = 0, gradeable = 0, avgConf = 0;\nlet outcomeSummary = outcomeDataOk ? \u0027No outcome report found\u0027 : \u0027Outcome data unavailable\u0027;\nfor (const o of outcomes) {\n  const c = o.content || \u0027\u0027;\n  const hrMatch = c.match(/Hit Rate:\\s*(\\d+)%.*?\\((\\d+)\\/(\\d+) graded\\)/);\n  if (hrMatch) {\n    hitRate = hrMatch[1] + \u0027%\u0027;\n    correct = parseInt(hrMatch[2]);\n    gradeable = parseInt(hrMatch[3]);\n    incorrect = gradeable - correct;\n    const acMatch = c.match(/Avg Confidence:\\s*([\\d.]+)%/);\n    avgConf = acMatch ? parseFloat(acMatch[1]) : 0;\n    outcomeSummary = c.split(\u0027\\n\u0027).slice(0, 5).join(\u0027 | \u0027).replace(/\\s+/g, \u0027 \u0027);\n    break;\n  }\n}\n\nconst sessionAvgConf = confCount \u003e 0 ? Math.round(totalConf / confCount * 10) / 10 : avgConf;\nconst totalSignals = buys + sells + waits;\nconst dateStr = new Date().toISOString().slice(0, 10);\nconst hitNum  = hitRate !== \u0027N/A\u0027 ? parseInt(hitRate) : -1;\nconst threshold = 55;\n\nconst statusLine = !dataOk\n  ? \u0027PRICE DATA UNAVAILABLE\u0027\n  : !signalDataOk\n  ? \u0027No signals recorded yet\u0027\n  : hitNum \u003e= threshold\n  ? \u0027Hit rate \u0027 + hitRate + \u0027 ABOVE \u0027 + threshold + \u0027% threshold\u0027\n  : hitNum \u003e= 0\n  ? \u0027Hit rate \u0027 + hitRate + \u0027 BELOW \u0027 + threshold + \u0027% - paper trading only\u0027\n  : \u0027Accumulating outcome data\u0027;\n\nconst report = \u0027DAILY CRYPTO REPORT - \u0027 + dateStr +\n  \u0027\\nBTC/USD: $\u0027 + Math.round(price) + \u0027 (\u0027 + (change24h \u003e= 0 ? \u0027+\u0027 : \u0027\u0027) + change24h + \u0027% 24H)\u0027 +\n  (!dataOk ? \u0027 [PRICE FETCH FAILED]\u0027 : \u0027\u0027) +\n  \u0027\\n\\nSIGNALS LAST 24H: \u0027 + totalSignals + \u0027 total\u0027 + (!signalDataOk ? \u0027 [VAULT UNAVAILABLE]\u0027 : \u0027\u0027) +\n  \u0027\\nBUY: \u0027 + buys + \u0027 | SELL: \u0027 + sells + \u0027 | WAIT: \u0027 + waits +\n  \u0027\\nAvg Signal Confidence: \u0027 + sessionAvgConf + \u0027%\u0027 +\n  \u0027\\n\\nPERFORMANCE (cumulative graded):\\nHit Rate: \u0027 + hitRate + \u0027 | Correct: \u0027 + correct + \u0027 | Incorrect: \u0027 + incorrect + \u0027 | Gradeable: \u0027 + gradeable +\n  \u0027\\n\u0027 + outcomeSummary +\n  \u0027\\n\\n\u0027 + statusLine;\n\n// ââ Build Telegram Message ââââââââââââââââââââââââââââââââââââââââââââââââââââ\nconst HR = \u0027\\u2501\u0027.repeat(20);\nconst chgEmoji = change24h \u003e 3 ? \u0027\\uD83D\\uDE80\u0027 : change24h \u003e 0.5 ? \u0027\\uD83D\\uDCC8\u0027 : change24h \u003c -3 ? \u0027\\uD83D\\uDCC9\u0027 : change24h \u003c -0.5 ? \u0027\\uD83D\\uDD34\u0027 : \u0027\\u27A1\\uFE0F\u0027;\nconst hrBadge  = hitNum \u003e= 70 ? \u0027\\uD83D\\uDD25\u0027 : hitNum \u003e= threshold ? \u0027\\u2705\u0027 : hitNum \u003e= 0 ? \u0027\\u26A0\\uFE0F\u0027 : \u0027\\uD83D\\uDCCA\u0027;\nconst hrStatus = !dataOk\n  ? \u0027\\uD83D\\uDEA8 Price data unavailable\u0027\n  : hitNum \u003e= threshold\n  ? \u0027\\u2705 \u003cb\u003eAbove \u0027 + threshold + \u0027% threshold \\u2014 signal quality GOOD\u003c/b\u003e\u0027\n  : hitNum \u003e= 0\n  ? \u0027\\u26A0\\uFE0F \u003cb\u003eBelow \u0027 + threshold + \u0027% \\u2014 paper trading mode\u003c/b\u003e\u0027\n  : \u0027\\uD83D\\uDCCA Building dataset \\u2014 need more signals\u0027;\n\nconst signalBalance = totalSignals \u003e 0\n  ? \u0027Bias: \u0027 + (buys \u003e sells + waits ? \u0027\\uD83D\\uDFE2 Bullish (\u0027 + Math.round(buys/totalSignals*100) + \u0027% BUY)\u0027 : sells \u003e buys + waits ? \u0027\\uD83D\\uDD34 Bearish (\u0027 + Math.round(sells/totalSignals*100) + \u0027% SELL)\u0027 : \u0027\\uD83D\\uDFE1 Neutral (mixed)\u0027)\n  : \u0027No signals recorded\u0027;\n\nconst telegramMsg = [\n  \u0027\\uD83D\\uDDD3 \u003cb\u003eDAILY REPORT \\u2014 CRYPTO SPECIALIST v3\u003c/b\u003e\u0027,\n  \u0027\\uD83D\\uDCC5 \u0027 + dateStr + \u0027 \\u00B7 08:00 UTC\u0027,\n  \u0027\u0027,\n  HR,\n  \u0027\\uD83D\\uDCB0 BTC/USD: \u003cb\u003e$\u0027 + Math.round(price).toLocaleString(\u0027en-US\u0027) + \u0027\u003c/b\u003e   \u0027 + chgEmoji + \u0027 \u0027 + (change24h \u003e= 0 ? \u0027+\u0027 : \u0027\u0027) + change24h + \u0027% 24H\u0027 + (!dataOk ? \u0027  \\uD83D\\uDEA8 PRICE UNAVAILABLE\u0027 : \u0027\u0027),\n  \u0027\u0027,\n  HR,\n  \u0027\\uD83D\\uDCCA \u003cb\u003eSIGNALS (last 24h): \u0027 + totalSignals + \u0027 total\u003c/b\u003e\u0027 + (!signalDataOk ? \u0027  \\uD83D\\uDEA8 VAULT UNAVAILABLE\u0027 : \u0027\u0027),\n  \u0027\\uD83D\\uDFE2 BUY: \u003cb\u003e\u0027 + buys + \u0027\u003c/b\u003e   \\uD83D\\uDD34 SELL: \u003cb\u003e\u0027 + sells + \u0027\u003c/b\u003e   \\u26AA WAIT: \u003cb\u003e\u0027 + waits + \u0027\u003c/b\u003e\u0027,\n  \u0027\\uD83D\\uDCB3 Avg Signal Confidence: \u003cb\u003e\u0027 + sessionAvgConf + \u0027%\u003c/b\u003e\u0027,\n  signalBalance,\n  \u0027\u0027,\n  HR,\n  hrBadge + \u0027 \u003cb\u003ePERFORMANCE (cumulative)\u003c/b\u003e\u0027,\n  \u0027Hit Rate: \u003cb\u003e\u0027 + hitRate + \u0027\u003c/b\u003e   \\u2705 Correct: \u0027 + correct + \u0027   \\u274C Incorrect: \u0027 + incorrect + \u0027   Graded: \u0027 + gradeable,\n  hrStatus,\n  \u0027\u0027,\n  \u0027\u003ci\u003e\\u23F1 Next report: tomorrow 08:00 UTC  \\u00B7  Threshold: \u0027 + threshold + \u0027%  \\u00B7  v3-super\u003c/i\u003e\u0027\n].join(\u0027\\n\u0027);\n\nreturn [{ json: { report, price, change24h, buys, sells, waits, hitRate, correct, incorrect, gradeable, sessionAvgConf, dateStr, dataOk, signalDataOk, outcomeDataOk, telegramMsg } }];\n"
+                                     },
+                      "id":  "dr05",
                       "name":  "Build Daily Report"
                   },
                   {
-                      "parameters":  {
-                                         "additionalFields":  {
-                                                                  "parse_mode":  "HTML"
-                                                              },
-                                         "text":  "={{ \u0027\u003cb\u003eð\u0085 \u0027 + $json.report.split(\u0027\\n\u0027)[0] + \u0027\u003c/b\u003e\\n\\n\u0027 + $json.report.split(\u0027\\n\u0027).slice(1).join(\u0027\\n\u0027) }}",
-                                         "chatId":  "6275020593",
-                                         "resource":  "message",
-                                         "operation":  "sendMessage"
-                                     },
-                      "id":  "dr06",
                       "typeVersion":  1.2,
                       "credentials":  {
                                           "telegramApi":  {
@@ -156,13 +146,23 @@
                                                               "name":  "Telegram account"
                                                           }
                                       },
+                      "id":  "dr06",
+                      "name":  "Send Daily Telegram",
+                      "parameters":  {
+                                         "text":  "={{ $json.telegramMsg }}",
+                                         "resource":  "message",
+                                         "operation":  "sendMessage",
+                                         "chatId":  "6275020593",
+                                         "additionalFields":  {
+                                                                  "parse_mode":  "HTML"
+                                                              }
+                                     },
                       "type":  "n8n-nodes-base.telegram",
+                      "webhookId":  "de717361-918a-4740-ba0b-7ef7e125af8b",
                       "position":  [
                                        600,
                                        400
-                                   ],
-                      "name":  "Send Daily Telegram",
-                      "webhookId":  "de717361-918a-4740-ba0b-7ef7e125af8b"
+                                   ]
                   }
               ],
     "connections":  {
@@ -171,8 +171,8 @@
                                                            [
                                                                {
                                                                    "type":  "main",
-                                                                   "index":  0,
-                                                                   "node":  "Build Daily Report"
+                                                                   "node":  "Build Daily Report",
+                                                                   "index":  0
                                                                }
                                                            ]
                                                        ]
@@ -181,20 +181,31 @@
                                             "main":  [
                                                          [
                                                              {
-                                                                 "type":  "main",
                                                                  "index":  0,
-                                                                 "node":  "Build Daily Report"
+                                                                 "node":  "Build Daily Report",
+                                                                 "type":  "main"
                                                              }
                                                          ]
                                                      ]
                                         },
+                        "Build Daily Report":  {
+                                                   "main":  [
+                                                                [
+                                                                    {
+                                                                        "node":  "Send Daily Telegram",
+                                                                        "type":  "main",
+                                                                        "index":  0
+                                                                    }
+                                                                ]
+                                                            ]
+                                               },
                         "Daily 08:00 UTC":  {
                                                 "main":  [
                                                              [
                                                                  {
                                                                      "index":  0,
-                                                                     "type":  "main",
-                                                                     "node":  "Fetch Price"
+                                                                     "node":  "Fetch Price",
+                                                                     "type":  "main"
                                                                  },
                                                                  {
                                                                      "node":  "Read 24H Signals",
@@ -202,31 +213,20 @@
                                                                      "index":  0
                                                                  },
                                                                  {
-                                                                     "node":  "Read Outcomes",
                                                                      "type":  "main",
+                                                                     "node":  "Read Outcomes",
                                                                      "index":  0
                                                                  }
                                                              ]
                                                          ]
                                             },
-                        "Build Daily Report":  {
-                                                   "main":  [
-                                                                [
-                                                                    {
-                                                                        "node":  "Send Daily Telegram",
-                                                                        "index":  0,
-                                                                        "type":  "main"
-                                                                    }
-                                                                ]
-                                                            ]
-                                               },
                         "Read 24H Signals":  {
                                                  "main":  [
                                                               [
                                                                   {
-                                                                      "index":  0,
+                                                                      "node":  "Build Daily Report",
                                                                       "type":  "main",
-                                                                      "node":  "Build Daily Report"
+                                                                      "index":  0
                                                                   }
                                                               ]
                                                           ]
@@ -246,9 +246,9 @@
                    },
     "meta":  null,
     "pinData":  null,
-    "versionId":  "ed09e9cb-c4b8-4dc3-bc6d-8343c87c20c9",
-    "activeVersionId":  "ed09e9cb-c4b8-4dc3-bc6d-8343c87c20c9",
-    "versionCounter":  4,
+    "versionId":  "3f46d425-ea49-4390-ad32-134aed27207b",
+    "activeVersionId":  "3f46d425-ea49-4390-ad32-134aed27207b",
+    "versionCounter":  24,
     "triggerCount":  1,
     "shared":  [
                    {
@@ -273,13 +273,13 @@
 
              ],
     "activeVersion":  {
-                          "updatedAt":  "2026-04-18T18:35:19.669Z",
-                          "createdAt":  "2026-04-18T18:35:19.669Z",
-                          "versionId":  "ed09e9cb-c4b8-4dc3-bc6d-8343c87c20c9",
+                          "updatedAt":  "2026-04-19T06:21:22.951Z",
+                          "createdAt":  "2026-04-19T06:21:22.951Z",
+                          "versionId":  "3f46d425-ea49-4390-ad32-134aed27207b",
                           "workflowId":  "rdjetGa1aegwIB4t",
                           "nodes":  [
                                         {
-                                            "id":  "dr01",
+                                            "typeVersion":  1.2,
                                             "parameters":  {
                                                                "rule":  {
                                                                             "interval":  [
@@ -290,57 +290,45 @@
                                                                                          ]
                                                                         }
                                                            },
-                                            "typeVersion":  1.2,
-                                            "type":  "n8n-nodes-base.scheduleTrigger",
+                                            "id":  "dr01",
                                             "name":  "Daily 08:00 UTC",
                                             "position":  [
                                                              0,
                                                              300
-                                                         ]
+                                                         ],
+                                            "type":  "n8n-nodes-base.scheduleTrigger"
                                         },
                                         {
-                                            "parameters":  {
-                                                               "method":  "GET",
-                                                               "url":  "https://api.kraken.com/0/public/Ticker?pair=XBTUSD",
-                                                               "options":  {
-
-                                                                           }
-                                                           },
-                                            "id":  "dr02",
-                                            "onError":  "continueRegularOutput",
                                             "typeVersion":  4.2,
                                             "type":  "n8n-nodes-base.httpRequest",
                                             "position":  [
                                                              200,
                                                              200
                                                          ],
-                                            "name":  "Fetch Price"
+                                            "name":  "Fetch Price",
+                                            "id":  "dr02",
+                                            "parameters":  {
+                                                               "url":  "https://api.kraken.com/0/public/Ticker?pair=XBTUSD",
+                                                               "method":  "GET",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "onError":  "continueRegularOutput"
                                         },
                                         {
                                             "typeVersion":  4.2,
-                                            "name":  "Read 24H Signals",
+                                            "onError":  "continueRegularOutput",
+                                            "type":  "n8n-nodes-base.httpRequest",
                                             "position":  [
                                                              200,
                                                              400
                                                          ],
-                                            "type":  "n8n-nodes-base.httpRequest",
+                                            "name":  "Read 24H Signals",
                                             "id":  "dr03",
                                             "parameters":  {
-                                                               "options":  {
-
-                                                                           },
-                                                               "headerParameters":  {
-                                                                                        "parameters":  [
-                                                                                                           {
-                                                                                                               "value":  "2dc6c69574c14d615ce146e54640aa13030dade7aa86697c",
-                                                                                                               "name":  "X-Vault-Secret"
-                                                                                                           }
-                                                                                                       ]
-                                                                                    },
-                                                               "sendHeaders":  true,
                                                                "sendQuery":  true,
                                                                "url":  "https://super-agent-production.up.railway.app/memory/export",
-                                                               "method":  "GET",
                                                                "queryParameters":  {
                                                                                        "parameters":  [
                                                                                                           {
@@ -352,20 +340,34 @@
                                                                                                               "value":  "crypto_signal"
                                                                                                           }
                                                                                                       ]
-                                                                                   }
-                                                           },
-                                            "onError":  "continueRegularOutput"
+                                                                                   },
+                                                               "method":  "GET",
+                                                               "sendHeaders":  true,
+                                                               "headerParameters":  {
+                                                                                        "parameters":  [
+                                                                                                           {
+                                                                                                               "value":  "2dc6c69574c14d615ce146e54640aa13030dade7aa86697c",
+                                                                                                               "name":  "X-Vault-Secret"
+                                                                                                           }
+                                                                                                       ]
+                                                                                    },
+                                                               "options":  {
+
+                                                                           }
+                                                           }
                                         },
                                         {
                                             "typeVersion":  4.2,
+                                            "onError":  "continueRegularOutput",
+                                            "type":  "n8n-nodes-base.httpRequest",
                                             "position":  [
                                                              200,
                                                              600
                                                          ],
                                             "name":  "Read Outcomes",
-                                            "type":  "n8n-nodes-base.httpRequest",
+                                            "id":  "dr04",
                                             "parameters":  {
-                                                               "method":  "GET",
+                                                               "url":  "https://super-agent-production.up.railway.app/memory/export",
                                                                "queryParameters":  {
                                                                                        "parameters":  [
                                                                                                           {
@@ -378,48 +380,36 @@
                                                                                                           }
                                                                                                       ]
                                                                                    },
-                                                               "url":  "https://super-agent-production.up.railway.app/memory/export",
                                                                "sendQuery":  true,
+                                                               "method":  "GET",
+                                                               "sendHeaders":  true,
                                                                "headerParameters":  {
                                                                                         "parameters":  [
                                                                                                            {
-                                                                                                               "name":  "X-Vault-Secret",
-                                                                                                               "value":  "2dc6c69574c14d615ce146e54640aa13030dade7aa86697c"
+                                                                                                               "value":  "2dc6c69574c14d615ce146e54640aa13030dade7aa86697c",
+                                                                                                               "name":  "X-Vault-Secret"
                                                                                                            }
                                                                                                        ]
                                                                                     },
-                                                               "sendHeaders":  true,
                                                                "options":  {
 
                                                                            }
-                                                           },
-                                            "id":  "dr04",
-                                            "onError":  "continueRegularOutput"
+                                                           }
                                         },
                                         {
-                                            "parameters":  {
-                                                               "jsCode":  "const vaultRaw = $(\"Read 24H Signals\").first().json;\nconst outcomeRaw = $(\"Read Outcomes\").first().json;\nconst tickerRaw = $(\"Fetch Price\").first().json;\n\nconst memories = (vaultRaw \u0026\u0026 vaultRaw.memories) ? vaultRaw.memories : [];\nconst outcomes = (outcomeRaw \u0026\u0026 outcomeRaw.memories) ? outcomeRaw.memories : [];\nconst tickerResult = tickerRaw \u0026\u0026 tickerRaw.result ? tickerRaw.result : {};\nconst tickerKey = Object.keys(tickerResult)[0];\nconst ticker = tickerResult[tickerKey] || {};\nconst price = ticker.c ? parseFloat(ticker.c[0]) : 0;\nconst open = ticker.o ? parseFloat(ticker.o[1]) : price;\nconst change24h = open \u003e 0 ? Math.round(((price - open) / open) * 10000) / 100 : 0;\n\n// Count signals from last 24h vault entries\nlet buys = 0, sells = 0, waits = 0;\nconst last24h = new Date(Date.now() - 86400000).toISOString();\nfor (const m of memories) {\n  if (m.created_at \u003c last24h) continue;\n  const c = m.content || \"\";\n  if (c.match(/TRADE SIGNAL.*?BUY/)) buys++;\n  else if (c.match(/TRADE SIGNAL.*?SELL/)) sells++;\n  else if (c.match(/TRADE SIGNAL.*?WAIT/)) waits++;\n}\n\n// Latest outcome report\nlet hitRate = \"N/A\", outcomeSummary = \"No outcome data\";\nfor (const o of outcomes) {\n  const c = o.content || \"\";\n  const hrMatch = c.match(/Hit Rate:\\s*(\\d+)%/);\n  if (hrMatch) {\n    hitRate = hrMatch[1] + \"%\";\n    outcomeSummary = c.split(\"\\n\").slice(0, 4).join(\" | \");\n    break;\n  }\n}\n\nconst totalSignals = buys + sells + waits;\nconst now = new Date();\nconst dateStr = now.toISOString().slice(0, 10);\nconst hour = now.getUTCHours();\n\nconst report = `DAILY CRYPTO REPORT â ${dateStr}\nBTC/USD: $${Math.round(price)} (${change24h \u003e= 0 ? \"+\" : \"\"}${change24h}% 24H)\n\nSIGNALS (last 24h): ${totalSignals} total\nâ¢ BUY: ${buys} | SELL: ${sells} | WAIT: ${waits}\n\nPERFORMANCE:\nHit Rate: ${hitRate}\n${outcomeSummary}\n\nStatus: ${hitRate !== \"N/A\" \u0026\u0026 parseInt(hitRate) \u003e= 55 ? \"â\u0085 ABOVE threshold (55%)\" : hitRate !== \"N/A\" ? \"â ï¸ BELOW threshold â paper trading only\" : \"ð Accumulating data\"}`;\n\nreturn [{ json: { report, price, change24h, buys, sells, waits, hitRate, dateStr } }];"
-                                                           },
-                                            "id":  "dr05",
                                             "typeVersion":  2,
-                                            "type":  "n8n-nodes-base.code",
                                             "position":  [
                                                              400,
                                                              400
                                                          ],
+                                            "type":  "n8n-nodes-base.code",
+                                            "parameters":  {
+                                                               "jsCode":  "// ââ Build Daily Report + Telegram message âââââââââââââââââââââââââââââââââââââ\nconst vaultRaw   = $(\"Read 24H Signals\").first().json;\nconst outcomeRaw = $(\"Read Outcomes\").first().json;\nconst tickerRaw  = $(\"Fetch Price\").first().json;\n\nconst memories = (vaultRaw   \u0026\u0026 vaultRaw.memories)  ? vaultRaw.memories  : [];\nconst outcomes = (outcomeRaw \u0026\u0026 outcomeRaw.memories) ? outcomeRaw.memories : [];\nconst tickerResult = tickerRaw \u0026\u0026 tickerRaw.result ? tickerRaw.result : {};\nconst tickerKey = Object.keys(tickerResult)[0];\nconst ticker = tickerResult[tickerKey] || {};\nconst price     = ticker.c ? parseFloat(ticker.c[0]) : 0;\nconst open      = ticker.o ? parseFloat(ticker.o[1]) : price;\nconst change24h = open \u003e 0 ? Math.round(((price - open) / open) * 10000) / 100 : 0;\n\nconst dataOk       = price \u003e 0;\nconst signalDataOk = memories.length \u003e 0;\nconst outcomeDataOk = outcomes.length \u003e 0;\n\n// Count signals from last 24h\nlet buys = 0, sells = 0, waits = 0, totalConf = 0, confCount = 0;\nconst last24h = new Date(Date.now() - 86400000).toISOString();\nfor (const m of memories) {\n  if (!m.created_at || m.created_at \u003c last24h) continue;\n  const c = m.content || \u0027\u0027;\n  if (/TRADE SIGNAL[^:]*:\\s*BUY\\s+BTC/.test(c))  buys++;\n  else if (/TRADE SIGNAL[^:]*:\\s*SELL\\s+BTC/.test(c)) sells++;\n  else if (/TRADE SIGNAL[^:]*:\\s*WAIT\\s+BTC/.test(c)) waits++;\n  const cm = c.match(/Confidence:([\\d.]+)%/);\n  if (cm) { totalConf += parseFloat(cm[1]); confCount++; }\n}\n\n// Parse latest outcome report\nlet hitRate = \u0027N/A\u0027, correct = 0, incorrect = 0, gradeable = 0, avgConf = 0;\nlet outcomeSummary = outcomeDataOk ? \u0027No outcome report found\u0027 : \u0027Outcome data unavailable\u0027;\nfor (const o of outcomes) {\n  const c = o.content || \u0027\u0027;\n  const hrMatch = c.match(/Hit Rate:\\s*(\\d+)%.*?\\((\\d+)\\/(\\d+) graded\\)/);\n  if (hrMatch) {\n    hitRate = hrMatch[1] + \u0027%\u0027;\n    correct = parseInt(hrMatch[2]);\n    gradeable = parseInt(hrMatch[3]);\n    incorrect = gradeable - correct;\n    const acMatch = c.match(/Avg Confidence:\\s*([\\d.]+)%/);\n    avgConf = acMatch ? parseFloat(acMatch[1]) : 0;\n    outcomeSummary = c.split(\u0027\\n\u0027).slice(0, 5).join(\u0027 | \u0027).replace(/\\s+/g, \u0027 \u0027);\n    break;\n  }\n}\n\nconst sessionAvgConf = confCount \u003e 0 ? Math.round(totalConf / confCount * 10) / 10 : avgConf;\nconst totalSignals = buys + sells + waits;\nconst dateStr = new Date().toISOString().slice(0, 10);\nconst hitNum  = hitRate !== \u0027N/A\u0027 ? parseInt(hitRate) : -1;\nconst threshold = 55;\n\nconst statusLine = !dataOk\n  ? \u0027PRICE DATA UNAVAILABLE\u0027\n  : !signalDataOk\n  ? \u0027No signals recorded yet\u0027\n  : hitNum \u003e= threshold\n  ? \u0027Hit rate \u0027 + hitRate + \u0027 ABOVE \u0027 + threshold + \u0027% threshold\u0027\n  : hitNum \u003e= 0\n  ? \u0027Hit rate \u0027 + hitRate + \u0027 BELOW \u0027 + threshold + \u0027% - paper trading only\u0027\n  : \u0027Accumulating outcome data\u0027;\n\nconst report = \u0027DAILY CRYPTO REPORT - \u0027 + dateStr +\n  \u0027\\nBTC/USD: $\u0027 + Math.round(price) + \u0027 (\u0027 + (change24h \u003e= 0 ? \u0027+\u0027 : \u0027\u0027) + change24h + \u0027% 24H)\u0027 +\n  (!dataOk ? \u0027 [PRICE FETCH FAILED]\u0027 : \u0027\u0027) +\n  \u0027\\n\\nSIGNALS LAST 24H: \u0027 + totalSignals + \u0027 total\u0027 + (!signalDataOk ? \u0027 [VAULT UNAVAILABLE]\u0027 : \u0027\u0027) +\n  \u0027\\nBUY: \u0027 + buys + \u0027 | SELL: \u0027 + sells + \u0027 | WAIT: \u0027 + waits +\n  \u0027\\nAvg Signal Confidence: \u0027 + sessionAvgConf + \u0027%\u0027 +\n  \u0027\\n\\nPERFORMANCE (cumulative graded):\\nHit Rate: \u0027 + hitRate + \u0027 | Correct: \u0027 + correct + \u0027 | Incorrect: \u0027 + incorrect + \u0027 | Gradeable: \u0027 + gradeable +\n  \u0027\\n\u0027 + outcomeSummary +\n  \u0027\\n\\n\u0027 + statusLine;\n\n// ââ Build Telegram Message ââââââââââââââââââââââââââââââââââââââââââââââââââââ\nconst HR = \u0027\\u2501\u0027.repeat(20);\nconst chgEmoji = change24h \u003e 3 ? \u0027\\uD83D\\uDE80\u0027 : change24h \u003e 0.5 ? \u0027\\uD83D\\uDCC8\u0027 : change24h \u003c -3 ? \u0027\\uD83D\\uDCC9\u0027 : change24h \u003c -0.5 ? \u0027\\uD83D\\uDD34\u0027 : \u0027\\u27A1\\uFE0F\u0027;\nconst hrBadge  = hitNum \u003e= 70 ? \u0027\\uD83D\\uDD25\u0027 : hitNum \u003e= threshold ? \u0027\\u2705\u0027 : hitNum \u003e= 0 ? \u0027\\u26A0\\uFE0F\u0027 : \u0027\\uD83D\\uDCCA\u0027;\nconst hrStatus = !dataOk\n  ? \u0027\\uD83D\\uDEA8 Price data unavailable\u0027\n  : hitNum \u003e= threshold\n  ? \u0027\\u2705 \u003cb\u003eAbove \u0027 + threshold + \u0027% threshold \\u2014 signal quality GOOD\u003c/b\u003e\u0027\n  : hitNum \u003e= 0\n  ? \u0027\\u26A0\\uFE0F \u003cb\u003eBelow \u0027 + threshold + \u0027% \\u2014 paper trading mode\u003c/b\u003e\u0027\n  : \u0027\\uD83D\\uDCCA Building dataset \\u2014 need more signals\u0027;\n\nconst signalBalance = totalSignals \u003e 0\n  ? \u0027Bias: \u0027 + (buys \u003e sells + waits ? \u0027\\uD83D\\uDFE2 Bullish (\u0027 + Math.round(buys/totalSignals*100) + \u0027% BUY)\u0027 : sells \u003e buys + waits ? \u0027\\uD83D\\uDD34 Bearish (\u0027 + Math.round(sells/totalSignals*100) + \u0027% SELL)\u0027 : \u0027\\uD83D\\uDFE1 Neutral (mixed)\u0027)\n  : \u0027No signals recorded\u0027;\n\nconst telegramMsg = [\n  \u0027\\uD83D\\uDDD3 \u003cb\u003eDAILY REPORT \\u2014 CRYPTO SPECIALIST v3\u003c/b\u003e\u0027,\n  \u0027\\uD83D\\uDCC5 \u0027 + dateStr + \u0027 \\u00B7 08:00 UTC\u0027,\n  \u0027\u0027,\n  HR,\n  \u0027\\uD83D\\uDCB0 BTC/USD: \u003cb\u003e$\u0027 + Math.round(price).toLocaleString(\u0027en-US\u0027) + \u0027\u003c/b\u003e   \u0027 + chgEmoji + \u0027 \u0027 + (change24h \u003e= 0 ? \u0027+\u0027 : \u0027\u0027) + change24h + \u0027% 24H\u0027 + (!dataOk ? \u0027  \\uD83D\\uDEA8 PRICE UNAVAILABLE\u0027 : \u0027\u0027),\n  \u0027\u0027,\n  HR,\n  \u0027\\uD83D\\uDCCA \u003cb\u003eSIGNALS (last 24h): \u0027 + totalSignals + \u0027 total\u003c/b\u003e\u0027 + (!signalDataOk ? \u0027  \\uD83D\\uDEA8 VAULT UNAVAILABLE\u0027 : \u0027\u0027),\n  \u0027\\uD83D\\uDFE2 BUY: \u003cb\u003e\u0027 + buys + \u0027\u003c/b\u003e   \\uD83D\\uDD34 SELL: \u003cb\u003e\u0027 + sells + \u0027\u003c/b\u003e   \\u26AA WAIT: \u003cb\u003e\u0027 + waits + \u0027\u003c/b\u003e\u0027,\n  \u0027\\uD83D\\uDCB3 Avg Signal Confidence: \u003cb\u003e\u0027 + sessionAvgConf + \u0027%\u003c/b\u003e\u0027,\n  signalBalance,\n  \u0027\u0027,\n  HR,\n  hrBadge + \u0027 \u003cb\u003ePERFORMANCE (cumulative)\u003c/b\u003e\u0027,\n  \u0027Hit Rate: \u003cb\u003e\u0027 + hitRate + \u0027\u003c/b\u003e   \\u2705 Correct: \u0027 + correct + \u0027   \\u274C Incorrect: \u0027 + incorrect + \u0027   Graded: \u0027 + gradeable,\n  hrStatus,\n  \u0027\u0027,\n  \u0027\u003ci\u003e\\u23F1 Next report: tomorrow 08:00 UTC  \\u00B7  Threshold: \u0027 + threshold + \u0027%  \\u00B7  v3-super\u003c/i\u003e\u0027\n].join(\u0027\\n\u0027);\n\nreturn [{ json: { report, price, change24h, buys, sells, waits, hitRate, correct, incorrect, gradeable, sessionAvgConf, dateStr, dataOk, signalDataOk, outcomeDataOk, telegramMsg } }];\n"
+                                                           },
+                                            "id":  "dr05",
                                             "name":  "Build Daily Report"
                                         },
                                         {
-                                            "parameters":  {
-                                                               "additionalFields":  {
-                                                                                        "parse_mode":  "HTML"
-                                                                                    },
-                                                               "text":  "={{ \u0027\u003cb\u003eð\u0085 \u0027 + $json.report.split(\u0027\\n\u0027)[0] + \u0027\u003c/b\u003e\\n\\n\u0027 + $json.report.split(\u0027\\n\u0027).slice(1).join(\u0027\\n\u0027) }}",
-                                                               "chatId":  "6275020593",
-                                                               "resource":  "message",
-                                                               "operation":  "sendMessage"
-                                                           },
-                                            "id":  "dr06",
                                             "typeVersion":  1.2,
                                             "credentials":  {
                                                                 "telegramApi":  {
@@ -427,13 +417,23 @@
                                                                                     "name":  "Telegram account"
                                                                                 }
                                                             },
+                                            "id":  "dr06",
+                                            "name":  "Send Daily Telegram",
+                                            "parameters":  {
+                                                               "text":  "={{ $json.telegramMsg }}",
+                                                               "resource":  "message",
+                                                               "operation":  "sendMessage",
+                                                               "chatId":  "6275020593",
+                                                               "additionalFields":  {
+                                                                                        "parse_mode":  "HTML"
+                                                                                    }
+                                                           },
                                             "type":  "n8n-nodes-base.telegram",
+                                            "webhookId":  "de717361-918a-4740-ba0b-7ef7e125af8b",
                                             "position":  [
                                                              600,
                                                              400
-                                                         ],
-                                            "name":  "Send Daily Telegram",
-                                            "webhookId":  "de717361-918a-4740-ba0b-7ef7e125af8b"
+                                                         ]
                                         }
                                     ],
                           "connections":  {
@@ -442,8 +442,8 @@
                                                                                  [
                                                                                      {
                                                                                          "type":  "main",
-                                                                                         "index":  0,
-                                                                                         "node":  "Build Daily Report"
+                                                                                         "node":  "Build Daily Report",
+                                                                                         "index":  0
                                                                                      }
                                                                                  ]
                                                                              ]
@@ -452,20 +452,31 @@
                                                                   "main":  [
                                                                                [
                                                                                    {
-                                                                                       "type":  "main",
                                                                                        "index":  0,
-                                                                                       "node":  "Build Daily Report"
+                                                                                       "node":  "Build Daily Report",
+                                                                                       "type":  "main"
                                                                                    }
                                                                                ]
                                                                            ]
                                                               },
+                                              "Build Daily Report":  {
+                                                                         "main":  [
+                                                                                      [
+                                                                                          {
+                                                                                              "node":  "Send Daily Telegram",
+                                                                                              "type":  "main",
+                                                                                              "index":  0
+                                                                                          }
+                                                                                      ]
+                                                                                  ]
+                                                                     },
                                               "Daily 08:00 UTC":  {
                                                                       "main":  [
                                                                                    [
                                                                                        {
                                                                                            "index":  0,
-                                                                                           "type":  "main",
-                                                                                           "node":  "Fetch Price"
+                                                                                           "node":  "Fetch Price",
+                                                                                           "type":  "main"
                                                                                        },
                                                                                        {
                                                                                            "node":  "Read 24H Signals",
@@ -473,31 +484,20 @@
                                                                                            "index":  0
                                                                                        },
                                                                                        {
-                                                                                           "node":  "Read Outcomes",
                                                                                            "type":  "main",
+                                                                                           "node":  "Read Outcomes",
                                                                                            "index":  0
                                                                                        }
                                                                                    ]
                                                                                ]
                                                                   },
-                                              "Build Daily Report":  {
-                                                                         "main":  [
-                                                                                      [
-                                                                                          {
-                                                                                              "node":  "Send Daily Telegram",
-                                                                                              "index":  0,
-                                                                                              "type":  "main"
-                                                                                          }
-                                                                                      ]
-                                                                                  ]
-                                                                     },
                                               "Read 24H Signals":  {
                                                                        "main":  [
                                                                                     [
                                                                                         {
-                                                                                            "index":  0,
+                                                                                            "node":  "Build Daily Report",
                                                                                             "type":  "main",
-                                                                                            "node":  "Build Daily Report"
+                                                                                            "index":  0
                                                                                         }
                                                                                     ]
                                                                                 ]
@@ -509,10 +509,10 @@
                           "autosaved":  false,
                           "workflowPublishHistory":  [
                                                          {
-                                                             "createdAt":  "2026-04-18T18:35:31.498Z",
-                                                             "id":  416,
+                                                             "createdAt":  "2026-04-19T06:21:23.356Z",
+                                                             "id":  523,
                                                              "workflowId":  "rdjetGa1aegwIB4t",
-                                                             "versionId":  "ed09e9cb-c4b8-4dc3-bc6d-8343c87c20c9",
+                                                             "versionId":  "3f46d425-ea49-4390-ad32-134aed27207b",
                                                              "event":  "activated",
                                                              "userId":  "09977cda-9140-4e68-a948-e88d1f400c18"
                                                          }

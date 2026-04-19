@@ -1,0 +1,549 @@
+﻿{
+    "updatedAt":  "2026-04-19T07:27:31.296Z",
+    "createdAt":  "2026-04-19T03:30:21.885Z",
+    "id":  "Ejd6MjrInCScZ8bv",
+    "name":  "RECON OS - WF-22 Weakness Heatmap",
+    "description":  null,
+    "active":  true,
+    "isArchived":  false,
+    "nodes":  [
+                  {
+                      "parameters":  {
+                                         "rule":  {
+                                                      "interval":  [
+                                                                       {
+                                                                           "field":  "cronExpression",
+                                                                           "expression":  "0 6 * * 1"
+                                                                       }
+                                                                   ]
+                                                  }
+                                     },
+                      "id":  "cron-weekly",
+                      "name":  "Cron Weekly Monday",
+                      "type":  "n8n-nodes-base.scheduleTrigger",
+                      "typeVersion":  1.2,
+                      "position":  [
+                                       240,
+                                       300
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "httpMethod":  "POST",
+                                         "path":  "recon-os/internal/heatmap",
+                                         "responseMode":  "lastNode",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "wh-heatmap",
+                      "name":  "Webhook",
+                      "type":  "n8n-nodes-base.webhook",
+                      "typeVersion":  2,
+                      "position":  [
+                                       240,
+                                       500
+                                   ],
+                      "webhookId":  "recon-os-internal-heatmap"
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "SELECT\n  c.id as client_id,\n  c.name as client_name,\n  nf.category,\n  nf.cwe_id,\n  nf.owasp_category,\n  COUNT(nf.id) as occurrence_count,\n  COUNT(DISTINCT nf.engagement_id) as engagement_count,\n  MIN(nf.first_seen) as first_seen,\n  MAX(nf.last_seen) as last_seen,\n  AVG(nf.recon_score) as avg_score,\n  COUNT(nf.id) FILTER (WHERE nf.remediation_status = \u0027verified_fixed\u0027) as times_fixed,\n  COUNT(nf.id) FILTER (WHERE nf.reopen_count \u003e 0) as times_reopened\nFROM normalized_findings nf\nJOIN engagements e ON nf.engagement_id = e.id\nJOIN clients c ON e.client_id = c.id\nWHERE nf.validation_status IN (\u0027validated\u0027,\u0027analyst_reviewed\u0027,\u0027verified_fixed\u0027)\n  AND nf.cwe_id IS NOT NULL\nGROUP BY c.id, c.name, nf.category, nf.cwe_id, nf.owasp_category\nHAVING COUNT(DISTINCT nf.engagement_id) \u003e= 1\nORDER BY c.id, occurrence_count DESC;",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "pg-get-patterns",
+                      "name":  "Get Cross-Engagement Patterns",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       460,
+                                       300
+                                   ],
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "oHS3dvjMW1h1PkMp",
+                                                           "name":  "RECON OS PostgreSQL"
+                                                       }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "const patterns = $input.all().map(i =\u003e i.json);\nconst results = [];\n\nfor (const p of patterns) {\n  const occurrences = parseInt(p.occurrence_count||0);\n  const engagements = parseInt(p.engagement_count||0);\n  const timesReopened = parseInt(p.times_reopened||0);\n  const timesFixed = parseInt(p.times_fixed||0);\n\n  // Determine pattern type\n  let patternType = \u0027recurring\u0027;\n  let narrative = \u0027\u0027;\n\n  if (engagements \u003e= 3 \u0026\u0026 timesFixed \u003e 0 \u0026\u0026 timesReopened \u003e 0) {\n    patternType = \u0027systemic\u0027;\n    narrative = `${p.cwe_id} (${p.category}) has appeared in ${engagements} engagements for ${p.client_name}. Despite ${timesFixed} fix attempt(s), it has reopened ${timesReopened} time(s), indicating a systemic weakness in the development process.`;\n  } else if (engagements \u003e= 2) {\n    patternType = \u0027recurring\u0027;\n    narrative = `${p.cwe_id} (${p.category}) has recurred across ${engagements} engagements for ${p.client_name}. Pattern suggests this vulnerability class is not being addressed at root cause.`;\n  } else {\n    patternType = \u0027emerging\u0027;\n    narrative = `${p.cwe_id} (${p.category}) first detected for ${p.client_name}. Monitor for recurrence.`;\n  }\n\n  results.push({\n    client_id: p.client_id,\n    category: p.category,\n    cwe_id: p.cwe_id,\n    owasp_category: p.owasp_category,\n    occurrence_count: occurrences,\n    engagement_count: engagements,\n    first_seen: p.first_seen,\n    last_seen: p.last_seen,\n    pattern_type: patternType,\n    narrative\n  });\n}\n\n// Build summary for Slack\nconst systemic = results.filter(r =\u003e r.pattern_type === \u0027systemic\u0027);\nconst recurring = results.filter(r =\u003e r.pattern_type === \u0027recurring\u0027);\n\nconst slackSummary = [\n  `?? *RECON OS - Weekly Weakness Heatmap*`,\n  `Date: ${new Date().toISOString().split(\u0027T\u0027)[0]}`,\n  `Patterns analyzed: ${results.length}`,\n  systemic.length \u003e 0 ? `\\n?? *SYSTEMIC (${systemic.length})*:` : \u0027\u0027,\n  ...systemic.slice(0,3).map(s =\u003e `  . ${s.cwe_id} - ${s.client_id} - ${s.engagement_count} engagements, reopened ${s.occurrence_count}?`),\n  recurring.length \u003e 0 ? `\\n?? *RECURRING (${recurring.length})*:` : \u0027\u0027,\n  ...recurring.slice(0,3).map(r =\u003e `  . ${r.cwe_id} (${r.category}) - ${r.engagement_count} engagements`)\n].filter(Boolean).join(\u0027\\n\u0027);\n\nreturn [{ json: { patterns: results, slack_summary: slackSummary, systemic_count: systemic.length, total: results.length } }];"
+                                     },
+                      "id":  "analyze-patterns",
+                      "name":  "Analyze Weakness Patterns",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       680,
+                                       300
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "const patterns = $input.first().json.patterns;\nreturn patterns.map(p =\u003e ({ json: p }));"
+                                     },
+                      "id":  "split-patterns",
+                      "name":  "Split Patterns",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       900,
+                                       300
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "INSERT INTO weakness_patterns (\n  client_id, category, cwe_id, owasp_category,\n  occurrence_count, engagement_count, first_seen, last_seen,\n  pattern_type, narrative, updated_at\n) VALUES (\n  \u0027{{ $json.client_id }}\u0027,\n  \u0027{{ $json.category }}\u0027,\n  \u0027{{ $json.cwe_id }}\u0027,\n  {{ $json.owasp_category ? \"\u0027\" + $json.owasp_category + \"\u0027\" : \u0027NULL\u0027 }},\n  {{ $json.occurrence_count }},\n  {{ $json.engagement_count }},\n  \u0027{{ $json.first_seen }}\u0027::timestamptz,\n  \u0027{{ $json.last_seen }}\u0027::timestamptz,\n  \u0027{{ $json.pattern_type }}\u0027,\n  \u0027{{ $json.narrative.replace(/\u0027/g,\"\u0027\u0027\") }}\u0027,\n  NOW()\n)\nON CONFLICT (client_id, cwe_id) DO UPDATE SET\n  occurrence_count = EXCLUDED.occurrence_count,\n  engagement_count = EXCLUDED.engagement_count,\n  last_seen = EXCLUDED.last_seen,\n  pattern_type = EXCLUDED.pattern_type,\n  narrative = EXCLUDED.narrative,\n  updated_at = NOW();",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "pg-upsert-patterns",
+                      "name":  "Upsert Weakness Patterns",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       1120,
+                                       300
+                                   ],
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "oHS3dvjMW1h1PkMp",
+                                                           "name":  "RECON OS PostgreSQL"
+                                                       }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "method":  "POST",
+                                         "url":  "={{ $env.RECON_OS_SLACK_WEBHOOK || \u0027https://hooks.slack.com/services/PLACEHOLDER\u0027 }}",
+                                         "sendBody":  true,
+                                         "specifyBody":  "json",
+                                         "jsonBody":  "={{ JSON.stringify({ text: $(\u0027Analyze Weakness Patterns\u0027).first().json.slack_summary, username: \u0027RECON OS Heatmap\u0027, icon_emoji: \u0027:fire:\u0027 }) }}",
+                                         "options":  {
+                                                         "timeout":  10000
+                                                     }
+                                     },
+                      "id":  "send-slack",
+                      "name":  "Send Slack Summary",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.2,
+                      "position":  [
+                                       1340,
+                                       300
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "INSERT INTO audit_logs (event_type, actor, payload)\nVALUES (\u0027heatmap_updated\u0027,\u0027wf22\u0027,\u0027{\"patterns_updated\":{{ $(\u0027Analyze Weakness Patterns\u0027).first().json.total }},\"systemic\":{{ $(\u0027Analyze Weakness Patterns\u0027).first().json.systemic_count }}}\u0027::jsonb);",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "pg-audit",
+                      "name":  "Audit Log",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       1560,
+                                       300
+                                   ],
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "oHS3dvjMW1h1PkMp",
+                                                           "name":  "RECON OS PostgreSQL"
+                                                       }
+                                      }
+                  }
+              ],
+    "connections":  {
+                        "Cron Weekly Monday":  {
+                                                   "main":  [
+                                                                [
+                                                                    {
+                                                                        "node":  "Get Cross-Engagement Patterns",
+                                                                        "type":  "main",
+                                                                        "index":  0
+                                                                    }
+                                                                ]
+                                                            ]
+                                               },
+                        "Webhook":  {
+                                        "main":  [
+                                                     [
+                                                         {
+                                                             "node":  "Get Cross-Engagement Patterns",
+                                                             "type":  "main",
+                                                             "index":  0
+                                                         }
+                                                     ]
+                                                 ]
+                                    },
+                        "Get Cross-Engagement Patterns":  {
+                                                              "main":  [
+                                                                           [
+                                                                               {
+                                                                                   "node":  "Analyze Weakness Patterns",
+                                                                                   "type":  "main",
+                                                                                   "index":  0
+                                                                               }
+                                                                           ]
+                                                                       ]
+                                                          },
+                        "Analyze Weakness Patterns":  {
+                                                          "main":  [
+                                                                       [
+                                                                           {
+                                                                               "node":  "Split Patterns",
+                                                                               "type":  "main",
+                                                                               "index":  0
+                                                                           }
+                                                                       ]
+                                                                   ]
+                                                      },
+                        "Split Patterns":  {
+                                               "main":  [
+                                                            [
+                                                                {
+                                                                    "node":  "Upsert Weakness Patterns",
+                                                                    "type":  "main",
+                                                                    "index":  0
+                                                                }
+                                                            ]
+                                                        ]
+                                           },
+                        "Upsert Weakness Patterns":  {
+                                                         "main":  [
+                                                                      [
+                                                                          {
+                                                                              "node":  "Send Slack Summary",
+                                                                              "type":  "main",
+                                                                              "index":  0
+                                                                          }
+                                                                      ]
+                                                                  ]
+                                                     },
+                        "Send Slack Summary":  {
+                                                   "main":  [
+                                                                [
+                                                                    {
+                                                                        "node":  "Audit Log",
+                                                                        "type":  "main",
+                                                                        "index":  0
+                                                                    }
+                                                                ]
+                                                            ]
+                                               }
+                    },
+    "settings":  {
+                     "executionOrder":  "v1",
+                     "saveManualExecutions":  true,
+                     "saveExecutionProgress":  true,
+                     "callerPolicy":  "workflowsFromSameOwner",
+                     "availableInMCP":  false
+                 },
+    "staticData":  {
+                       "node:Cron Weekly Monday":  {
+                                                       "recurrenceRules":  [
+
+                                                                           ]
+                                                   }
+                   },
+    "meta":  null,
+    "pinData":  null,
+    "versionId":  "60bf4278-8920-4415-917f-93fe61e41ef3",
+    "activeVersionId":  "60bf4278-8920-4415-917f-93fe61e41ef3",
+    "versionCounter":  7,
+    "triggerCount":  2,
+    "shared":  [
+                   {
+                       "updatedAt":  "2026-04-19T03:30:21.885Z",
+                       "createdAt":  "2026-04-19T03:30:21.885Z",
+                       "role":  "workflow:owner",
+                       "workflowId":  "Ejd6MjrInCScZ8bv",
+                       "projectId":  "Lrgt6JR85OZiVLcX",
+                       "project":  {
+                                       "updatedAt":  "2026-03-31T09:07:31.366Z",
+                                       "createdAt":  "2026-03-31T08:57:43.789Z",
+                                       "id":  "Lrgt6JR85OZiVLcX",
+                                       "name":  "gelson mascarenhas \u003cgelson_m@hotmail.com\u003e",
+                                       "type":  "personal",
+                                       "icon":  null,
+                                       "description":  null,
+                                       "creatorId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                   }
+                   }
+               ],
+    "tags":  [
+
+             ],
+    "activeVersion":  {
+                          "updatedAt":  "2026-04-19T07:27:31.298Z",
+                          "createdAt":  "2026-04-19T07:27:31.298Z",
+                          "versionId":  "60bf4278-8920-4415-917f-93fe61e41ef3",
+                          "workflowId":  "Ejd6MjrInCScZ8bv",
+                          "nodes":  [
+                                        {
+                                            "parameters":  {
+                                                               "rule":  {
+                                                                            "interval":  [
+                                                                                             {
+                                                                                                 "field":  "cronExpression",
+                                                                                                 "expression":  "0 6 * * 1"
+                                                                                             }
+                                                                                         ]
+                                                                        }
+                                                           },
+                                            "id":  "cron-weekly",
+                                            "name":  "Cron Weekly Monday",
+                                            "type":  "n8n-nodes-base.scheduleTrigger",
+                                            "typeVersion":  1.2,
+                                            "position":  [
+                                                             240,
+                                                             300
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "httpMethod":  "POST",
+                                                               "path":  "recon-os/internal/heatmap",
+                                                               "responseMode":  "lastNode",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "wh-heatmap",
+                                            "name":  "Webhook",
+                                            "type":  "n8n-nodes-base.webhook",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             240,
+                                                             500
+                                                         ],
+                                            "webhookId":  "recon-os-internal-heatmap"
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "operation":  "executeQuery",
+                                                               "query":  "SELECT\n  c.id as client_id,\n  c.name as client_name,\n  nf.category,\n  nf.cwe_id,\n  nf.owasp_category,\n  COUNT(nf.id) as occurrence_count,\n  COUNT(DISTINCT nf.engagement_id) as engagement_count,\n  MIN(nf.first_seen) as first_seen,\n  MAX(nf.last_seen) as last_seen,\n  AVG(nf.recon_score) as avg_score,\n  COUNT(nf.id) FILTER (WHERE nf.remediation_status = \u0027verified_fixed\u0027) as times_fixed,\n  COUNT(nf.id) FILTER (WHERE nf.reopen_count \u003e 0) as times_reopened\nFROM normalized_findings nf\nJOIN engagements e ON nf.engagement_id = e.id\nJOIN clients c ON e.client_id = c.id\nWHERE nf.validation_status IN (\u0027validated\u0027,\u0027analyst_reviewed\u0027,\u0027verified_fixed\u0027)\n  AND nf.cwe_id IS NOT NULL\nGROUP BY c.id, c.name, nf.category, nf.cwe_id, nf.owasp_category\nHAVING COUNT(DISTINCT nf.engagement_id) \u003e= 1\nORDER BY c.id, occurrence_count DESC;",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "pg-get-patterns",
+                                            "name":  "Get Cross-Engagement Patterns",
+                                            "type":  "n8n-nodes-base.postgres",
+                                            "typeVersion":  2.5,
+                                            "position":  [
+                                                             460,
+                                                             300
+                                                         ],
+                                            "credentials":  {
+                                                                "postgres":  {
+                                                                                 "id":  "oHS3dvjMW1h1PkMp",
+                                                                                 "name":  "RECON OS PostgreSQL"
+                                                                             }
+                                                            }
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "jsCode":  "const patterns = $input.all().map(i =\u003e i.json);\nconst results = [];\n\nfor (const p of patterns) {\n  const occurrences = parseInt(p.occurrence_count||0);\n  const engagements = parseInt(p.engagement_count||0);\n  const timesReopened = parseInt(p.times_reopened||0);\n  const timesFixed = parseInt(p.times_fixed||0);\n\n  // Determine pattern type\n  let patternType = \u0027recurring\u0027;\n  let narrative = \u0027\u0027;\n\n  if (engagements \u003e= 3 \u0026\u0026 timesFixed \u003e 0 \u0026\u0026 timesReopened \u003e 0) {\n    patternType = \u0027systemic\u0027;\n    narrative = `${p.cwe_id} (${p.category}) has appeared in ${engagements} engagements for ${p.client_name}. Despite ${timesFixed} fix attempt(s), it has reopened ${timesReopened} time(s), indicating a systemic weakness in the development process.`;\n  } else if (engagements \u003e= 2) {\n    patternType = \u0027recurring\u0027;\n    narrative = `${p.cwe_id} (${p.category}) has recurred across ${engagements} engagements for ${p.client_name}. Pattern suggests this vulnerability class is not being addressed at root cause.`;\n  } else {\n    patternType = \u0027emerging\u0027;\n    narrative = `${p.cwe_id} (${p.category}) first detected for ${p.client_name}. Monitor for recurrence.`;\n  }\n\n  results.push({\n    client_id: p.client_id,\n    category: p.category,\n    cwe_id: p.cwe_id,\n    owasp_category: p.owasp_category,\n    occurrence_count: occurrences,\n    engagement_count: engagements,\n    first_seen: p.first_seen,\n    last_seen: p.last_seen,\n    pattern_type: patternType,\n    narrative\n  });\n}\n\n// Build summary for Slack\nconst systemic = results.filter(r =\u003e r.pattern_type === \u0027systemic\u0027);\nconst recurring = results.filter(r =\u003e r.pattern_type === \u0027recurring\u0027);\n\nconst slackSummary = [\n  `?? *RECON OS - Weekly Weakness Heatmap*`,\n  `Date: ${new Date().toISOString().split(\u0027T\u0027)[0]}`,\n  `Patterns analyzed: ${results.length}`,\n  systemic.length \u003e 0 ? `\\n?? *SYSTEMIC (${systemic.length})*:` : \u0027\u0027,\n  ...systemic.slice(0,3).map(s =\u003e `  . ${s.cwe_id} - ${s.client_id} - ${s.engagement_count} engagements, reopened ${s.occurrence_count}?`),\n  recurring.length \u003e 0 ? `\\n?? *RECURRING (${recurring.length})*:` : \u0027\u0027,\n  ...recurring.slice(0,3).map(r =\u003e `  . ${r.cwe_id} (${r.category}) - ${r.engagement_count} engagements`)\n].filter(Boolean).join(\u0027\\n\u0027);\n\nreturn [{ json: { patterns: results, slack_summary: slackSummary, systemic_count: systemic.length, total: results.length } }];"
+                                                           },
+                                            "id":  "analyze-patterns",
+                                            "name":  "Analyze Weakness Patterns",
+                                            "type":  "n8n-nodes-base.code",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             680,
+                                                             300
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "jsCode":  "const patterns = $input.first().json.patterns;\nreturn patterns.map(p =\u003e ({ json: p }));"
+                                                           },
+                                            "id":  "split-patterns",
+                                            "name":  "Split Patterns",
+                                            "type":  "n8n-nodes-base.code",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             900,
+                                                             300
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "operation":  "executeQuery",
+                                                               "query":  "INSERT INTO weakness_patterns (\n  client_id, category, cwe_id, owasp_category,\n  occurrence_count, engagement_count, first_seen, last_seen,\n  pattern_type, narrative, updated_at\n) VALUES (\n  \u0027{{ $json.client_id }}\u0027,\n  \u0027{{ $json.category }}\u0027,\n  \u0027{{ $json.cwe_id }}\u0027,\n  {{ $json.owasp_category ? \"\u0027\" + $json.owasp_category + \"\u0027\" : \u0027NULL\u0027 }},\n  {{ $json.occurrence_count }},\n  {{ $json.engagement_count }},\n  \u0027{{ $json.first_seen }}\u0027::timestamptz,\n  \u0027{{ $json.last_seen }}\u0027::timestamptz,\n  \u0027{{ $json.pattern_type }}\u0027,\n  \u0027{{ $json.narrative.replace(/\u0027/g,\"\u0027\u0027\") }}\u0027,\n  NOW()\n)\nON CONFLICT (client_id, cwe_id) DO UPDATE SET\n  occurrence_count = EXCLUDED.occurrence_count,\n  engagement_count = EXCLUDED.engagement_count,\n  last_seen = EXCLUDED.last_seen,\n  pattern_type = EXCLUDED.pattern_type,\n  narrative = EXCLUDED.narrative,\n  updated_at = NOW();",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "pg-upsert-patterns",
+                                            "name":  "Upsert Weakness Patterns",
+                                            "type":  "n8n-nodes-base.postgres",
+                                            "typeVersion":  2.5,
+                                            "position":  [
+                                                             1120,
+                                                             300
+                                                         ],
+                                            "credentials":  {
+                                                                "postgres":  {
+                                                                                 "id":  "oHS3dvjMW1h1PkMp",
+                                                                                 "name":  "RECON OS PostgreSQL"
+                                                                             }
+                                                            }
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "method":  "POST",
+                                                               "url":  "={{ $env.RECON_OS_SLACK_WEBHOOK || \u0027https://hooks.slack.com/services/PLACEHOLDER\u0027 }}",
+                                                               "sendBody":  true,
+                                                               "specifyBody":  "json",
+                                                               "jsonBody":  "={{ JSON.stringify({ text: $(\u0027Analyze Weakness Patterns\u0027).first().json.slack_summary, username: \u0027RECON OS Heatmap\u0027, icon_emoji: \u0027:fire:\u0027 }) }}",
+                                                               "options":  {
+                                                                               "timeout":  10000
+                                                                           }
+                                                           },
+                                            "id":  "send-slack",
+                                            "name":  "Send Slack Summary",
+                                            "type":  "n8n-nodes-base.httpRequest",
+                                            "typeVersion":  4.2,
+                                            "position":  [
+                                                             1340,
+                                                             300
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "operation":  "executeQuery",
+                                                               "query":  "INSERT INTO audit_logs (event_type, actor, payload)\nVALUES (\u0027heatmap_updated\u0027,\u0027wf22\u0027,\u0027{\"patterns_updated\":{{ $(\u0027Analyze Weakness Patterns\u0027).first().json.total }},\"systemic\":{{ $(\u0027Analyze Weakness Patterns\u0027).first().json.systemic_count }}}\u0027::jsonb);",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "pg-audit",
+                                            "name":  "Audit Log",
+                                            "type":  "n8n-nodes-base.postgres",
+                                            "typeVersion":  2.5,
+                                            "position":  [
+                                                             1560,
+                                                             300
+                                                         ],
+                                            "credentials":  {
+                                                                "postgres":  {
+                                                                                 "id":  "oHS3dvjMW1h1PkMp",
+                                                                                 "name":  "RECON OS PostgreSQL"
+                                                                             }
+                                                            }
+                                        }
+                                    ],
+                          "connections":  {
+                                              "Cron Weekly Monday":  {
+                                                                         "main":  [
+                                                                                      [
+                                                                                          {
+                                                                                              "node":  "Get Cross-Engagement Patterns",
+                                                                                              "type":  "main",
+                                                                                              "index":  0
+                                                                                          }
+                                                                                      ]
+                                                                                  ]
+                                                                     },
+                                              "Webhook":  {
+                                                              "main":  [
+                                                                           [
+                                                                               {
+                                                                                   "node":  "Get Cross-Engagement Patterns",
+                                                                                   "type":  "main",
+                                                                                   "index":  0
+                                                                               }
+                                                                           ]
+                                                                       ]
+                                                          },
+                                              "Get Cross-Engagement Patterns":  {
+                                                                                    "main":  [
+                                                                                                 [
+                                                                                                     {
+                                                                                                         "node":  "Analyze Weakness Patterns",
+                                                                                                         "type":  "main",
+                                                                                                         "index":  0
+                                                                                                     }
+                                                                                                 ]
+                                                                                             ]
+                                                                                },
+                                              "Analyze Weakness Patterns":  {
+                                                                                "main":  [
+                                                                                             [
+                                                                                                 {
+                                                                                                     "node":  "Split Patterns",
+                                                                                                     "type":  "main",
+                                                                                                     "index":  0
+                                                                                                 }
+                                                                                             ]
+                                                                                         ]
+                                                                            },
+                                              "Split Patterns":  {
+                                                                     "main":  [
+                                                                                  [
+                                                                                      {
+                                                                                          "node":  "Upsert Weakness Patterns",
+                                                                                          "type":  "main",
+                                                                                          "index":  0
+                                                                                      }
+                                                                                  ]
+                                                                              ]
+                                                                 },
+                                              "Upsert Weakness Patterns":  {
+                                                                               "main":  [
+                                                                                            [
+                                                                                                {
+                                                                                                    "node":  "Send Slack Summary",
+                                                                                                    "type":  "main",
+                                                                                                    "index":  0
+                                                                                                }
+                                                                                            ]
+                                                                                        ]
+                                                                           },
+                                              "Send Slack Summary":  {
+                                                                         "main":  [
+                                                                                      [
+                                                                                          {
+                                                                                              "node":  "Audit Log",
+                                                                                              "type":  "main",
+                                                                                              "index":  0
+                                                                                          }
+                                                                                      ]
+                                                                                  ]
+                                                                     }
+                                          },
+                          "authors":  "gelson mascarenhas",
+                          "name":  null,
+                          "description":  null,
+                          "autosaved":  false,
+                          "workflowPublishHistory":  [
+                                                         {
+                                                             "createdAt":  "2026-04-19T07:27:31.356Z",
+                                                             "id":  557,
+                                                             "workflowId":  "Ejd6MjrInCScZ8bv",
+                                                             "versionId":  "60bf4278-8920-4415-917f-93fe61e41ef3",
+                                                             "event":  "deactivated",
+                                                             "userId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                                         },
+                                                         {
+                                                             "createdAt":  "2026-04-19T07:27:31.382Z",
+                                                             "id":  558,
+                                                             "workflowId":  "Ejd6MjrInCScZ8bv",
+                                                             "versionId":  "60bf4278-8920-4415-917f-93fe61e41ef3",
+                                                             "event":  "activated",
+                                                             "userId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                                         }
+                                                     ]
+                      }
+}

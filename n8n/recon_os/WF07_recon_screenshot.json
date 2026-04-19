@@ -1,0 +1,100 @@
+{
+  "name": "RECON OS — WF-07 Recon Screenshot",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "recon-os/recon/screenshot",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wh-screenshot",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "recon-os-recon-screenshot"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body || $input.first().json;\nconst val = body.asset_value || '';\nconst url = val.startsWith('http') ? val : 'https://' + val;\nreturn [{ json: { asset_id: body.asset_id, asset_value: val, target_url: url, engagement_id: body.engagement_id } }];"
+      },
+      "id": "normalize",
+      "name": "Normalize Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO scan_jobs (engagement_id, asset_id, tool, profile, status, started_at)\nVALUES ('{{ $json.engagement_id }}','{{ $json.asset_id }}','screenshot','passive','running',NOW())\nRETURNING id;",
+        "options": {}
+      },
+      "id": "pg-scan-job",
+      "name": "Create Scan Job",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [680, 300],
+      "credentials": { "postgres": { "id": "RECON_OS_PG_CRED", "name": "RECON OS PostgreSQL" } }
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.screenshotone.com/take?access_key={{ $env.SCREENSHOT_API_KEY || 'demo' }}&url={{ encodeURIComponent($('Normalize Input').first().json.target_url) }}&viewport_width=1280&viewport_height=800&format=jpg&response_type=json",
+        "options": { "timeout": 30000 }
+      },
+      "id": "take-screenshot",
+      "name": "Take Screenshot",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const result = $input.first().json;\nconst assetId = $('Normalize Input').first().json.asset_id;\nconst engId = $('Normalize Input').first().json.engagement_id;\nconst assetVal = $('Normalize Input').first().json.asset_value;\nconst scanJobId = $('Create Scan Job').first().json.id;\n\n// Handle screenshot API response (varies by provider)\nconst screenshotUrl = result.url || result.screenshot_url || result.signed_url || null;\nconst storageRef = screenshotUrl ? `screenshot:${assetVal}:${new Date().toISOString().split('T')[0]}` : null;\n\nreturn [{ json: {\n  asset_id: assetId,\n  engagement_id: engId,\n  asset_value: assetVal,\n  scan_job_id: scanJobId,\n  screenshot_url: screenshotUrl,\n  storage_ref: storageRef,\n  captured_at: new Date().toISOString(),\n  success: !!screenshotUrl\n} }];"
+      },
+      "id": "process-screenshot",
+      "name": "Process Screenshot Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE assets SET screenshot_url = '{{ $json.screenshot_url || '' }}', last_tested = NOW() WHERE id = '{{ $json.asset_id }}';\nUPDATE scan_jobs SET status='completed', completed_at=NOW() WHERE id='{{ $json.scan_job_id }}';",
+        "options": {}
+      },
+      "id": "pg-update",
+      "name": "Update Asset Screenshot",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1340, 300],
+      "credentials": { "postgres": { "id": "RECON_OS_PG_CRED", "name": "RECON OS PostgreSQL" } }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO discovery_records (engagement_id, asset_id, source, record_type, record_value, raw_data)\nVALUES ('{{ $('Normalize Input').first().json.engagement_id }}','{{ $('Normalize Input').first().json.asset_id }}','screenshot','visual_capture','{{ $('Process Screenshot Result').first().json.screenshot_url || 'failed' }}','{\"captured_at\":\"{{ $('Process Screenshot Result').first().json.captured_at }}\",\"success\":{{ $('Process Screenshot Result').first().json.success }},\"storage_ref\":\"{{ $('Process Screenshot Result').first().json.storage_ref || '' }}\"}'::jsonb);",
+        "options": {}
+      },
+      "id": "pg-store-record",
+      "name": "Store Discovery Record",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1560, 300],
+      "credentials": { "postgres": { "id": "RECON_OS_PG_CRED", "name": "RECON OS PostgreSQL" } }
+    }
+  ],
+  "connections": {
+    "Webhook": { "main": [[{ "node": "Normalize Input", "type": "main", "index": 0 }]] },
+    "Normalize Input": { "main": [[{ "node": "Create Scan Job", "type": "main", "index": 0 }]] },
+    "Create Scan Job": { "main": [[{ "node": "Take Screenshot", "type": "main", "index": 0 }]] },
+    "Take Screenshot": { "main": [[{ "node": "Process Screenshot Result", "type": "main", "index": 0 }]] },
+    "Process Screenshot Result": { "main": [[{ "node": "Update Asset Screenshot", "type": "main", "index": 0 }]] },
+    "Update Asset Screenshot": { "main": [[{ "node": "Store Discovery Record", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1", "saveManualExecutions": true, "saveExecutionProgress": true },
+  "meta": { "description": "RECON OS WF-07: Screenshot capture for authorized web assets. Uses screenshot API (configurable). Stores reference URL and metadata. Set SCREENSHOT_API_KEY env var in n8n." }
+}

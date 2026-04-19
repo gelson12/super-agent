@@ -1,0 +1,475 @@
+﻿{
+    "updatedAt":  "2026-04-19T07:32:13.587Z",
+    "createdAt":  "2026-04-19T03:30:11.080Z",
+    "id":  "RjVvY9Ew1XcEYDNw",
+    "name":  "RECON OS - WF-07 Recon Screenshot",
+    "description":  null,
+    "active":  true,
+    "isArchived":  false,
+    "nodes":  [
+                  {
+                      "parameters":  {
+                                         "httpMethod":  "POST",
+                                         "path":  "recon-os/recon/screenshot",
+                                         "responseMode":  "lastNode",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "wh-screenshot",
+                      "name":  "Webhook",
+                      "type":  "n8n-nodes-base.webhook",
+                      "typeVersion":  2,
+                      "position":  [
+                                       240,
+                                       300
+                                   ],
+                      "webhookId":  "recon-os-recon-screenshot"
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "const body = $input.first().json.body || $input.first().json;\nconst val = body.asset_value || \u0027\u0027;\nconst url = val.startsWith(\u0027http\u0027) ? val : \u0027https://\u0027 + val;\nreturn [{ json: { asset_id: body.asset_id, asset_value: val, target_url: url, engagement_id: body.engagement_id } }];"
+                                     },
+                      "id":  "normalize",
+                      "name":  "Normalize Input",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       460,
+                                       300
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "INSERT INTO scan_jobs (engagement_id, asset_id, tool, profile, status, started_at)\nVALUES (\u0027{{ $json.engagement_id }}\u0027,\u0027{{ $json.asset_id }}\u0027,\u0027screenshot\u0027,\u0027passive\u0027,\u0027running\u0027,NOW())\nRETURNING id;",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "pg-scan-job",
+                      "name":  "Create Scan Job",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       680,
+                                       300
+                                   ],
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "oHS3dvjMW1h1PkMp",
+                                                           "name":  "RECON OS PostgreSQL"
+                                                       }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "method":  "GET",
+                                         "url":  "=https://api.screenshotone.com/take?access_key={{ $env.SCREENSHOT_API_KEY || \u0027demo\u0027 }}\u0026url={{ encodeURIComponent($(\u0027Normalize Input\u0027).first().json.target_url) }}\u0026viewport_width=1280\u0026viewport_height=800\u0026format=jpg\u0026response_type=json",
+                                         "options":  {
+                                                         "timeout":  30000
+                                                     }
+                                     },
+                      "id":  "take-screenshot",
+                      "name":  "Take Screenshot",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.2,
+                      "position":  [
+                                       900,
+                                       300
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "const result = $input.first().json;\nconst assetId = $(\u0027Normalize Input\u0027).first().json.asset_id;\nconst engId = $(\u0027Normalize Input\u0027).first().json.engagement_id;\nconst assetVal = $(\u0027Normalize Input\u0027).first().json.asset_value;\nconst scanJobId = $(\u0027Create Scan Job\u0027).first().json.id;\n\n// Handle screenshot API response (varies by provider)\nconst screenshotUrl = result.url || result.screenshot_url || result.signed_url || null;\nconst storageRef = screenshotUrl ? `screenshot:${assetVal}:${new Date().toISOString().split(\u0027T\u0027)[0]}` : null;\n\nreturn [{ json: {\n  asset_id: assetId,\n  engagement_id: engId,\n  asset_value: assetVal,\n  scan_job_id: scanJobId,\n  screenshot_url: screenshotUrl,\n  storage_ref: storageRef,\n  captured_at: new Date().toISOString(),\n  success: !!screenshotUrl\n} }];"
+                                     },
+                      "id":  "process-screenshot",
+                      "name":  "Process Screenshot Result",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       1120,
+                                       300
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "UPDATE assets SET screenshot_url = \u0027{{ $json.screenshot_url || \u0027\u0027 }}\u0027, last_tested = NOW() WHERE id = \u0027{{ $json.asset_id }}\u0027;\nUPDATE scan_jobs SET status=\u0027completed\u0027, completed_at=NOW() WHERE id=\u0027{{ $json.scan_job_id }}\u0027;",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "pg-update",
+                      "name":  "Update Asset Screenshot",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       1340,
+                                       300
+                                   ],
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "oHS3dvjMW1h1PkMp",
+                                                           "name":  "RECON OS PostgreSQL"
+                                                       }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "INSERT INTO discovery_records (engagement_id, asset_id, source, record_type, record_value, raw_data)\nVALUES (\u0027{{ $(\u0027Normalize Input\u0027).first().json.engagement_id }}\u0027,\u0027{{ $(\u0027Normalize Input\u0027).first().json.asset_id }}\u0027,\u0027screenshot\u0027,\u0027visual_capture\u0027,\u0027{{ $(\u0027Process Screenshot Result\u0027).first().json.screenshot_url || \u0027failed\u0027 }}\u0027,\u0027{\"captured_at\":\"{{ $(\u0027Process Screenshot Result\u0027).first().json.captured_at }}\",\"success\":{{ $(\u0027Process Screenshot Result\u0027).first().json.success }},\"storage_ref\":\"{{ $(\u0027Process Screenshot Result\u0027).first().json.storage_ref || \u0027\u0027 }}\"}\u0027::jsonb);",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "pg-store-record",
+                      "name":  "Store Discovery Record",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       1560,
+                                       300
+                                   ],
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "oHS3dvjMW1h1PkMp",
+                                                           "name":  "RECON OS PostgreSQL"
+                                                       }
+                                      }
+                  }
+              ],
+    "connections":  {
+                        "Webhook":  {
+                                        "main":  [
+                                                     [
+                                                         {
+                                                             "node":  "Normalize Input",
+                                                             "type":  "main",
+                                                             "index":  0
+                                                         }
+                                                     ]
+                                                 ]
+                                    },
+                        "Normalize Input":  {
+                                                "main":  [
+                                                             [
+                                                                 {
+                                                                     "node":  "Create Scan Job",
+                                                                     "type":  "main",
+                                                                     "index":  0
+                                                                 }
+                                                             ]
+                                                         ]
+                                            },
+                        "Create Scan Job":  {
+                                                "main":  [
+                                                             [
+                                                                 {
+                                                                     "node":  "Take Screenshot",
+                                                                     "type":  "main",
+                                                                     "index":  0
+                                                                 }
+                                                             ]
+                                                         ]
+                                            },
+                        "Take Screenshot":  {
+                                                "main":  [
+                                                             [
+                                                                 {
+                                                                     "node":  "Process Screenshot Result",
+                                                                     "type":  "main",
+                                                                     "index":  0
+                                                                 }
+                                                             ]
+                                                         ]
+                                            },
+                        "Process Screenshot Result":  {
+                                                          "main":  [
+                                                                       [
+                                                                           {
+                                                                               "node":  "Update Asset Screenshot",
+                                                                               "type":  "main",
+                                                                               "index":  0
+                                                                           }
+                                                                       ]
+                                                                   ]
+                                                      },
+                        "Update Asset Screenshot":  {
+                                                        "main":  [
+                                                                     [
+                                                                         {
+                                                                             "node":  "Store Discovery Record",
+                                                                             "type":  "main",
+                                                                             "index":  0
+                                                                         }
+                                                                     ]
+                                                                 ]
+                                                    }
+                    },
+    "settings":  {
+                     "executionOrder":  "v1",
+                     "saveManualExecutions":  true,
+                     "saveExecutionProgress":  true,
+                     "callerPolicy":  "workflowsFromSameOwner",
+                     "availableInMCP":  false
+                 },
+    "staticData":  null,
+    "meta":  null,
+    "pinData":  null,
+    "versionId":  "f2c3d1b8-2ca4-42e7-a8e9-355cc5638698",
+    "activeVersionId":  "f2c3d1b8-2ca4-42e7-a8e9-355cc5638698",
+    "versionCounter":  6,
+    "triggerCount":  1,
+    "shared":  [
+                   {
+                       "updatedAt":  "2026-04-19T03:30:11.080Z",
+                       "createdAt":  "2026-04-19T03:30:11.080Z",
+                       "role":  "workflow:owner",
+                       "workflowId":  "RjVvY9Ew1XcEYDNw",
+                       "projectId":  "Lrgt6JR85OZiVLcX",
+                       "project":  {
+                                       "updatedAt":  "2026-03-31T09:07:31.366Z",
+                                       "createdAt":  "2026-03-31T08:57:43.789Z",
+                                       "id":  "Lrgt6JR85OZiVLcX",
+                                       "name":  "gelson mascarenhas \u003cgelson_m@hotmail.com\u003e",
+                                       "type":  "personal",
+                                       "icon":  null,
+                                       "description":  null,
+                                       "creatorId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                   }
+                   }
+               ],
+    "tags":  [
+
+             ],
+    "activeVersion":  {
+                          "updatedAt":  "2026-04-19T07:32:13.589Z",
+                          "createdAt":  "2026-04-19T07:32:13.589Z",
+                          "versionId":  "f2c3d1b8-2ca4-42e7-a8e9-355cc5638698",
+                          "workflowId":  "RjVvY9Ew1XcEYDNw",
+                          "nodes":  [
+                                        {
+                                            "parameters":  {
+                                                               "httpMethod":  "POST",
+                                                               "path":  "recon-os/recon/screenshot",
+                                                               "responseMode":  "lastNode",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "wh-screenshot",
+                                            "name":  "Webhook",
+                                            "type":  "n8n-nodes-base.webhook",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             240,
+                                                             300
+                                                         ],
+                                            "webhookId":  "recon-os-recon-screenshot"
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "jsCode":  "const body = $input.first().json.body || $input.first().json;\nconst val = body.asset_value || \u0027\u0027;\nconst url = val.startsWith(\u0027http\u0027) ? val : \u0027https://\u0027 + val;\nreturn [{ json: { asset_id: body.asset_id, asset_value: val, target_url: url, engagement_id: body.engagement_id } }];"
+                                                           },
+                                            "id":  "normalize",
+                                            "name":  "Normalize Input",
+                                            "type":  "n8n-nodes-base.code",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             460,
+                                                             300
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "operation":  "executeQuery",
+                                                               "query":  "INSERT INTO scan_jobs (engagement_id, asset_id, tool, profile, status, started_at)\nVALUES (\u0027{{ $json.engagement_id }}\u0027,\u0027{{ $json.asset_id }}\u0027,\u0027screenshot\u0027,\u0027passive\u0027,\u0027running\u0027,NOW())\nRETURNING id;",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "pg-scan-job",
+                                            "name":  "Create Scan Job",
+                                            "type":  "n8n-nodes-base.postgres",
+                                            "typeVersion":  2.5,
+                                            "position":  [
+                                                             680,
+                                                             300
+                                                         ],
+                                            "credentials":  {
+                                                                "postgres":  {
+                                                                                 "id":  "oHS3dvjMW1h1PkMp",
+                                                                                 "name":  "RECON OS PostgreSQL"
+                                                                             }
+                                                            }
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "method":  "GET",
+                                                               "url":  "=https://api.screenshotone.com/take?access_key={{ $env.SCREENSHOT_API_KEY || \u0027demo\u0027 }}\u0026url={{ encodeURIComponent($(\u0027Normalize Input\u0027).first().json.target_url) }}\u0026viewport_width=1280\u0026viewport_height=800\u0026format=jpg\u0026response_type=json",
+                                                               "options":  {
+                                                                               "timeout":  30000
+                                                                           }
+                                                           },
+                                            "id":  "take-screenshot",
+                                            "name":  "Take Screenshot",
+                                            "type":  "n8n-nodes-base.httpRequest",
+                                            "typeVersion":  4.2,
+                                            "position":  [
+                                                             900,
+                                                             300
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "jsCode":  "const result = $input.first().json;\nconst assetId = $(\u0027Normalize Input\u0027).first().json.asset_id;\nconst engId = $(\u0027Normalize Input\u0027).first().json.engagement_id;\nconst assetVal = $(\u0027Normalize Input\u0027).first().json.asset_value;\nconst scanJobId = $(\u0027Create Scan Job\u0027).first().json.id;\n\n// Handle screenshot API response (varies by provider)\nconst screenshotUrl = result.url || result.screenshot_url || result.signed_url || null;\nconst storageRef = screenshotUrl ? `screenshot:${assetVal}:${new Date().toISOString().split(\u0027T\u0027)[0]}` : null;\n\nreturn [{ json: {\n  asset_id: assetId,\n  engagement_id: engId,\n  asset_value: assetVal,\n  scan_job_id: scanJobId,\n  screenshot_url: screenshotUrl,\n  storage_ref: storageRef,\n  captured_at: new Date().toISOString(),\n  success: !!screenshotUrl\n} }];"
+                                                           },
+                                            "id":  "process-screenshot",
+                                            "name":  "Process Screenshot Result",
+                                            "type":  "n8n-nodes-base.code",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             1120,
+                                                             300
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "operation":  "executeQuery",
+                                                               "query":  "UPDATE assets SET screenshot_url = \u0027{{ $json.screenshot_url || \u0027\u0027 }}\u0027, last_tested = NOW() WHERE id = \u0027{{ $json.asset_id }}\u0027;\nUPDATE scan_jobs SET status=\u0027completed\u0027, completed_at=NOW() WHERE id=\u0027{{ $json.scan_job_id }}\u0027;",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "pg-update",
+                                            "name":  "Update Asset Screenshot",
+                                            "type":  "n8n-nodes-base.postgres",
+                                            "typeVersion":  2.5,
+                                            "position":  [
+                                                             1340,
+                                                             300
+                                                         ],
+                                            "credentials":  {
+                                                                "postgres":  {
+                                                                                 "id":  "oHS3dvjMW1h1PkMp",
+                                                                                 "name":  "RECON OS PostgreSQL"
+                                                                             }
+                                                            }
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "operation":  "executeQuery",
+                                                               "query":  "INSERT INTO discovery_records (engagement_id, asset_id, source, record_type, record_value, raw_data)\nVALUES (\u0027{{ $(\u0027Normalize Input\u0027).first().json.engagement_id }}\u0027,\u0027{{ $(\u0027Normalize Input\u0027).first().json.asset_id }}\u0027,\u0027screenshot\u0027,\u0027visual_capture\u0027,\u0027{{ $(\u0027Process Screenshot Result\u0027).first().json.screenshot_url || \u0027failed\u0027 }}\u0027,\u0027{\"captured_at\":\"{{ $(\u0027Process Screenshot Result\u0027).first().json.captured_at }}\",\"success\":{{ $(\u0027Process Screenshot Result\u0027).first().json.success }},\"storage_ref\":\"{{ $(\u0027Process Screenshot Result\u0027).first().json.storage_ref || \u0027\u0027 }}\"}\u0027::jsonb);",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "pg-store-record",
+                                            "name":  "Store Discovery Record",
+                                            "type":  "n8n-nodes-base.postgres",
+                                            "typeVersion":  2.5,
+                                            "position":  [
+                                                             1560,
+                                                             300
+                                                         ],
+                                            "credentials":  {
+                                                                "postgres":  {
+                                                                                 "id":  "oHS3dvjMW1h1PkMp",
+                                                                                 "name":  "RECON OS PostgreSQL"
+                                                                             }
+                                                            }
+                                        }
+                                    ],
+                          "connections":  {
+                                              "Webhook":  {
+                                                              "main":  [
+                                                                           [
+                                                                               {
+                                                                                   "node":  "Normalize Input",
+                                                                                   "type":  "main",
+                                                                                   "index":  0
+                                                                               }
+                                                                           ]
+                                                                       ]
+                                                          },
+                                              "Normalize Input":  {
+                                                                      "main":  [
+                                                                                   [
+                                                                                       {
+                                                                                           "node":  "Create Scan Job",
+                                                                                           "type":  "main",
+                                                                                           "index":  0
+                                                                                       }
+                                                                                   ]
+                                                                               ]
+                                                                  },
+                                              "Create Scan Job":  {
+                                                                      "main":  [
+                                                                                   [
+                                                                                       {
+                                                                                           "node":  "Take Screenshot",
+                                                                                           "type":  "main",
+                                                                                           "index":  0
+                                                                                       }
+                                                                                   ]
+                                                                               ]
+                                                                  },
+                                              "Take Screenshot":  {
+                                                                      "main":  [
+                                                                                   [
+                                                                                       {
+                                                                                           "node":  "Process Screenshot Result",
+                                                                                           "type":  "main",
+                                                                                           "index":  0
+                                                                                       }
+                                                                                   ]
+                                                                               ]
+                                                                  },
+                                              "Process Screenshot Result":  {
+                                                                                "main":  [
+                                                                                             [
+                                                                                                 {
+                                                                                                     "node":  "Update Asset Screenshot",
+                                                                                                     "type":  "main",
+                                                                                                     "index":  0
+                                                                                                 }
+                                                                                             ]
+                                                                                         ]
+                                                                            },
+                                              "Update Asset Screenshot":  {
+                                                                              "main":  [
+                                                                                           [
+                                                                                               {
+                                                                                                   "node":  "Store Discovery Record",
+                                                                                                   "type":  "main",
+                                                                                                   "index":  0
+                                                                                               }
+                                                                                           ]
+                                                                                       ]
+                                                                          }
+                                          },
+                          "authors":  "gelson mascarenhas",
+                          "name":  null,
+                          "description":  null,
+                          "autosaved":  false,
+                          "workflowPublishHistory":  [
+                                                         {
+                                                             "createdAt":  "2026-04-19T07:32:13.647Z",
+                                                             "id":  571,
+                                                             "workflowId":  "RjVvY9Ew1XcEYDNw",
+                                                             "versionId":  "f2c3d1b8-2ca4-42e7-a8e9-355cc5638698",
+                                                             "event":  "deactivated",
+                                                             "userId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                                         },
+                                                         {
+                                                             "createdAt":  "2026-04-19T07:32:13.671Z",
+                                                             "id":  572,
+                                                             "workflowId":  "RjVvY9Ew1XcEYDNw",
+                                                             "versionId":  "f2c3d1b8-2ca4-42e7-a8e9-355cc5638698",
+                                                             "event":  "activated",
+                                                             "userId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                                         }
+                                                     ]
+                      }
+}

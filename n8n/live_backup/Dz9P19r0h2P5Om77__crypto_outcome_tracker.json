@@ -1,5 +1,5 @@
 ﻿{
-    "updatedAt":  "2026-04-18T18:29:36.417Z",
+    "updatedAt":  "2026-04-19T06:21:18.318Z",
     "createdAt":  "2026-04-18T18:29:36.417Z",
     "id":  "Dz9P19r0h2P5Om77",
     "name":  "Crypto Outcome Tracker",
@@ -8,54 +8,55 @@
     "isArchived":  false,
     "nodes":  [
                   {
-                      "typeVersion":  1.2,
-                      "parameters":  {
-                                         "rule":  {
-                                                      "interval":  [
-                                                                       {
-                                                                           "field":  "hours",
-                                                                           "hoursInterval":  4
-                                                                       }
-                                                                   ]
-                                                  }
-                                     },
                       "name":  "Schedule Trigger",
-                      "id":  "ot01",
+                      "type":  "n8n-nodes-base.scheduleTrigger",
+                      "typeVersion":  1.2,
                       "position":  [
                                        0,
                                        300
                                    ],
-                      "type":  "n8n-nodes-base.scheduleTrigger"
+                      "parameters":  {
+                                         "rule":  {
+                                                      "interval":  [
+                                                                       {
+                                                                           "hoursInterval":  4,
+                                                                           "field":  "hours"
+                                                                       }
+                                                                   ]
+                                                  }
+                                     },
+                      "id":  "ot01"
                   },
                   {
+                      "parameters":  {
+                                         "method":  "GET",
+                                         "options":  {
+
+                                                     },
+                                         "url":  "https://api.kraken.com/0/public/Ticker?pair=XBTUSD"
+                                     },
+                      "id":  "ot02",
                       "name":  "Fetch BTC Price",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "onError":  "continueRegularOutput",
+                      "typeVersion":  4.2,
                       "position":  [
                                        200,
                                        200
-                                   ],
-                      "id":  "ot02",
-                      "onError":  "continueRegularOutput",
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "typeVersion":  4.2,
-                      "parameters":  {
-                                         "method":  "GET",
-                                         "url":  "https://api.kraken.com/0/public/Ticker?pair=XBTUSD",
-                                         "options":  {
-
-                                                     }
-                                     }
+                                   ]
                   },
                   {
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "name":  "Read Vault Signals",
-                      "onError":  "continueRegularOutput",
-                      "id":  "ot03",
                       "position":  [
                                        200,
                                        400
                                    ],
+                      "typeVersion":  4.2,
+                      "onError":  "continueRegularOutput",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "name":  "Read Vault Signals",
+                      "id":  "ot03",
                       "parameters":  {
-                                         "method":  "GET",
+                                         "sendHeaders":  true,
                                          "options":  {
 
                                                      },
@@ -71,36 +72,9 @@
                                                                                     }
                                                                                 ]
                                                              },
-                                         "headerParameters":  {
-                                                                  "parameters":  [
-                                                                                     {
-                                                                                         "value":  "2dc6c69574c14d615ce146e54640aa13030dade7aa86697c",
-                                                                                         "name":  "X-Vault-Secret"
-                                                                                     }
-                                                                                 ]
-                                                              },
-                                         "url":  "https://super-agent-production.up.railway.app/memory/export",
+                                         "method":  "GET",
                                          "sendQuery":  true,
-                                         "sendHeaders":  true
-                                     },
-                      "typeVersion":  4.2
-                  },
-                  {
-                      "typeVersion":  2,
-                      "parameters":  {
-                                         "jsCode":  "const tickerRaw = $(\u0027Fetch BTC Price\u0027).first().json;\nconst tickerResult = tickerRaw \u0026\u0026 tickerRaw.result ? tickerRaw.result : {};\nconst tickerKey = Object.keys(tickerResult)[0];\nconst ticker = tickerResult[tickerKey] || {};\nconst currentPrice = ticker.c ? parseFloat(ticker.c[0]) : 0;\n\nconst vaultRaw = $(\u0027Read Vault Signals\u0027).first().json;\nconst memories = (vaultRaw \u0026\u0026 vaultRaw.memories) ? vaultRaw.memories : [];\n\nlet correct = 0, incorrect = 0, neutral = 0, evaluated = 0;\nconst outcomes = [];\n\nfor (const mem of memories) {\n  const content = mem.content || \u0027\u0027;\n  const dirMatch = content.match(/TRADE SIGNAL[^:]*:\\s*(BUY|SELL|WAIT)/);\n  const priceMatch = content.match(/@\\s*\\$(\\d+(?:\\.\\d+)?)/);\n  const confMatch = content.match(/Conf:\\s*([\\d.]+)%/);\n  if (!dirMatch || !priceMatch) continue;\n  const dir = dirMatch[1];\n  const signalPrice = parseFloat(priceMatch[1]);\n  const conf = confMatch ? parseFloat(confMatch[1]) : 0;\n  if (dir === \u0027WAIT\u0027) { neutral++; evaluated++; continue; }\n  if (currentPrice === 0 || signalPrice === 0) continue;\n  const pctMove = ((currentPrice - signalPrice) / signalPrice) * 100;\n  let outcome;\n  if (Math.abs(pctMove) \u003c 0.3) { outcome = \u0027TOO_SOON\u0027; }\n  else if (dir === \u0027BUY\u0027 \u0026\u0026 pctMove \u003e 0) { outcome = \u0027CORRECT\u0027; correct++; }\n  else if (dir === \u0027SELL\u0027 \u0026\u0026 pctMove \u003c 0) { outcome = \u0027CORRECT\u0027; correct++; }\n  else { outcome = \u0027INCORRECT\u0027; incorrect++; }\n  evaluated++;\n  outcomes.push({ dir, signalPrice, currentPrice: Math.round(currentPrice), pctMove: Math.round(pctMove * 100) / 100, conf, outcome });\n}\n\nconst total = correct + incorrect;\nconst hitRate = total \u003e 0 ? Math.round((correct / total) * 100) : 0;\nconst avgConf = outcomes.length \u003e 0 ? Math.round(outcomes.reduce((s, o) =\u003e s + o.conf, 0) / outcomes.length * 10) / 10 : 0;\nconst summary = `OUTCOME REPORT | ${new Date().toISOString().slice(0,16)}Z\\nBTC @ $${Math.round(currentPrice)}\\nSignals evaluated: ${evaluated} | Correct: ${correct} | Incorrect: ${incorrect} | Neutral: ${neutral}\\nHit Rate: ${hitRate}% | Avg Confidence: ${avgConf}%\\nLast 3: ${outcomes.slice(0,3).map(o =\u003e o.dir + \u0027 \u0027 + o.outcome + \u0027 (\u0027 + o.pctMove + \u0027%)\u0027).join(\u0027 | \u0027)}`;\nreturn [{ json: { summary, hitRate, correct, incorrect, neutral, evaluated, currentPrice, avgConf, outcomes: outcomes.slice(0, 10) } }];"
-                                     },
-                      "position":  [
-                                       400,
-                                       300
-                                   ],
-                      "id":  "ot04",
-                      "name":  "Evaluate Outcomes",
-                      "type":  "n8n-nodes-base.code"
-                  },
-                  {
-                      "parameters":  {
-                                         "sendHeaders":  true,
+                                         "url":  "https://super-agent-production.up.railway.app/memory/export",
                                          "headerParameters":  {
                                                                   "parameters":  [
                                                                                      {
@@ -108,9 +82,29 @@
                                                                                          "value":  "2dc6c69574c14d615ce146e54640aa13030dade7aa86697c"
                                                                                      }
                                                                                  ]
-                                                              },
-                                         "url":  "https://super-agent-production.up.railway.app/memory/ingest",
-                                         "sendBody":  true,
+                                                              }
+                                     }
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "// ââ Evaluate Outcomes + build Telegram message ââââââââââââââââââââââââââââââââ\nconst tickerRaw = $(\u0027Fetch BTC Price\u0027).first().json;\nconst tickerResult = tickerRaw \u0026\u0026 tickerRaw.result ? tickerRaw.result : {};\nconst tickerKey = Object.keys(tickerResult)[0];\nconst ticker = tickerResult[tickerKey] || {};\nconst currentPrice = ticker.c ? parseFloat(ticker.c[0]) : 0;\nif (currentPrice === 0) {\n  const errMsg = \u0027\\uD83D\\uDEA8 \u003cb\u003eOUTCOME TRACKER \\u2014 ERROR\u003c/b\u003e\\n\\nBTC price fetch failed. Cannot evaluate outcomes.\\n\\n\u003ci\u003eSystem continues monitoring.\u003c/i\u003e\u0027;\n  return [{ json: { error: \u0027No BTC price available\u0027, hitRate: 0, evaluated: 0, summary: \u0027OUTCOME ERROR: BTC price unavailable\u0027, telegramMsg: errMsg } }];\n}\n\nconst vaultRaw = $(\u0027Read Vault Signals\u0027).first().json;\nconst memories = (vaultRaw \u0026\u0026 vaultRaw.memories) ? vaultRaw.memories : [];\nconst cutoff48h = new Date(Date.now() - 48 * 3600 * 1000).toISOString();\n\nlet correct = 0, incorrect = 0, neutral = 0, tooSoon = 0, stale = 0;\nconst outcomes = [];\n\nfor (const mem of memories) {\n  const content = mem.content || \u0027\u0027;\n  const createdAt = mem.created_at || \u0027\u0027;\n  if (createdAt \u0026\u0026 createdAt \u003c cutoff48h) { stale++; continue; }\n  const dirMatch   = content.match(/TRADE SIGNAL[^:]*:\\s*(BUY|SELL|WAIT)\\s+BTC/);\n  const priceMatch = content.match(/@ \\$([\\d,]+(?:\\.\\d+)?)/);\n  const confMatch  = content.match(/Confidence:([\\d.]+)%/);\n  if (!dirMatch || !priceMatch) continue;\n  const dir = dirMatch[1];\n  const signalPrice = parseFloat(priceMatch[1].replace(/,/g, \u0027\u0027));\n  const conf = confMatch ? parseFloat(confMatch[1]) : 50;\n  if (dir === \u0027WAIT\u0027) { neutral++; continue; }\n  if (signalPrice === 0) continue;\n  const ageSecs = createdAt ? (Date.now() - new Date(createdAt).getTime()) / 1000 : 14400;\n  const minMove = ageSecs \u003c 3600 ? 0.3 : ageSecs \u003c 14400 ? 0.6 : 1.2;\n  const pctMove = ((currentPrice - signalPrice) / signalPrice) * 100;\n  let outcome;\n  if (Math.abs(pctMove) \u003c minMove) {\n    outcome = \u0027TOO_SOON\u0027; tooSoon++;\n  } else if (dir === \u0027BUY\u0027 \u0026\u0026 pctMove \u003e 0) {\n    outcome = \u0027CORRECT\u0027; correct++;\n  } else if (dir === \u0027SELL\u0027 \u0026\u0026 pctMove \u003c 0) {\n    outcome = \u0027CORRECT\u0027; correct++;\n  } else {\n    outcome = \u0027INCORRECT\u0027; incorrect++;\n  }\n  outcomes.push({ dir, signalPrice, currentPrice: Math.round(currentPrice), pctMove: Math.round(pctMove * 100) / 100, conf, outcome, ageMins: Math.round(ageSecs / 60) });\n}\n\nconst gradeable    = correct + incorrect;\nconst hitRate      = gradeable \u003e 0 ? Math.round((correct / gradeable) * 100) : 0;\nconst graded       = outcomes.filter(o =\u003e o.outcome !== \u0027TOO_SOON\u0027);\nconst avgConf      = graded.length \u003e 0 ? Math.round(graded.reduce((s, o) =\u003e s + o.conf, 0) / graded.length * 10) / 10 : 0;\nconst evaluated    = correct + incorrect + neutral + tooSoon;\nconst recentGraded = graded.slice(0, 3);\nconst dataQuality  = gradeable \u003c 5 ? \u0027INSUFFICIENT\u0027 : gradeable \u003c 10 ? \u0027BUILDING\u0027 : \u0027SUFFICIENT\u0027;\nconst threshold    = 55;\n\nconst summary = \u0027OUTCOME REPORT | \u0027 + new Date().toISOString().slice(0,16) + \u0027Z\\nBTC @ $\u0027 + Math.round(currentPrice) +\n  \u0027\\nEvaluated: \u0027 + evaluated + \u0027 (\u0027 + gradeable + \u0027 gradeable, \u0027 + tooSoon + \u0027 too-soon, \u0027 + stale + \u0027 stale, \u0027 + neutral + \u0027 waits)\u0027 +\n  \u0027\\nHit Rate: \u0027 + hitRate + \u0027% (\u0027 + correct + \u0027/\u0027 + gradeable + \u0027 graded) | Avg Confidence: \u0027 + avgConf + \u0027%\u0027 +\n  \u0027\\nLast 3 graded: \u0027 + (recentGraded.map(o =\u003e o.dir + \u0027 \u0027 + o.outcome + \u0027 (\u0027 + o.pctMove + \u0027%)\u0027).join(\u0027 | \u0027) || \u0027none yet\u0027);\n\n// ââ Build Telegram Message ââââââââââââââââââââââââââââââââââââââââââââââââââââ\nconst ts    = new Date().toISOString().replace(\u0027T\u0027, \u0027 \u0027).slice(0, 16) + \u0027 UTC\u0027;\nconst HR    = \u0027\\u2501\u0027.repeat(20);\nconst hrBadge   = hitRate \u003e= 70 ? \u0027\\uD83D\\uDD25\u0027 : hitRate \u003e= 55 ? \u0027\\u2705\u0027 : hitRate \u003e 0 ? \u0027\\u26A0\\uFE0F\u0027 : \u0027\\uD83D\\uDCCA\u0027;\nconst hrStatus  = hitRate \u003e= threshold ? \u0027\\u2705 Above \u0027 + threshold + \u0027% threshold\u0027 : hitRate \u003e 0 ? \u0027\\u26A0\\uFE0F Below \u0027 + threshold + \u0027% \\u2014 paper mode only\u0027 : \u0027\\uD83D\\uDCCA Accumulating data\u0027;\nconst dqBadge   = dataQuality === \u0027SUFFICIENT\u0027 ? \u0027\\uD83D\\uDFE2\u0027 : dataQuality === \u0027BUILDING\u0027 ? \u0027\\uD83D\\uDFE1\u0027 : \u0027\\uD83D\\uDD34\u0027;\n\nconst outcomeLines = recentGraded.map(o =\u003e {\n  const ico = o.outcome === \u0027CORRECT\u0027 ? \u0027\\u2705\u0027 : \u0027\\u274C\u0027;\n  const dir2 = o.dir === \u0027BUY\u0027 ? \u0027\\uD83D\\uDFE2 BUY\u0027 : \u0027\\uD83D\\uDD34 SELL\u0027;\n  return ico + \u0027 \u0027 + dir2 + \u0027  $\u0027 + o.signalPrice.toLocaleString(\u0027en-US\u0027) + \u0027  \\u2192  \u0027 + (o.pctMove \u003e= 0 ? \u0027+\u0027 : \u0027\u0027) + o.pctMove + \u0027%  (\u0027 + o.ageMins + \u0027min)\u0027;\n});\n\nconst telegramMsg = [\n  \u0027\\uD83D\\uDCCA \u003cb\u003ePERFORMANCE UPDATE \\u2014 CRYPTO v3\u003c/b\u003e\u0027,\n  \u0027\\uD83D\\uDDD3 \u0027 + ts,\n  \u0027\u0027,\n  HR,\n  hrBadge + \u0027 \u003cb\u003eHIT RATE: \u0027 + hitRate + \u0027%\u003c/b\u003e   (\u0027 + correct + \u0027 correct / \u0027 + gradeable + \u0027 graded)\u0027,\n  hrStatus,\n  HR,\n  \u0027\u0027,\n  \u0027\\uD83D\\uDCB0 BTC: \u003cb\u003e$\u0027 + Math.round(currentPrice).toLocaleString(\u0027en-US\u0027) + \u0027\u003c/b\u003e\u0027,\n  \u0027\\uD83D\\uDCE6 Avg Signal Confidence: \u003cb\u003e\u0027 + avgConf + \u0027%\u003c/b\u003e\u0027,\n  \u0027\u0027,\n  \u0027\u003cb\u003eBreakdown:\u003c/b\u003e\u0027,\n  \u0027\\u2705 Correct: \u003cb\u003e\u0027 + correct + \u0027\u003c/b\u003e   \\u274C Incorrect: \u003cb\u003e\u0027 + incorrect + \u0027\u003c/b\u003e   \\u23F3 Too-soon: \u003cb\u003e\u0027 + tooSoon + \u0027\u003c/b\u003e\u0027,\n  \u0027\\u26AA Wait signals: \u003cb\u003e\u0027 + neutral + \u0027\u003c/b\u003e   \\uD83D\\uDCC5 Stale (\u003e48h): \u003cb\u003e\u0027 + stale + \u0027\u003c/b\u003e\u0027,\n  \u0027\u0027,\n  \u0027\u003cb\u003eLast graded signals:\u003c/b\u003e\u0027,\n  outcomeLines.length ? outcomeLines.join(\u0027\\n\u0027) : \u0027\u003ci\u003eNo graded signals yet\u003c/i\u003e\u0027,\n  \u0027\u0027,\n  dqBadge + \u0027 Data quality: \u003cb\u003e\u0027 + dataQuality + \u0027\u003c/b\u003e  (\u0027 + gradeable + \u0027 graded signals)\u0027,\n  \u0027\u0027,\n  \u0027\u003ci\u003e\\u23F1 Evaluated every 4h  \\u00B7  Threshold: \u0027 + threshold + \u0027%  \\u00B7  v3-super\u003c/i\u003e\u0027\n].join(\u0027\\n\u0027);\n\nreturn [{ json: { summary, hitRate, correct, incorrect, neutral, tooSoon, stale, evaluated, gradeable, currentPrice, avgConf, outcomes: outcomes.slice(0, 10), dataQuality, telegramMsg } }];\n"
+                                     },
+                      "id":  "ot04",
+                      "name":  "Evaluate Outcomes",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       400,
+                                       300
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "sendHeaders":  true,
+                                         "options":  {
+
+                                                     },
+                                         "method":  "POST",
                                          "bodyParameters":  {
                                                                 "parameters":  [
                                                                                    {
@@ -118,80 +112,75 @@
                                                                                        "name":  "content"
                                                                                    },
                                                                                    {
-                                                                                       "name":  "tags",
-                                                                                       "value":  "[\"crypto_outcome\",\"performance\"]"
+                                                                                       "value":  "[\"crypto_outcome\",\"performance\"]",
+                                                                                       "name":  "tags"
                                                                                    },
                                                                                    {
-                                                                                       "value":  "outcome_tracker",
-                                                                                       "name":  "source"
+                                                                                       "name":  "source",
+                                                                                       "value":  "outcome_tracker"
                                                                                    }
                                                                                ]
                                                             },
-                                         "options":  {
-
-                                                     },
-                                         "method":  "POST"
+                                         "sendBody":  true,
+                                         "url":  "https://super-agent-production.up.railway.app/memory/ingest",
+                                         "headerParameters":  {
+                                                                  "parameters":  [
+                                                                                     {
+                                                                                         "value":  "2dc6c69574c14d615ce146e54640aa13030dade7aa86697c",
+                                                                                         "name":  "X-Vault-Secret"
+                                                                                     }
+                                                                                 ]
+                                                              }
                                      },
-                      "typeVersion":  4.2,
-                      "type":  "n8n-nodes-base.httpRequest",
-                      "onError":  "continueRegularOutput",
                       "id":  "ot05",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "name":  "Write Outcome to Vault",
                       "position":  [
                                        600,
                                        200
                                    ],
-                      "name":  "Write Outcome to Vault"
+                      "typeVersion":  4.2,
+                      "onError":  "continueRegularOutput"
                   },
                   {
+                      "webhookId":  "c22fed57-c1bd-49f4-8eac-aa91b487d284",
+                      "name":  "Telegram Performance",
+                      "type":  "n8n-nodes-base.telegram",
+                      "id":  "ot06",
                       "parameters":  {
+                                         "operation":  "sendMessage",
                                          "additionalFields":  {
                                                                   "parse_mode":  "HTML"
                                                               },
-                                         "operation":  "sendMessage",
                                          "resource":  "message",
                                          "chatId":  "6275020593",
-                                         "text":  "={{ \u0027\u003cb\u003eð CRYPTO PERFORMANCE UPDATE\u003c/b\u003e\\n\\n\u0027 + $json.summary + \u0027\\n\\n\u003ci\u003eHit rate threshold for live trading: 55%+\u003c/i\u003e\u0027 }}"
+                                         "text":  "={{ $json.telegramMsg }}"
                                      },
+                      "typeVersion":  1.2,
+                      "position":  [
+                                       600,
+                                       400
+                                   ],
                       "credentials":  {
                                           "telegramApi":  {
                                                               "id":  "vaWr2cxS1Q9HsYd4",
                                                               "name":  "Telegram account"
                                                           }
-                                      },
-                      "typeVersion":  1.2,
-                      "type":  "n8n-nodes-base.telegram",
-                      "name":  "Telegram Performance",
-                      "position":  [
-                                       600,
-                                       400
-                                   ],
-                      "id":  "ot06",
-                      "webhookId":  "c22fed57-c1bd-49f4-8eac-aa91b487d284"
+                                      }
                   }
               ],
     "connections":  {
-                        "Fetch BTC Price":  {
-                                                "main":  [
-                                                             [
-                                                                 {
-                                                                     "index":  0,
-                                                                     "type":  "main",
-                                                                     "node":  "Evaluate Outcomes"
-                                                                 }
-                                                             ]
-                                                         ]
-                                            },
                         "Evaluate Outcomes":  {
                                                   "main":  [
                                                                [
                                                                    {
                                                                        "node":  "Write Outcome to Vault",
-                                                                       "type":  "main",
-                                                                       "index":  0
+                                                                       "index":  0,
+                                                                       "type":  "main"
                                                                    },
                                                                    {
-                                                                       "node":  "Telegram Performance",
                                                                        "type":  "main",
+                                                                       "node":  "Telegram Performance",
                                                                        "index":  0
                                                                    }
                                                                ]
@@ -201,8 +190,8 @@
                                                    "main":  [
                                                                 [
                                                                     {
-                                                                        "node":  "Evaluate Outcomes",
                                                                         "index":  0,
+                                                                        "node":  "Evaluate Outcomes",
                                                                         "type":  "main"
                                                                     }
                                                                 ]
@@ -213,17 +202,28 @@
                                                               [
                                                                   {
                                                                       "type":  "main",
-                                                                      "index":  0,
-                                                                      "node":  "Fetch BTC Price"
+                                                                      "node":  "Fetch BTC Price",
+                                                                      "index":  0
                                                                   },
                                                                   {
                                                                       "type":  "main",
-                                                                      "index":  0,
-                                                                      "node":  "Read Vault Signals"
+                                                                      "node":  "Read Vault Signals",
+                                                                      "index":  0
                                                                   }
                                                               ]
                                                           ]
-                                             }
+                                             },
+                        "Fetch BTC Price":  {
+                                                "main":  [
+                                                             [
+                                                                 {
+                                                                     "node":  "Evaluate Outcomes",
+                                                                     "index":  0,
+                                                                     "type":  "main"
+                                                                 }
+                                                             ]
+                                                         ]
+                                            }
                     },
     "settings":  {
                      "executionOrder":  "v1",
@@ -233,15 +233,15 @@
     "staticData":  {
                        "node:Schedule Trigger":  {
                                                      "recurrenceRules":  [
-
+                                                                             8
                                                                          ]
                                                  }
                    },
     "meta":  null,
     "pinData":  null,
-    "versionId":  "0bf15141-6114-430a-9099-761ae244d429",
-    "activeVersionId":  "0bf15141-6114-430a-9099-761ae244d429",
-    "versionCounter":  4,
+    "versionId":  "7c6169b0-fb00-4540-86fb-a4ff2025a6c4",
+    "activeVersionId":  "7c6169b0-fb00-4540-86fb-a4ff2025a6c4",
+    "versionCounter":  25,
     "triggerCount":  1,
     "shared":  [
                    {
@@ -266,60 +266,61 @@
 
              ],
     "activeVersion":  {
-                          "updatedAt":  "2026-04-18T18:29:36.432Z",
-                          "createdAt":  "2026-04-18T18:29:36.432Z",
-                          "versionId":  "0bf15141-6114-430a-9099-761ae244d429",
+                          "updatedAt":  "2026-04-19T06:21:18.321Z",
+                          "createdAt":  "2026-04-19T06:21:18.321Z",
+                          "versionId":  "7c6169b0-fb00-4540-86fb-a4ff2025a6c4",
                           "workflowId":  "Dz9P19r0h2P5Om77",
                           "nodes":  [
                                         {
-                                            "typeVersion":  1.2,
-                                            "parameters":  {
-                                                               "rule":  {
-                                                                            "interval":  [
-                                                                                             {
-                                                                                                 "field":  "hours",
-                                                                                                 "hoursInterval":  4
-                                                                                             }
-                                                                                         ]
-                                                                        }
-                                                           },
                                             "name":  "Schedule Trigger",
-                                            "id":  "ot01",
+                                            "type":  "n8n-nodes-base.scheduleTrigger",
+                                            "typeVersion":  1.2,
                                             "position":  [
                                                              0,
                                                              300
                                                          ],
-                                            "type":  "n8n-nodes-base.scheduleTrigger"
+                                            "parameters":  {
+                                                               "rule":  {
+                                                                            "interval":  [
+                                                                                             {
+                                                                                                 "hoursInterval":  4,
+                                                                                                 "field":  "hours"
+                                                                                             }
+                                                                                         ]
+                                                                        }
+                                                           },
+                                            "id":  "ot01"
                                         },
                                         {
+                                            "parameters":  {
+                                                               "method":  "GET",
+                                                               "options":  {
+
+                                                                           },
+                                                               "url":  "https://api.kraken.com/0/public/Ticker?pair=XBTUSD"
+                                                           },
+                                            "id":  "ot02",
                                             "name":  "Fetch BTC Price",
+                                            "type":  "n8n-nodes-base.httpRequest",
+                                            "onError":  "continueRegularOutput",
+                                            "typeVersion":  4.2,
                                             "position":  [
                                                              200,
                                                              200
-                                                         ],
-                                            "id":  "ot02",
-                                            "onError":  "continueRegularOutput",
-                                            "type":  "n8n-nodes-base.httpRequest",
-                                            "typeVersion":  4.2,
-                                            "parameters":  {
-                                                               "method":  "GET",
-                                                               "url":  "https://api.kraken.com/0/public/Ticker?pair=XBTUSD",
-                                                               "options":  {
-
-                                                                           }
-                                                           }
+                                                         ]
                                         },
                                         {
-                                            "type":  "n8n-nodes-base.httpRequest",
-                                            "name":  "Read Vault Signals",
-                                            "onError":  "continueRegularOutput",
-                                            "id":  "ot03",
                                             "position":  [
                                                              200,
                                                              400
                                                          ],
+                                            "typeVersion":  4.2,
+                                            "onError":  "continueRegularOutput",
+                                            "type":  "n8n-nodes-base.httpRequest",
+                                            "name":  "Read Vault Signals",
+                                            "id":  "ot03",
                                             "parameters":  {
-                                                               "method":  "GET",
+                                                               "sendHeaders":  true,
                                                                "options":  {
 
                                                                            },
@@ -335,36 +336,9 @@
                                                                                                           }
                                                                                                       ]
                                                                                    },
-                                                               "headerParameters":  {
-                                                                                        "parameters":  [
-                                                                                                           {
-                                                                                                               "value":  "2dc6c69574c14d615ce146e54640aa13030dade7aa86697c",
-                                                                                                               "name":  "X-Vault-Secret"
-                                                                                                           }
-                                                                                                       ]
-                                                                                    },
-                                                               "url":  "https://super-agent-production.up.railway.app/memory/export",
+                                                               "method":  "GET",
                                                                "sendQuery":  true,
-                                                               "sendHeaders":  true
-                                                           },
-                                            "typeVersion":  4.2
-                                        },
-                                        {
-                                            "typeVersion":  2,
-                                            "parameters":  {
-                                                               "jsCode":  "const tickerRaw = $(\u0027Fetch BTC Price\u0027).first().json;\nconst tickerResult = tickerRaw \u0026\u0026 tickerRaw.result ? tickerRaw.result : {};\nconst tickerKey = Object.keys(tickerResult)[0];\nconst ticker = tickerResult[tickerKey] || {};\nconst currentPrice = ticker.c ? parseFloat(ticker.c[0]) : 0;\n\nconst vaultRaw = $(\u0027Read Vault Signals\u0027).first().json;\nconst memories = (vaultRaw \u0026\u0026 vaultRaw.memories) ? vaultRaw.memories : [];\n\nlet correct = 0, incorrect = 0, neutral = 0, evaluated = 0;\nconst outcomes = [];\n\nfor (const mem of memories) {\n  const content = mem.content || \u0027\u0027;\n  const dirMatch = content.match(/TRADE SIGNAL[^:]*:\\s*(BUY|SELL|WAIT)/);\n  const priceMatch = content.match(/@\\s*\\$(\\d+(?:\\.\\d+)?)/);\n  const confMatch = content.match(/Conf:\\s*([\\d.]+)%/);\n  if (!dirMatch || !priceMatch) continue;\n  const dir = dirMatch[1];\n  const signalPrice = parseFloat(priceMatch[1]);\n  const conf = confMatch ? parseFloat(confMatch[1]) : 0;\n  if (dir === \u0027WAIT\u0027) { neutral++; evaluated++; continue; }\n  if (currentPrice === 0 || signalPrice === 0) continue;\n  const pctMove = ((currentPrice - signalPrice) / signalPrice) * 100;\n  let outcome;\n  if (Math.abs(pctMove) \u003c 0.3) { outcome = \u0027TOO_SOON\u0027; }\n  else if (dir === \u0027BUY\u0027 \u0026\u0026 pctMove \u003e 0) { outcome = \u0027CORRECT\u0027; correct++; }\n  else if (dir === \u0027SELL\u0027 \u0026\u0026 pctMove \u003c 0) { outcome = \u0027CORRECT\u0027; correct++; }\n  else { outcome = \u0027INCORRECT\u0027; incorrect++; }\n  evaluated++;\n  outcomes.push({ dir, signalPrice, currentPrice: Math.round(currentPrice), pctMove: Math.round(pctMove * 100) / 100, conf, outcome });\n}\n\nconst total = correct + incorrect;\nconst hitRate = total \u003e 0 ? Math.round((correct / total) * 100) : 0;\nconst avgConf = outcomes.length \u003e 0 ? Math.round(outcomes.reduce((s, o) =\u003e s + o.conf, 0) / outcomes.length * 10) / 10 : 0;\nconst summary = `OUTCOME REPORT | ${new Date().toISOString().slice(0,16)}Z\\nBTC @ $${Math.round(currentPrice)}\\nSignals evaluated: ${evaluated} | Correct: ${correct} | Incorrect: ${incorrect} | Neutral: ${neutral}\\nHit Rate: ${hitRate}% | Avg Confidence: ${avgConf}%\\nLast 3: ${outcomes.slice(0,3).map(o =\u003e o.dir + \u0027 \u0027 + o.outcome + \u0027 (\u0027 + o.pctMove + \u0027%)\u0027).join(\u0027 | \u0027)}`;\nreturn [{ json: { summary, hitRate, correct, incorrect, neutral, evaluated, currentPrice, avgConf, outcomes: outcomes.slice(0, 10) } }];"
-                                                           },
-                                            "position":  [
-                                                             400,
-                                                             300
-                                                         ],
-                                            "id":  "ot04",
-                                            "name":  "Evaluate Outcomes",
-                                            "type":  "n8n-nodes-base.code"
-                                        },
-                                        {
-                                            "parameters":  {
-                                                               "sendHeaders":  true,
+                                                               "url":  "https://super-agent-production.up.railway.app/memory/export",
                                                                "headerParameters":  {
                                                                                         "parameters":  [
                                                                                                            {
@@ -372,9 +346,29 @@
                                                                                                                "value":  "2dc6c69574c14d615ce146e54640aa13030dade7aa86697c"
                                                                                                            }
                                                                                                        ]
-                                                                                    },
-                                                               "url":  "https://super-agent-production.up.railway.app/memory/ingest",
-                                                               "sendBody":  true,
+                                                                                    }
+                                                           }
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "jsCode":  "// ââ Evaluate Outcomes + build Telegram message ââââââââââââââââââââââââââââââââ\nconst tickerRaw = $(\u0027Fetch BTC Price\u0027).first().json;\nconst tickerResult = tickerRaw \u0026\u0026 tickerRaw.result ? tickerRaw.result : {};\nconst tickerKey = Object.keys(tickerResult)[0];\nconst ticker = tickerResult[tickerKey] || {};\nconst currentPrice = ticker.c ? parseFloat(ticker.c[0]) : 0;\nif (currentPrice === 0) {\n  const errMsg = \u0027\\uD83D\\uDEA8 \u003cb\u003eOUTCOME TRACKER \\u2014 ERROR\u003c/b\u003e\\n\\nBTC price fetch failed. Cannot evaluate outcomes.\\n\\n\u003ci\u003eSystem continues monitoring.\u003c/i\u003e\u0027;\n  return [{ json: { error: \u0027No BTC price available\u0027, hitRate: 0, evaluated: 0, summary: \u0027OUTCOME ERROR: BTC price unavailable\u0027, telegramMsg: errMsg } }];\n}\n\nconst vaultRaw = $(\u0027Read Vault Signals\u0027).first().json;\nconst memories = (vaultRaw \u0026\u0026 vaultRaw.memories) ? vaultRaw.memories : [];\nconst cutoff48h = new Date(Date.now() - 48 * 3600 * 1000).toISOString();\n\nlet correct = 0, incorrect = 0, neutral = 0, tooSoon = 0, stale = 0;\nconst outcomes = [];\n\nfor (const mem of memories) {\n  const content = mem.content || \u0027\u0027;\n  const createdAt = mem.created_at || \u0027\u0027;\n  if (createdAt \u0026\u0026 createdAt \u003c cutoff48h) { stale++; continue; }\n  const dirMatch   = content.match(/TRADE SIGNAL[^:]*:\\s*(BUY|SELL|WAIT)\\s+BTC/);\n  const priceMatch = content.match(/@ \\$([\\d,]+(?:\\.\\d+)?)/);\n  const confMatch  = content.match(/Confidence:([\\d.]+)%/);\n  if (!dirMatch || !priceMatch) continue;\n  const dir = dirMatch[1];\n  const signalPrice = parseFloat(priceMatch[1].replace(/,/g, \u0027\u0027));\n  const conf = confMatch ? parseFloat(confMatch[1]) : 50;\n  if (dir === \u0027WAIT\u0027) { neutral++; continue; }\n  if (signalPrice === 0) continue;\n  const ageSecs = createdAt ? (Date.now() - new Date(createdAt).getTime()) / 1000 : 14400;\n  const minMove = ageSecs \u003c 3600 ? 0.3 : ageSecs \u003c 14400 ? 0.6 : 1.2;\n  const pctMove = ((currentPrice - signalPrice) / signalPrice) * 100;\n  let outcome;\n  if (Math.abs(pctMove) \u003c minMove) {\n    outcome = \u0027TOO_SOON\u0027; tooSoon++;\n  } else if (dir === \u0027BUY\u0027 \u0026\u0026 pctMove \u003e 0) {\n    outcome = \u0027CORRECT\u0027; correct++;\n  } else if (dir === \u0027SELL\u0027 \u0026\u0026 pctMove \u003c 0) {\n    outcome = \u0027CORRECT\u0027; correct++;\n  } else {\n    outcome = \u0027INCORRECT\u0027; incorrect++;\n  }\n  outcomes.push({ dir, signalPrice, currentPrice: Math.round(currentPrice), pctMove: Math.round(pctMove * 100) / 100, conf, outcome, ageMins: Math.round(ageSecs / 60) });\n}\n\nconst gradeable    = correct + incorrect;\nconst hitRate      = gradeable \u003e 0 ? Math.round((correct / gradeable) * 100) : 0;\nconst graded       = outcomes.filter(o =\u003e o.outcome !== \u0027TOO_SOON\u0027);\nconst avgConf      = graded.length \u003e 0 ? Math.round(graded.reduce((s, o) =\u003e s + o.conf, 0) / graded.length * 10) / 10 : 0;\nconst evaluated    = correct + incorrect + neutral + tooSoon;\nconst recentGraded = graded.slice(0, 3);\nconst dataQuality  = gradeable \u003c 5 ? \u0027INSUFFICIENT\u0027 : gradeable \u003c 10 ? \u0027BUILDING\u0027 : \u0027SUFFICIENT\u0027;\nconst threshold    = 55;\n\nconst summary = \u0027OUTCOME REPORT | \u0027 + new Date().toISOString().slice(0,16) + \u0027Z\\nBTC @ $\u0027 + Math.round(currentPrice) +\n  \u0027\\nEvaluated: \u0027 + evaluated + \u0027 (\u0027 + gradeable + \u0027 gradeable, \u0027 + tooSoon + \u0027 too-soon, \u0027 + stale + \u0027 stale, \u0027 + neutral + \u0027 waits)\u0027 +\n  \u0027\\nHit Rate: \u0027 + hitRate + \u0027% (\u0027 + correct + \u0027/\u0027 + gradeable + \u0027 graded) | Avg Confidence: \u0027 + avgConf + \u0027%\u0027 +\n  \u0027\\nLast 3 graded: \u0027 + (recentGraded.map(o =\u003e o.dir + \u0027 \u0027 + o.outcome + \u0027 (\u0027 + o.pctMove + \u0027%)\u0027).join(\u0027 | \u0027) || \u0027none yet\u0027);\n\n// ââ Build Telegram Message ââââââââââââââââââââââââââââââââââââââââââââââââââââ\nconst ts    = new Date().toISOString().replace(\u0027T\u0027, \u0027 \u0027).slice(0, 16) + \u0027 UTC\u0027;\nconst HR    = \u0027\\u2501\u0027.repeat(20);\nconst hrBadge   = hitRate \u003e= 70 ? \u0027\\uD83D\\uDD25\u0027 : hitRate \u003e= 55 ? \u0027\\u2705\u0027 : hitRate \u003e 0 ? \u0027\\u26A0\\uFE0F\u0027 : \u0027\\uD83D\\uDCCA\u0027;\nconst hrStatus  = hitRate \u003e= threshold ? \u0027\\u2705 Above \u0027 + threshold + \u0027% threshold\u0027 : hitRate \u003e 0 ? \u0027\\u26A0\\uFE0F Below \u0027 + threshold + \u0027% \\u2014 paper mode only\u0027 : \u0027\\uD83D\\uDCCA Accumulating data\u0027;\nconst dqBadge   = dataQuality === \u0027SUFFICIENT\u0027 ? \u0027\\uD83D\\uDFE2\u0027 : dataQuality === \u0027BUILDING\u0027 ? \u0027\\uD83D\\uDFE1\u0027 : \u0027\\uD83D\\uDD34\u0027;\n\nconst outcomeLines = recentGraded.map(o =\u003e {\n  const ico = o.outcome === \u0027CORRECT\u0027 ? \u0027\\u2705\u0027 : \u0027\\u274C\u0027;\n  const dir2 = o.dir === \u0027BUY\u0027 ? \u0027\\uD83D\\uDFE2 BUY\u0027 : \u0027\\uD83D\\uDD34 SELL\u0027;\n  return ico + \u0027 \u0027 + dir2 + \u0027  $\u0027 + o.signalPrice.toLocaleString(\u0027en-US\u0027) + \u0027  \\u2192  \u0027 + (o.pctMove \u003e= 0 ? \u0027+\u0027 : \u0027\u0027) + o.pctMove + \u0027%  (\u0027 + o.ageMins + \u0027min)\u0027;\n});\n\nconst telegramMsg = [\n  \u0027\\uD83D\\uDCCA \u003cb\u003ePERFORMANCE UPDATE \\u2014 CRYPTO v3\u003c/b\u003e\u0027,\n  \u0027\\uD83D\\uDDD3 \u0027 + ts,\n  \u0027\u0027,\n  HR,\n  hrBadge + \u0027 \u003cb\u003eHIT RATE: \u0027 + hitRate + \u0027%\u003c/b\u003e   (\u0027 + correct + \u0027 correct / \u0027 + gradeable + \u0027 graded)\u0027,\n  hrStatus,\n  HR,\n  \u0027\u0027,\n  \u0027\\uD83D\\uDCB0 BTC: \u003cb\u003e$\u0027 + Math.round(currentPrice).toLocaleString(\u0027en-US\u0027) + \u0027\u003c/b\u003e\u0027,\n  \u0027\\uD83D\\uDCE6 Avg Signal Confidence: \u003cb\u003e\u0027 + avgConf + \u0027%\u003c/b\u003e\u0027,\n  \u0027\u0027,\n  \u0027\u003cb\u003eBreakdown:\u003c/b\u003e\u0027,\n  \u0027\\u2705 Correct: \u003cb\u003e\u0027 + correct + \u0027\u003c/b\u003e   \\u274C Incorrect: \u003cb\u003e\u0027 + incorrect + \u0027\u003c/b\u003e   \\u23F3 Too-soon: \u003cb\u003e\u0027 + tooSoon + \u0027\u003c/b\u003e\u0027,\n  \u0027\\u26AA Wait signals: \u003cb\u003e\u0027 + neutral + \u0027\u003c/b\u003e   \\uD83D\\uDCC5 Stale (\u003e48h): \u003cb\u003e\u0027 + stale + \u0027\u003c/b\u003e\u0027,\n  \u0027\u0027,\n  \u0027\u003cb\u003eLast graded signals:\u003c/b\u003e\u0027,\n  outcomeLines.length ? outcomeLines.join(\u0027\\n\u0027) : \u0027\u003ci\u003eNo graded signals yet\u003c/i\u003e\u0027,\n  \u0027\u0027,\n  dqBadge + \u0027 Data quality: \u003cb\u003e\u0027 + dataQuality + \u0027\u003c/b\u003e  (\u0027 + gradeable + \u0027 graded signals)\u0027,\n  \u0027\u0027,\n  \u0027\u003ci\u003e\\u23F1 Evaluated every 4h  \\u00B7  Threshold: \u0027 + threshold + \u0027%  \\u00B7  v3-super\u003c/i\u003e\u0027\n].join(\u0027\\n\u0027);\n\nreturn [{ json: { summary, hitRate, correct, incorrect, neutral, tooSoon, stale, evaluated, gradeable, currentPrice, avgConf, outcomes: outcomes.slice(0, 10), dataQuality, telegramMsg } }];\n"
+                                                           },
+                                            "id":  "ot04",
+                                            "name":  "Evaluate Outcomes",
+                                            "type":  "n8n-nodes-base.code",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             400,
+                                                             300
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "sendHeaders":  true,
+                                                               "options":  {
+
+                                                                           },
+                                                               "method":  "POST",
                                                                "bodyParameters":  {
                                                                                       "parameters":  [
                                                                                                          {
@@ -382,80 +376,75 @@
                                                                                                              "name":  "content"
                                                                                                          },
                                                                                                          {
-                                                                                                             "name":  "tags",
-                                                                                                             "value":  "[\"crypto_outcome\",\"performance\"]"
+                                                                                                             "value":  "[\"crypto_outcome\",\"performance\"]",
+                                                                                                             "name":  "tags"
                                                                                                          },
                                                                                                          {
-                                                                                                             "value":  "outcome_tracker",
-                                                                                                             "name":  "source"
+                                                                                                             "name":  "source",
+                                                                                                             "value":  "outcome_tracker"
                                                                                                          }
                                                                                                      ]
                                                                                   },
-                                                               "options":  {
-
-                                                                           },
-                                                               "method":  "POST"
+                                                               "sendBody":  true,
+                                                               "url":  "https://super-agent-production.up.railway.app/memory/ingest",
+                                                               "headerParameters":  {
+                                                                                        "parameters":  [
+                                                                                                           {
+                                                                                                               "value":  "2dc6c69574c14d615ce146e54640aa13030dade7aa86697c",
+                                                                                                               "name":  "X-Vault-Secret"
+                                                                                                           }
+                                                                                                       ]
+                                                                                    }
                                                            },
-                                            "typeVersion":  4.2,
-                                            "type":  "n8n-nodes-base.httpRequest",
-                                            "onError":  "continueRegularOutput",
                                             "id":  "ot05",
+                                            "type":  "n8n-nodes-base.httpRequest",
+                                            "name":  "Write Outcome to Vault",
                                             "position":  [
                                                              600,
                                                              200
                                                          ],
-                                            "name":  "Write Outcome to Vault"
+                                            "typeVersion":  4.2,
+                                            "onError":  "continueRegularOutput"
                                         },
                                         {
+                                            "webhookId":  "c22fed57-c1bd-49f4-8eac-aa91b487d284",
+                                            "name":  "Telegram Performance",
+                                            "type":  "n8n-nodes-base.telegram",
+                                            "id":  "ot06",
                                             "parameters":  {
+                                                               "operation":  "sendMessage",
                                                                "additionalFields":  {
                                                                                         "parse_mode":  "HTML"
                                                                                     },
-                                                               "operation":  "sendMessage",
                                                                "resource":  "message",
                                                                "chatId":  "6275020593",
-                                                               "text":  "={{ \u0027\u003cb\u003eð CRYPTO PERFORMANCE UPDATE\u003c/b\u003e\\n\\n\u0027 + $json.summary + \u0027\\n\\n\u003ci\u003eHit rate threshold for live trading: 55%+\u003c/i\u003e\u0027 }}"
+                                                               "text":  "={{ $json.telegramMsg }}"
                                                            },
+                                            "typeVersion":  1.2,
+                                            "position":  [
+                                                             600,
+                                                             400
+                                                         ],
                                             "credentials":  {
                                                                 "telegramApi":  {
                                                                                     "id":  "vaWr2cxS1Q9HsYd4",
                                                                                     "name":  "Telegram account"
                                                                                 }
-                                                            },
-                                            "typeVersion":  1.2,
-                                            "type":  "n8n-nodes-base.telegram",
-                                            "name":  "Telegram Performance",
-                                            "position":  [
-                                                             600,
-                                                             400
-                                                         ],
-                                            "id":  "ot06",
-                                            "webhookId":  "c22fed57-c1bd-49f4-8eac-aa91b487d284"
+                                                            }
                                         }
                                     ],
                           "connections":  {
-                                              "Fetch BTC Price":  {
-                                                                      "main":  [
-                                                                                   [
-                                                                                       {
-                                                                                           "index":  0,
-                                                                                           "type":  "main",
-                                                                                           "node":  "Evaluate Outcomes"
-                                                                                       }
-                                                                                   ]
-                                                                               ]
-                                                                  },
                                               "Evaluate Outcomes":  {
                                                                         "main":  [
                                                                                      [
                                                                                          {
                                                                                              "node":  "Write Outcome to Vault",
-                                                                                             "type":  "main",
-                                                                                             "index":  0
+                                                                                             "index":  0,
+                                                                                             "type":  "main"
                                                                                          },
                                                                                          {
-                                                                                             "node":  "Telegram Performance",
                                                                                              "type":  "main",
+                                                                                             "node":  "Telegram Performance",
                                                                                              "index":  0
                                                                                          }
                                                                                      ]
@@ -465,8 +454,8 @@
                                                                          "main":  [
                                                                                       [
                                                                                           {
-                                                                                              "node":  "Evaluate Outcomes",
                                                                                               "index":  0,
+                                                                                              "node":  "Evaluate Outcomes",
                                                                                               "type":  "main"
                                                                                           }
                                                                                       ]
@@ -477,17 +466,28 @@
                                                                                     [
                                                                                         {
                                                                                             "type":  "main",
-                                                                                            "index":  0,
-                                                                                            "node":  "Fetch BTC Price"
+                                                                                            "node":  "Fetch BTC Price",
+                                                                                            "index":  0
                                                                                         },
                                                                                         {
                                                                                             "type":  "main",
-                                                                                            "index":  0,
-                                                                                            "node":  "Read Vault Signals"
+                                                                                            "node":  "Read Vault Signals",
+                                                                                            "index":  0
                                                                                         }
                                                                                     ]
                                                                                 ]
-                                                                   }
+                                                                   },
+                                              "Fetch BTC Price":  {
+                                                                      "main":  [
+                                                                                   [
+                                                                                       {
+                                                                                           "node":  "Evaluate Outcomes",
+                                                                                           "index":  0,
+                                                                                           "type":  "main"
+                                                                                       }
+                                                                                   ]
+                                                                               ]
+                                                                  }
                                           },
                           "authors":  "gelson mascarenhas",
                           "name":  null,
@@ -495,10 +495,10 @@
                           "autosaved":  false,
                           "workflowPublishHistory":  [
                                                          {
-                                                             "createdAt":  "2026-04-18T18:30:44.460Z",
-                                                             "id":  412,
+                                                             "createdAt":  "2026-04-19T06:21:18.734Z",
+                                                             "id":  521,
                                                              "workflowId":  "Dz9P19r0h2P5Om77",
-                                                             "versionId":  "0bf15141-6114-430a-9099-761ae244d429",
+                                                             "versionId":  "7c6169b0-fb00-4540-86fb-a4ff2025a6c4",
                                                              "event":  "activated",
                                                              "userId":  "09977cda-9140-4e68-a948-e88d1f400c18"
                                                          }

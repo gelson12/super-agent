@@ -1,0 +1,795 @@
+﻿{
+    "updatedAt":  "2026-04-19T07:32:13.259Z",
+    "createdAt":  "2026-04-19T03:30:12.372Z",
+    "id":  "WpPRm8uWzUjcWXh6",
+    "name":  "RECON OS - WF-05 Recon DNS",
+    "description":  null,
+    "active":  true,
+    "isArchived":  false,
+    "nodes":  [
+                  {
+                      "parameters":  {
+                                         "httpMethod":  "POST",
+                                         "path":  "recon-os/recon/dns",
+                                         "responseMode":  "lastNode",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "wh-dns",
+                      "name":  "Webhook",
+                      "type":  "n8n-nodes-base.webhook",
+                      "typeVersion":  2,
+                      "position":  [
+                                       240,
+                                       300
+                                   ],
+                      "webhookId":  "recon-os-recon-dns"
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "const body = $input.first().json.body || $input.first().json;\nreturn [{ json: {\n  asset_id: body.asset_id,\n  asset_value: (body.asset_value || \u0027\u0027).toLowerCase().trim(),\n  engagement_id: body.engagement_id\n} }];"
+                                     },
+                      "id":  "normalize",
+                      "name":  "Normalize Input",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       460,
+                                       300
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "INSERT INTO scan_jobs (engagement_id, asset_id, tool, profile, status, started_at)\nVALUES (\u0027{{ $json.engagement_id }}\u0027,\u0027{{ $json.asset_id }}\u0027,\u0027dns_enum\u0027,\u0027passive\u0027,\u0027running\u0027,NOW())\nRETURNING id;",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "pg-scan-job",
+                      "name":  "Create Scan Job",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       680,
+                                       300
+                                   ],
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "oHS3dvjMW1h1PkMp",
+                                                           "name":  "RECON OS PostgreSQL"
+                                                       }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "method":  "GET",
+                                         "url":  "=https://dns.google/resolve?name={{ $(\u0027Normalize Input\u0027).first().json.asset_value }}\u0026type=A",
+                                         "options":  {
+                                                         "timeout":  10000
+                                                     }
+                                     },
+                      "id":  "dns-a-record",
+                      "name":  "DNS A Records",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.2,
+                      "position":  [
+                                       900,
+                                       200
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "method":  "GET",
+                                         "url":  "=https://dns.google/resolve?name={{ $(\u0027Normalize Input\u0027).first().json.asset_value }}\u0026type=MX",
+                                         "options":  {
+                                                         "timeout":  10000
+                                                     }
+                                     },
+                      "id":  "dns-mx-record",
+                      "name":  "DNS MX Records",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.2,
+                      "position":  [
+                                       900,
+                                       340
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "method":  "GET",
+                                         "url":  "=https://dns.google/resolve?name={{ $(\u0027Normalize Input\u0027).first().json.asset_value }}\u0026type=TXT",
+                                         "options":  {
+                                                         "timeout":  10000
+                                                     }
+                                     },
+                      "id":  "dns-txt-record",
+                      "name":  "DNS TXT Records",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.2,
+                      "position":  [
+                                       900,
+                                       480
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "method":  "GET",
+                                         "url":  "=https://crt.sh/?q=%25.{{ $(\u0027Normalize Input\u0027).first().json.asset_value }}\u0026output=json",
+                                         "options":  {
+                                                         "timeout":  15000
+                                                     }
+                                     },
+                      "id":  "crtsh",
+                      "name":  "Certificate Transparency",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.2,
+                      "position":  [
+                                       900,
+                                       620
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "const domain = $(\u0027Normalize Input\u0027).first().json.asset_value;\nconst engId = $(\u0027Normalize Input\u0027).first().json.engagement_id;\nconst assetId = $(\u0027Normalize Input\u0027).first().json.asset_id;\nconst scanJobId = $(\u0027Create Scan Job\u0027).first().json.id;\n\n// Parse A records\nlet aRecords = [];\ntry {\n  const aData = $(\u0027DNS A Records\u0027).first().json;\n  aRecords = (aData.Answer || []).filter(r =\u003e r.type === 1).map(r =\u003e r.data);\n} catch(e) {}\n\n// Parse MX records\nlet mxRecords = [];\ntry {\n  const mxData = $(\u0027DNS MX Records\u0027).first().json;\n  mxRecords = (mxData.Answer || []).filter(r =\u003e r.type === 15).map(r =\u003e r.data);\n} catch(e) {}\n\n// Parse TXT records\nlet txtRecords = [];\ntry {\n  const txtData = $(\u0027DNS TXT Records\u0027).first().json;\n  txtRecords = (txtData.Answer || []).filter(r =\u003e r.type === 16).map(r =\u003e r.data);\n} catch(e) {}\n\n// Parse crt.sh subdomains\nlet subdomains = new Set();\ntry {\n  const crtData = $(\u0027Certificate Transparency\u0027).first().json;\n  if (Array.isArray(crtData)) {\n    crtData.forEach(entry =\u003e {\n      const names = (entry.name_value || \u0027\u0027).split(\u0027\\n\u0027);\n      names.forEach(n =\u003e {\n        const clean = n.trim().replace(/^\\*\\./, \u0027\u0027).toLowerCase();\n        if (clean \u0026\u0026 clean !== domain \u0026\u0026 clean.endsWith(\u0027.\u0027 + domain)) {\n          subdomains.add(clean);\n        }\n      });\n    });\n  }\n} catch(e) {}\n\nreturn [{ json: {\n  domain,\n  engagement_id: engId,\n  asset_id: assetId,\n  scan_job_id: scanJobId,\n  a_records: aRecords,\n  mx_records: mxRecords,\n  txt_records: txtRecords,\n  discovered_subdomains: Array.from(subdomains).slice(0, 100),\n  discovery_count: subdomains.size\n} }];"
+                                     },
+                      "id":  "parse-dns",
+                      "name":  "Parse DNS Results",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       1120,
+                                       400
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "const data = $input.first().json;\nconst subdomains = data.discovered_subdomains || [];\nreturn subdomains.map(sub =\u003e ({ json: {\n  asset_value: sub,\n  asset_type: \u0027subdomain\u0027,\n  engagement_id: data.engagement_id,\n  notes: \u0027Discovered via crt.sh CT log\u0027\n} }));"
+                                     },
+                      "id":  "split-subdomains",
+                      "name":  "Split Subdomains",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       1340,
+                                       400
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "method":  "POST",
+                                         "url":  "https://outstanding-blessing-production-1d4b.up.railway.app/webhook/recon-os/assets/submit",
+                                         "sendBody":  true,
+                                         "specifyBody":  "json",
+                                         "jsonBody":  "={{ JSON.stringify($json) }}",
+                                         "options":  {
+                                                         "timeout":  10000
+                                                     }
+                                     },
+                      "id":  "submit-subdomain",
+                      "name":  "Submit Subdomain as Asset",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.2,
+                      "position":  [
+                                       1560,
+                                       400
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "INSERT INTO discovery_records (engagement_id, asset_id, source, record_type, record_value, raw_data)\nVALUES\n(\u0027{{ $(\u0027Normalize Input\u0027).first().json.engagement_id }}\u0027,\u0027{{ $(\u0027Normalize Input\u0027).first().json.asset_id }}\u0027,\u0027dns_enum\u0027,\u0027a_records\u0027,\u0027{{ ($(\u0027Parse DNS Results\u0027).first().json.a_records||[]).join(\u0027,\u0027).replace(/\u0027/g,\"\u0027\u0027\") }}\u0027,\u0027{\"a\":{{ JSON.stringify($(\u0027Parse DNS Results\u0027).first().json.a_records) }},\"mx\":{{ JSON.stringify($(\u0027Parse DNS Results\u0027).first().json.mx_records) }},\"txt\":{{ JSON.stringify($(\u0027Parse DNS Results\u0027).first().json.txt_records) }},\"subdomains_found\":{{ $(\u0027Parse DNS Results\u0027).first().json.discovery_count }}}\u0027::jsonb);",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "pg-store-discovery",
+                      "name":  "Store Discovery Record",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       1780,
+                                       300
+                                   ],
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "oHS3dvjMW1h1PkMp",
+                                                           "name":  "RECON OS PostgreSQL"
+                                                       }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "UPDATE scan_jobs SET status=\u0027completed\u0027, completed_at=NOW() WHERE id=\u0027{{ $(\u0027Create Scan Job\u0027).first().json.id }}\u0027;",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "pg-complete-job",
+                      "name":  "Complete Scan Job",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       2000,
+                                       300
+                                   ],
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "oHS3dvjMW1h1PkMp",
+                                                           "name":  "RECON OS PostgreSQL"
+                                                       }
+                                      }
+                  }
+              ],
+    "connections":  {
+                        "Webhook":  {
+                                        "main":  [
+                                                     [
+                                                         {
+                                                             "node":  "Normalize Input",
+                                                             "type":  "main",
+                                                             "index":  0
+                                                         }
+                                                     ]
+                                                 ]
+                                    },
+                        "Normalize Input":  {
+                                                "main":  [
+                                                             [
+                                                                 {
+                                                                     "node":  "Create Scan Job",
+                                                                     "type":  "main",
+                                                                     "index":  0
+                                                                 }
+                                                             ]
+                                                         ]
+                                            },
+                        "Create Scan Job":  {
+                                                "main":  [
+                                                             [
+                                                                 {
+                                                                     "node":  "DNS A Records",
+                                                                     "type":  "main",
+                                                                     "index":  0
+                                                                 }
+                                                             ],
+                                                             [
+                                                                 {
+                                                                     "node":  "DNS MX Records",
+                                                                     "type":  "main",
+                                                                     "index":  0
+                                                                 }
+                                                             ],
+                                                             [
+                                                                 {
+                                                                     "node":  "DNS TXT Records",
+                                                                     "type":  "main",
+                                                                     "index":  0
+                                                                 }
+                                                             ],
+                                                             [
+                                                                 {
+                                                                     "node":  "Certificate Transparency",
+                                                                     "type":  "main",
+                                                                     "index":  0
+                                                                 }
+                                                             ]
+                                                         ]
+                                            },
+                        "DNS A Records":  {
+                                              "main":  [
+                                                           [
+                                                               {
+                                                                   "node":  "Parse DNS Results",
+                                                                   "type":  "main",
+                                                                   "index":  0
+                                                               }
+                                                           ]
+                                                       ]
+                                          },
+                        "DNS MX Records":  {
+                                               "main":  [
+                                                            [
+                                                                {
+                                                                    "node":  "Parse DNS Results",
+                                                                    "type":  "main",
+                                                                    "index":  0
+                                                                }
+                                                            ]
+                                                        ]
+                                           },
+                        "DNS TXT Records":  {
+                                                "main":  [
+                                                             [
+                                                                 {
+                                                                     "node":  "Parse DNS Results",
+                                                                     "type":  "main",
+                                                                     "index":  0
+                                                                 }
+                                                             ]
+                                                         ]
+                                            },
+                        "Certificate Transparency":  {
+                                                         "main":  [
+                                                                      [
+                                                                          {
+                                                                              "node":  "Parse DNS Results",
+                                                                              "type":  "main",
+                                                                              "index":  0
+                                                                          }
+                                                                      ]
+                                                                  ]
+                                                     },
+                        "Parse DNS Results":  {
+                                                  "main":  [
+                                                               [
+                                                                   {
+                                                                       "node":  "Split Subdomains",
+                                                                       "type":  "main",
+                                                                       "index":  0
+                                                                   }
+                                                               ]
+                                                           ]
+                                              },
+                        "Split Subdomains":  {
+                                                 "main":  [
+                                                              [
+                                                                  {
+                                                                      "node":  "Submit Subdomain as Asset",
+                                                                      "type":  "main",
+                                                                      "index":  0
+                                                                  }
+                                                              ]
+                                                          ]
+                                             },
+                        "Submit Subdomain as Asset":  {
+                                                          "main":  [
+                                                                       [
+                                                                           {
+                                                                               "node":  "Store Discovery Record",
+                                                                               "type":  "main",
+                                                                               "index":  0
+                                                                           }
+                                                                       ]
+                                                                   ]
+                                                      },
+                        "Store Discovery Record":  {
+                                                       "main":  [
+                                                                    [
+                                                                        {
+                                                                            "node":  "Complete Scan Job",
+                                                                            "type":  "main",
+                                                                            "index":  0
+                                                                        }
+                                                                    ]
+                                                                ]
+                                                   }
+                    },
+    "settings":  {
+                     "executionOrder":  "v1",
+                     "saveManualExecutions":  true,
+                     "saveExecutionProgress":  true,
+                     "callerPolicy":  "workflowsFromSameOwner",
+                     "availableInMCP":  false
+                 },
+    "staticData":  null,
+    "meta":  null,
+    "pinData":  null,
+    "versionId":  "81a84e82-212f-42cb-ab3b-9932f12ad45c",
+    "activeVersionId":  "81a84e82-212f-42cb-ab3b-9932f12ad45c",
+    "versionCounter":  6,
+    "triggerCount":  1,
+    "shared":  [
+                   {
+                       "updatedAt":  "2026-04-19T03:30:12.372Z",
+                       "createdAt":  "2026-04-19T03:30:12.372Z",
+                       "role":  "workflow:owner",
+                       "workflowId":  "WpPRm8uWzUjcWXh6",
+                       "projectId":  "Lrgt6JR85OZiVLcX",
+                       "project":  {
+                                       "updatedAt":  "2026-03-31T09:07:31.366Z",
+                                       "createdAt":  "2026-03-31T08:57:43.789Z",
+                                       "id":  "Lrgt6JR85OZiVLcX",
+                                       "name":  "gelson mascarenhas \u003cgelson_m@hotmail.com\u003e",
+                                       "type":  "personal",
+                                       "icon":  null,
+                                       "description":  null,
+                                       "creatorId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                   }
+                   }
+               ],
+    "tags":  [
+
+             ],
+    "activeVersion":  {
+                          "updatedAt":  "2026-04-19T07:32:13.261Z",
+                          "createdAt":  "2026-04-19T07:32:13.261Z",
+                          "versionId":  "81a84e82-212f-42cb-ab3b-9932f12ad45c",
+                          "workflowId":  "WpPRm8uWzUjcWXh6",
+                          "nodes":  [
+                                        {
+                                            "parameters":  {
+                                                               "httpMethod":  "POST",
+                                                               "path":  "recon-os/recon/dns",
+                                                               "responseMode":  "lastNode",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "wh-dns",
+                                            "name":  "Webhook",
+                                            "type":  "n8n-nodes-base.webhook",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             240,
+                                                             300
+                                                         ],
+                                            "webhookId":  "recon-os-recon-dns"
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "jsCode":  "const body = $input.first().json.body || $input.first().json;\nreturn [{ json: {\n  asset_id: body.asset_id,\n  asset_value: (body.asset_value || \u0027\u0027).toLowerCase().trim(),\n  engagement_id: body.engagement_id\n} }];"
+                                                           },
+                                            "id":  "normalize",
+                                            "name":  "Normalize Input",
+                                            "type":  "n8n-nodes-base.code",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             460,
+                                                             300
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "operation":  "executeQuery",
+                                                               "query":  "INSERT INTO scan_jobs (engagement_id, asset_id, tool, profile, status, started_at)\nVALUES (\u0027{{ $json.engagement_id }}\u0027,\u0027{{ $json.asset_id }}\u0027,\u0027dns_enum\u0027,\u0027passive\u0027,\u0027running\u0027,NOW())\nRETURNING id;",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "pg-scan-job",
+                                            "name":  "Create Scan Job",
+                                            "type":  "n8n-nodes-base.postgres",
+                                            "typeVersion":  2.5,
+                                            "position":  [
+                                                             680,
+                                                             300
+                                                         ],
+                                            "credentials":  {
+                                                                "postgres":  {
+                                                                                 "id":  "oHS3dvjMW1h1PkMp",
+                                                                                 "name":  "RECON OS PostgreSQL"
+                                                                             }
+                                                            }
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "method":  "GET",
+                                                               "url":  "=https://dns.google/resolve?name={{ $(\u0027Normalize Input\u0027).first().json.asset_value }}\u0026type=A",
+                                                               "options":  {
+                                                                               "timeout":  10000
+                                                                           }
+                                                           },
+                                            "id":  "dns-a-record",
+                                            "name":  "DNS A Records",
+                                            "type":  "n8n-nodes-base.httpRequest",
+                                            "typeVersion":  4.2,
+                                            "position":  [
+                                                             900,
+                                                             200
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "method":  "GET",
+                                                               "url":  "=https://dns.google/resolve?name={{ $(\u0027Normalize Input\u0027).first().json.asset_value }}\u0026type=MX",
+                                                               "options":  {
+                                                                               "timeout":  10000
+                                                                           }
+                                                           },
+                                            "id":  "dns-mx-record",
+                                            "name":  "DNS MX Records",
+                                            "type":  "n8n-nodes-base.httpRequest",
+                                            "typeVersion":  4.2,
+                                            "position":  [
+                                                             900,
+                                                             340
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "method":  "GET",
+                                                               "url":  "=https://dns.google/resolve?name={{ $(\u0027Normalize Input\u0027).first().json.asset_value }}\u0026type=TXT",
+                                                               "options":  {
+                                                                               "timeout":  10000
+                                                                           }
+                                                           },
+                                            "id":  "dns-txt-record",
+                                            "name":  "DNS TXT Records",
+                                            "type":  "n8n-nodes-base.httpRequest",
+                                            "typeVersion":  4.2,
+                                            "position":  [
+                                                             900,
+                                                             480
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "method":  "GET",
+                                                               "url":  "=https://crt.sh/?q=%25.{{ $(\u0027Normalize Input\u0027).first().json.asset_value }}\u0026output=json",
+                                                               "options":  {
+                                                                               "timeout":  15000
+                                                                           }
+                                                           },
+                                            "id":  "crtsh",
+                                            "name":  "Certificate Transparency",
+                                            "type":  "n8n-nodes-base.httpRequest",
+                                            "typeVersion":  4.2,
+                                            "position":  [
+                                                             900,
+                                                             620
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "jsCode":  "const domain = $(\u0027Normalize Input\u0027).first().json.asset_value;\nconst engId = $(\u0027Normalize Input\u0027).first().json.engagement_id;\nconst assetId = $(\u0027Normalize Input\u0027).first().json.asset_id;\nconst scanJobId = $(\u0027Create Scan Job\u0027).first().json.id;\n\n// Parse A records\nlet aRecords = [];\ntry {\n  const aData = $(\u0027DNS A Records\u0027).first().json;\n  aRecords = (aData.Answer || []).filter(r =\u003e r.type === 1).map(r =\u003e r.data);\n} catch(e) {}\n\n// Parse MX records\nlet mxRecords = [];\ntry {\n  const mxData = $(\u0027DNS MX Records\u0027).first().json;\n  mxRecords = (mxData.Answer || []).filter(r =\u003e r.type === 15).map(r =\u003e r.data);\n} catch(e) {}\n\n// Parse TXT records\nlet txtRecords = [];\ntry {\n  const txtData = $(\u0027DNS TXT Records\u0027).first().json;\n  txtRecords = (txtData.Answer || []).filter(r =\u003e r.type === 16).map(r =\u003e r.data);\n} catch(e) {}\n\n// Parse crt.sh subdomains\nlet subdomains = new Set();\ntry {\n  const crtData = $(\u0027Certificate Transparency\u0027).first().json;\n  if (Array.isArray(crtData)) {\n    crtData.forEach(entry =\u003e {\n      const names = (entry.name_value || \u0027\u0027).split(\u0027\\n\u0027);\n      names.forEach(n =\u003e {\n        const clean = n.trim().replace(/^\\*\\./, \u0027\u0027).toLowerCase();\n        if (clean \u0026\u0026 clean !== domain \u0026\u0026 clean.endsWith(\u0027.\u0027 + domain)) {\n          subdomains.add(clean);\n        }\n      });\n    });\n  }\n} catch(e) {}\n\nreturn [{ json: {\n  domain,\n  engagement_id: engId,\n  asset_id: assetId,\n  scan_job_id: scanJobId,\n  a_records: aRecords,\n  mx_records: mxRecords,\n  txt_records: txtRecords,\n  discovered_subdomains: Array.from(subdomains).slice(0, 100),\n  discovery_count: subdomains.size\n} }];"
+                                                           },
+                                            "id":  "parse-dns",
+                                            "name":  "Parse DNS Results",
+                                            "type":  "n8n-nodes-base.code",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             1120,
+                                                             400
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "jsCode":  "const data = $input.first().json;\nconst subdomains = data.discovered_subdomains || [];\nreturn subdomains.map(sub =\u003e ({ json: {\n  asset_value: sub,\n  asset_type: \u0027subdomain\u0027,\n  engagement_id: data.engagement_id,\n  notes: \u0027Discovered via crt.sh CT log\u0027\n} }));"
+                                                           },
+                                            "id":  "split-subdomains",
+                                            "name":  "Split Subdomains",
+                                            "type":  "n8n-nodes-base.code",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             1340,
+                                                             400
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "method":  "POST",
+                                                               "url":  "https://outstanding-blessing-production-1d4b.up.railway.app/webhook/recon-os/assets/submit",
+                                                               "sendBody":  true,
+                                                               "specifyBody":  "json",
+                                                               "jsonBody":  "={{ JSON.stringify($json) }}",
+                                                               "options":  {
+                                                                               "timeout":  10000
+                                                                           }
+                                                           },
+                                            "id":  "submit-subdomain",
+                                            "name":  "Submit Subdomain as Asset",
+                                            "type":  "n8n-nodes-base.httpRequest",
+                                            "typeVersion":  4.2,
+                                            "position":  [
+                                                             1560,
+                                                             400
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "operation":  "executeQuery",
+                                                               "query":  "INSERT INTO discovery_records (engagement_id, asset_id, source, record_type, record_value, raw_data)\nVALUES\n(\u0027{{ $(\u0027Normalize Input\u0027).first().json.engagement_id }}\u0027,\u0027{{ $(\u0027Normalize Input\u0027).first().json.asset_id }}\u0027,\u0027dns_enum\u0027,\u0027a_records\u0027,\u0027{{ ($(\u0027Parse DNS Results\u0027).first().json.a_records||[]).join(\u0027,\u0027).replace(/\u0027/g,\"\u0027\u0027\") }}\u0027,\u0027{\"a\":{{ JSON.stringify($(\u0027Parse DNS Results\u0027).first().json.a_records) }},\"mx\":{{ JSON.stringify($(\u0027Parse DNS Results\u0027).first().json.mx_records) }},\"txt\":{{ JSON.stringify($(\u0027Parse DNS Results\u0027).first().json.txt_records) }},\"subdomains_found\":{{ $(\u0027Parse DNS Results\u0027).first().json.discovery_count }}}\u0027::jsonb);",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "pg-store-discovery",
+                                            "name":  "Store Discovery Record",
+                                            "type":  "n8n-nodes-base.postgres",
+                                            "typeVersion":  2.5,
+                                            "position":  [
+                                                             1780,
+                                                             300
+                                                         ],
+                                            "credentials":  {
+                                                                "postgres":  {
+                                                                                 "id":  "oHS3dvjMW1h1PkMp",
+                                                                                 "name":  "RECON OS PostgreSQL"
+                                                                             }
+                                                            }
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "operation":  "executeQuery",
+                                                               "query":  "UPDATE scan_jobs SET status=\u0027completed\u0027, completed_at=NOW() WHERE id=\u0027{{ $(\u0027Create Scan Job\u0027).first().json.id }}\u0027;",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "pg-complete-job",
+                                            "name":  "Complete Scan Job",
+                                            "type":  "n8n-nodes-base.postgres",
+                                            "typeVersion":  2.5,
+                                            "position":  [
+                                                             2000,
+                                                             300
+                                                         ],
+                                            "credentials":  {
+                                                                "postgres":  {
+                                                                                 "id":  "oHS3dvjMW1h1PkMp",
+                                                                                 "name":  "RECON OS PostgreSQL"
+                                                                             }
+                                                            }
+                                        }
+                                    ],
+                          "connections":  {
+                                              "Webhook":  {
+                                                              "main":  [
+                                                                           [
+                                                                               {
+                                                                                   "node":  "Normalize Input",
+                                                                                   "type":  "main",
+                                                                                   "index":  0
+                                                                               }
+                                                                           ]
+                                                                       ]
+                                                          },
+                                              "Normalize Input":  {
+                                                                      "main":  [
+                                                                                   [
+                                                                                       {
+                                                                                           "node":  "Create Scan Job",
+                                                                                           "type":  "main",
+                                                                                           "index":  0
+                                                                                       }
+                                                                                   ]
+                                                                               ]
+                                                                  },
+                                              "Create Scan Job":  {
+                                                                      "main":  [
+                                                                                   [
+                                                                                       {
+                                                                                           "node":  "DNS A Records",
+                                                                                           "type":  "main",
+                                                                                           "index":  0
+                                                                                       }
+                                                                                   ],
+                                                                                   [
+                                                                                       {
+                                                                                           "node":  "DNS MX Records",
+                                                                                           "type":  "main",
+                                                                                           "index":  0
+                                                                                       }
+                                                                                   ],
+                                                                                   [
+                                                                                       {
+                                                                                           "node":  "DNS TXT Records",
+                                                                                           "type":  "main",
+                                                                                           "index":  0
+                                                                                       }
+                                                                                   ],
+                                                                                   [
+                                                                                       {
+                                                                                           "node":  "Certificate Transparency",
+                                                                                           "type":  "main",
+                                                                                           "index":  0
+                                                                                       }
+                                                                                   ]
+                                                                               ]
+                                                                  },
+                                              "DNS A Records":  {
+                                                                    "main":  [
+                                                                                 [
+                                                                                     {
+                                                                                         "node":  "Parse DNS Results",
+                                                                                         "type":  "main",
+                                                                                         "index":  0
+                                                                                     }
+                                                                                 ]
+                                                                             ]
+                                                                },
+                                              "DNS MX Records":  {
+                                                                     "main":  [
+                                                                                  [
+                                                                                      {
+                                                                                          "node":  "Parse DNS Results",
+                                                                                          "type":  "main",
+                                                                                          "index":  0
+                                                                                      }
+                                                                                  ]
+                                                                              ]
+                                                                 },
+                                              "DNS TXT Records":  {
+                                                                      "main":  [
+                                                                                   [
+                                                                                       {
+                                                                                           "node":  "Parse DNS Results",
+                                                                                           "type":  "main",
+                                                                                           "index":  0
+                                                                                       }
+                                                                                   ]
+                                                                               ]
+                                                                  },
+                                              "Certificate Transparency":  {
+                                                                               "main":  [
+                                                                                            [
+                                                                                                {
+                                                                                                    "node":  "Parse DNS Results",
+                                                                                                    "type":  "main",
+                                                                                                    "index":  0
+                                                                                                }
+                                                                                            ]
+                                                                                        ]
+                                                                           },
+                                              "Parse DNS Results":  {
+                                                                        "main":  [
+                                                                                     [
+                                                                                         {
+                                                                                             "node":  "Split Subdomains",
+                                                                                             "type":  "main",
+                                                                                             "index":  0
+                                                                                         }
+                                                                                     ]
+                                                                                 ]
+                                                                    },
+                                              "Split Subdomains":  {
+                                                                       "main":  [
+                                                                                    [
+                                                                                        {
+                                                                                            "node":  "Submit Subdomain as Asset",
+                                                                                            "type":  "main",
+                                                                                            "index":  0
+                                                                                        }
+                                                                                    ]
+                                                                                ]
+                                                                   },
+                                              "Submit Subdomain as Asset":  {
+                                                                                "main":  [
+                                                                                             [
+                                                                                                 {
+                                                                                                     "node":  "Store Discovery Record",
+                                                                                                     "type":  "main",
+                                                                                                     "index":  0
+                                                                                                 }
+                                                                                             ]
+                                                                                         ]
+                                                                            },
+                                              "Store Discovery Record":  {
+                                                                             "main":  [
+                                                                                          [
+                                                                                              {
+                                                                                                  "node":  "Complete Scan Job",
+                                                                                                  "type":  "main",
+                                                                                                  "index":  0
+                                                                                              }
+                                                                                          ]
+                                                                                      ]
+                                                                         }
+                                          },
+                          "authors":  "gelson mascarenhas",
+                          "name":  null,
+                          "description":  null,
+                          "autosaved":  false,
+                          "workflowPublishHistory":  [
+                                                         {
+                                                             "createdAt":  "2026-04-19T07:32:13.325Z",
+                                                             "id":  569,
+                                                             "workflowId":  "WpPRm8uWzUjcWXh6",
+                                                             "versionId":  "81a84e82-212f-42cb-ab3b-9932f12ad45c",
+                                                             "event":  "deactivated",
+                                                             "userId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                                         },
+                                                         {
+                                                             "createdAt":  "2026-04-19T07:32:13.354Z",
+                                                             "id":  570,
+                                                             "workflowId":  "WpPRm8uWzUjcWXh6",
+                                                             "versionId":  "81a84e82-212f-42cb-ab3b-9932f12ad45c",
+                                                             "event":  "activated",
+                                                             "userId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                                         }
+                                                     ]
+                      }
+}

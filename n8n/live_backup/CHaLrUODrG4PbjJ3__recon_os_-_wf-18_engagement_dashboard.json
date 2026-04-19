@@ -1,0 +1,427 @@
+﻿{
+    "updatedAt":  "2026-04-19T07:27:28.945Z",
+    "createdAt":  "2026-04-19T03:30:20.746Z",
+    "id":  "CHaLrUODrG4PbjJ3",
+    "name":  "RECON OS - WF-18 Engagement Dashboard",
+    "description":  null,
+    "active":  true,
+    "isArchived":  false,
+    "nodes":  [
+                  {
+                      "parameters":  {
+                                         "httpMethod":  "GET",
+                                         "path":  "recon-os/dashboard",
+                                         "responseMode":  "responseNode",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "wh-dashboard",
+                      "name":  "Webhook Dashboard",
+                      "type":  "n8n-nodes-base.webhook",
+                      "typeVersion":  2,
+                      "position":  [
+                                       240,
+                                       300
+                                   ],
+                      "webhookId":  "recon-os-dashboard"
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "SELECT e.id, e.name, e.type, e.status, e.testing_window_start, e.testing_window_end,\n       c.name as client_name,\n       em.total_assets, em.assets_tested, em.coverage_pct,\n       em.total_findings, em.validated_findings, em.verified_fixed, em.avg_mttr_days,\n       em.criticals, em.highs, em.mediums, em.lows,\n       (NOW() BETWEEN e.testing_window_start AND e.testing_window_end) as is_in_window\nFROM engagements e\nJOIN clients c ON e.client_id = c.id\nLEFT JOIN engagement_metrics em ON em.engagement_id = e.id\nWHERE e.status IN (\u0027active\u0027,\u0027completed\u0027)\nORDER BY e.created_at DESC\nLIMIT 10;",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "pg-engagements",
+                      "name":  "Get Engagements",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       460,
+                                       300
+                                   ],
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "oHS3dvjMW1h1PkMp",
+                                                           "name":  "RECON OS PostgreSQL"
+                                                       }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "SELECT\n  (SELECT COUNT(*) FROM normalized_findings WHERE validation_status=\u0027pending_analyst\u0027) as global_pending_validation,\n  (SELECT COUNT(*) FROM normalized_findings WHERE priority_bucket=\u0027immediate_attention\u0027 AND remediation_status=\u0027open\u0027) as global_immediate,\n  (SELECT COUNT(*) FROM retest_records WHERE result IS NULL AND scheduled_at \u003c NOW()) as global_overdue_retests,\n  (SELECT COUNT(*) FROM normalized_findings WHERE is_recurring=true) as global_recurring,\n  (SELECT COUNT(*) FROM engagements WHERE status=\u0027active\u0027) as active_engagements,\n  (SELECT COUNT(*) FROM clients) as total_clients,\n  (SELECT COUNT(*) FROM normalized_findings WHERE first_seen \u003e= NOW() - INTERVAL \u00277 days\u0027) as new_findings_7d,\n  (SELECT ROUND(AVG(EXTRACT(EPOCH FROM (closed_at - first_seen))/86400),1) FROM normalized_findings WHERE closed_at IS NOT NULL) as global_avg_mttr;",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "pg-global-stats",
+                      "name":  "Get Global Stats",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       680,
+                                       300
+                                   ],
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "oHS3dvjMW1h1PkMp",
+                                                           "name":  "RECON OS PostgreSQL"
+                                                       }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "SELECT category, COUNT(*) as count, AVG(recon_score) as avg_score\nFROM normalized_findings\nWHERE validation_status IN (\u0027validated\u0027,\u0027analyst_reviewed\u0027)\n  AND remediation_status NOT IN (\u0027verified_fixed\u0027)\nGROUP BY category\nORDER BY count DESC\nLIMIT 8;",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "pg-weakness-breakdown",
+                      "name":  "Get Weakness Breakdown",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       900,
+                                       300
+                                   ],
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "oHS3dvjMW1h1PkMp",
+                                                           "name":  "RECON OS PostgreSQL"
+                                                       }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "const engagements = $(\u0027Get Engagements\u0027).all().map(i =\u003e i.json);\nconst global = $(\u0027Get Global Stats\u0027).first().json;\nconst weaknesses = $(\u0027Get Weakness Breakdown\u0027).all().map(i =\u003e i.json);\n\nconst dashboard = {\n  generated_at: new Date().toISOString(),\n  platform: \u0027RECON OS v1.0\u0027,\n  global_health: {\n    active_engagements: parseInt(global.active_engagements||0),\n    total_clients: parseInt(global.total_clients||0),\n    immediate_attention_open: parseInt(global.global_immediate||0),\n    pending_validation: parseInt(global.global_pending_validation||0),\n    overdue_retests: parseInt(global.global_overdue_retests||0),\n    recurring_findings: parseInt(global.global_recurring||0),\n    new_findings_7d: parseInt(global.new_findings_7d||0),\n    global_avg_mttr_days: parseFloat(global.global_avg_mttr||0)\n  },\n  engagements: engagements.map(e =\u003e ({\n    id: e.id,\n    name: e.name,\n    client: e.client_name,\n    type: e.type,\n    status: e.status,\n    is_in_window: e.is_in_window,\n    window: `${e.testing_window_start?.split(\u0027T\u0027)[0]} - ${e.testing_window_end?.split(\u0027T\u0027)[0]}`,\n    assets: { total: parseInt(e.total_assets||0), tested: parseInt(e.assets_tested||0), coverage_pct: parseFloat(e.coverage_pct||0) },\n    findings: {\n      total: parseInt(e.total_findings||0),\n      validated: parseInt(e.validated_findings||0),\n      fixed: parseInt(e.verified_fixed||0),\n      critical: parseInt(e.criticals||0),\n      high: parseInt(e.highs||0),\n      medium: parseInt(e.mediums||0),\n      low: parseInt(e.lows||0)\n    },\n    avg_mttr_days: parseFloat(e.avg_mttr_days||0)\n  })),\n  weakness_heatmap: weaknesses.map(w =\u003e ({\n    category: w.category,\n    open_findings: parseInt(w.count),\n    avg_risk_score: Math.round(parseFloat(w.avg_score||0)*100)/100\n  }))\n};\n\nreturn [{ json: { dashboard } }];"
+                                     },
+                      "id":  "build-dashboard",
+                      "name":  "Build Dashboard",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       1120,
+                                       300
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "respondWith":  "json",
+                                         "responseBody":  "={{ JSON.stringify($json.dashboard) }}",
+                                         "options":  {
+                                                         "responseCode":  200
+                                                     }
+                                     },
+                      "id":  "respond-ok",
+                      "name":  "Respond Dashboard",
+                      "type":  "n8n-nodes-base.respondToWebhook",
+                      "typeVersion":  1.1,
+                      "position":  [
+                                       1340,
+                                       300
+                                   ]
+                  }
+              ],
+    "connections":  {
+                        "Webhook Dashboard":  {
+                                                  "main":  [
+                                                               [
+                                                                   {
+                                                                       "node":  "Get Engagements",
+                                                                       "type":  "main",
+                                                                       "index":  0
+                                                                   }
+                                                               ]
+                                                           ]
+                                              },
+                        "Get Engagements":  {
+                                                "main":  [
+                                                             [
+                                                                 {
+                                                                     "node":  "Get Global Stats",
+                                                                     "type":  "main",
+                                                                     "index":  0
+                                                                 }
+                                                             ]
+                                                         ]
+                                            },
+                        "Get Global Stats":  {
+                                                 "main":  [
+                                                              [
+                                                                  {
+                                                                      "node":  "Get Weakness Breakdown",
+                                                                      "type":  "main",
+                                                                      "index":  0
+                                                                  }
+                                                              ]
+                                                          ]
+                                             },
+                        "Get Weakness Breakdown":  {
+                                                       "main":  [
+                                                                    [
+                                                                        {
+                                                                            "node":  "Build Dashboard",
+                                                                            "type":  "main",
+                                                                            "index":  0
+                                                                        }
+                                                                    ]
+                                                                ]
+                                                   },
+                        "Build Dashboard":  {
+                                                "main":  [
+                                                             [
+                                                                 {
+                                                                     "node":  "Respond Dashboard",
+                                                                     "type":  "main",
+                                                                     "index":  0
+                                                                 }
+                                                             ]
+                                                         ]
+                                            }
+                    },
+    "settings":  {
+                     "executionOrder":  "v1",
+                     "saveManualExecutions":  true,
+                     "saveExecutionProgress":  true,
+                     "callerPolicy":  "workflowsFromSameOwner",
+                     "availableInMCP":  false
+                 },
+    "staticData":  null,
+    "meta":  null,
+    "pinData":  null,
+    "versionId":  "2b3f9fbd-0726-483e-80b5-8fbc8a989e5b",
+    "activeVersionId":  "2b3f9fbd-0726-483e-80b5-8fbc8a989e5b",
+    "versionCounter":  6,
+    "triggerCount":  1,
+    "shared":  [
+                   {
+                       "updatedAt":  "2026-04-19T03:30:20.746Z",
+                       "createdAt":  "2026-04-19T03:30:20.746Z",
+                       "role":  "workflow:owner",
+                       "workflowId":  "CHaLrUODrG4PbjJ3",
+                       "projectId":  "Lrgt6JR85OZiVLcX",
+                       "project":  {
+                                       "updatedAt":  "2026-03-31T09:07:31.366Z",
+                                       "createdAt":  "2026-03-31T08:57:43.789Z",
+                                       "id":  "Lrgt6JR85OZiVLcX",
+                                       "name":  "gelson mascarenhas \u003cgelson_m@hotmail.com\u003e",
+                                       "type":  "personal",
+                                       "icon":  null,
+                                       "description":  null,
+                                       "creatorId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                   }
+                   }
+               ],
+    "tags":  [
+
+             ],
+    "activeVersion":  {
+                          "updatedAt":  "2026-04-19T07:27:28.947Z",
+                          "createdAt":  "2026-04-19T07:27:28.947Z",
+                          "versionId":  "2b3f9fbd-0726-483e-80b5-8fbc8a989e5b",
+                          "workflowId":  "CHaLrUODrG4PbjJ3",
+                          "nodes":  [
+                                        {
+                                            "parameters":  {
+                                                               "httpMethod":  "GET",
+                                                               "path":  "recon-os/dashboard",
+                                                               "responseMode":  "responseNode",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "wh-dashboard",
+                                            "name":  "Webhook Dashboard",
+                                            "type":  "n8n-nodes-base.webhook",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             240,
+                                                             300
+                                                         ],
+                                            "webhookId":  "recon-os-dashboard"
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "operation":  "executeQuery",
+                                                               "query":  "SELECT e.id, e.name, e.type, e.status, e.testing_window_start, e.testing_window_end,\n       c.name as client_name,\n       em.total_assets, em.assets_tested, em.coverage_pct,\n       em.total_findings, em.validated_findings, em.verified_fixed, em.avg_mttr_days,\n       em.criticals, em.highs, em.mediums, em.lows,\n       (NOW() BETWEEN e.testing_window_start AND e.testing_window_end) as is_in_window\nFROM engagements e\nJOIN clients c ON e.client_id = c.id\nLEFT JOIN engagement_metrics em ON em.engagement_id = e.id\nWHERE e.status IN (\u0027active\u0027,\u0027completed\u0027)\nORDER BY e.created_at DESC\nLIMIT 10;",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "pg-engagements",
+                                            "name":  "Get Engagements",
+                                            "type":  "n8n-nodes-base.postgres",
+                                            "typeVersion":  2.5,
+                                            "position":  [
+                                                             460,
+                                                             300
+                                                         ],
+                                            "credentials":  {
+                                                                "postgres":  {
+                                                                                 "id":  "oHS3dvjMW1h1PkMp",
+                                                                                 "name":  "RECON OS PostgreSQL"
+                                                                             }
+                                                            }
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "operation":  "executeQuery",
+                                                               "query":  "SELECT\n  (SELECT COUNT(*) FROM normalized_findings WHERE validation_status=\u0027pending_analyst\u0027) as global_pending_validation,\n  (SELECT COUNT(*) FROM normalized_findings WHERE priority_bucket=\u0027immediate_attention\u0027 AND remediation_status=\u0027open\u0027) as global_immediate,\n  (SELECT COUNT(*) FROM retest_records WHERE result IS NULL AND scheduled_at \u003c NOW()) as global_overdue_retests,\n  (SELECT COUNT(*) FROM normalized_findings WHERE is_recurring=true) as global_recurring,\n  (SELECT COUNT(*) FROM engagements WHERE status=\u0027active\u0027) as active_engagements,\n  (SELECT COUNT(*) FROM clients) as total_clients,\n  (SELECT COUNT(*) FROM normalized_findings WHERE first_seen \u003e= NOW() - INTERVAL \u00277 days\u0027) as new_findings_7d,\n  (SELECT ROUND(AVG(EXTRACT(EPOCH FROM (closed_at - first_seen))/86400),1) FROM normalized_findings WHERE closed_at IS NOT NULL) as global_avg_mttr;",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "pg-global-stats",
+                                            "name":  "Get Global Stats",
+                                            "type":  "n8n-nodes-base.postgres",
+                                            "typeVersion":  2.5,
+                                            "position":  [
+                                                             680,
+                                                             300
+                                                         ],
+                                            "credentials":  {
+                                                                "postgres":  {
+                                                                                 "id":  "oHS3dvjMW1h1PkMp",
+                                                                                 "name":  "RECON OS PostgreSQL"
+                                                                             }
+                                                            }
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "operation":  "executeQuery",
+                                                               "query":  "SELECT category, COUNT(*) as count, AVG(recon_score) as avg_score\nFROM normalized_findings\nWHERE validation_status IN (\u0027validated\u0027,\u0027analyst_reviewed\u0027)\n  AND remediation_status NOT IN (\u0027verified_fixed\u0027)\nGROUP BY category\nORDER BY count DESC\nLIMIT 8;",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "pg-weakness-breakdown",
+                                            "name":  "Get Weakness Breakdown",
+                                            "type":  "n8n-nodes-base.postgres",
+                                            "typeVersion":  2.5,
+                                            "position":  [
+                                                             900,
+                                                             300
+                                                         ],
+                                            "credentials":  {
+                                                                "postgres":  {
+                                                                                 "id":  "oHS3dvjMW1h1PkMp",
+                                                                                 "name":  "RECON OS PostgreSQL"
+                                                                             }
+                                                            }
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "jsCode":  "const engagements = $(\u0027Get Engagements\u0027).all().map(i =\u003e i.json);\nconst global = $(\u0027Get Global Stats\u0027).first().json;\nconst weaknesses = $(\u0027Get Weakness Breakdown\u0027).all().map(i =\u003e i.json);\n\nconst dashboard = {\n  generated_at: new Date().toISOString(),\n  platform: \u0027RECON OS v1.0\u0027,\n  global_health: {\n    active_engagements: parseInt(global.active_engagements||0),\n    total_clients: parseInt(global.total_clients||0),\n    immediate_attention_open: parseInt(global.global_immediate||0),\n    pending_validation: parseInt(global.global_pending_validation||0),\n    overdue_retests: parseInt(global.global_overdue_retests||0),\n    recurring_findings: parseInt(global.global_recurring||0),\n    new_findings_7d: parseInt(global.new_findings_7d||0),\n    global_avg_mttr_days: parseFloat(global.global_avg_mttr||0)\n  },\n  engagements: engagements.map(e =\u003e ({\n    id: e.id,\n    name: e.name,\n    client: e.client_name,\n    type: e.type,\n    status: e.status,\n    is_in_window: e.is_in_window,\n    window: `${e.testing_window_start?.split(\u0027T\u0027)[0]} - ${e.testing_window_end?.split(\u0027T\u0027)[0]}`,\n    assets: { total: parseInt(e.total_assets||0), tested: parseInt(e.assets_tested||0), coverage_pct: parseFloat(e.coverage_pct||0) },\n    findings: {\n      total: parseInt(e.total_findings||0),\n      validated: parseInt(e.validated_findings||0),\n      fixed: parseInt(e.verified_fixed||0),\n      critical: parseInt(e.criticals||0),\n      high: parseInt(e.highs||0),\n      medium: parseInt(e.mediums||0),\n      low: parseInt(e.lows||0)\n    },\n    avg_mttr_days: parseFloat(e.avg_mttr_days||0)\n  })),\n  weakness_heatmap: weaknesses.map(w =\u003e ({\n    category: w.category,\n    open_findings: parseInt(w.count),\n    avg_risk_score: Math.round(parseFloat(w.avg_score||0)*100)/100\n  }))\n};\n\nreturn [{ json: { dashboard } }];"
+                                                           },
+                                            "id":  "build-dashboard",
+                                            "name":  "Build Dashboard",
+                                            "type":  "n8n-nodes-base.code",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             1120,
+                                                             300
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "respondWith":  "json",
+                                                               "responseBody":  "={{ JSON.stringify($json.dashboard) }}",
+                                                               "options":  {
+                                                                               "responseCode":  200
+                                                                           }
+                                                           },
+                                            "id":  "respond-ok",
+                                            "name":  "Respond Dashboard",
+                                            "type":  "n8n-nodes-base.respondToWebhook",
+                                            "typeVersion":  1.1,
+                                            "position":  [
+                                                             1340,
+                                                             300
+                                                         ]
+                                        }
+                                    ],
+                          "connections":  {
+                                              "Webhook Dashboard":  {
+                                                                        "main":  [
+                                                                                     [
+                                                                                         {
+                                                                                             "node":  "Get Engagements",
+                                                                                             "type":  "main",
+                                                                                             "index":  0
+                                                                                         }
+                                                                                     ]
+                                                                                 ]
+                                                                    },
+                                              "Get Engagements":  {
+                                                                      "main":  [
+                                                                                   [
+                                                                                       {
+                                                                                           "node":  "Get Global Stats",
+                                                                                           "type":  "main",
+                                                                                           "index":  0
+                                                                                       }
+                                                                                   ]
+                                                                               ]
+                                                                  },
+                                              "Get Global Stats":  {
+                                                                       "main":  [
+                                                                                    [
+                                                                                        {
+                                                                                            "node":  "Get Weakness Breakdown",
+                                                                                            "type":  "main",
+                                                                                            "index":  0
+                                                                                        }
+                                                                                    ]
+                                                                                ]
+                                                                   },
+                                              "Get Weakness Breakdown":  {
+                                                                             "main":  [
+                                                                                          [
+                                                                                              {
+                                                                                                  "node":  "Build Dashboard",
+                                                                                                  "type":  "main",
+                                                                                                  "index":  0
+                                                                                              }
+                                                                                          ]
+                                                                                      ]
+                                                                         },
+                                              "Build Dashboard":  {
+                                                                      "main":  [
+                                                                                   [
+                                                                                       {
+                                                                                           "node":  "Respond Dashboard",
+                                                                                           "type":  "main",
+                                                                                           "index":  0
+                                                                                       }
+                                                                                   ]
+                                                                               ]
+                                                                  }
+                                          },
+                          "authors":  "gelson mascarenhas",
+                          "name":  null,
+                          "description":  null,
+                          "autosaved":  false,
+                          "workflowPublishHistory":  [
+                                                         {
+                                                             "createdAt":  "2026-04-19T07:27:28.990Z",
+                                                             "id":  545,
+                                                             "workflowId":  "CHaLrUODrG4PbjJ3",
+                                                             "versionId":  "2b3f9fbd-0726-483e-80b5-8fbc8a989e5b",
+                                                             "event":  "deactivated",
+                                                             "userId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                                         },
+                                                         {
+                                                             "createdAt":  "2026-04-19T07:27:29.012Z",
+                                                             "id":  546,
+                                                             "workflowId":  "CHaLrUODrG4PbjJ3",
+                                                             "versionId":  "2b3f9fbd-0726-483e-80b5-8fbc8a989e5b",
+                                                             "event":  "activated",
+                                                             "userId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                                         }
+                                                     ]
+                      }
+}

@@ -1,0 +1,729 @@
+﻿{
+    "updatedAt":  "2026-04-19T07:27:33.665Z",
+    "createdAt":  "2026-04-19T03:30:11.781Z",
+    "id":  "dfPmNrYeBYnAvfoh",
+    "name":  "RECON OS - WF-06 Recon HTTP",
+    "description":  null,
+    "active":  true,
+    "isArchived":  false,
+    "nodes":  [
+                  {
+                      "parameters":  {
+                                         "httpMethod":  "POST",
+                                         "path":  "recon-os/recon/http",
+                                         "responseMode":  "lastNode",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "wh-http",
+                      "name":  "Webhook",
+                      "type":  "n8n-nodes-base.webhook",
+                      "typeVersion":  2,
+                      "position":  [
+                                       240,
+                                       300
+                                   ],
+                      "webhookId":  "recon-os-recon-http"
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "const body = $input.first().json.body || $input.first().json;\nconst val = body.asset_value || \u0027\u0027;\nconst url = val.startsWith(\u0027http\u0027) ? val : \u0027https://\u0027 + val;\nreturn [{ json: { asset_id: body.asset_id, asset_value: val, target_url: url, engagement_id: body.engagement_id } }];"
+                                     },
+                      "id":  "normalize",
+                      "name":  "Normalize Input",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       460,
+                                       300
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "INSERT INTO scan_jobs (engagement_id, asset_id, tool, profile, status, started_at)\nVALUES (\u0027{{ $json.engagement_id }}\u0027,\u0027{{ $json.asset_id }}\u0027,\u0027http_probe\u0027,\u0027passive\u0027,\u0027running\u0027,NOW())\nRETURNING id;",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "pg-scan-job",
+                      "name":  "Create Scan Job",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       680,
+                                       300
+                                   ],
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "oHS3dvjMW1h1PkMp",
+                                                           "name":  "RECON OS PostgreSQL"
+                                                       }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "method":  "GET",
+                                         "url":  "={{ $(\u0027Normalize Input\u0027).first().json.target_url }}",
+                                         "sendHeaders":  true,
+                                         "headerParameters":  {
+                                                                  "parameters":  [
+                                                                                     {
+                                                                                         "name":  "User-Agent",
+                                                                                         "value":  "RECON-OS-Scanner/1.0 (Authorized Security Assessment)"
+                                                                                     }
+                                                                                 ]
+                                                              },
+                                         "options":  {
+                                                         "timeout":  15000,
+                                                         "redirect":  {
+                                                                          "redirect":  {
+                                                                                           "followRedirects":  true,
+                                                                                           "maxRedirects":  3
+                                                                                       }
+                                                                      },
+                                                         "response":  {
+                                                                          "response":  {
+                                                                                           "fullResponse":  true
+                                                                                       }
+                                                                      }
+                                                     }
+                                     },
+                      "id":  "http-probe",
+                      "name":  "HTTP Probe",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.2,
+                      "position":  [
+                                       900,
+                                       300
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "const probe = $input.first().json;\nconst assetVal = $(\u0027Normalize Input\u0027).first().json.asset_value;\nconst assetId = $(\u0027Normalize Input\u0027).first().json.asset_id;\nconst engId = $(\u0027Normalize Input\u0027).first().json.engagement_id;\nconst scanJobId = $(\u0027Create Scan Job\u0027).first().json.id;\n\nconst headers = probe.headers || {};\nconst statusCode = probe.statusCode || 0;\nconst body = (probe.body || \u0027\u0027).substring(0, 2000);\n\n// Security header checks\nconst secHeaders = [\n  \u0027strict-transport-security\u0027,\u0027content-security-policy\u0027,\u0027x-frame-options\u0027,\n  \u0027x-content-type-options\u0027,\u0027referrer-policy\u0027,\u0027permissions-policy\u0027\n];\nconst missingHeaders = secHeaders.filter(h =\u003e !headers[h] \u0026\u0026 !headers[h.toLowerCase()]);\nconst presentHeaders = secHeaders.filter(h =\u003e headers[h] || headers[h.toLowerCase()]);\n\n// Server version disclosure\nconst serverHeader = headers[\u0027server\u0027] || headers[\u0027Server\u0027] || \u0027\u0027;\nconst xPoweredBy = headers[\u0027x-powered-by\u0027] || headers[\u0027X-Powered-By\u0027] || \u0027\u0027;\nconst versionDisclosure = /\\d+\\.\\d+/.test(serverHeader) || /\\d+\\.\\d+/.test(xPoweredBy);\n\n// Tech detection from headers\nconst techStack = [];\nif (/nginx/i.test(serverHeader)) techStack.push(\u0027nginx\u0027);\nif (/apache/i.test(serverHeader)) techStack.push(\u0027apache\u0027);\nif (/iis/i.test(serverHeader)) techStack.push(\u0027IIS\u0027);\nif (/express/i.test(xPoweredBy)) techStack.push(\u0027Express.js\u0027);\nif (/php/i.test(xPoweredBy)) techStack.push(\u0027PHP\u0027);\nif (/asp\\.net/i.test(xPoweredBy)) techStack.push(\u0027ASP.NET\u0027);\nif (/wordpress/i.test(body)) techStack.push(\u0027WordPress\u0027);\n\nconst findings = [];\nif (missingHeaders.length \u003e 0) {\n  findings.push({ type: \u0027missing_security_headers\u0027, headers: missingHeaders, severity: missingHeaders.includes(\u0027content-security-policy\u0027) ? \u0027medium\u0027 : \u0027low\u0027 });\n}\nif (versionDisclosure) {\n  findings.push({ type: \u0027version_disclosure\u0027, server: serverHeader, x_powered_by: xPoweredBy, severity: \u0027informational\u0027 });\n}\n\nreturn [{ json: {\n  asset_id: assetId,\n  asset_value: assetVal,\n  engagement_id: engId,\n  scan_job_id: scanJobId,\n  status_code: statusCode,\n  server_header: serverHeader,\n  x_powered_by: xPoweredBy,\n  tech_stack: techStack,\n  missing_security_headers: missingHeaders,\n  present_security_headers: presentHeaders,\n  version_disclosure: versionDisclosure,\n  findings,\n  has_findings: findings.length \u003e 0\n} }];"
+                                     },
+                      "id":  "analyze-response",
+                      "name":  "Analyze Response",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       1120,
+                                       300
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "UPDATE assets SET\n  http_status = {{ $json.status_code }},\n  tech_stack = ARRAY[{{ $json.tech_stack.map(t =\u003e \"\u0027\" + t + \"\u0027\").join(\u0027,\u0027) || \"\u0027unknown\u0027\" }}],\n  last_tested = NOW()\nWHERE id = \u0027{{ $json.asset_id }}\u0027;",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "pg-update-asset",
+                      "name":  "Update Asset",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       1340,
+                                       300
+                                   ],
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "oHS3dvjMW1h1PkMp",
+                                                           "name":  "RECON OS PostgreSQL"
+                                                       }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "conditions":  {
+                                                            "options":  {
+                                                                            "caseSensitive":  true,
+                                                                            "leftValue":  "",
+                                                                            "typeValidation":  "strict"
+                                                                        },
+                                                            "conditions":  [
+                                                                               {
+                                                                                   "id":  "cond-findings",
+                                                                                   "leftValue":  "={{ $(\u0027Analyze Response\u0027).first().json.has_findings }}",
+                                                                                   "rightValue":  true,
+                                                                                   "operator":  {
+                                                                                                    "type":  "boolean",
+                                                                                                    "operation":  "true"
+                                                                                                }
+                                                                               }
+                                                                           ],
+                                                            "combinator":  "and"
+                                                        },
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "if-findings",
+                      "name":  "IF Has Findings?",
+                      "type":  "n8n-nodes-base.if",
+                      "typeVersion":  2.2,
+                      "position":  [
+                                       1560,
+                                       300
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "const data = $(\u0027Analyze Response\u0027).first().json;\nreturn data.findings.map(f =\u003e ({ json: {\n  engagement_id: data.engagement_id,\n  asset_id: data.asset_id,\n  source_tool: \u0027recon_http\u0027,\n  title: f.type === \u0027missing_security_headers\u0027\n    ? `Missing Security Headers: ${f.headers.join(\u0027, \u0027)}`\n    : \u0027Server Version Disclosure\u0027,\n  raw_severity: f.severity,\n  raw_evidence: JSON.stringify(f),\n  raw_data: f\n} }));"
+                                     },
+                      "id":  "prepare-findings",
+                      "name":  "Prepare Finding Payloads",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       1780,
+                                       200
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "method":  "POST",
+                                         "url":  "https://outstanding-blessing-production-1d4b.up.railway.app/webhook/recon-os/findings/submit",
+                                         "sendBody":  true,
+                                         "specifyBody":  "json",
+                                         "jsonBody":  "={{ JSON.stringify($json) }}",
+                                         "options":  {
+                                                         "timeout":  10000
+                                                     }
+                                     },
+                      "id":  "submit-finding",
+                      "name":  "Submit Finding",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.2,
+                      "position":  [
+                                       2000,
+                                       200
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "INSERT INTO discovery_records (engagement_id, asset_id, source, record_type, record_value, raw_data)\nVALUES (\u0027{{ $(\u0027Analyze Response\u0027).first().json.engagement_id }}\u0027,\u0027{{ $(\u0027Analyze Response\u0027).first().json.asset_id }}\u0027,\u0027recon_http\u0027,\u0027http_probe\u0027,\u0027{{ $(\u0027Analyze Response\u0027).first().json.status_code }}\u0027,\u0027{\"status_code\":{{ $(\u0027Analyze Response\u0027).first().json.status_code }},\"tech_stack\":{{ JSON.stringify($(\u0027Analyze Response\u0027).first().json.tech_stack) }},\"missing_headers\":{{ JSON.stringify($(\u0027Analyze Response\u0027).first().json.missing_security_headers) }}}\u0027::jsonb);\nUPDATE scan_jobs SET status=\u0027completed\u0027, completed_at=NOW() WHERE id=\u0027{{ $(\u0027Create Scan Job\u0027).first().json.id }}\u0027;",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "pg-finalize",
+                      "name":  "Store Discovery + Complete Job",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       1780,
+                                       400
+                                   ],
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "oHS3dvjMW1h1PkMp",
+                                                           "name":  "RECON OS PostgreSQL"
+                                                       }
+                                      }
+                  }
+              ],
+    "connections":  {
+                        "Webhook":  {
+                                        "main":  [
+                                                     [
+                                                         {
+                                                             "node":  "Normalize Input",
+                                                             "type":  "main",
+                                                             "index":  0
+                                                         }
+                                                     ]
+                                                 ]
+                                    },
+                        "Normalize Input":  {
+                                                "main":  [
+                                                             [
+                                                                 {
+                                                                     "node":  "Create Scan Job",
+                                                                     "type":  "main",
+                                                                     "index":  0
+                                                                 }
+                                                             ]
+                                                         ]
+                                            },
+                        "Create Scan Job":  {
+                                                "main":  [
+                                                             [
+                                                                 {
+                                                                     "node":  "HTTP Probe",
+                                                                     "type":  "main",
+                                                                     "index":  0
+                                                                 }
+                                                             ]
+                                                         ]
+                                            },
+                        "HTTP Probe":  {
+                                           "main":  [
+                                                        [
+                                                            {
+                                                                "node":  "Analyze Response",
+                                                                "type":  "main",
+                                                                "index":  0
+                                                            }
+                                                        ]
+                                                    ]
+                                       },
+                        "Analyze Response":  {
+                                                 "main":  [
+                                                              [
+                                                                  {
+                                                                      "node":  "Update Asset",
+                                                                      "type":  "main",
+                                                                      "index":  0
+                                                                  }
+                                                              ]
+                                                          ]
+                                             },
+                        "Update Asset":  {
+                                             "main":  [
+                                                          [
+                                                              {
+                                                                  "node":  "IF Has Findings?",
+                                                                  "type":  "main",
+                                                                  "index":  0
+                                                              }
+                                                          ]
+                                                      ]
+                                         },
+                        "IF Has Findings?":  {
+                                                 "main":  [
+                                                              [
+                                                                  {
+                                                                      "node":  "Prepare Finding Payloads",
+                                                                      "type":  "main",
+                                                                      "index":  0
+                                                                  }
+                                                              ],
+                                                              [
+                                                                  {
+                                                                      "node":  "Store Discovery + Complete Job",
+                                                                      "type":  "main",
+                                                                      "index":  0
+                                                                  }
+                                                              ]
+                                                          ]
+                                             },
+                        "Prepare Finding Payloads":  {
+                                                         "main":  [
+                                                                      [
+                                                                          {
+                                                                              "node":  "Submit Finding",
+                                                                              "type":  "main",
+                                                                              "index":  0
+                                                                          }
+                                                                      ]
+                                                                  ]
+                                                     },
+                        "Submit Finding":  {
+                                               "main":  [
+                                                            [
+                                                                {
+                                                                    "node":  "Store Discovery + Complete Job",
+                                                                    "type":  "main",
+                                                                    "index":  0
+                                                                }
+                                                            ]
+                                                        ]
+                                           }
+                    },
+    "settings":  {
+                     "executionOrder":  "v1",
+                     "saveManualExecutions":  true,
+                     "saveExecutionProgress":  true,
+                     "callerPolicy":  "workflowsFromSameOwner",
+                     "availableInMCP":  false
+                 },
+    "staticData":  null,
+    "meta":  null,
+    "pinData":  null,
+    "versionId":  "c19f614e-c30f-40ab-a226-87fab2d2c177",
+    "activeVersionId":  "c19f614e-c30f-40ab-a226-87fab2d2c177",
+    "versionCounter":  6,
+    "triggerCount":  1,
+    "shared":  [
+                   {
+                       "updatedAt":  "2026-04-19T03:30:11.781Z",
+                       "createdAt":  "2026-04-19T03:30:11.781Z",
+                       "role":  "workflow:owner",
+                       "workflowId":  "dfPmNrYeBYnAvfoh",
+                       "projectId":  "Lrgt6JR85OZiVLcX",
+                       "project":  {
+                                       "updatedAt":  "2026-03-31T09:07:31.366Z",
+                                       "createdAt":  "2026-03-31T08:57:43.789Z",
+                                       "id":  "Lrgt6JR85OZiVLcX",
+                                       "name":  "gelson mascarenhas \u003cgelson_m@hotmail.com\u003e",
+                                       "type":  "personal",
+                                       "icon":  null,
+                                       "description":  null,
+                                       "creatorId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                   }
+                   }
+               ],
+    "tags":  [
+
+             ],
+    "activeVersion":  {
+                          "updatedAt":  "2026-04-19T07:27:33.667Z",
+                          "createdAt":  "2026-04-19T07:27:33.667Z",
+                          "versionId":  "c19f614e-c30f-40ab-a226-87fab2d2c177",
+                          "workflowId":  "dfPmNrYeBYnAvfoh",
+                          "nodes":  [
+                                        {
+                                            "parameters":  {
+                                                               "httpMethod":  "POST",
+                                                               "path":  "recon-os/recon/http",
+                                                               "responseMode":  "lastNode",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "wh-http",
+                                            "name":  "Webhook",
+                                            "type":  "n8n-nodes-base.webhook",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             240,
+                                                             300
+                                                         ],
+                                            "webhookId":  "recon-os-recon-http"
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "jsCode":  "const body = $input.first().json.body || $input.first().json;\nconst val = body.asset_value || \u0027\u0027;\nconst url = val.startsWith(\u0027http\u0027) ? val : \u0027https://\u0027 + val;\nreturn [{ json: { asset_id: body.asset_id, asset_value: val, target_url: url, engagement_id: body.engagement_id } }];"
+                                                           },
+                                            "id":  "normalize",
+                                            "name":  "Normalize Input",
+                                            "type":  "n8n-nodes-base.code",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             460,
+                                                             300
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "operation":  "executeQuery",
+                                                               "query":  "INSERT INTO scan_jobs (engagement_id, asset_id, tool, profile, status, started_at)\nVALUES (\u0027{{ $json.engagement_id }}\u0027,\u0027{{ $json.asset_id }}\u0027,\u0027http_probe\u0027,\u0027passive\u0027,\u0027running\u0027,NOW())\nRETURNING id;",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "pg-scan-job",
+                                            "name":  "Create Scan Job",
+                                            "type":  "n8n-nodes-base.postgres",
+                                            "typeVersion":  2.5,
+                                            "position":  [
+                                                             680,
+                                                             300
+                                                         ],
+                                            "credentials":  {
+                                                                "postgres":  {
+                                                                                 "id":  "oHS3dvjMW1h1PkMp",
+                                                                                 "name":  "RECON OS PostgreSQL"
+                                                                             }
+                                                            }
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "method":  "GET",
+                                                               "url":  "={{ $(\u0027Normalize Input\u0027).first().json.target_url }}",
+                                                               "sendHeaders":  true,
+                                                               "headerParameters":  {
+                                                                                        "parameters":  [
+                                                                                                           {
+                                                                                                               "name":  "User-Agent",
+                                                                                                               "value":  "RECON-OS-Scanner/1.0 (Authorized Security Assessment)"
+                                                                                                           }
+                                                                                                       ]
+                                                                                    },
+                                                               "options":  {
+                                                                               "timeout":  15000,
+                                                                               "redirect":  {
+                                                                                                "redirect":  {
+                                                                                                                 "followRedirects":  true,
+                                                                                                                 "maxRedirects":  3
+                                                                                                             }
+                                                                                            },
+                                                                               "response":  {
+                                                                                                "response":  {
+                                                                                                                 "fullResponse":  true
+                                                                                                             }
+                                                                                            }
+                                                                           }
+                                                           },
+                                            "id":  "http-probe",
+                                            "name":  "HTTP Probe",
+                                            "type":  "n8n-nodes-base.httpRequest",
+                                            "typeVersion":  4.2,
+                                            "position":  [
+                                                             900,
+                                                             300
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "jsCode":  "const probe = $input.first().json;\nconst assetVal = $(\u0027Normalize Input\u0027).first().json.asset_value;\nconst assetId = $(\u0027Normalize Input\u0027).first().json.asset_id;\nconst engId = $(\u0027Normalize Input\u0027).first().json.engagement_id;\nconst scanJobId = $(\u0027Create Scan Job\u0027).first().json.id;\n\nconst headers = probe.headers || {};\nconst statusCode = probe.statusCode || 0;\nconst body = (probe.body || \u0027\u0027).substring(0, 2000);\n\n// Security header checks\nconst secHeaders = [\n  \u0027strict-transport-security\u0027,\u0027content-security-policy\u0027,\u0027x-frame-options\u0027,\n  \u0027x-content-type-options\u0027,\u0027referrer-policy\u0027,\u0027permissions-policy\u0027\n];\nconst missingHeaders = secHeaders.filter(h =\u003e !headers[h] \u0026\u0026 !headers[h.toLowerCase()]);\nconst presentHeaders = secHeaders.filter(h =\u003e headers[h] || headers[h.toLowerCase()]);\n\n// Server version disclosure\nconst serverHeader = headers[\u0027server\u0027] || headers[\u0027Server\u0027] || \u0027\u0027;\nconst xPoweredBy = headers[\u0027x-powered-by\u0027] || headers[\u0027X-Powered-By\u0027] || \u0027\u0027;\nconst versionDisclosure = /\\d+\\.\\d+/.test(serverHeader) || /\\d+\\.\\d+/.test(xPoweredBy);\n\n// Tech detection from headers\nconst techStack = [];\nif (/nginx/i.test(serverHeader)) techStack.push(\u0027nginx\u0027);\nif (/apache/i.test(serverHeader)) techStack.push(\u0027apache\u0027);\nif (/iis/i.test(serverHeader)) techStack.push(\u0027IIS\u0027);\nif (/express/i.test(xPoweredBy)) techStack.push(\u0027Express.js\u0027);\nif (/php/i.test(xPoweredBy)) techStack.push(\u0027PHP\u0027);\nif (/asp\\.net/i.test(xPoweredBy)) techStack.push(\u0027ASP.NET\u0027);\nif (/wordpress/i.test(body)) techStack.push(\u0027WordPress\u0027);\n\nconst findings = [];\nif (missingHeaders.length \u003e 0) {\n  findings.push({ type: \u0027missing_security_headers\u0027, headers: missingHeaders, severity: missingHeaders.includes(\u0027content-security-policy\u0027) ? \u0027medium\u0027 : \u0027low\u0027 });\n}\nif (versionDisclosure) {\n  findings.push({ type: \u0027version_disclosure\u0027, server: serverHeader, x_powered_by: xPoweredBy, severity: \u0027informational\u0027 });\n}\n\nreturn [{ json: {\n  asset_id: assetId,\n  asset_value: assetVal,\n  engagement_id: engId,\n  scan_job_id: scanJobId,\n  status_code: statusCode,\n  server_header: serverHeader,\n  x_powered_by: xPoweredBy,\n  tech_stack: techStack,\n  missing_security_headers: missingHeaders,\n  present_security_headers: presentHeaders,\n  version_disclosure: versionDisclosure,\n  findings,\n  has_findings: findings.length \u003e 0\n} }];"
+                                                           },
+                                            "id":  "analyze-response",
+                                            "name":  "Analyze Response",
+                                            "type":  "n8n-nodes-base.code",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             1120,
+                                                             300
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "operation":  "executeQuery",
+                                                               "query":  "UPDATE assets SET\n  http_status = {{ $json.status_code }},\n  tech_stack = ARRAY[{{ $json.tech_stack.map(t =\u003e \"\u0027\" + t + \"\u0027\").join(\u0027,\u0027) || \"\u0027unknown\u0027\" }}],\n  last_tested = NOW()\nWHERE id = \u0027{{ $json.asset_id }}\u0027;",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "pg-update-asset",
+                                            "name":  "Update Asset",
+                                            "type":  "n8n-nodes-base.postgres",
+                                            "typeVersion":  2.5,
+                                            "position":  [
+                                                             1340,
+                                                             300
+                                                         ],
+                                            "credentials":  {
+                                                                "postgres":  {
+                                                                                 "id":  "oHS3dvjMW1h1PkMp",
+                                                                                 "name":  "RECON OS PostgreSQL"
+                                                                             }
+                                                            }
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "conditions":  {
+                                                                                  "options":  {
+                                                                                                  "caseSensitive":  true,
+                                                                                                  "leftValue":  "",
+                                                                                                  "typeValidation":  "strict"
+                                                                                              },
+                                                                                  "conditions":  [
+                                                                                                     {
+                                                                                                         "id":  "cond-findings",
+                                                                                                         "leftValue":  "={{ $(\u0027Analyze Response\u0027).first().json.has_findings }}",
+                                                                                                         "rightValue":  true,
+                                                                                                         "operator":  {
+                                                                                                                          "type":  "boolean",
+                                                                                                                          "operation":  "true"
+                                                                                                                      }
+                                                                                                     }
+                                                                                                 ],
+                                                                                  "combinator":  "and"
+                                                                              },
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "if-findings",
+                                            "name":  "IF Has Findings?",
+                                            "type":  "n8n-nodes-base.if",
+                                            "typeVersion":  2.2,
+                                            "position":  [
+                                                             1560,
+                                                             300
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "jsCode":  "const data = $(\u0027Analyze Response\u0027).first().json;\nreturn data.findings.map(f =\u003e ({ json: {\n  engagement_id: data.engagement_id,\n  asset_id: data.asset_id,\n  source_tool: \u0027recon_http\u0027,\n  title: f.type === \u0027missing_security_headers\u0027\n    ? `Missing Security Headers: ${f.headers.join(\u0027, \u0027)}`\n    : \u0027Server Version Disclosure\u0027,\n  raw_severity: f.severity,\n  raw_evidence: JSON.stringify(f),\n  raw_data: f\n} }));"
+                                                           },
+                                            "id":  "prepare-findings",
+                                            "name":  "Prepare Finding Payloads",
+                                            "type":  "n8n-nodes-base.code",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             1780,
+                                                             200
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "method":  "POST",
+                                                               "url":  "https://outstanding-blessing-production-1d4b.up.railway.app/webhook/recon-os/findings/submit",
+                                                               "sendBody":  true,
+                                                               "specifyBody":  "json",
+                                                               "jsonBody":  "={{ JSON.stringify($json) }}",
+                                                               "options":  {
+                                                                               "timeout":  10000
+                                                                           }
+                                                           },
+                                            "id":  "submit-finding",
+                                            "name":  "Submit Finding",
+                                            "type":  "n8n-nodes-base.httpRequest",
+                                            "typeVersion":  4.2,
+                                            "position":  [
+                                                             2000,
+                                                             200
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "operation":  "executeQuery",
+                                                               "query":  "INSERT INTO discovery_records (engagement_id, asset_id, source, record_type, record_value, raw_data)\nVALUES (\u0027{{ $(\u0027Analyze Response\u0027).first().json.engagement_id }}\u0027,\u0027{{ $(\u0027Analyze Response\u0027).first().json.asset_id }}\u0027,\u0027recon_http\u0027,\u0027http_probe\u0027,\u0027{{ $(\u0027Analyze Response\u0027).first().json.status_code }}\u0027,\u0027{\"status_code\":{{ $(\u0027Analyze Response\u0027).first().json.status_code }},\"tech_stack\":{{ JSON.stringify($(\u0027Analyze Response\u0027).first().json.tech_stack) }},\"missing_headers\":{{ JSON.stringify($(\u0027Analyze Response\u0027).first().json.missing_security_headers) }}}\u0027::jsonb);\nUPDATE scan_jobs SET status=\u0027completed\u0027, completed_at=NOW() WHERE id=\u0027{{ $(\u0027Create Scan Job\u0027).first().json.id }}\u0027;",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "pg-finalize",
+                                            "name":  "Store Discovery + Complete Job",
+                                            "type":  "n8n-nodes-base.postgres",
+                                            "typeVersion":  2.5,
+                                            "position":  [
+                                                             1780,
+                                                             400
+                                                         ],
+                                            "credentials":  {
+                                                                "postgres":  {
+                                                                                 "id":  "oHS3dvjMW1h1PkMp",
+                                                                                 "name":  "RECON OS PostgreSQL"
+                                                                             }
+                                                            }
+                                        }
+                                    ],
+                          "connections":  {
+                                              "Webhook":  {
+                                                              "main":  [
+                                                                           [
+                                                                               {
+                                                                                   "node":  "Normalize Input",
+                                                                                   "type":  "main",
+                                                                                   "index":  0
+                                                                               }
+                                                                           ]
+                                                                       ]
+                                                          },
+                                              "Normalize Input":  {
+                                                                      "main":  [
+                                                                                   [
+                                                                                       {
+                                                                                           "node":  "Create Scan Job",
+                                                                                           "type":  "main",
+                                                                                           "index":  0
+                                                                                       }
+                                                                                   ]
+                                                                               ]
+                                                                  },
+                                              "Create Scan Job":  {
+                                                                      "main":  [
+                                                                                   [
+                                                                                       {
+                                                                                           "node":  "HTTP Probe",
+                                                                                           "type":  "main",
+                                                                                           "index":  0
+                                                                                       }
+                                                                                   ]
+                                                                               ]
+                                                                  },
+                                              "HTTP Probe":  {
+                                                                 "main":  [
+                                                                              [
+                                                                                  {
+                                                                                      "node":  "Analyze Response",
+                                                                                      "type":  "main",
+                                                                                      "index":  0
+                                                                                  }
+                                                                              ]
+                                                                          ]
+                                                             },
+                                              "Analyze Response":  {
+                                                                       "main":  [
+                                                                                    [
+                                                                                        {
+                                                                                            "node":  "Update Asset",
+                                                                                            "type":  "main",
+                                                                                            "index":  0
+                                                                                        }
+                                                                                    ]
+                                                                                ]
+                                                                   },
+                                              "Update Asset":  {
+                                                                   "main":  [
+                                                                                [
+                                                                                    {
+                                                                                        "node":  "IF Has Findings?",
+                                                                                        "type":  "main",
+                                                                                        "index":  0
+                                                                                    }
+                                                                                ]
+                                                                            ]
+                                                               },
+                                              "IF Has Findings?":  {
+                                                                       "main":  [
+                                                                                    [
+                                                                                        {
+                                                                                            "node":  "Prepare Finding Payloads",
+                                                                                            "type":  "main",
+                                                                                            "index":  0
+                                                                                        }
+                                                                                    ],
+                                                                                    [
+                                                                                        {
+                                                                                            "node":  "Store Discovery + Complete Job",
+                                                                                            "type":  "main",
+                                                                                            "index":  0
+                                                                                        }
+                                                                                    ]
+                                                                                ]
+                                                                   },
+                                              "Prepare Finding Payloads":  {
+                                                                               "main":  [
+                                                                                            [
+                                                                                                {
+                                                                                                    "node":  "Submit Finding",
+                                                                                                    "type":  "main",
+                                                                                                    "index":  0
+                                                                                                }
+                                                                                            ]
+                                                                                        ]
+                                                                           },
+                                              "Submit Finding":  {
+                                                                     "main":  [
+                                                                                  [
+                                                                                      {
+                                                                                          "node":  "Store Discovery + Complete Job",
+                                                                                          "type":  "main",
+                                                                                          "index":  0
+                                                                                      }
+                                                                                  ]
+                                                                              ]
+                                                                 }
+                                          },
+                          "authors":  "gelson mascarenhas",
+                          "name":  null,
+                          "description":  null,
+                          "autosaved":  false,
+                          "workflowPublishHistory":  [
+                                                         {
+                                                             "createdAt":  "2026-04-19T07:27:33.724Z",
+                                                             "id":  567,
+                                                             "workflowId":  "dfPmNrYeBYnAvfoh",
+                                                             "versionId":  "c19f614e-c30f-40ab-a226-87fab2d2c177",
+                                                             "event":  "deactivated",
+                                                             "userId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                                         },
+                                                         {
+                                                             "createdAt":  "2026-04-19T07:27:33.747Z",
+                                                             "id":  568,
+                                                             "workflowId":  "dfPmNrYeBYnAvfoh",
+                                                             "versionId":  "c19f614e-c30f-40ab-a226-87fab2d2c177",
+                                                             "event":  "activated",
+                                                             "userId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                                         }
+                                                     ]
+                      }
+}

@@ -1,0 +1,511 @@
+﻿{
+    "updatedAt":  "2026-04-19T07:27:29.805Z",
+    "createdAt":  "2026-04-19T03:30:07.654Z",
+    "id":  "NZreSLQHTChjwqWw",
+    "name":  "RECON OS - WF-02 Scope Guardian",
+    "description":  null,
+    "active":  true,
+    "isArchived":  false,
+    "nodes":  [
+                  {
+                      "parameters":  {
+                                         "inputSource":  "passthrough"
+                                     },
+                      "id":  "wf-trigger",
+                      "name":  "Execute Workflow Trigger",
+                      "type":  "n8n-nodes-base.executeWorkflowTrigger",
+                      "typeVersion":  1.1,
+                      "position":  [
+                                       240,
+                                       300
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "SELECT id, status, testing_window_start, testing_window_end, rate_limit_profile\nFROM engagements\nWHERE id = \u0027{{ $json.engagement_id }}\u0027\nLIMIT 1;",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "pg-get-engagement",
+                      "name":  "Get Engagement",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       460,
+                                       300
+                                   ],
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "oHS3dvjMW1h1PkMp",
+                                                           "name":  "RECON OS PostgreSQL"
+                                                       }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "const eng = $input.first().json;\nconst asset = $(\u0027Execute Workflow Trigger\u0027).first().json.asset_value || \u0027\u0027;\nif (!eng || !eng.id) {\n  return [{ json: { allowed: false, reason: \u0027engagement_not_found\u0027, asset_value: asset } }];\n}\nif (eng.status !== \u0027active\u0027) {\n  return [{ json: { allowed: false, reason: \u0027engagement_not_active\u0027, status: eng.status, asset_value: asset } }];\n}\nconst now = new Date();\nconst start = new Date(eng.testing_window_start);\nconst end = new Date(eng.testing_window_end);\nif (now \u003c start || now \u003e end) {\n  return [{ json: { allowed: false, reason: \u0027outside_testing_window\u0027, window_start: eng.testing_window_start, window_end: eng.testing_window_end, asset_value: asset } }];\n}\nreturn [{ json: { engagement_ok: true, engagement_id: eng.id, rate_limit_profile: eng.rate_limit_profile, asset_value: asset } }];"
+                                     },
+                      "id":  "check-engagement",
+                      "name":  "Check Engagement Status",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       680,
+                                       300
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "conditions":  {
+                                                            "options":  {
+                                                                            "caseSensitive":  true,
+                                                                            "leftValue":  "",
+                                                                            "typeValidation":  "strict"
+                                                                        },
+                                                            "conditions":  [
+                                                                               {
+                                                                                   "id":  "cond-eng",
+                                                                                   "leftValue":  "={{ $json.engagement_ok }}",
+                                                                                   "rightValue":  true,
+                                                                                   "operator":  {
+                                                                                                    "type":  "boolean",
+                                                                                                    "operation":  "true"
+                                                                                                }
+                                                                               }
+                                                                           ],
+                                                            "combinator":  "and"
+                                                        },
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "if-eng-ok",
+                      "name":  "IF Engagement OK?",
+                      "type":  "n8n-nodes-base.if",
+                      "typeVersion":  2.2,
+                      "position":  [
+                                       900,
+                                       300
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "SELECT id, value, scope_type, in_scope\nFROM scope_rules\nWHERE engagement_id = \u0027{{ $json.engagement_id }}\u0027\nAND in_scope = true;",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "pg-get-scope",
+                      "name":  "Get Scope Rules",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       1120,
+                                       300
+                                   ],
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "oHS3dvjMW1h1PkMp",
+                                                           "name":  "RECON OS PostgreSQL"
+                                                       }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "const rules = $input.all().map(i =\u003e i.json);\nconst triggerData = $(\u0027Execute Workflow Trigger\u0027).first().json;\nconst assetValue = (triggerData.asset_value || \u0027\u0027).toLowerCase().trim().replace(/\\.$/,\u0027\u0027);\nconst engId = $(\u0027Check Engagement Status\u0027).first().json.engagement_id;\nconst rateProfile = $(\u0027Check Engagement Status\u0027).first().json.rate_limit_profile;\n\nfunction normalizeHost(h) {\n  return h.toLowerCase().trim().replace(/\\.$/,\u0027\u0027).replace(/^https?:\\/\\//,\u0027\u0027).split(\u0027/\u0027)[0];\n}\n\nlet matched = null;\nfor (const rule of rules) {\n  const ruleVal = normalizeHost(rule.value);\n  if (rule.scope_type === \u0027domain\u0027 || rule.scope_type === \u0027web_app\u0027 || rule.scope_type === \u0027api\u0027) {\n    if (assetValue === ruleVal) { matched = rule; break; }\n  } else if (rule.scope_type === \u0027subdomain_wildcard\u0027) {\n    const base = ruleVal.replace(/^\\*\\./, \u0027\u0027);\n    if (assetValue === base || assetValue.endsWith(\u0027.\u0027 + base)) { matched = rule; break; }\n  } else if (rule.scope_type === \u0027ip\u0027) {\n    if (assetValue === ruleVal) { matched = rule; break; }\n  } else if (rule.scope_type === \u0027cidr\u0027) {\n    // Basic CIDR check - for production use a proper CIDR library\n    const [network, bits] = ruleVal.split(\u0027/\u0027);\n    matched = null; // placeholder - analyst should verify IP scope manually\n  } else if (rule.scope_type === \u0027environment\u0027) {\n    if (assetValue.includes(ruleVal)) { matched = rule; break; }\n  }\n}\n\nif (!matched) {\n  return [{ json: { allowed: false, reason: \u0027out_of_scope\u0027, asset_value: assetValue, engagement_id: engId } }];\n}\n\nreturn [{ json: { allowed: true, scope_rule_id: matched.id, scope_type: matched.scope_type, asset_value: assetValue, engagement_id: engId, rate_limit_profile: rateProfile } }];"
+                                     },
+                      "id":  "check-scope",
+                      "name":  "Check Asset Scope",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       1340,
+                                       300
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "INSERT INTO audit_logs (event_type, actor, engagement_id, entity_type, payload)\nVALUES (\u0027oos_attempt_blocked\u0027, \u0027scope_guardian\u0027, \u0027{{ $json.engagement_id }}\u0027, \u0027asset\u0027, \u0027{\"asset_value\":\"{{ $json.asset_value }}\",\"reason\":\"{{ $json.reason }}\"}\u0027::jsonb);",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "pg-audit-block",
+                      "name":  "Audit OOS Block",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       1120,
+                                       500
+                                   ],
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "oHS3dvjMW1h1PkMp",
+                                                           "name":  "RECON OS PostgreSQL"
+                                                       }
+                                      }
+                  }
+              ],
+    "connections":  {
+                        "Execute Workflow Trigger":  {
+                                                         "main":  [
+                                                                      [
+                                                                          {
+                                                                              "node":  "Get Engagement",
+                                                                              "type":  "main",
+                                                                              "index":  0
+                                                                          }
+                                                                      ]
+                                                                  ]
+                                                     },
+                        "Get Engagement":  {
+                                               "main":  [
+                                                            [
+                                                                {
+                                                                    "node":  "Check Engagement Status",
+                                                                    "type":  "main",
+                                                                    "index":  0
+                                                                }
+                                                            ]
+                                                        ]
+                                           },
+                        "Check Engagement Status":  {
+                                                        "main":  [
+                                                                     [
+                                                                         {
+                                                                             "node":  "IF Engagement OK?",
+                                                                             "type":  "main",
+                                                                             "index":  0
+                                                                         }
+                                                                     ]
+                                                                 ]
+                                                    },
+                        "IF Engagement OK?":  {
+                                                  "main":  [
+                                                               [
+                                                                   {
+                                                                       "node":  "Get Scope Rules",
+                                                                       "type":  "main",
+                                                                       "index":  0
+                                                                   }
+                                                               ],
+                                                               [
+                                                                   {
+                                                                       "node":  "Audit OOS Block",
+                                                                       "type":  "main",
+                                                                       "index":  0
+                                                                   }
+                                                               ]
+                                                           ]
+                                              },
+                        "Get Scope Rules":  {
+                                                "main":  [
+                                                             [
+                                                                 {
+                                                                     "node":  "Check Asset Scope",
+                                                                     "type":  "main",
+                                                                     "index":  0
+                                                                 }
+                                                             ]
+                                                         ]
+                                            },
+                        "Check Asset Scope":  {
+                                                  "main":  [
+                                                               [
+                                                                   {
+                                                                       "node":  "Audit OOS Block",
+                                                                       "type":  "main",
+                                                                       "index":  0
+                                                                   }
+                                                               ]
+                                                           ]
+                                              }
+                    },
+    "settings":  {
+                     "executionOrder":  "v1",
+                     "saveManualExecutions":  true,
+                     "saveExecutionProgress":  true,
+                     "callerPolicy":  "workflowsFromSameOwner",
+                     "availableInMCP":  false
+                 },
+    "staticData":  null,
+    "meta":  null,
+    "pinData":  null,
+    "versionId":  "43577fea-25e0-435e-99cc-08f3122537c8",
+    "activeVersionId":  "43577fea-25e0-435e-99cc-08f3122537c8",
+    "versionCounter":  6,
+    "triggerCount":  0,
+    "shared":  [
+                   {
+                       "updatedAt":  "2026-04-19T03:30:07.654Z",
+                       "createdAt":  "2026-04-19T03:30:07.654Z",
+                       "role":  "workflow:owner",
+                       "workflowId":  "NZreSLQHTChjwqWw",
+                       "projectId":  "Lrgt6JR85OZiVLcX",
+                       "project":  {
+                                       "updatedAt":  "2026-03-31T09:07:31.366Z",
+                                       "createdAt":  "2026-03-31T08:57:43.789Z",
+                                       "id":  "Lrgt6JR85OZiVLcX",
+                                       "name":  "gelson mascarenhas \u003cgelson_m@hotmail.com\u003e",
+                                       "type":  "personal",
+                                       "icon":  null,
+                                       "description":  null,
+                                       "creatorId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                   }
+                   }
+               ],
+    "tags":  [
+
+             ],
+    "activeVersion":  {
+                          "updatedAt":  "2026-04-19T07:27:29.807Z",
+                          "createdAt":  "2026-04-19T07:27:29.807Z",
+                          "versionId":  "43577fea-25e0-435e-99cc-08f3122537c8",
+                          "workflowId":  "NZreSLQHTChjwqWw",
+                          "nodes":  [
+                                        {
+                                            "parameters":  {
+                                                               "inputSource":  "passthrough"
+                                                           },
+                                            "id":  "wf-trigger",
+                                            "name":  "Execute Workflow Trigger",
+                                            "type":  "n8n-nodes-base.executeWorkflowTrigger",
+                                            "typeVersion":  1.1,
+                                            "position":  [
+                                                             240,
+                                                             300
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "operation":  "executeQuery",
+                                                               "query":  "SELECT id, status, testing_window_start, testing_window_end, rate_limit_profile\nFROM engagements\nWHERE id = \u0027{{ $json.engagement_id }}\u0027\nLIMIT 1;",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "pg-get-engagement",
+                                            "name":  "Get Engagement",
+                                            "type":  "n8n-nodes-base.postgres",
+                                            "typeVersion":  2.5,
+                                            "position":  [
+                                                             460,
+                                                             300
+                                                         ],
+                                            "credentials":  {
+                                                                "postgres":  {
+                                                                                 "id":  "oHS3dvjMW1h1PkMp",
+                                                                                 "name":  "RECON OS PostgreSQL"
+                                                                             }
+                                                            }
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "jsCode":  "const eng = $input.first().json;\nconst asset = $(\u0027Execute Workflow Trigger\u0027).first().json.asset_value || \u0027\u0027;\nif (!eng || !eng.id) {\n  return [{ json: { allowed: false, reason: \u0027engagement_not_found\u0027, asset_value: asset } }];\n}\nif (eng.status !== \u0027active\u0027) {\n  return [{ json: { allowed: false, reason: \u0027engagement_not_active\u0027, status: eng.status, asset_value: asset } }];\n}\nconst now = new Date();\nconst start = new Date(eng.testing_window_start);\nconst end = new Date(eng.testing_window_end);\nif (now \u003c start || now \u003e end) {\n  return [{ json: { allowed: false, reason: \u0027outside_testing_window\u0027, window_start: eng.testing_window_start, window_end: eng.testing_window_end, asset_value: asset } }];\n}\nreturn [{ json: { engagement_ok: true, engagement_id: eng.id, rate_limit_profile: eng.rate_limit_profile, asset_value: asset } }];"
+                                                           },
+                                            "id":  "check-engagement",
+                                            "name":  "Check Engagement Status",
+                                            "type":  "n8n-nodes-base.code",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             680,
+                                                             300
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "conditions":  {
+                                                                                  "options":  {
+                                                                                                  "caseSensitive":  true,
+                                                                                                  "leftValue":  "",
+                                                                                                  "typeValidation":  "strict"
+                                                                                              },
+                                                                                  "conditions":  [
+                                                                                                     {
+                                                                                                         "id":  "cond-eng",
+                                                                                                         "leftValue":  "={{ $json.engagement_ok }}",
+                                                                                                         "rightValue":  true,
+                                                                                                         "operator":  {
+                                                                                                                          "type":  "boolean",
+                                                                                                                          "operation":  "true"
+                                                                                                                      }
+                                                                                                     }
+                                                                                                 ],
+                                                                                  "combinator":  "and"
+                                                                              },
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "if-eng-ok",
+                                            "name":  "IF Engagement OK?",
+                                            "type":  "n8n-nodes-base.if",
+                                            "typeVersion":  2.2,
+                                            "position":  [
+                                                             900,
+                                                             300
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "operation":  "executeQuery",
+                                                               "query":  "SELECT id, value, scope_type, in_scope\nFROM scope_rules\nWHERE engagement_id = \u0027{{ $json.engagement_id }}\u0027\nAND in_scope = true;",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "pg-get-scope",
+                                            "name":  "Get Scope Rules",
+                                            "type":  "n8n-nodes-base.postgres",
+                                            "typeVersion":  2.5,
+                                            "position":  [
+                                                             1120,
+                                                             300
+                                                         ],
+                                            "credentials":  {
+                                                                "postgres":  {
+                                                                                 "id":  "oHS3dvjMW1h1PkMp",
+                                                                                 "name":  "RECON OS PostgreSQL"
+                                                                             }
+                                                            }
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "jsCode":  "const rules = $input.all().map(i =\u003e i.json);\nconst triggerData = $(\u0027Execute Workflow Trigger\u0027).first().json;\nconst assetValue = (triggerData.asset_value || \u0027\u0027).toLowerCase().trim().replace(/\\.$/,\u0027\u0027);\nconst engId = $(\u0027Check Engagement Status\u0027).first().json.engagement_id;\nconst rateProfile = $(\u0027Check Engagement Status\u0027).first().json.rate_limit_profile;\n\nfunction normalizeHost(h) {\n  return h.toLowerCase().trim().replace(/\\.$/,\u0027\u0027).replace(/^https?:\\/\\//,\u0027\u0027).split(\u0027/\u0027)[0];\n}\n\nlet matched = null;\nfor (const rule of rules) {\n  const ruleVal = normalizeHost(rule.value);\n  if (rule.scope_type === \u0027domain\u0027 || rule.scope_type === \u0027web_app\u0027 || rule.scope_type === \u0027api\u0027) {\n    if (assetValue === ruleVal) { matched = rule; break; }\n  } else if (rule.scope_type === \u0027subdomain_wildcard\u0027) {\n    const base = ruleVal.replace(/^\\*\\./, \u0027\u0027);\n    if (assetValue === base || assetValue.endsWith(\u0027.\u0027 + base)) { matched = rule; break; }\n  } else if (rule.scope_type === \u0027ip\u0027) {\n    if (assetValue === ruleVal) { matched = rule; break; }\n  } else if (rule.scope_type === \u0027cidr\u0027) {\n    // Basic CIDR check - for production use a proper CIDR library\n    const [network, bits] = ruleVal.split(\u0027/\u0027);\n    matched = null; // placeholder - analyst should verify IP scope manually\n  } else if (rule.scope_type === \u0027environment\u0027) {\n    if (assetValue.includes(ruleVal)) { matched = rule; break; }\n  }\n}\n\nif (!matched) {\n  return [{ json: { allowed: false, reason: \u0027out_of_scope\u0027, asset_value: assetValue, engagement_id: engId } }];\n}\n\nreturn [{ json: { allowed: true, scope_rule_id: matched.id, scope_type: matched.scope_type, asset_value: assetValue, engagement_id: engId, rate_limit_profile: rateProfile } }];"
+                                                           },
+                                            "id":  "check-scope",
+                                            "name":  "Check Asset Scope",
+                                            "type":  "n8n-nodes-base.code",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             1340,
+                                                             300
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "operation":  "executeQuery",
+                                                               "query":  "INSERT INTO audit_logs (event_type, actor, engagement_id, entity_type, payload)\nVALUES (\u0027oos_attempt_blocked\u0027, \u0027scope_guardian\u0027, \u0027{{ $json.engagement_id }}\u0027, \u0027asset\u0027, \u0027{\"asset_value\":\"{{ $json.asset_value }}\",\"reason\":\"{{ $json.reason }}\"}\u0027::jsonb);",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "pg-audit-block",
+                                            "name":  "Audit OOS Block",
+                                            "type":  "n8n-nodes-base.postgres",
+                                            "typeVersion":  2.5,
+                                            "position":  [
+                                                             1120,
+                                                             500
+                                                         ],
+                                            "credentials":  {
+                                                                "postgres":  {
+                                                                                 "id":  "oHS3dvjMW1h1PkMp",
+                                                                                 "name":  "RECON OS PostgreSQL"
+                                                                             }
+                                                            }
+                                        }
+                                    ],
+                          "connections":  {
+                                              "Execute Workflow Trigger":  {
+                                                                               "main":  [
+                                                                                            [
+                                                                                                {
+                                                                                                    "node":  "Get Engagement",
+                                                                                                    "type":  "main",
+                                                                                                    "index":  0
+                                                                                                }
+                                                                                            ]
+                                                                                        ]
+                                                                           },
+                                              "Get Engagement":  {
+                                                                     "main":  [
+                                                                                  [
+                                                                                      {
+                                                                                          "node":  "Check Engagement Status",
+                                                                                          "type":  "main",
+                                                                                          "index":  0
+                                                                                      }
+                                                                                  ]
+                                                                              ]
+                                                                 },
+                                              "Check Engagement Status":  {
+                                                                              "main":  [
+                                                                                           [
+                                                                                               {
+                                                                                                   "node":  "IF Engagement OK?",
+                                                                                                   "type":  "main",
+                                                                                                   "index":  0
+                                                                                               }
+                                                                                           ]
+                                                                                       ]
+                                                                          },
+                                              "IF Engagement OK?":  {
+                                                                        "main":  [
+                                                                                     [
+                                                                                         {
+                                                                                             "node":  "Get Scope Rules",
+                                                                                             "type":  "main",
+                                                                                             "index":  0
+                                                                                         }
+                                                                                     ],
+                                                                                     [
+                                                                                         {
+                                                                                             "node":  "Audit OOS Block",
+                                                                                             "type":  "main",
+                                                                                             "index":  0
+                                                                                         }
+                                                                                     ]
+                                                                                 ]
+                                                                    },
+                                              "Get Scope Rules":  {
+                                                                      "main":  [
+                                                                                   [
+                                                                                       {
+                                                                                           "node":  "Check Asset Scope",
+                                                                                           "type":  "main",
+                                                                                           "index":  0
+                                                                                       }
+                                                                                   ]
+                                                                               ]
+                                                                  },
+                                              "Check Asset Scope":  {
+                                                                        "main":  [
+                                                                                     [
+                                                                                         {
+                                                                                             "node":  "Audit OOS Block",
+                                                                                             "type":  "main",
+                                                                                             "index":  0
+                                                                                         }
+                                                                                     ]
+                                                                                 ]
+                                                                    }
+                                          },
+                          "authors":  "gelson mascarenhas",
+                          "name":  null,
+                          "description":  null,
+                          "autosaved":  false,
+                          "workflowPublishHistory":  [
+                                                         {
+                                                             "createdAt":  "2026-04-19T07:27:29.850Z",
+                                                             "id":  549,
+                                                             "workflowId":  "NZreSLQHTChjwqWw",
+                                                             "versionId":  "43577fea-25e0-435e-99cc-08f3122537c8",
+                                                             "event":  "deactivated",
+                                                             "userId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                                         },
+                                                         {
+                                                             "createdAt":  "2026-04-19T07:27:29.867Z",
+                                                             "id":  550,
+                                                             "workflowId":  "NZreSLQHTChjwqWw",
+                                                             "versionId":  "43577fea-25e0-435e-99cc-08f3122537c8",
+                                                             "event":  "activated",
+                                                             "userId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                                         }
+                                                     ]
+                      }
+}

@@ -1,0 +1,761 @@
+﻿{
+    "updatedAt":  "2026-04-19T07:27:30.411Z",
+    "createdAt":  "2026-04-19T03:30:18.102Z",
+    "id":  "gkO6CvbB5OQYJz8R",
+    "name":  "RECON OS - WF-15 Retest Scheduler",
+    "description":  null,
+    "active":  true,
+    "isArchived":  false,
+    "nodes":  [
+                  {
+                      "parameters":  {
+                                         "httpMethod":  "POST",
+                                         "path":  "recon-os/retests/schedule",
+                                         "responseMode":  "responseNode",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "wh-retest",
+                      "name":  "Webhook Schedule",
+                      "type":  "n8n-nodes-base.webhook",
+                      "typeVersion":  2,
+                      "position":  [
+                                       240,
+                                       300
+                                   ],
+                      "webhookId":  "recon-os-retests-schedule"
+                  },
+                  {
+                      "parameters":  {
+                                         "rule":  {
+                                                      "interval":  [
+                                                                       {
+                                                                           "field":  "cronExpression",
+                                                                           "expression":  "0 9 * * 1"
+                                                                       }
+                                                                   ]
+                                                  }
+                                     },
+                      "id":  "cron-weekly",
+                      "name":  "Cron Weekly Monday",
+                      "type":  "n8n-nodes-base.scheduleTrigger",
+                      "typeVersion":  1.2,
+                      "position":  [
+                                       240,
+                                       500
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "SELECT nf.id as finding_id, nf.title, nf.severity, nf.priority_bucket,\n       nf.evidence_summary, nf.remediation_evidence,\n       nf.engagement_id, a.asset_value\nFROM normalized_findings nf\nJOIN assets a ON nf.asset_id = a.id\nWHERE nf.remediation_status = \u0027fixed_pending_retest\u0027\n  AND NOT EXISTS (SELECT 1 FROM retest_records rr WHERE rr.finding_id = nf.id AND rr.result IS NULL)\nLIMIT 20;",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "pg-get-pending-retests",
+                      "name":  "Get Pending Retests",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       460,
+                                       500
+                                   ],
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "oHS3dvjMW1h1PkMp",
+                                                           "name":  "RECON OS PostgreSQL"
+                                                       }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "const body = $input.first().json.body || $input.first().json;\nreturn [{ json: { finding_id: body.finding_id } }];"
+                                     },
+                      "id":  "normalize-wh",
+                      "name":  "Normalize Webhook Input",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       460,
+                                       300
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "SELECT nf.id as finding_id, nf.title, nf.severity, nf.priority_bucket, nf.evidence_summary, nf.remediation_evidence, nf.engagement_id, a.asset_value\nFROM normalized_findings nf\nJOIN assets a ON nf.asset_id = a.id\nWHERE nf.id = \u0027{{ $json.finding_id }}\u0027\nLIMIT 1;",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "pg-get-single",
+                      "name":  "Get Single Finding",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       680,
+                                       300
+                                   ],
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "oHS3dvjMW1h1PkMp",
+                                                           "name":  "RECON OS PostgreSQL"
+                                                       }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "INSERT INTO retest_records (finding_id, engagement_id, scheduled_at)\nVALUES (\u0027{{ $json.finding_id }}\u0027,\u0027{{ $json.engagement_id }}\u0027,NOW() + INTERVAL \u002724 hours\u0027)\nRETURNING id;",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "pg-create-retest",
+                      "name":  "Create Retest Record",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       900,
+                                       300
+                                   ],
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "oHS3dvjMW1h1PkMp",
+                                                           "name":  "RECON OS PostgreSQL"
+                                                       }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "method":  "POST",
+                                         "url":  "={{ $env.RECON_OS_SLACK_WEBHOOK || \u0027https://hooks.slack.com/services/PLACEHOLDER\u0027 }}",
+                                         "sendBody":  true,
+                                         "specifyBody":  "json",
+                                         "jsonBody":  "={{ JSON.stringify({\n  text: \u0027?? *RECON OS - Retest Scheduled*\\nFinding: \u0027 + $(\u0027Get Single Finding\u0027).first().json.title + \u0027\\nAsset: \u0027 + $(\u0027Get Single Finding\u0027).first().json.asset_value + \u0027\\nSeverity: \u0027 + $(\u0027Get Single Finding\u0027).first().json.severity.toUpperCase() + \u0027\\nRetest ID: \u0027 + $(\u0027Create Retest Record\u0027).first().json.id + \u0027\\nSubmit result: POST /webhook/recon-os/retests/result\\n{\"retest_id\":\"\u0027 + $(\u0027Create Retest Record\u0027).first().json.id + \u0027\",\"result\":\"pass|fail|partial\",\"retest_evidence\":\"...\"}\u0027,\n  username: \u0027RECON OS\u0027,\n  icon_emoji: \u0027:repeat:\u0027\n}) }}",
+                                         "options":  {
+                                                         "timeout":  10000
+                                                     }
+                                     },
+                      "id":  "notify-analyst",
+                      "name":  "Notify Analyst",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.2,
+                      "position":  [
+                                       1120,
+                                       300
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "respondWith":  "json",
+                                         "responseBody":  "={{ JSON.stringify({ ok: true, retest_id: $(\u0027Create Retest Record\u0027).first().json.id, scheduled_at: \u0027In 24 hours\u0027, finding_id: $(\u0027Get Single Finding\u0027).first().json.finding_id }) }}",
+                                         "options":  {
+                                                         "responseCode":  201
+                                                     }
+                                     },
+                      "id":  "respond-201",
+                      "name":  "Respond 201",
+                      "type":  "n8n-nodes-base.respondToWebhook",
+                      "typeVersion":  1.1,
+                      "position":  [
+                                       1340,
+                                       300
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "httpMethod":  "POST",
+                                         "path":  "recon-os/retests/result",
+                                         "responseMode":  "responseNode",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "wh-result",
+                      "name":  "Webhook Retest Result",
+                      "type":  "n8n-nodes-base.webhook",
+                      "typeVersion":  2,
+                      "position":  [
+                                       240,
+                                       700
+                                   ],
+                      "webhookId":  "recon-os-retests-result"
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "const body = $input.first().json.body || $input.first().json;\nif (!body.retest_id || !body.result) return [{ json: { valid: false, error: \u0027retest_id and result required\u0027 } }];\nif (![\u0027pass\u0027,\u0027fail\u0027,\u0027partial\u0027].includes(body.result)) return [{ json: { valid: false, error: \u0027result must be pass, fail, or partial\u0027 } }];\nreturn [{ json: {\n  valid: true,\n  retest_id: body.retest_id,\n  result: body.result,\n  retest_evidence: body.retest_evidence || \u0027\u0027,\n  retested_by: body.retested_by || \u0027analyst\u0027,\n  notes: body.notes || \u0027\u0027\n} }];"
+                                     },
+                      "id":  "validate-result",
+                      "name":  "Validate Result Input",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       460,
+                                       700
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "method":  "POST",
+                                         "url":  "https://outstanding-blessing-production-1d4b.up.railway.app/webhook/recon-os/internal/retest-validate",
+                                         "sendBody":  true,
+                                         "specifyBody":  "json",
+                                         "jsonBody":  "={{ JSON.stringify($json) }}",
+                                         "options":  {
+                                                         "timeout":  15000
+                                                     }
+                                     },
+                      "id":  "call-retest-validator",
+                      "name":  "Call Retest Validator",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.2,
+                      "position":  [
+                                       680,
+                                       700
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "respondWith":  "json",
+                                         "responseBody":  "={{ JSON.stringify({ ok: true, retest_id: $(\u0027Validate Result Input\u0027).first().json.retest_id, result: $(\u0027Validate Result Input\u0027).first().json.result }) }}",
+                                         "options":  {
+                                                         "responseCode":  200
+                                                     }
+                                     },
+                      "id":  "respond-result-ok",
+                      "name":  "Respond Result OK",
+                      "type":  "n8n-nodes-base.respondToWebhook",
+                      "typeVersion":  1.1,
+                      "position":  [
+                                       900,
+                                       700
+                                   ]
+                  }
+              ],
+    "connections":  {
+                        "Webhook Schedule":  {
+                                                 "main":  [
+                                                              [
+                                                                  {
+                                                                      "node":  "Normalize Webhook Input",
+                                                                      "type":  "main",
+                                                                      "index":  0
+                                                                  }
+                                                              ]
+                                                          ]
+                                             },
+                        "Cron Weekly Monday":  {
+                                                   "main":  [
+                                                                [
+                                                                    {
+                                                                        "node":  "Get Pending Retests",
+                                                                        "type":  "main",
+                                                                        "index":  0
+                                                                    }
+                                                                ]
+                                                            ]
+                                               },
+                        "Get Pending Retests":  {
+                                                    "main":  [
+                                                                 [
+                                                                     {
+                                                                         "node":  "Create Retest Record",
+                                                                         "type":  "main",
+                                                                         "index":  0
+                                                                     }
+                                                                 ]
+                                                             ]
+                                                },
+                        "Normalize Webhook Input":  {
+                                                        "main":  [
+                                                                     [
+                                                                         {
+                                                                             "node":  "Get Single Finding",
+                                                                             "type":  "main",
+                                                                             "index":  0
+                                                                         }
+                                                                     ]
+                                                                 ]
+                                                    },
+                        "Get Single Finding":  {
+                                                   "main":  [
+                                                                [
+                                                                    {
+                                                                        "node":  "Create Retest Record",
+                                                                        "type":  "main",
+                                                                        "index":  0
+                                                                    }
+                                                                ]
+                                                            ]
+                                               },
+                        "Create Retest Record":  {
+                                                     "main":  [
+                                                                  [
+                                                                      {
+                                                                          "node":  "Notify Analyst",
+                                                                          "type":  "main",
+                                                                          "index":  0
+                                                                      }
+                                                                  ]
+                                                              ]
+                                                 },
+                        "Notify Analyst":  {
+                                               "main":  [
+                                                            [
+                                                                {
+                                                                    "node":  "Respond 201",
+                                                                    "type":  "main",
+                                                                    "index":  0
+                                                                }
+                                                            ]
+                                                        ]
+                                           },
+                        "Webhook Retest Result":  {
+                                                      "main":  [
+                                                                   [
+                                                                       {
+                                                                           "node":  "Validate Result Input",
+                                                                           "type":  "main",
+                                                                           "index":  0
+                                                                       }
+                                                                   ]
+                                                               ]
+                                                  },
+                        "Validate Result Input":  {
+                                                      "main":  [
+                                                                   [
+                                                                       {
+                                                                           "node":  "Call Retest Validator",
+                                                                           "type":  "main",
+                                                                           "index":  0
+                                                                       }
+                                                                   ]
+                                                               ]
+                                                  },
+                        "Call Retest Validator":  {
+                                                      "main":  [
+                                                                   [
+                                                                       {
+                                                                           "node":  "Respond Result OK",
+                                                                           "type":  "main",
+                                                                           "index":  0
+                                                                       }
+                                                                   ]
+                                                               ]
+                                                  }
+                    },
+    "settings":  {
+                     "executionOrder":  "v1",
+                     "saveManualExecutions":  true,
+                     "saveExecutionProgress":  true,
+                     "callerPolicy":  "workflowsFromSameOwner",
+                     "availableInMCP":  false
+                 },
+    "staticData":  {
+                       "node:Cron Weekly Monday":  {
+                                                       "recurrenceRules":  [
+
+                                                                           ]
+                                                   }
+                   },
+    "meta":  null,
+    "pinData":  null,
+    "versionId":  "f5d2c3b0-f367-4558-aab2-03ae12016502",
+    "activeVersionId":  "f5d2c3b0-f367-4558-aab2-03ae12016502",
+    "versionCounter":  7,
+    "triggerCount":  3,
+    "shared":  [
+                   {
+                       "updatedAt":  "2026-04-19T03:30:18.102Z",
+                       "createdAt":  "2026-04-19T03:30:18.102Z",
+                       "role":  "workflow:owner",
+                       "workflowId":  "gkO6CvbB5OQYJz8R",
+                       "projectId":  "Lrgt6JR85OZiVLcX",
+                       "project":  {
+                                       "updatedAt":  "2026-03-31T09:07:31.366Z",
+                                       "createdAt":  "2026-03-31T08:57:43.789Z",
+                                       "id":  "Lrgt6JR85OZiVLcX",
+                                       "name":  "gelson mascarenhas \u003cgelson_m@hotmail.com\u003e",
+                                       "type":  "personal",
+                                       "icon":  null,
+                                       "description":  null,
+                                       "creatorId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                   }
+                   }
+               ],
+    "tags":  [
+
+             ],
+    "activeVersion":  {
+                          "updatedAt":  "2026-04-19T07:27:30.413Z",
+                          "createdAt":  "2026-04-19T07:27:30.413Z",
+                          "versionId":  "f5d2c3b0-f367-4558-aab2-03ae12016502",
+                          "workflowId":  "gkO6CvbB5OQYJz8R",
+                          "nodes":  [
+                                        {
+                                            "parameters":  {
+                                                               "httpMethod":  "POST",
+                                                               "path":  "recon-os/retests/schedule",
+                                                               "responseMode":  "responseNode",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "wh-retest",
+                                            "name":  "Webhook Schedule",
+                                            "type":  "n8n-nodes-base.webhook",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             240,
+                                                             300
+                                                         ],
+                                            "webhookId":  "recon-os-retests-schedule"
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "rule":  {
+                                                                            "interval":  [
+                                                                                             {
+                                                                                                 "field":  "cronExpression",
+                                                                                                 "expression":  "0 9 * * 1"
+                                                                                             }
+                                                                                         ]
+                                                                        }
+                                                           },
+                                            "id":  "cron-weekly",
+                                            "name":  "Cron Weekly Monday",
+                                            "type":  "n8n-nodes-base.scheduleTrigger",
+                                            "typeVersion":  1.2,
+                                            "position":  [
+                                                             240,
+                                                             500
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "operation":  "executeQuery",
+                                                               "query":  "SELECT nf.id as finding_id, nf.title, nf.severity, nf.priority_bucket,\n       nf.evidence_summary, nf.remediation_evidence,\n       nf.engagement_id, a.asset_value\nFROM normalized_findings nf\nJOIN assets a ON nf.asset_id = a.id\nWHERE nf.remediation_status = \u0027fixed_pending_retest\u0027\n  AND NOT EXISTS (SELECT 1 FROM retest_records rr WHERE rr.finding_id = nf.id AND rr.result IS NULL)\nLIMIT 20;",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "pg-get-pending-retests",
+                                            "name":  "Get Pending Retests",
+                                            "type":  "n8n-nodes-base.postgres",
+                                            "typeVersion":  2.5,
+                                            "position":  [
+                                                             460,
+                                                             500
+                                                         ],
+                                            "credentials":  {
+                                                                "postgres":  {
+                                                                                 "id":  "oHS3dvjMW1h1PkMp",
+                                                                                 "name":  "RECON OS PostgreSQL"
+                                                                             }
+                                                            }
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "jsCode":  "const body = $input.first().json.body || $input.first().json;\nreturn [{ json: { finding_id: body.finding_id } }];"
+                                                           },
+                                            "id":  "normalize-wh",
+                                            "name":  "Normalize Webhook Input",
+                                            "type":  "n8n-nodes-base.code",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             460,
+                                                             300
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "operation":  "executeQuery",
+                                                               "query":  "SELECT nf.id as finding_id, nf.title, nf.severity, nf.priority_bucket, nf.evidence_summary, nf.remediation_evidence, nf.engagement_id, a.asset_value\nFROM normalized_findings nf\nJOIN assets a ON nf.asset_id = a.id\nWHERE nf.id = \u0027{{ $json.finding_id }}\u0027\nLIMIT 1;",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "pg-get-single",
+                                            "name":  "Get Single Finding",
+                                            "type":  "n8n-nodes-base.postgres",
+                                            "typeVersion":  2.5,
+                                            "position":  [
+                                                             680,
+                                                             300
+                                                         ],
+                                            "credentials":  {
+                                                                "postgres":  {
+                                                                                 "id":  "oHS3dvjMW1h1PkMp",
+                                                                                 "name":  "RECON OS PostgreSQL"
+                                                                             }
+                                                            }
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "operation":  "executeQuery",
+                                                               "query":  "INSERT INTO retest_records (finding_id, engagement_id, scheduled_at)\nVALUES (\u0027{{ $json.finding_id }}\u0027,\u0027{{ $json.engagement_id }}\u0027,NOW() + INTERVAL \u002724 hours\u0027)\nRETURNING id;",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "pg-create-retest",
+                                            "name":  "Create Retest Record",
+                                            "type":  "n8n-nodes-base.postgres",
+                                            "typeVersion":  2.5,
+                                            "position":  [
+                                                             900,
+                                                             300
+                                                         ],
+                                            "credentials":  {
+                                                                "postgres":  {
+                                                                                 "id":  "oHS3dvjMW1h1PkMp",
+                                                                                 "name":  "RECON OS PostgreSQL"
+                                                                             }
+                                                            }
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "method":  "POST",
+                                                               "url":  "={{ $env.RECON_OS_SLACK_WEBHOOK || \u0027https://hooks.slack.com/services/PLACEHOLDER\u0027 }}",
+                                                               "sendBody":  true,
+                                                               "specifyBody":  "json",
+                                                               "jsonBody":  "={{ JSON.stringify({\n  text: \u0027?? *RECON OS - Retest Scheduled*\\nFinding: \u0027 + $(\u0027Get Single Finding\u0027).first().json.title + \u0027\\nAsset: \u0027 + $(\u0027Get Single Finding\u0027).first().json.asset_value + \u0027\\nSeverity: \u0027 + $(\u0027Get Single Finding\u0027).first().json.severity.toUpperCase() + \u0027\\nRetest ID: \u0027 + $(\u0027Create Retest Record\u0027).first().json.id + \u0027\\nSubmit result: POST /webhook/recon-os/retests/result\\n{\"retest_id\":\"\u0027 + $(\u0027Create Retest Record\u0027).first().json.id + \u0027\",\"result\":\"pass|fail|partial\",\"retest_evidence\":\"...\"}\u0027,\n  username: \u0027RECON OS\u0027,\n  icon_emoji: \u0027:repeat:\u0027\n}) }}",
+                                                               "options":  {
+                                                                               "timeout":  10000
+                                                                           }
+                                                           },
+                                            "id":  "notify-analyst",
+                                            "name":  "Notify Analyst",
+                                            "type":  "n8n-nodes-base.httpRequest",
+                                            "typeVersion":  4.2,
+                                            "position":  [
+                                                             1120,
+                                                             300
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "respondWith":  "json",
+                                                               "responseBody":  "={{ JSON.stringify({ ok: true, retest_id: $(\u0027Create Retest Record\u0027).first().json.id, scheduled_at: \u0027In 24 hours\u0027, finding_id: $(\u0027Get Single Finding\u0027).first().json.finding_id }) }}",
+                                                               "options":  {
+                                                                               "responseCode":  201
+                                                                           }
+                                                           },
+                                            "id":  "respond-201",
+                                            "name":  "Respond 201",
+                                            "type":  "n8n-nodes-base.respondToWebhook",
+                                            "typeVersion":  1.1,
+                                            "position":  [
+                                                             1340,
+                                                             300
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "httpMethod":  "POST",
+                                                               "path":  "recon-os/retests/result",
+                                                               "responseMode":  "responseNode",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "wh-result",
+                                            "name":  "Webhook Retest Result",
+                                            "type":  "n8n-nodes-base.webhook",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             240,
+                                                             700
+                                                         ],
+                                            "webhookId":  "recon-os-retests-result"
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "jsCode":  "const body = $input.first().json.body || $input.first().json;\nif (!body.retest_id || !body.result) return [{ json: { valid: false, error: \u0027retest_id and result required\u0027 } }];\nif (![\u0027pass\u0027,\u0027fail\u0027,\u0027partial\u0027].includes(body.result)) return [{ json: { valid: false, error: \u0027result must be pass, fail, or partial\u0027 } }];\nreturn [{ json: {\n  valid: true,\n  retest_id: body.retest_id,\n  result: body.result,\n  retest_evidence: body.retest_evidence || \u0027\u0027,\n  retested_by: body.retested_by || \u0027analyst\u0027,\n  notes: body.notes || \u0027\u0027\n} }];"
+                                                           },
+                                            "id":  "validate-result",
+                                            "name":  "Validate Result Input",
+                                            "type":  "n8n-nodes-base.code",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             460,
+                                                             700
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "method":  "POST",
+                                                               "url":  "https://outstanding-blessing-production-1d4b.up.railway.app/webhook/recon-os/internal/retest-validate",
+                                                               "sendBody":  true,
+                                                               "specifyBody":  "json",
+                                                               "jsonBody":  "={{ JSON.stringify($json) }}",
+                                                               "options":  {
+                                                                               "timeout":  15000
+                                                                           }
+                                                           },
+                                            "id":  "call-retest-validator",
+                                            "name":  "Call Retest Validator",
+                                            "type":  "n8n-nodes-base.httpRequest",
+                                            "typeVersion":  4.2,
+                                            "position":  [
+                                                             680,
+                                                             700
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "respondWith":  "json",
+                                                               "responseBody":  "={{ JSON.stringify({ ok: true, retest_id: $(\u0027Validate Result Input\u0027).first().json.retest_id, result: $(\u0027Validate Result Input\u0027).first().json.result }) }}",
+                                                               "options":  {
+                                                                               "responseCode":  200
+                                                                           }
+                                                           },
+                                            "id":  "respond-result-ok",
+                                            "name":  "Respond Result OK",
+                                            "type":  "n8n-nodes-base.respondToWebhook",
+                                            "typeVersion":  1.1,
+                                            "position":  [
+                                                             900,
+                                                             700
+                                                         ]
+                                        }
+                                    ],
+                          "connections":  {
+                                              "Webhook Schedule":  {
+                                                                       "main":  [
+                                                                                    [
+                                                                                        {
+                                                                                            "node":  "Normalize Webhook Input",
+                                                                                            "type":  "main",
+                                                                                            "index":  0
+                                                                                        }
+                                                                                    ]
+                                                                                ]
+                                                                   },
+                                              "Cron Weekly Monday":  {
+                                                                         "main":  [
+                                                                                      [
+                                                                                          {
+                                                                                              "node":  "Get Pending Retests",
+                                                                                              "type":  "main",
+                                                                                              "index":  0
+                                                                                          }
+                                                                                      ]
+                                                                                  ]
+                                                                     },
+                                              "Get Pending Retests":  {
+                                                                          "main":  [
+                                                                                       [
+                                                                                           {
+                                                                                               "node":  "Create Retest Record",
+                                                                                               "type":  "main",
+                                                                                               "index":  0
+                                                                                           }
+                                                                                       ]
+                                                                                   ]
+                                                                      },
+                                              "Normalize Webhook Input":  {
+                                                                              "main":  [
+                                                                                           [
+                                                                                               {
+                                                                                                   "node":  "Get Single Finding",
+                                                                                                   "type":  "main",
+                                                                                                   "index":  0
+                                                                                               }
+                                                                                           ]
+                                                                                       ]
+                                                                          },
+                                              "Get Single Finding":  {
+                                                                         "main":  [
+                                                                                      [
+                                                                                          {
+                                                                                              "node":  "Create Retest Record",
+                                                                                              "type":  "main",
+                                                                                              "index":  0
+                                                                                          }
+                                                                                      ]
+                                                                                  ]
+                                                                     },
+                                              "Create Retest Record":  {
+                                                                           "main":  [
+                                                                                        [
+                                                                                            {
+                                                                                                "node":  "Notify Analyst",
+                                                                                                "type":  "main",
+                                                                                                "index":  0
+                                                                                            }
+                                                                                        ]
+                                                                                    ]
+                                                                       },
+                                              "Notify Analyst":  {
+                                                                     "main":  [
+                                                                                  [
+                                                                                      {
+                                                                                          "node":  "Respond 201",
+                                                                                          "type":  "main",
+                                                                                          "index":  0
+                                                                                      }
+                                                                                  ]
+                                                                              ]
+                                                                 },
+                                              "Webhook Retest Result":  {
+                                                                            "main":  [
+                                                                                         [
+                                                                                             {
+                                                                                                 "node":  "Validate Result Input",
+                                                                                                 "type":  "main",
+                                                                                                 "index":  0
+                                                                                             }
+                                                                                         ]
+                                                                                     ]
+                                                                        },
+                                              "Validate Result Input":  {
+                                                                            "main":  [
+                                                                                         [
+                                                                                             {
+                                                                                                 "node":  "Call Retest Validator",
+                                                                                                 "type":  "main",
+                                                                                                 "index":  0
+                                                                                             }
+                                                                                         ]
+                                                                                     ]
+                                                                        },
+                                              "Call Retest Validator":  {
+                                                                            "main":  [
+                                                                                         [
+                                                                                             {
+                                                                                                 "node":  "Respond Result OK",
+                                                                                                 "type":  "main",
+                                                                                                 "index":  0
+                                                                                             }
+                                                                                         ]
+                                                                                     ]
+                                                                        }
+                                          },
+                          "authors":  "gelson mascarenhas",
+                          "name":  null,
+                          "description":  null,
+                          "autosaved":  false,
+                          "workflowPublishHistory":  [
+                                                         {
+                                                             "createdAt":  "2026-04-19T07:27:30.478Z",
+                                                             "id":  553,
+                                                             "workflowId":  "gkO6CvbB5OQYJz8R",
+                                                             "versionId":  "f5d2c3b0-f367-4558-aab2-03ae12016502",
+                                                             "event":  "deactivated",
+                                                             "userId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                                         },
+                                                         {
+                                                             "createdAt":  "2026-04-19T07:27:30.514Z",
+                                                             "id":  554,
+                                                             "workflowId":  "gkO6CvbB5OQYJz8R",
+                                                             "versionId":  "f5d2c3b0-f367-4558-aab2-03ae12016502",
+                                                             "event":  "activated",
+                                                             "userId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                                         }
+                                                     ]
+                      }
+}

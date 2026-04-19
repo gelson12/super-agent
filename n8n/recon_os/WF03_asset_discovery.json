@@ -1,0 +1,156 @@
+{
+  "name": "RECON OS — WF-03 Asset Discovery",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "recon-os/assets/submit",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wh-asset",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "recon-os-assets-submit"
+    },
+    {
+      "parameters": { "inputSource": "passthrough" },
+      "id": "wf-trigger",
+      "name": "Execute Workflow Trigger",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\nconst body = item.body || item;\nreturn [{ json: {\n  engagement_id: body.engagement_id,\n  asset_value: (body.asset_value || '').toLowerCase().trim(),\n  asset_type: body.asset_type || 'domain',\n  owner_team: body.owner_team || null,\n  business_criticality: body.business_criticality || 'medium',\n  environment: body.environment || 'unknown',\n  notes: body.notes || null\n} }];"
+      },
+      "id": "normalize-input",
+      "name": "Normalize Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "workflowId": { "__rl": true, "value": "PLACEHOLDER_WF02_SCOPE_GUARDIAN_ID", "mode": "id" },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": { "asset_value": "={{ $json.asset_value }}", "engagement_id": "={{ $json.engagement_id }}" }
+        },
+        "options": {}
+      },
+      "id": "exec-scope-guardian",
+      "name": "Scope Guardian",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.1,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [{ "id": "cond-allowed", "leftValue": "={{ $json.allowed }}", "rightValue": true, "operator": { "type": "boolean", "operation": "true" } }],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-allowed",
+      "name": "IF In Scope?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: false, reason: $json.reason, asset_value: $json.asset_value }) }}",
+        "options": { "responseCode": 403 }
+      },
+      "id": "respond-blocked",
+      "name": "Respond Blocked",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1120, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "const assetValue = $('Normalize Input').first().json.asset_value;\nlet assetType = $('Normalize Input').first().json.asset_type;\nif (!assetType || assetType === 'auto') {\n  if (/^\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}/.test(assetValue)) assetType = 'ip';\n  else if (/\\//.test(assetValue) && !/^http/.test(assetValue)) assetType = 'api';\n  else if (/^http/.test(assetValue)) assetType = 'web_app';\n  else if ((assetValue.match(/\\./g)||[]).length >= 2) assetType = 'subdomain';\n  else assetType = 'domain';\n}\nreturn [{ json: { ...$('Normalize Input').first().json, asset_type: assetType } }];"
+      },
+      "id": "classify-asset",
+      "name": "Classify Asset",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO assets (engagement_id, asset_value, asset_type, scope_status, owner_team, business_criticality, environment, notes)\nVALUES (\n  '{{ $json.engagement_id }}',\n  '{{ $json.asset_value.replace(/'/g,\"''\") }}',\n  '{{ $json.asset_type }}',\n  'in_scope',\n  {{ $json.owner_team ? \"'\" + $json.owner_team + \"'\" : 'NULL' }},\n  '{{ $json.business_criticality }}',\n  '{{ $json.environment }}',\n  {{ $json.notes ? \"'\" + $json.notes.replace(/'/g,\"''\") + \"'\" : 'NULL' }}\n)\nON CONFLICT (engagement_id, asset_value) DO UPDATE\n  SET last_discovered = NOW(), asset_type = EXCLUDED.asset_type\nRETURNING id, (xmax = 0) AS is_new;",
+        "options": {}
+      },
+      "id": "pg-upsert-asset",
+      "name": "Upsert Asset",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1340, 300],
+      "credentials": { "postgres": { "id": "RECON_OS_PG_CRED", "name": "RECON OS PostgreSQL" } }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE engagement_metrics\nSET total_assets = (SELECT COUNT(*) FROM assets WHERE engagement_id = '{{ $('Normalize Input').first().json.engagement_id }}'),\n    updated_at = NOW()\nWHERE engagement_id = '{{ $('Normalize Input').first().json.engagement_id }}';",
+        "options": {}
+      },
+      "id": "pg-update-metrics",
+      "name": "Update Metrics",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1560, 300],
+      "credentials": { "postgres": { "id": "RECON_OS_PG_CRED", "name": "RECON OS PostgreSQL" } }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO audit_logs (event_type, actor, engagement_id, entity_type, entity_id, payload)\nVALUES ('asset_discovered', 'wf03', '{{ $('Normalize Input').first().json.engagement_id }}', 'asset', '{{ $('Upsert Asset').first().json.id }}', '{\"asset_value\":\"{{ $('Normalize Input').first().json.asset_value }}\",\"asset_type\":\"{{ $('Classify Asset').first().json.asset_type }}\"}'::jsonb);",
+        "options": {}
+      },
+      "id": "pg-audit",
+      "name": "Audit Log",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1780, 300],
+      "credentials": { "postgres": { "id": "RECON_OS_PG_CRED", "name": "RECON OS PostgreSQL" } }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, asset_id: $('Upsert Asset').first().json.id, is_new: $('Upsert Asset').first().json.is_new }) }}",
+        "options": { "responseCode": 200 }
+      },
+      "id": "respond-ok",
+      "name": "Respond OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2000, 300]
+    }
+  ],
+  "connections": {
+    "Webhook": { "main": [[{ "node": "Normalize Input", "type": "main", "index": 0 }]] },
+    "Execute Workflow Trigger": { "main": [[{ "node": "Normalize Input", "type": "main", "index": 0 }]] },
+    "Normalize Input": { "main": [[{ "node": "Scope Guardian", "type": "main", "index": 0 }]] },
+    "Scope Guardian": { "main": [[{ "node": "IF In Scope?", "type": "main", "index": 0 }]] },
+    "IF In Scope?": { "main": [
+      [{ "node": "Classify Asset", "type": "main", "index": 0 }],
+      [{ "node": "Respond Blocked", "type": "main", "index": 0 }]
+    ]},
+    "Classify Asset": { "main": [[{ "node": "Upsert Asset", "type": "main", "index": 0 }]] },
+    "Upsert Asset": { "main": [[{ "node": "Update Metrics", "type": "main", "index": 0 }]] },
+    "Update Metrics": { "main": [[{ "node": "Audit Log", "type": "main", "index": 0 }]] },
+    "Audit Log": { "main": [[{ "node": "Respond OK", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1", "saveManualExecutions": true, "saveExecutionProgress": true },
+  "meta": { "description": "RECON OS WF-03: Asset Discovery — registers and classifies in-scope assets. Called via webhook or sub-workflow. Hard-blocked for OOS assets. POST /webhook/recon-os/assets/submit" }
+}

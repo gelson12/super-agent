@@ -1,0 +1,591 @@
+﻿{
+    "updatedAt":  "2026-04-19T07:27:27.585Z",
+    "createdAt":  "2026-04-19T03:30:10.456Z",
+    "id":  "co3doTFYeZmCSLVq",
+    "name":  "RECON OS - WF-13 Executive Summary",
+    "description":  null,
+    "active":  true,
+    "isArchived":  false,
+    "nodes":  [
+                  {
+                      "parameters":  {
+                                         "httpMethod":  "POST",
+                                         "path":  "recon-os/reports/executive",
+                                         "responseMode":  "responseNode",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "wh-exec",
+                      "name":  "Webhook",
+                      "type":  "n8n-nodes-base.webhook",
+                      "typeVersion":  2,
+                      "position":  [
+                                       240,
+                                       300
+                                   ],
+                      "webhookId":  "recon-os-reports-executive"
+                  },
+                  {
+                      "parameters":  {
+                                         "inputSource":  "passthrough"
+                                     },
+                      "id":  "wf-trigger",
+                      "name":  "Execute Workflow Trigger",
+                      "type":  "n8n-nodes-base.executeWorkflowTrigger",
+                      "typeVersion":  1.1,
+                      "position":  [
+                                       240,
+                                       500
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "const item = $input.first().json;\nconst body = item.body || item;\nreturn [{ json: { engagement_id: body.engagement_id } }];"
+                                     },
+                      "id":  "normalize",
+                      "name":  "Normalize",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       460,
+                                       300
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "SELECT e.name as engagement_name, e.testing_window_start, e.testing_window_end, e.type,\n       c.name as client_name,\n       COUNT(nf.id) FILTER (WHERE nf.severity=\u0027critical\u0027) as criticals,\n       COUNT(nf.id) FILTER (WHERE nf.severity=\u0027high\u0027) as highs,\n       COUNT(nf.id) FILTER (WHERE nf.severity=\u0027medium\u0027) as mediums,\n       COUNT(nf.id) FILTER (WHERE nf.severity=\u0027low\u0027) as lows,\n       COUNT(nf.id) FILTER (WHERE nf.validation_status=\u0027verified_fixed\u0027) as fixed,\n       COUNT(nf.id) FILTER (WHERE nf.validation_status IN (\u0027validated\u0027,\u0027analyst_reviewed\u0027)) as open_validated,\n       COUNT(nf.id) FILTER (WHERE nf.is_recurring=true) as recurring,\n       ROUND(AVG(nf.recon_score),2) as avg_score,\n       em.total_assets, em.assets_tested, em.coverage_pct\nFROM engagements e\nJOIN clients c ON e.client_id = c.id\nLEFT JOIN normalized_findings nf ON nf.engagement_id = e.id\nLEFT JOIN engagement_metrics em ON em.engagement_id = e.id\nWHERE e.id = \u0027{{ $json.engagement_id }}\u0027\nGROUP BY e.id, e.name, e.testing_window_start, e.testing_window_end, e.type, c.name, em.total_assets, em.assets_tested, em.coverage_pct;",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "pg-get-stats",
+                      "name":  "Get Engagement Stats",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       680,
+                                       300
+                                   ],
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "oHS3dvjMW1h1PkMp",
+                                                           "name":  "RECON OS PostgreSQL"
+                                                       }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "SELECT nf.title, nf.severity, nf.recon_score, nf.score_explanation, nf.business_impact, a.asset_value\nFROM normalized_findings nf\nJOIN assets a ON nf.asset_id = a.id\nWHERE nf.engagement_id = \u0027{{ $(\u0027Normalize\u0027).first().json.engagement_id }}\u0027\n  AND nf.validation_status IN (\u0027validated\u0027,\u0027analyst_reviewed\u0027)\nORDER BY nf.recon_score DESC\nLIMIT 5;",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "pg-top-findings",
+                      "name":  "Get Top 5 Findings",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       900,
+                                       300
+                                   ],
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "oHS3dvjMW1h1PkMp",
+                                                           "name":  "RECON OS PostgreSQL"
+                                                       }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "SELECT owasp_category, COUNT(*) as count\nFROM normalized_findings\nWHERE engagement_id = \u0027{{ $(\u0027Normalize\u0027).first().json.engagement_id }}\u0027\n  AND owasp_category IS NOT NULL\nGROUP BY owasp_category\nORDER BY count DESC;",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "pg-owasp",
+                      "name":  "Get OWASP Breakdown",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       1120,
+                                       300
+                                   ],
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "oHS3dvjMW1h1PkMp",
+                                                           "name":  "RECON OS PostgreSQL"
+                                                       }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "const stats = $(\u0027Get Engagement Stats\u0027).first().json;\nconst topFindings = $(\u0027Get Top 5 Findings\u0027).all().map(i =\u003e i.json);\nconst owaspBreakdown = $(\u0027Get OWASP Breakdown\u0027).all().map(i =\u003e i.json);\nconst engId = $(\u0027Normalize\u0027).first().json.engagement_id;\n\n// Determine overall risk posture\nlet riskPosture = \u0027Low\u0027;\nif (parseInt(stats.criticals) \u003e 0) riskPosture = \u0027Critical\u0027;\nelse if (parseInt(stats.highs) \u003e 2) riskPosture = \u0027High\u0027;\nelse if (parseInt(stats.highs) \u003e 0 || parseInt(stats.mediums) \u003e 3) riskPosture = \u0027Medium\u0027;\n\n// Build executive narrative\nconst totalFindings = parseInt(stats.criticals||0) + parseInt(stats.highs||0) + parseInt(stats.mediums||0) + parseInt(stats.lows||0);\nconst remediationPriority = topFindings.map((f,i) =\u003e `${i+1}. [${f.severity.toUpperCase()}] ${f.title} (${f.asset_value}) - Score: ${f.recon_score}/10`);\n\nconst executiveSummary = {\n  engagement: {\n    client: stats.client_name,\n    name: stats.engagement_name,\n    type: stats.type,\n    period: `${stats.testing_window_start?.split(\u0027T\u0027)[0]} to ${stats.testing_window_end?.split(\u0027T\u0027)[0]}`\n  },\n  risk_posture: riskPosture,\n  findings_summary: {\n    total: totalFindings,\n    critical: parseInt(stats.criticals||0),\n    high: parseInt(stats.highs||0),\n    medium: parseInt(stats.mediums||0),\n    low: parseInt(stats.lows||0),\n    fixed: parseInt(stats.fixed||0),\n    recurring: parseInt(stats.recurring||0),\n    average_risk_score: parseFloat(stats.avg_score||0)\n  },\n  asset_coverage: {\n    total_in_scope: parseInt(stats.total_assets||0),\n    tested: parseInt(stats.assets_tested||0),\n    coverage_pct: parseFloat(stats.coverage_pct||0)\n  },\n  top_priority_actions: remediationPriority,\n  owasp_categories_affected: owaspBreakdown.map(o =\u003e `${o.owasp_category}: ${o.count} finding(s)`),\n  key_observations: [\n    parseInt(stats.recurring||0) \u003e 0 ? `${stats.recurring} finding(s) are recurring from prior engagements - indicating systemic weaknesses.` : null,\n    riskPosture === \u0027Critical\u0027 ? \u0027At least one critical-severity finding requires immediate remediation.\u0027 : null,\n    parseFloat(stats.coverage_pct||0) \u003c 80 ? `Asset coverage is ${stats.coverage_pct}% - some in-scope assets were not fully tested.` : null\n  ].filter(Boolean),\n  generated_at: new Date().toISOString()\n};\n\nreturn [{ json: { engagement_id: engId, executive_summary: executiveSummary } }];"
+                                     },
+                      "id":  "build-exec-summary",
+                      "name":  "Build Executive Summary",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       1340,
+                                       300
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "INSERT INTO reports (engagement_id, report_type, status, metadata)\nVALUES (\u0027{{ $json.engagement_id }}\u0027,\u0027executive\u0027,\u0027draft\u0027,\u0027{{ JSON.stringify($json.executive_summary).replace(/\u0027/g,\"\u0027\u0027\") }}\u0027::jsonb)\nRETURNING id;",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "pg-store-exec",
+                      "name":  "Store Executive Report",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       1560,
+                                       300
+                                   ],
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "oHS3dvjMW1h1PkMp",
+                                                           "name":  "RECON OS PostgreSQL"
+                                                       }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "respondWith":  "json",
+                                         "responseBody":  "={{ JSON.stringify({ ok: true, report_id: $(\u0027Store Executive Report\u0027).first().json.id, executive_summary: $(\u0027Build Executive Summary\u0027).first().json.executive_summary }) }}",
+                                         "options":  {
+                                                         "responseCode":  200
+                                                     }
+                                     },
+                      "id":  "respond-ok",
+                      "name":  "Respond",
+                      "type":  "n8n-nodes-base.respondToWebhook",
+                      "typeVersion":  1.1,
+                      "position":  [
+                                       1780,
+                                       300
+                                   ]
+                  }
+              ],
+    "connections":  {
+                        "Webhook":  {
+                                        "main":  [
+                                                     [
+                                                         {
+                                                             "node":  "Normalize",
+                                                             "type":  "main",
+                                                             "index":  0
+                                                         }
+                                                     ]
+                                                 ]
+                                    },
+                        "Execute Workflow Trigger":  {
+                                                         "main":  [
+                                                                      [
+                                                                          {
+                                                                              "node":  "Normalize",
+                                                                              "type":  "main",
+                                                                              "index":  0
+                                                                          }
+                                                                      ]
+                                                                  ]
+                                                     },
+                        "Normalize":  {
+                                          "main":  [
+                                                       [
+                                                           {
+                                                               "node":  "Get Engagement Stats",
+                                                               "type":  "main",
+                                                               "index":  0
+                                                           }
+                                                       ]
+                                                   ]
+                                      },
+                        "Get Engagement Stats":  {
+                                                     "main":  [
+                                                                  [
+                                                                      {
+                                                                          "node":  "Get Top 5 Findings",
+                                                                          "type":  "main",
+                                                                          "index":  0
+                                                                      }
+                                                                  ]
+                                                              ]
+                                                 },
+                        "Get Top 5 Findings":  {
+                                                   "main":  [
+                                                                [
+                                                                    {
+                                                                        "node":  "Get OWASP Breakdown",
+                                                                        "type":  "main",
+                                                                        "index":  0
+                                                                    }
+                                                                ]
+                                                            ]
+                                               },
+                        "Get OWASP Breakdown":  {
+                                                    "main":  [
+                                                                 [
+                                                                     {
+                                                                         "node":  "Build Executive Summary",
+                                                                         "type":  "main",
+                                                                         "index":  0
+                                                                     }
+                                                                 ]
+                                                             ]
+                                                },
+                        "Build Executive Summary":  {
+                                                        "main":  [
+                                                                     [
+                                                                         {
+                                                                             "node":  "Store Executive Report",
+                                                                             "type":  "main",
+                                                                             "index":  0
+                                                                         }
+                                                                     ]
+                                                                 ]
+                                                    },
+                        "Store Executive Report":  {
+                                                       "main":  [
+                                                                    [
+                                                                        {
+                                                                            "node":  "Respond",
+                                                                            "type":  "main",
+                                                                            "index":  0
+                                                                        }
+                                                                    ]
+                                                                ]
+                                                   }
+                    },
+    "settings":  {
+                     "executionOrder":  "v1",
+                     "saveManualExecutions":  true,
+                     "saveExecutionProgress":  true,
+                     "callerPolicy":  "workflowsFromSameOwner",
+                     "availableInMCP":  false
+                 },
+    "staticData":  null,
+    "meta":  null,
+    "pinData":  null,
+    "versionId":  "d571532f-16a2-4f3c-93d7-28ac7a08fada",
+    "activeVersionId":  "d571532f-16a2-4f3c-93d7-28ac7a08fada",
+    "versionCounter":  6,
+    "triggerCount":  1,
+    "shared":  [
+                   {
+                       "updatedAt":  "2026-04-19T03:30:10.456Z",
+                       "createdAt":  "2026-04-19T03:30:10.456Z",
+                       "role":  "workflow:owner",
+                       "workflowId":  "co3doTFYeZmCSLVq",
+                       "projectId":  "Lrgt6JR85OZiVLcX",
+                       "project":  {
+                                       "updatedAt":  "2026-03-31T09:07:31.366Z",
+                                       "createdAt":  "2026-03-31T08:57:43.789Z",
+                                       "id":  "Lrgt6JR85OZiVLcX",
+                                       "name":  "gelson mascarenhas \u003cgelson_m@hotmail.com\u003e",
+                                       "type":  "personal",
+                                       "icon":  null,
+                                       "description":  null,
+                                       "creatorId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                   }
+                   }
+               ],
+    "tags":  [
+
+             ],
+    "activeVersion":  {
+                          "updatedAt":  "2026-04-19T07:27:27.587Z",
+                          "createdAt":  "2026-04-19T07:27:27.587Z",
+                          "versionId":  "d571532f-16a2-4f3c-93d7-28ac7a08fada",
+                          "workflowId":  "co3doTFYeZmCSLVq",
+                          "nodes":  [
+                                        {
+                                            "parameters":  {
+                                                               "httpMethod":  "POST",
+                                                               "path":  "recon-os/reports/executive",
+                                                               "responseMode":  "responseNode",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "wh-exec",
+                                            "name":  "Webhook",
+                                            "type":  "n8n-nodes-base.webhook",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             240,
+                                                             300
+                                                         ],
+                                            "webhookId":  "recon-os-reports-executive"
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "inputSource":  "passthrough"
+                                                           },
+                                            "id":  "wf-trigger",
+                                            "name":  "Execute Workflow Trigger",
+                                            "type":  "n8n-nodes-base.executeWorkflowTrigger",
+                                            "typeVersion":  1.1,
+                                            "position":  [
+                                                             240,
+                                                             500
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "jsCode":  "const item = $input.first().json;\nconst body = item.body || item;\nreturn [{ json: { engagement_id: body.engagement_id } }];"
+                                                           },
+                                            "id":  "normalize",
+                                            "name":  "Normalize",
+                                            "type":  "n8n-nodes-base.code",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             460,
+                                                             300
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "operation":  "executeQuery",
+                                                               "query":  "SELECT e.name as engagement_name, e.testing_window_start, e.testing_window_end, e.type,\n       c.name as client_name,\n       COUNT(nf.id) FILTER (WHERE nf.severity=\u0027critical\u0027) as criticals,\n       COUNT(nf.id) FILTER (WHERE nf.severity=\u0027high\u0027) as highs,\n       COUNT(nf.id) FILTER (WHERE nf.severity=\u0027medium\u0027) as mediums,\n       COUNT(nf.id) FILTER (WHERE nf.severity=\u0027low\u0027) as lows,\n       COUNT(nf.id) FILTER (WHERE nf.validation_status=\u0027verified_fixed\u0027) as fixed,\n       COUNT(nf.id) FILTER (WHERE nf.validation_status IN (\u0027validated\u0027,\u0027analyst_reviewed\u0027)) as open_validated,\n       COUNT(nf.id) FILTER (WHERE nf.is_recurring=true) as recurring,\n       ROUND(AVG(nf.recon_score),2) as avg_score,\n       em.total_assets, em.assets_tested, em.coverage_pct\nFROM engagements e\nJOIN clients c ON e.client_id = c.id\nLEFT JOIN normalized_findings nf ON nf.engagement_id = e.id\nLEFT JOIN engagement_metrics em ON em.engagement_id = e.id\nWHERE e.id = \u0027{{ $json.engagement_id }}\u0027\nGROUP BY e.id, e.name, e.testing_window_start, e.testing_window_end, e.type, c.name, em.total_assets, em.assets_tested, em.coverage_pct;",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "pg-get-stats",
+                                            "name":  "Get Engagement Stats",
+                                            "type":  "n8n-nodes-base.postgres",
+                                            "typeVersion":  2.5,
+                                            "position":  [
+                                                             680,
+                                                             300
+                                                         ],
+                                            "credentials":  {
+                                                                "postgres":  {
+                                                                                 "id":  "oHS3dvjMW1h1PkMp",
+                                                                                 "name":  "RECON OS PostgreSQL"
+                                                                             }
+                                                            }
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "operation":  "executeQuery",
+                                                               "query":  "SELECT nf.title, nf.severity, nf.recon_score, nf.score_explanation, nf.business_impact, a.asset_value\nFROM normalized_findings nf\nJOIN assets a ON nf.asset_id = a.id\nWHERE nf.engagement_id = \u0027{{ $(\u0027Normalize\u0027).first().json.engagement_id }}\u0027\n  AND nf.validation_status IN (\u0027validated\u0027,\u0027analyst_reviewed\u0027)\nORDER BY nf.recon_score DESC\nLIMIT 5;",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "pg-top-findings",
+                                            "name":  "Get Top 5 Findings",
+                                            "type":  "n8n-nodes-base.postgres",
+                                            "typeVersion":  2.5,
+                                            "position":  [
+                                                             900,
+                                                             300
+                                                         ],
+                                            "credentials":  {
+                                                                "postgres":  {
+                                                                                 "id":  "oHS3dvjMW1h1PkMp",
+                                                                                 "name":  "RECON OS PostgreSQL"
+                                                                             }
+                                                            }
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "operation":  "executeQuery",
+                                                               "query":  "SELECT owasp_category, COUNT(*) as count\nFROM normalized_findings\nWHERE engagement_id = \u0027{{ $(\u0027Normalize\u0027).first().json.engagement_id }}\u0027\n  AND owasp_category IS NOT NULL\nGROUP BY owasp_category\nORDER BY count DESC;",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "pg-owasp",
+                                            "name":  "Get OWASP Breakdown",
+                                            "type":  "n8n-nodes-base.postgres",
+                                            "typeVersion":  2.5,
+                                            "position":  [
+                                                             1120,
+                                                             300
+                                                         ],
+                                            "credentials":  {
+                                                                "postgres":  {
+                                                                                 "id":  "oHS3dvjMW1h1PkMp",
+                                                                                 "name":  "RECON OS PostgreSQL"
+                                                                             }
+                                                            }
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "jsCode":  "const stats = $(\u0027Get Engagement Stats\u0027).first().json;\nconst topFindings = $(\u0027Get Top 5 Findings\u0027).all().map(i =\u003e i.json);\nconst owaspBreakdown = $(\u0027Get OWASP Breakdown\u0027).all().map(i =\u003e i.json);\nconst engId = $(\u0027Normalize\u0027).first().json.engagement_id;\n\n// Determine overall risk posture\nlet riskPosture = \u0027Low\u0027;\nif (parseInt(stats.criticals) \u003e 0) riskPosture = \u0027Critical\u0027;\nelse if (parseInt(stats.highs) \u003e 2) riskPosture = \u0027High\u0027;\nelse if (parseInt(stats.highs) \u003e 0 || parseInt(stats.mediums) \u003e 3) riskPosture = \u0027Medium\u0027;\n\n// Build executive narrative\nconst totalFindings = parseInt(stats.criticals||0) + parseInt(stats.highs||0) + parseInt(stats.mediums||0) + parseInt(stats.lows||0);\nconst remediationPriority = topFindings.map((f,i) =\u003e `${i+1}. [${f.severity.toUpperCase()}] ${f.title} (${f.asset_value}) - Score: ${f.recon_score}/10`);\n\nconst executiveSummary = {\n  engagement: {\n    client: stats.client_name,\n    name: stats.engagement_name,\n    type: stats.type,\n    period: `${stats.testing_window_start?.split(\u0027T\u0027)[0]} to ${stats.testing_window_end?.split(\u0027T\u0027)[0]}`\n  },\n  risk_posture: riskPosture,\n  findings_summary: {\n    total: totalFindings,\n    critical: parseInt(stats.criticals||0),\n    high: parseInt(stats.highs||0),\n    medium: parseInt(stats.mediums||0),\n    low: parseInt(stats.lows||0),\n    fixed: parseInt(stats.fixed||0),\n    recurring: parseInt(stats.recurring||0),\n    average_risk_score: parseFloat(stats.avg_score||0)\n  },\n  asset_coverage: {\n    total_in_scope: parseInt(stats.total_assets||0),\n    tested: parseInt(stats.assets_tested||0),\n    coverage_pct: parseFloat(stats.coverage_pct||0)\n  },\n  top_priority_actions: remediationPriority,\n  owasp_categories_affected: owaspBreakdown.map(o =\u003e `${o.owasp_category}: ${o.count} finding(s)`),\n  key_observations: [\n    parseInt(stats.recurring||0) \u003e 0 ? `${stats.recurring} finding(s) are recurring from prior engagements - indicating systemic weaknesses.` : null,\n    riskPosture === \u0027Critical\u0027 ? \u0027At least one critical-severity finding requires immediate remediation.\u0027 : null,\n    parseFloat(stats.coverage_pct||0) \u003c 80 ? `Asset coverage is ${stats.coverage_pct}% - some in-scope assets were not fully tested.` : null\n  ].filter(Boolean),\n  generated_at: new Date().toISOString()\n};\n\nreturn [{ json: { engagement_id: engId, executive_summary: executiveSummary } }];"
+                                                           },
+                                            "id":  "build-exec-summary",
+                                            "name":  "Build Executive Summary",
+                                            "type":  "n8n-nodes-base.code",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             1340,
+                                                             300
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "operation":  "executeQuery",
+                                                               "query":  "INSERT INTO reports (engagement_id, report_type, status, metadata)\nVALUES (\u0027{{ $json.engagement_id }}\u0027,\u0027executive\u0027,\u0027draft\u0027,\u0027{{ JSON.stringify($json.executive_summary).replace(/\u0027/g,\"\u0027\u0027\") }}\u0027::jsonb)\nRETURNING id;",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "pg-store-exec",
+                                            "name":  "Store Executive Report",
+                                            "type":  "n8n-nodes-base.postgres",
+                                            "typeVersion":  2.5,
+                                            "position":  [
+                                                             1560,
+                                                             300
+                                                         ],
+                                            "credentials":  {
+                                                                "postgres":  {
+                                                                                 "id":  "oHS3dvjMW1h1PkMp",
+                                                                                 "name":  "RECON OS PostgreSQL"
+                                                                             }
+                                                            }
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "respondWith":  "json",
+                                                               "responseBody":  "={{ JSON.stringify({ ok: true, report_id: $(\u0027Store Executive Report\u0027).first().json.id, executive_summary: $(\u0027Build Executive Summary\u0027).first().json.executive_summary }) }}",
+                                                               "options":  {
+                                                                               "responseCode":  200
+                                                                           }
+                                                           },
+                                            "id":  "respond-ok",
+                                            "name":  "Respond",
+                                            "type":  "n8n-nodes-base.respondToWebhook",
+                                            "typeVersion":  1.1,
+                                            "position":  [
+                                                             1780,
+                                                             300
+                                                         ]
+                                        }
+                                    ],
+                          "connections":  {
+                                              "Webhook":  {
+                                                              "main":  [
+                                                                           [
+                                                                               {
+                                                                                   "node":  "Normalize",
+                                                                                   "type":  "main",
+                                                                                   "index":  0
+                                                                               }
+                                                                           ]
+                                                                       ]
+                                                          },
+                                              "Execute Workflow Trigger":  {
+                                                                               "main":  [
+                                                                                            [
+                                                                                                {
+                                                                                                    "node":  "Normalize",
+                                                                                                    "type":  "main",
+                                                                                                    "index":  0
+                                                                                                }
+                                                                                            ]
+                                                                                        ]
+                                                                           },
+                                              "Normalize":  {
+                                                                "main":  [
+                                                                             [
+                                                                                 {
+                                                                                     "node":  "Get Engagement Stats",
+                                                                                     "type":  "main",
+                                                                                     "index":  0
+                                                                                 }
+                                                                             ]
+                                                                         ]
+                                                            },
+                                              "Get Engagement Stats":  {
+                                                                           "main":  [
+                                                                                        [
+                                                                                            {
+                                                                                                "node":  "Get Top 5 Findings",
+                                                                                                "type":  "main",
+                                                                                                "index":  0
+                                                                                            }
+                                                                                        ]
+                                                                                    ]
+                                                                       },
+                                              "Get Top 5 Findings":  {
+                                                                         "main":  [
+                                                                                      [
+                                                                                          {
+                                                                                              "node":  "Get OWASP Breakdown",
+                                                                                              "type":  "main",
+                                                                                              "index":  0
+                                                                                          }
+                                                                                      ]
+                                                                                  ]
+                                                                     },
+                                              "Get OWASP Breakdown":  {
+                                                                          "main":  [
+                                                                                       [
+                                                                                           {
+                                                                                               "node":  "Build Executive Summary",
+                                                                                               "type":  "main",
+                                                                                               "index":  0
+                                                                                           }
+                                                                                       ]
+                                                                                   ]
+                                                                      },
+                                              "Build Executive Summary":  {
+                                                                              "main":  [
+                                                                                           [
+                                                                                               {
+                                                                                                   "node":  "Store Executive Report",
+                                                                                                   "type":  "main",
+                                                                                                   "index":  0
+                                                                                               }
+                                                                                           ]
+                                                                                       ]
+                                                                          },
+                                              "Store Executive Report":  {
+                                                                             "main":  [
+                                                                                          [
+                                                                                              {
+                                                                                                  "node":  "Respond",
+                                                                                                  "type":  "main",
+                                                                                                  "index":  0
+                                                                                              }
+                                                                                          ]
+                                                                                      ]
+                                                                         }
+                                          },
+                          "authors":  "gelson mascarenhas",
+                          "name":  null,
+                          "description":  null,
+                          "autosaved":  false,
+                          "workflowPublishHistory":  [
+                                                         {
+                                                             "createdAt":  "2026-04-19T07:27:27.638Z",
+                                                             "id":  543,
+                                                             "workflowId":  "co3doTFYeZmCSLVq",
+                                                             "versionId":  "d571532f-16a2-4f3c-93d7-28ac7a08fada",
+                                                             "event":  "deactivated",
+                                                             "userId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                                         },
+                                                         {
+                                                             "createdAt":  "2026-04-19T07:27:27.658Z",
+                                                             "id":  544,
+                                                             "workflowId":  "co3doTFYeZmCSLVq",
+                                                             "versionId":  "d571532f-16a2-4f3c-93d7-28ac7a08fada",
+                                                             "event":  "activated",
+                                                             "userId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                                         }
+                                                     ]
+                      }
+}

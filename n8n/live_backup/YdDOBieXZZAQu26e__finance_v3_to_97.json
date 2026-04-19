@@ -1,0 +1,822 @@
+﻿{
+    "updatedAt":  "2026-04-19T03:29:33.064Z",
+    "createdAt":  "2026-04-19T03:29:33.064Z",
+    "id":  "YdDOBieXZZAQu26e",
+    "name":  "Finance V3 to 97",
+    "description":  null,
+    "active":  false,
+    "isArchived":  false,
+    "nodes":  [
+                  {
+                      "parameters":  {
+                                         "updates":  [
+                                                         "messages"
+                                                     ],
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "whatsapp-trigger",
+                      "name":  "WhatsApp Trigger",
+                      "type":  "n8n-nodes-base.whatsAppTrigger",
+                      "typeVersion":  1,
+                      "position":  [
+                                       200,
+                                       200
+                                   ],
+                      "webhookId":  "9b1af47e-04b8-49d7-b394-53453087ac81",
+                      "credentials":  {
+                                          "whatsAppTriggerApi":  {
+                                                                     "id":  "qWl5Z2MKku7htFew",
+                                                                     "name":  "WhatsApp OAuth account"
+                                                                 }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "updates":  [
+                                                         "message"
+                                                     ],
+                                         "additionalFields":  {
+
+                                                              }
+                                     },
+                      "id":  "telegram-trigger",
+                      "name":  "Telegram Trigger",
+                      "type":  "n8n-nodes-base.telegramTrigger",
+                      "typeVersion":  1.1,
+                      "position":  [
+                                       200,
+                                       450
+                                   ],
+                      "webhookId":  "finance-telegram-webhook-001",
+                      "credentials":  {
+                                          "telegramApi":  {
+                                                              "id":  "vaWr2cxS1Q9HsYd4",
+                                                              "name":  "Telegram account"
+                                                          }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "pollTimes":  {
+                                                           "item":  [
+                                                                        {
+                                                                            "mode":  "everyMinute"
+                                                                        }
+                                                                    ]
+                                                       },
+                                         "simple":  false,
+                                         "filters":  {
+                                                         "q":  "subject:(invoice OR receipt OR tax OR VAT OR HMRC OR statement OR remittance OR PAYE OR P60 OR P45) OR has:attachment",
+                                                         "readStatus":  "unread"
+                                                     },
+                                         "options":  {
+                                                         "dataPropertyAttachmentsPrefixName":  "attachment_",
+                                                         "downloadAttachments":  true
+                                                     }
+                                     },
+                      "id":  "gmail-trigger",
+                      "name":  "Gmail Finance Monitor",
+                      "type":  "n8n-nodes-base.gmailTrigger",
+                      "typeVersion":  1.3,
+                      "position":  [
+                                       200,
+                                       700
+                                   ],
+                      "credentials":  {
+                                          "gmailOAuth2":  {
+                                                              "id":  "DL39Lr8wENjvFtij",
+                                                              "name":  "Gmail account"
+                                                          }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "pollTimes":  {
+                                                           "item":  [
+                                                                        {
+                                                                            "mode":  "everyMinute"
+                                                                        }
+                                                                    ]
+                                                       },
+                                         "filters":  {
+
+                                                     },
+                                         "options":  {
+                                                         "downloadAttachments":  true,
+                                                         "attachmentsBinaryProperty":  "attachment_"
+                                                     }
+                                     },
+                      "id":  "outlook-trigger",
+                      "name":  "Outlook / Hotmail Monitor",
+                      "type":  "n8n-nodes-base.microsoftOutlookTrigger",
+                      "typeVersion":  1,
+                      "position":  [
+                                       200,
+                                       950
+                                   ],
+                      "credentials":  {
+                                          "microsoftOutlookOAuth2Api":  {
+                                                                            "id":  "9paQ8IJLgiLbjEYI",
+                                                                            "name":  "Microsoft Outlook account"
+                                                                        }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "const d=$input.first().json;const body=d.body||d;const msgType=body.type||\u0027text\u0027;const hasDoc=[\u0027document\u0027,\u0027image\u0027,\u0027audio\u0027,\u0027video\u0027].includes(msgType);return[{json:{source_channel:\u0027whatsapp\u0027,sender_id:body.from||\u0027unknown\u0027,sender_email:null,has_document:hasDoc,text:body.text?.body||body.caption||\u0027\u0027,subject:\u0027WhatsApp message\u0027,filename:body.document?.filename||body.image?.filename||null,media_id:body.document?.id||body.image?.id||null,attachment_key:hasDoc?\u0027attachment_0\u0027:null,raw:d},binary:$input.first().binary||{}}];"
+                                     },
+                      "id":  "normalize-whatsapp",
+                      "name":  "Normalize WhatsApp",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       500,
+                                       200
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "const d=$input.first().json;const msg=d.message||d;const hasDoc=!!(msg.document||msg.photo);return[{json:{source_channel:\u0027telegram\u0027,sender_id:String(msg.from?.id||msg.chat?.id||\u0027unknown\u0027),sender_email:null,has_document:hasDoc,text:msg.text||msg.caption||\u0027\u0027,subject:\u0027Telegram from \u0027+(msg.from?.username||msg.from?.first_name||\u0027unknown\u0027),filename:msg.document?.file_name||(msg.photo?\u0027photo.jpg\u0027:null),file_id:msg.document?.file_id||(msg.photo\u0026\u0026msg.photo[msg.photo.length-1]?.file_id)||null,attachment_key:hasDoc?\u0027attachment_0\u0027:null,raw:d},binary:$input.first().binary||{}}];"
+                                     },
+                      "id":  "normalize-telegram",
+                      "name":  "Normalize Telegram",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       500,
+                                       450
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "const d=$input.first().json;const b=$input.first().binary||{};const attachKey=Object.keys(d).find(k=\u003ek.startsWith(\u0027attachment_\u0027))||Object.keys(b).find(k=\u003ek.startsWith(\u0027attachment_\u0027))||null;const hasDoc=!!attachKey;return[{json:{source_channel:\u0027gmail\u0027,sender_id:d.from||\u0027unknown\u0027,sender_email:d.from||null,has_document:hasDoc,text:d.text||d.snippet||\u0027\u0027,subject:d.subject||\u0027\u0027,filename:(attachKey\u0026\u0026b[attachKey])?b[attachKey].fileName:null,attachment_key:attachKey,raw:d},binary:b}];"
+                                     },
+                      "id":  "normalize-gmail",
+                      "name":  "Normalize Gmail",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       500,
+                                       700
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "const d=$input.first().json;const b=$input.first().binary||{};const attachKey=Object.keys(b).find(k=\u003ek.startsWith(\u0027attachment_\u0027))||null;const hasDoc=d.hasAttachments===true||!!attachKey;const senderEmail=d.from?.emailAddress?.address||d.sender?.emailAddress?.address||String(d.from||\u0027unknown\u0027);return[{json:{source_channel:\u0027outlook\u0027,sender_id:senderEmail,sender_email:senderEmail,has_document:hasDoc,text:d.bodyPreview||\u0027\u0027,subject:d.subject||\u0027\u0027,filename:(attachKey\u0026\u0026b[attachKey])?b[attachKey].fileName:null,attachment_key:attachKey,raw:d},binary:b}];"
+                                     },
+                      "id":  "normalize-outlook",
+                      "name":  "Normalize Outlook",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       500,
+                                       950
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "conditions":  {
+                                                            "options":  {
+                                                                            "typeValidation":  "loose"
+                                                                        },
+                                                            "conditions":  [
+                                                                               {
+                                                                                   "id":  "c1",
+                                                                                   "leftValue":  "={{ $json.has_document }}",
+                                                                                   "operator":  {
+                                                                                                    "type":  "boolean",
+                                                                                                    "operation":  "true"
+                                                                                                }
+                                                                               }
+                                                                           ],
+                                                            "combinator":  "and"
+                                                        },
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "has-document",
+                      "name":  "Has Document?",
+                      "type":  "n8n-nodes-base.if",
+                      "typeVersion":  2.3,
+                      "position":  [
+                                       800,
+                                       580
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "method":  "POST",
+                                         "url":  "https://super-agent-production.up.railway.app/chat",
+                                         "sendHeaders":  true,
+                                         "headerParameters":  {
+                                                                  "parameters":  [
+                                                                                     {
+                                                                                         "name":  "Content-Type",
+                                                                                         "value":  "application/json"
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "X-Token",
+                                                                                         "value":  "={{ $env.SUPER_AGENT_PASSWORD }}"
+                                                                                     }
+                                                                                 ]
+                                                              },
+                                         "sendBody":  true,
+                                         "specifyBody":  "json",
+                                         "jsonBody":  "={{ JSON.stringify({ message: \u0027You are the Finance Operations Controller for Bridge Digital. You handle invoices, tax letters, VAT, expenses, bookkeeping, cash flow, and financial reporting. You also know UK tax deadlines (VAT quarters, Self Assessment Jan 31, PAYE monthly). Answer clearly and concisely: \u0027 + $json.text, session_id: $json.source_channel + \u0027_qa_\u0027 + $json.sender_id }) }}",
+                                         "options":  {
+                                                         "timeout":  60000
+                                                     }
+                                     },
+                      "id":  "finance-qa",
+                      "name":  "Finance Q\u0026A - Super Agent",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.2,
+                      "position":  [
+                                       1100,
+                                       320
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "const resp=$input.first().json.response||\u0027No response from finance assistant.\u0027;const orig=$(\u0027Has Document?\u0027).item.json;return[{json:{...orig,ai_response:resp}}];"
+                                     },
+                      "id":  "merge-qa",
+                      "name":  "Merge Q\u0026A Response",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       1400,
+                                       320
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "mode":  "rules",
+                                         "rules":  {
+                                                       "values":  [
+                                                                      {
+                                                                          "conditions":  {
+                                                                                             "options":  {
+                                                                                                             "caseSensitive":  false,
+                                                                                                             "typeValidation":  "loose"
+                                                                                                         },
+                                                                                             "combinator":  "and",
+                                                                                             "conditions":  [
+                                                                                                                {
+                                                                                                                    "id":  "rq1",
+                                                                                                                    "leftValue":  "={{ $json.source_channel }}",
+                                                                                                                    "rightValue":  "whatsapp",
+                                                                                                                    "operator":  {
+                                                                                                                                     "type":  "string",
+                                                                                                                                     "operation":  "equals"
+                                                                                                                                 }
+                                                                                                                }
+                                                                                                            ]
+                                                                                         },
+                                                                          "renameOutput":  true,
+                                                                          "outputKey":  "whatsapp"
+                                                                      },
+                                                                      {
+                                                                          "conditions":  {
+                                                                                             "options":  {
+                                                                                                             "caseSensitive":  false,
+                                                                                                             "typeValidation":  "loose"
+                                                                                                         },
+                                                                                             "combinator":  "and",
+                                                                                             "conditions":  [
+                                                                                                                {
+                                                                                                                    "id":  "rq2",
+                                                                                                                    "leftValue":  "={{ $json.source_channel }}",
+                                                                                                                    "rightValue":  "telegram",
+                                                                                                                    "operator":  {
+                                                                                                                                     "type":  "string",
+                                                                                                                                     "operation":  "equals"
+                                                                                                                                 }
+                                                                                                                }
+                                                                                                            ]
+                                                                                         },
+                                                                          "renameOutput":  true,
+                                                                          "outputKey":  "telegram"
+                                                                      }
+                                                                  ]
+                                                   },
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "route-qa",
+                      "name":  "Route Q\u0026A by Channel",
+                      "type":  "n8n-nodes-base.switch",
+                      "typeVersion":  3,
+                      "position":  [
+                                       1700,
+                                       320
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "send",
+                                         "phoneNumberId":  "1028630140342045",
+                                         "recipientPhoneNumber":  "={{ $json.sender_id }}",
+                                         "textBody":  "={{ $json.ai_response }}",
+                                         "additionalFields":  {
+
+                                                              }
+                                     },
+                      "id":  "send-whatsapp-qa",
+                      "name":  "Send WhatsApp Reply",
+                      "type":  "n8n-nodes-base.whatsApp",
+                      "typeVersion":  1.1,
+                      "position":  [
+                                       2000,
+                                       220
+                                   ],
+                      "credentials":  {
+                                          "whatsAppApi":  {
+                                                              "id":  "cO8ewwCrbB15ov3L",
+                                                              "name":  "WhatsApp account"
+                                                          }
+                                      },
+                      "webhookId":  "a0ee9615-e76d-4d43-8fde-905bdb0df976"
+                  },
+                  {
+                      "parameters":  {
+                                         "resource":  "message",
+                                         "operation":  "sendMessage",
+                                         "chatId":  "={{ $json.sender_id }}",
+                                         "text":  "={{ $json.ai_response }}",
+                                         "additionalFields":  {
+
+                                                              }
+                                     },
+                      "id":  "send-telegram-qa",
+                      "name":  "Send Telegram Reply",
+                      "type":  "n8n-nodes-base.telegram",
+                      "typeVersion":  1.2,
+                      "position":  [
+                                       2000,
+                                       420
+                                   ],
+                      "credentials":  {
+                                          "telegramApi":  {
+                                                              "id":  "vaWr2cxS1Q9HsYd4",
+                                                              "name":  "Telegram account"
+                                                          }
+                                      },
+                      "webhookId":  "209fd26e-3086-42b0-90fe-05edf8dee48a"
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "const d=$json;const filename=(d.filename||\u0027\u0027).toLowerCase();const subject=(d.subject||d.text||\u0027\u0027).toLowerCase();let doc_type=\u0027invoice\u0027;if(subject.includes(\u0027tax\u0027)||subject.includes(\u0027hmrc\u0027)||subject.includes(\u0027irs\u0027)||subject.includes(\u0027self assessment\u0027)||subject.includes(\u0027paye\u0027)||subject.includes(\u0027p60\u0027)||subject.includes(\u0027p45\u0027)||subject.includes(\u0027corporation tax\u0027)||filename.includes(\u0027tax\u0027)||filename.includes(\u0027hmrc\u0027)){doc_type=\u0027tax_letter\u0027;}else if(filename.endsWith(\u0027.csv\u0027)||filename.endsWith(\u0027.xlsx\u0027)||filename.endsWith(\u0027.xls\u0027)||filename.endsWith(\u0027.ods\u0027)||subject.includes(\u0027bank statement\u0027)||subject.includes(\u0027reconciliation\u0027)||subject.includes(\u0027statement of account\u0027)){doc_type=\u0027table\u0027;}else if(subject.includes(\u0027invoice\u0027)||subject.includes(\u0027receipt\u0027)||subject.includes(\u0027remittance\u0027)||filename.includes(\u0027invoice\u0027)||filename.includes(\u0027receipt\u0027)){doc_type=\u0027invoice\u0027;}const useOcr=!filename||filename.endsWith(\u0027.pdf\u0027)||filename.endsWith(\u0027.jpg\u0027)||filename.endsWith(\u0027.jpeg\u0027)||filename.endsWith(\u0027.png\u0027)||filename.endsWith(\u0027.tiff\u0027)||filename.endsWith(\u0027.tif\u0027)||doc_type!==\u0027table\u0027;return[{json:{...d,doc_type,use_ocr:useOcr}}];"
+                                     },
+                      "id":  "detect-doc-type",
+                      "name":  "Detect Document Type",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       1100,
+                                       840
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "mode":  "rules",
+                                         "rules":  {
+                                                       "values":  [
+                                                                      {
+                                                                          "conditions":  {
+                                                                                             "options":  {
+                                                                                                             "typeValidation":  "loose"
+                                                                                                         },
+                                                                                             "combinator":  "and",
+                                                                                             "conditions":  [
+                                                                                                                {
+                                                                                                                    "id":  "rd1",
+                                                                                                                    "leftValue":  "={{ $json.use_ocr }}",
+                                                                                                                    "rightValue":  true,
+                                                                                                                    "operator":  {
+                                                                                                                                     "type":  "boolean",
+                                                                                                                                     "operation":  "true"
+                                                                                                                                 }
+                                                                                                                }
+                                                                                                            ]
+                                                                                         },
+                                                                          "renameOutput":  true,
+                                                                          "outputKey":  "ocr"
+                                                                      },
+                                                                      {
+                                                                          "conditions":  {
+                                                                                             "options":  {
+                                                                                                             "caseSensitive":  false,
+                                                                                                             "typeValidation":  "loose"
+                                                                                                         },
+                                                                                             "combinator":  "and",
+                                                                                             "conditions":  [
+                                                                                                                {
+                                                                                                                    "id":  "rd2",
+                                                                                                                    "leftValue":  "={{ $json.doc_type }}",
+                                                                                                                    "rightValue":  "table",
+                                                                                                                    "operator":  {
+                                                                                                                                     "type":  "string",
+                                                                                                                                     "operation":  "equals"
+                                                                                                                                 }
+                                                                                                                }
+                                                                                                            ]
+                                                                                         },
+                                                                          "renameOutput":  true,
+                                                                          "outputKey":  "table"
+                                                                      }
+                                                                  ]
+                                                   },
+                                         "fallbackOutput":  2,
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "route-doc-type",
+                      "name":  "Route by Doc Type",
+                      "type":  "n8n-nodes-base.switch",
+                      "typeVersion":  3,
+                      "position":  [
+                                       1400,
+                                       840
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "resource":  "invoice",
+                                         "binaryPropertyName":  "={{ $json.attachment_key || \u0027attachment_0\u0027 }}"
+                                     },
+                      "id":  "mindee-ocr",
+                      "name":  "Mindee OCR",
+                      "type":  "n8n-nodes-base.mindee",
+                      "typeVersion":  3,
+                      "position":  [
+                                       1700,
+                                       700
+                                   ],
+                      "credentials":  {
+                                          "mindeeInvoiceApi":  {
+                                                                   "id":  "ShycnKUWIqZZrzsd",
+                                                                   "name":  "Mindee Invoice account"
+                                                               }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "const mindee=$input.first().json;let orig={};try{orig=$(\u0027Detect Document Type\u0027).item.json;}catch(e){}return[{json:{vendor:mindee.supplier_name||mindee.vendor||\u0027Unknown\u0027,document_type:orig.doc_type||\u0027invoice\u0027,reference_number:mindee.invoice_number||mindee.reference||\u0027N/A\u0027,date:mindee.date||new Date().toISOString().split(\u0027T\u0027)[0],due_date:mindee.due_date||null,amount:parseFloat(mindee.total_amount||mindee.amount||0),tax_amount:parseFloat(mindee.total_tax||mindee.tax_amount||0),currency:mindee.locale?.currency||\u0027GBP\u0027,description:\u0027Document from \u0027+(orig.sender_email||orig.sender_id||\u0027unknown\u0027),key_details:JSON.stringify(mindee),line_items:mindee.line_items||[],source_channel:orig.source_channel||\u0027unknown\u0027,sender_id:orig.sender_id||\u0027unknown\u0027,sender_email:orig.sender_email||null,doc_type:orig.doc_type||\u0027invoice\u0027,subject:orig.subject||\u0027\u0027}}];"
+                                     },
+                      "id":  "normalize-mindee",
+                      "name":  "Normalize Mindee Output",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       2000,
+                                       700
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "method":  "POST",
+                                         "url":  "https://super-agent-production.up.railway.app/chat",
+                                         "sendHeaders":  true,
+                                         "headerParameters":  {
+                                                                  "parameters":  [
+                                                                                     {
+                                                                                         "name":  "Content-Type",
+                                                                                         "value":  "application/json"
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "X-Token",
+                                                                                         "value":  "={{ $env.SUPER_AGENT_PASSWORD }}"
+                                                                                     }
+                                                                                 ]
+                                                              },
+                                         "sendBody":  true,
+                                         "specifyBody":  "json",
+                                         "jsonBody":  "={{ JSON.stringify({ message: \u0027You are a financial document extraction specialist for Bridge Digital. Extract ALL financial data from this document. Document type: \u0027 + $json.doc_type + \u0027. Subject/context: \u0027 + ($json.subject||$json.text||\u0027None\u0027) + \u0027. Return ONLY a valid JSON object: { vendor: string, document_type: string, reference_number: string, date: string (YYYY-MM-DD), due_date: string|null, amount: number, tax_amount: number, currency: string, description: string, key_details: string, line_items: array, source_channel: \"\u0027 + $json.source_channel + \u0027\", sender_id: \"\u0027 + $json.sender_id + \u0027\", sender_email: \u0027 + JSON.stringify($json.sender_email) + \u0027, doc_type: \"\u0027 + $json.doc_type + \u0027\" }\u0027, session_id: \u0027ai_extract_\u0027 + Date.now() }) }}",
+                                         "options":  {
+                                                         "timeout":  60000
+                                                     }
+                                     },
+                      "id":  "ai-extract",
+                      "name":  "AI Document Extract",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.2,
+                      "position":  [
+                                       1700,
+                                       980
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "const resp=$input.first().json.response||\u0027{}\u0027;let orig={};try{orig=$(\u0027Detect Document Type\u0027).item.json;}catch(e){}let parsed;try{const match=resp.match(/\\{[\\s\\S]*\\}/);parsed=JSON.parse(match?match[0]:resp);}catch(e){parsed={vendor:\u0027Unknown\u0027,document_type:orig.doc_type||\u0027unknown\u0027,amount:0,description:resp.substring(0,300)};}return[{json:{vendor:parsed.vendor||\u0027Unknown\u0027,document_type:parsed.document_type||orig.doc_type||\u0027invoice\u0027,reference_number:parsed.reference_number||\u0027N/A\u0027,date:parsed.date||new Date().toISOString().split(\u0027T\u0027)[0],due_date:parsed.due_date||null,amount:parseFloat(parsed.amount||0),tax_amount:parseFloat(parsed.tax_amount||0),currency:parsed.currency||\u0027GBP\u0027,description:parsed.description||\u0027\u0027,key_details:parsed.key_details||JSON.stringify(parsed),line_items:parsed.line_items||[],source_channel:orig.source_channel||parsed.source_channel||\u0027unknown\u0027,sender_id:orig.sender_id||parsed.sender_id||\u0027unknown\u0027,sender_email:orig.sender_email||parsed.sender_email||null,doc_type:orig.doc_type||parsed.doc_type||\u0027invoice\u0027,subject:orig.subject||\u0027\u0027}}];"
+                                     },
+                      "id":  "parse-ai-extract",
+                      "name":  "Parse AI Extract",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       2000,
+                                       980
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "const d=$json;const content=d.text||d.subject||\u0027Table document received\u0027;return[{json:{vendor:d.sender_email||d.sender_id||\u0027Unknown\u0027,document_type:\u0027financial_table\u0027,reference_number:\u0027TBL-\u0027+Date.now(),date:new Date().toISOString().split(\u0027T\u0027)[0],due_date:null,amount:0,tax_amount:0,currency:\u0027GBP\u0027,description:content.substring(0,500),key_details:content,line_items:[],source_channel:d.source_channel,sender_id:d.sender_id,sender_email:d.sender_email,doc_type:\u0027table\u0027,subject:d.subject||\u0027\u0027,needs_manual_review:true}}];"
+                                     },
+                      "id":  "parse-table",
+                      "name":  "Parse Table / CSV",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       1700,
+                                       1200
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "method":  "POST",
+                                         "url":  "https://super-agent-production.up.railway.app/chat",
+                                         "sendHeaders":  true,
+                                         "headerParameters":  {
+                                                                  "parameters":  [
+                                                                                     {
+                                                                                         "name":  "Content-Type",
+                                                                                         "value":  "application/json"
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "X-Token",
+                                                                                         "value":  "={{ $env.SUPER_AGENT_PASSWORD }}"
+                                                                                     }
+                                                                                 ]
+                                                              },
+                                         "sendBody":  true,
+                                         "specifyBody":  "json",
+                                         "jsonBody":  "={{ JSON.stringify({ message: \u0027You are a finance data validation specialist for Bridge Digital. Validate and enrich this extracted financial document data. Fix OCR errors, normalise dates to YYYY-MM-DD, normalise amounts to 2 decimal places, fill missing fields where possible. Return ONLY valid JSON: { vendor: string, invoice_number: string, date: string, due_date: string|null, amount: number, tax_amount: number, currency: string, line_items: array, payment_terms: string, po_number: string, document_type: string, description: string, extraction_confidence: number }. Input: \u0027 + JSON.stringify($json), session_id: \u0027enhanced_\u0027 + Date.now() }) }}",
+                                         "options":  {
+                                                         "timeout":  60000
+                                                     }
+                                     },
+                      "id":  "enhanced-extraction",
+                      "name":  "Enhanced Extraction - Super Agent",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.2,
+                      "position":  [
+                                       2350,
+                                       950
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "const resp=$input.first().json.response||\u0027{}\u0027;let origData={};try{origData=$(\u0027Normalize Mindee Output\u0027).item.json;}catch(e){}if(!origData.source_channel){try{origData=$(\u0027Parse AI Extract\u0027).item.json;}catch(e){}}if(!origData.source_channel){try{origData=$(\u0027Parse Table / CSV\u0027).item.json;}catch(e){}}let parsed;try{const match=resp.match(/\\{[\\s\\S]*\\}/);parsed=JSON.parse(match?match[0]:resp);}catch(e){parsed={};}return[{json:{...origData,...parsed,source_channel:origData.source_channel||\u0027unknown\u0027,sender_id:origData.sender_id||\u0027unknown\u0027,sender_email:origData.sender_email||null,doc_type:origData.doc_type||parsed.document_type||\u0027invoice\u0027,amount:parseFloat(parsed.amount||origData.amount||0),tax_amount:parseFloat(parsed.tax_amount||origData.tax_amount||0),currency:parsed.currency||origData.currency||\u0027GBP\u0027,date:parsed.date||origData.date||new Date().toISOString().split(\u0027T\u0027)[0]}}];"
+                                     },
+                      "id":  "parse-enhanced",
+                      "name":  "Parse Enhanced Extraction",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       2650,
+                                       950
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "SELECT COUNT(*) as duplicate_count FROM expenses WHERE LOWER(vendor) = LOWER($1) AND ABS(amount - $2::numeric) \u003c 0.50 AND date = $3 AND processed_date \u003e= NOW() - INTERVAL \u002730 days\u0027",
+                                         "options":  {
+                                                         "queryReplacement":  "={{ [$json.vendor||\u0027\u0027, $json.amount||0, $json.date||new Date().toISOString().split(\u0027T\u0027)[0]] }}"
+                                                     }
+                                     },
+                      "id":  "duplicate-check-sql",
+                      "name":  "Duplicate Check SQL",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       2900,
+                                       950
+                                   ],
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "Ae3yvuqjgMnVRrCo",
+                                                           "name":  "Postgres account"
+                                                       }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "conditions":  {
+                                                            "options":  {
+                                                                            "typeValidation":  "loose"
+                                                                        },
+                                                            "conditions":  [
+                                                                               {
+                                                                                   "id":  "dup1",
+                                                                                   "leftValue":  "={{ $json.duplicate_count }}",
+                                                                                   "operator":  {
+                                                                                                    "type":  "number",
+                                                                                                    "operation":  "gt"
+                                                                                                },
+                                                                                   "rightValue":  0
+                                                                               }
+                                                                           ],
+                                                            "combinator":  "and"
+                                                        },
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "is-duplicate",
+                      "name":  "Is Duplicate Invoice?",
+                      "type":  "n8n-nodes-base.if",
+                      "typeVersion":  2.3,
+                      "position":  [
+                                       3150,
+                                       950
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "sendTo":  "bridge.digital.solution@gmail.com",
+                                         "subject":  "=🔁 Duplicate Invoice Blocked: {{ $(\u0027Parse Enhanced Extraction\u0027).item.json.vendor }} — £{{ $(\u0027Parse Enhanced Extraction\u0027).item.json.amount }}",
+                                         "emailType":  "html",
+                                         "message":  "=\u003ch2 style=\u0027color:#e67e22\u0027\u003eDuplicate Invoice Detected — Processing Stopped\u003c/h2\u003e\u003cp\u003eA document matching an existing record was received and \u003cstrong\u003enot stored\u003c/strong\u003e to prevent duplication.\u003c/p\u003e\u003ctable border=\u00271\u0027 cellpadding=\u00278\u0027 style=\u0027border-collapse:collapse\u0027\u003e\u003ctr\u003e\u003ctd\u003e\u003cb\u003eVendor\u003c/b\u003e\u003c/td\u003e\u003ctd\u003e{{ $(\u0027Parse Enhanced Extraction\u0027).item.json.vendor }}\u003c/td\u003e\u003c/tr\u003e\u003ctr\u003e\u003ctd\u003e\u003cb\u003eAmount\u003c/b\u003e\u003c/td\u003e\u003ctd\u003e{{ $(\u0027Parse Enhanced Extraction\u0027).item.json.currency }} {{ $(\u0027Parse Enhanced Extraction\u0027).item.json.amount }}\u003c/td\u003e\u003c/tr\u003e\u003ctr\u003e\u003ctd\u003e\u003cb\u003eDate\u003c/b\u003e\u003c/td\u003e\u003ctd\u003e{{ $(\u0027Parse Enhanced Extraction\u0027).item.json.date }}\u003c/td\u003e\u003c/tr\u003e\u003ctr\u003e\u003ctd\u003e\u003cb\u003eSource\u003c/b\u003e\u003c/td\u003e\u003ctd\u003e{{ $(\u0027Parse Enhanced Extraction\u0027).item.json.source_channel }} — {{ $(\u0027Parse Enhanced Extraction\u0027).item.json.sender_id }}\u003c/td\u003e\u003c/tr\u003e\u003c/table\u003e\u003cp\u003eIf this is a legitimate new invoice, check the expenses log and re-submit with a different invoice number.\u003c/p\u003e",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "duplicate-alert-email",
+                      "name":  "Duplicate Alert Email",
+                      "type":  "n8n-nodes-base.gmail",
+                      "typeVersion":  2.2,
+                      "position":  [
+                                       3400,
+                                       850
+                                   ],
+                      "credentials":  {
+                                          "gmailOAuth2":  {
+                                                              "id":  "DL39Lr8wENjvFtij",
+                                                              "name":  "Gmail account"
+                                                          }
+                                      },
+                      "webhookId":  "b00e74de-89c3-4156-9b92-bb17002e109e"
+                  },
+                  {
+                      "parameters":  {
+                                         "resource":  "message",
+                                         "operation":  "sendMessage",
+                                         "chatId":  "={{ $env.TELEGRAM_ADMIN_CHAT_ID }}",
+                                         "text":  "=🔁 Duplicate Invoice Blocked\n\nVendor: {{ $(\u0027Parse Enhanced Extraction\u0027).item.json.vendor }}\nAmount: {{ $(\u0027Parse Enhanced Extraction\u0027).item.json.currency }} {{ $(\u0027Parse Enhanced Extraction\u0027).item.json.amount }}\nDate: {{ $(\u0027Parse Enhanced Extraction\u0027).item.json.date }}\nSource: {{ $(\u0027Parse Enhanced Extraction\u0027).item.json.source_channel }}\n\nThis invoice matched an existing record and was NOT stored.",
+                                         "additionalFields":  {
+
+                                                              }
+                                     },
+                      "id":  "duplicate-alert-telegram",
+                      "name":  "Duplicate Alert Telegram",
+                      "type":  "n8n-nodes-base.telegram",
+                      "typeVersion":  1.2,
+                      "position":  [
+                                       3400,
+                                       1050
+                                   ],
+                      "credentials":  {
+                                          "telegramApi":  {
+                                                              "id":  "vaWr2cxS1Q9HsYd4",
+                                                              "name":  "Telegram account"
+                                                          }
+                                      },
+                      "webhookId":  "3ab58530-40a2-43e4-bb88-69cec18e78dc"
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "const orig = $(\u0027Parse Enhanced Extraction\u0027).item.json;\nreturn [{ json: orig }];"
+                                     },
+                      "id":  "restore-invoice-data",
+                      "name":  "Restore Invoice Data",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       3400,
+                                       1250
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "method":  "POST",
+                                         "url":  "https://super-agent-production.up.railway.app/chat",
+                                         "sendHeaders":  true,
+                                         "headerParameters":  {
+                                                                  "parameters":  [
+                                                                                     {
+                                                                                         "name":  "Content-Type",
+                                                                                         "value":  "application/json"
+                                                                                     },
+                                                                                     {
+                                                                                         "name":  "X-Token",
+                                                                                         "value":  "={{ $env.SUPER_AGENT_PASSWORD }}"
+                                                                                     }
+                                                                                 ]
+                                                              },
+                                         "sendBody":  true,
+                                         "specifyBody":  "json",
+                                         "jsonBody":  "={{ JSON.stringify({ message: \u0027You are a senior finance analyst for Bridge Digital. Categorise and analyse this financial document. 1) CATEGORY: assign primary (Office Supplies, Travel, Marketing, Software/SaaS, Professional Services, Utilities, Rent, Payroll, Tax/HMRC, Insurance, Equipment, Training, Subscriptions, Other) and subcategory. 2) ANOMALY CHECK: flag duplicates, unusual amounts, suspicious vendors, missing required fields, tax errors. 3) PRIORITY: low/medium/high/urgent. Return ONLY valid JSON: { category: string, subcategory: string, vendor: string, amount: number, date: string, description: string, anomaly_flag: boolean, anomaly_severity: \"none\"|\"low\"|\"medium\"|\"high\"|\"critical\", anomaly_reason: string, anomaly_recommendations: array, confidence_score: number, budget_line: string, priority: string, action_required: string }. Document: \u0027 + JSON.stringify($json), session_id: \u0027categorize\u0027 }) }}",
+                                         "options":  {
+                                                         "timeout":  60000
+                                                     }
+                                     },
+                      "id":  "categorization",
+                      "name":  "Expense Categorization - Super Agent",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.2,
+                      "position":  [
+                                       3650,
+                                       1250
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "const resp=$input.first().json.response||\u0027{}\u0027;let origData={};try{origData=$(\u0027Restore Invoice Data\u0027).item.json;}catch(e){}let parsed;try{const match=resp.match(/\\{[\\s\\S]*\\}/);parsed=JSON.parse(match?match[0]:resp);}catch(e){parsed={category:\u0027Uncategorized\u0027,anomaly_flag:true,anomaly_severity:\u0027high\u0027,anomaly_reason:\u0027Parse failure\u0027,anomaly_recommendations:[\u0027Manual review required\u0027],confidence_score:0,priority:\u0027high\u0027,action_required:\u0027Manual review\u0027};}return[{json:{...origData,...parsed,anomaly_recommendations:Array.isArray(parsed.anomaly_recommendations)?parsed.anomaly_recommendations.join(\u0027; \u0027):(parsed.anomaly_recommendations||\u0027\u0027),processed_date:new Date().toISOString()}}];"
+                                     },
+                      "id":  "parse-categorization",
+                      "name":  "Parse Categorization",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       3950,
+                                       1250
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "conditions":  {
+                                                            "options":  {
+                                                                            "typeValidation":  "loose"
+                                                                        },
+                                                            "conditions":  [
+                                                                               {
+                                                                                   "id":  "c2",
+                                                                                   "leftValue":  "={{ $json.anomaly_flag }}",
+                                                                                   "operator":  {
+                                                                                                    "type":  "boolean",
+                                                                                                    "operation":  "true"
+                                                                                                }
+                                                                               }
+                                                                           ],
+                                                            "combinator":  "and"
+                                                        },
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "check-anomalies",
+                      "name":  "Anomaly Detected?",
+                      "type":  "n8n-nodes-base.if",
+                      "typeVersion":  2.3,
+                      "position":  [
+                                       4200,
+                                       1250
+                                   ]
+                  }
+              ],
+    "connections":  {
+
+                    },
+    "settings":  {
+                     "executionOrder":  "v1",
+                     "callerPolicy":  "workflowsFromSameOwner",
+                     "availableInMCP":  false
+                 },
+    "staticData":  null,
+    "meta":  null,
+    "pinData":  null,
+    "versionId":  "26a70c01-1413-44c9-a7cc-fd42383d17e0",
+    "activeVersionId":  null,
+    "versionCounter":  1,
+    "triggerCount":  0,
+    "shared":  [
+                   {
+                       "updatedAt":  "2026-04-19T03:29:33.064Z",
+                       "createdAt":  "2026-04-19T03:29:33.064Z",
+                       "role":  "workflow:owner",
+                       "workflowId":  "YdDOBieXZZAQu26e",
+                       "projectId":  "Lrgt6JR85OZiVLcX",
+                       "project":  {
+                                       "updatedAt":  "2026-03-31T09:07:31.366Z",
+                                       "createdAt":  "2026-03-31T08:57:43.789Z",
+                                       "id":  "Lrgt6JR85OZiVLcX",
+                                       "name":  "gelson mascarenhas \u003cgelson_m@hotmail.com\u003e",
+                                       "type":  "personal",
+                                       "icon":  null,
+                                       "description":  null,
+                                       "creatorId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                   }
+                   }
+               ],
+    "tags":  [
+
+             ],
+    "activeVersion":  null
+}

@@ -1,0 +1,92 @@
+{
+  "name": "_RECON_OS_SCHEMA_MIGRATION_TEMP",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "recon-os-run-schema",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wh-trigger",
+      "name": "Schema Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "recon-os-run-schema"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\";\nCREATE EXTENSION IF NOT EXISTS pgcrypto;\nCREATE TABLE IF NOT EXISTS clients (\n  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\n  name TEXT NOT NULL UNIQUE,\n  contact_name TEXT,\n  contact_email TEXT,\n  industry TEXT,\n  created_at TIMESTAMPTZ DEFAULT NOW(),\n  metadata JSONB DEFAULT '{}'\n);\nCREATE TABLE IF NOT EXISTS engagements (\n  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\n  client_id UUID REFERENCES clients(id),\n  name TEXT NOT NULL,\n  type TEXT DEFAULT 'web_app',\n  status TEXT DEFAULT 'active' CHECK (status IN ('active','paused','completed','archived','cancelled')),\n  testing_window_start TIMESTAMPTZ NOT NULL,\n  testing_window_end TIMESTAMPTZ NOT NULL,\n  rate_limit_profile TEXT DEFAULT 'standard' CHECK (rate_limit_profile IN ('standard','stealth','aggressive')),\n  roe_document_url TEXT,\n  roe_hash TEXT,\n  prohibited_actions JSONB DEFAULT '[]',\n  test_accounts JSONB DEFAULT '{}',\n  emergency_contact TEXT,\n  evidence_handling_notes TEXT,\n  created_at TIMESTAMPTZ DEFAULT NOW(),\n  closed_at TIMESTAMPTZ,\n  created_by TEXT\n);\nCREATE INDEX IF NOT EXISTS idx_engagements_client ON engagements(client_id);\nCREATE INDEX IF NOT EXISTS idx_engagements_status ON engagements(status);\nCREATE TABLE IF NOT EXISTS scope_rules (\n  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\n  engagement_id UUID REFERENCES engagements(id) ON DELETE CASCADE,\n  value TEXT NOT NULL,\n  scope_type TEXT NOT NULL CHECK (scope_type IN ('domain','subdomain_wildcard','ip','cidr','web_app','api','environment')),\n  in_scope BOOLEAN DEFAULT TRUE,\n  notes TEXT,\n  added_at TIMESTAMPTZ DEFAULT NOW(),\n  added_by TEXT\n);\nCREATE INDEX IF NOT EXISTS idx_scope_rules_engagement ON scope_rules(engagement_id, in_scope);\nCREATE TABLE IF NOT EXISTS prohibited_actions (\n  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\n  engagement_id UUID REFERENCES engagements(id) ON DELETE CASCADE,\n  description TEXT NOT NULL,\n  action_type TEXT,\n  requires_approval BOOLEAN DEFAULT FALSE\n);",
+        "options": {}
+      },
+      "id": "pg1",
+      "name": "Schema Part 1",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [460, 300],
+      "credentials": { "postgres": { "id": "oHS3dvjMW1h1PkMp", "name": "RECON OS PostgreSQL" } }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "CREATE TABLE IF NOT EXISTS assets (\n  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\n  engagement_id UUID REFERENCES engagements(id) ON DELETE CASCADE,\n  asset_value TEXT NOT NULL,\n  asset_type TEXT NOT NULL CHECK (asset_type IN ('domain','subdomain','ip','web_app','api','cloud_resource','service')),\n  scope_status TEXT DEFAULT 'in_scope' CHECK (scope_status IN ('in_scope','out_of_scope','pending_verification')),\n  owner_team TEXT,\n  business_criticality TEXT DEFAULT 'medium' CHECK (business_criticality IN ('critical','high','medium','low')),\n  environment TEXT DEFAULT 'unknown' CHECK (environment IN ('production','staging','development','unknown')),\n  tech_stack TEXT[],\n  tls_version TEXT,\n  cert_expiry DATE,\n  http_status INT,\n  auth_required BOOLEAN DEFAULT FALSE,\n  last_discovered TIMESTAMPTZ DEFAULT NOW(),\n  last_tested TIMESTAMPTZ,\n  screenshot_url TEXT,\n  notes TEXT,\n  metadata JSONB DEFAULT '{}',\n  UNIQUE(engagement_id, asset_value)\n);\nCREATE INDEX IF NOT EXISTS idx_assets_engagement ON assets(engagement_id);\nCREATE INDEX IF NOT EXISTS idx_assets_scope ON assets(engagement_id, scope_status);\nCREATE INDEX IF NOT EXISTS idx_assets_last_tested ON assets(last_tested);\nCREATE TABLE IF NOT EXISTS discovery_records (\n  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\n  engagement_id UUID REFERENCES engagements(id),\n  asset_id UUID REFERENCES assets(id),\n  source TEXT,\n  record_type TEXT,\n  record_value TEXT,\n  raw_data JSONB DEFAULT '{}',\n  discovered_at TIMESTAMPTZ DEFAULT NOW()\n);\nCREATE INDEX IF NOT EXISTS idx_discovery_asset ON discovery_records(asset_id);\nCREATE TABLE IF NOT EXISTS scan_jobs (\n  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\n  engagement_id UUID REFERENCES engagements(id),\n  asset_id UUID REFERENCES assets(id),\n  tool TEXT NOT NULL,\n  profile TEXT,\n  status TEXT DEFAULT 'pending' CHECK (status IN ('pending','running','completed','failed','cancelled')),\n  started_at TIMESTAMPTZ,\n  completed_at TIMESTAMPTZ,\n  error_message TEXT,\n  raw_output_ref TEXT,\n  created_at TIMESTAMPTZ DEFAULT NOW()\n);\nCREATE INDEX IF NOT EXISTS idx_scan_jobs_engagement ON scan_jobs(engagement_id, status);\nCREATE TABLE IF NOT EXISTS raw_findings (\n  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\n  engagement_id UUID REFERENCES engagements(id),\n  asset_id UUID REFERENCES assets(id),\n  scan_job_id UUID REFERENCES scan_jobs(id),\n  source_tool TEXT NOT NULL,\n  title TEXT NOT NULL,\n  raw_severity TEXT,\n  raw_evidence TEXT,\n  raw_data JSONB DEFAULT '{}',\n  status TEXT DEFAULT 'pending_dedup' CHECK (status IN ('pending_dedup','deduplicated','merged')),\n  ingested_at TIMESTAMPTZ DEFAULT NOW()\n);\nCREATE INDEX IF NOT EXISTS idx_raw_findings_engagement ON raw_findings(engagement_id, status);",
+        "options": {}
+      },
+      "id": "pg2",
+      "name": "Schema Part 2",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [680, 300],
+      "credentials": { "postgres": { "id": "oHS3dvjMW1h1PkMp", "name": "RECON OS PostgreSQL" } }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "CREATE TABLE IF NOT EXISTS normalized_findings (\n  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\n  engagement_id UUID REFERENCES engagements(id),\n  asset_id UUID REFERENCES assets(id),\n  raw_finding_ids UUID[] DEFAULT '{}',\n  title TEXT NOT NULL,\n  category TEXT,\n  cwe_id TEXT,\n  cve_id TEXT,\n  owasp_category TEXT,\n  severity TEXT DEFAULT 'medium' CHECK (severity IN ('critical','high','medium','low','informational')),\n  recon_score NUMERIC(4,2) DEFAULT 0,\n  priority_bucket TEXT DEFAULT 'medium_priority',\n  score_explanation TEXT,\n  validation_status TEXT DEFAULT 'pending_analyst' CHECK (validation_status IN ('pending_analyst','analyst_reviewed','validated','likely_false_positive','verified_fixed')),\n  validation_notes TEXT,\n  validated_by TEXT,\n  validated_at TIMESTAMPTZ,\n  remediation_status TEXT DEFAULT 'open' CHECK (remediation_status IN ('open','in_progress','fixed_pending_retest','partially_fixed','verified_fixed','reopened','accepted_risk')),\n  remediation_owner TEXT,\n  remediation_evidence TEXT,\n  remediation_notes TEXT,\n  remediation_updated_at TIMESTAMPTZ,\n  business_impact TEXT,\n  remediation_guidance TEXT,\n  ext_references TEXT[] DEFAULT '{}',\n  evidence_summary TEXT,\n  dedup_fingerprint TEXT,\n  occurrence_count INT DEFAULT 1,\n  is_recurring BOOLEAN DEFAULT FALSE,\n  recurrence_count INT DEFAULT 0,\n  first_seen TIMESTAMPTZ DEFAULT NOW(),\n  last_seen TIMESTAMPTZ DEFAULT NOW(),\n  closed_at TIMESTAMPTZ,\n  reopen_count INT DEFAULT 0,\n  analyst_notes TEXT,\n  metadata JSONB DEFAULT '{}'\n);\nCREATE INDEX IF NOT EXISTS idx_nf_engagement ON normalized_findings(engagement_id);\nCREATE INDEX IF NOT EXISTS idx_nf_status ON normalized_findings(validation_status, remediation_status);\nCREATE INDEX IF NOT EXISTS idx_nf_score ON normalized_findings(recon_score DESC);\nCREATE INDEX IF NOT EXISTS idx_nf_dedup ON normalized_findings(dedup_fingerprint, engagement_id);\nCREATE INDEX IF NOT EXISTS idx_nf_bucket ON normalized_findings(priority_bucket, engagement_id);\nCREATE TABLE IF NOT EXISTS evidence_references (\n  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\n  finding_id UUID REFERENCES normalized_findings(id) ON DELETE CASCADE,\n  evidence_type TEXT CHECK (evidence_type IN ('screenshot','http_request','http_response','log_excerpt','tool_output','analyst_note')),\n  title TEXT,\n  content TEXT,\n  storage_ref TEXT,\n  collected_at TIMESTAMPTZ DEFAULT NOW(),\n  collected_by TEXT,\n  is_sensitive BOOLEAN DEFAULT FALSE\n);\nCREATE INDEX IF NOT EXISTS idx_evidence_finding ON evidence_references(finding_id);\nCREATE TABLE IF NOT EXISTS validation_history (\n  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\n  finding_id UUID REFERENCES normalized_findings(id),\n  previous_status TEXT,\n  new_status TEXT,\n  changed_by TEXT,\n  changed_at TIMESTAMPTZ DEFAULT NOW(),\n  notes TEXT\n);\nCREATE TABLE IF NOT EXISTS risk_score_history (\n  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\n  finding_id UUID REFERENCES normalized_findings(id),\n  recon_score NUMERIC(4,2),\n  priority_bucket TEXT,\n  score_breakdown JSONB DEFAULT '{}',\n  scored_at TIMESTAMPTZ DEFAULT NOW()\n);",
+        "options": {}
+      },
+      "id": "pg3",
+      "name": "Schema Part 3",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [900, 300],
+      "credentials": { "postgres": { "id": "oHS3dvjMW1h1PkMp", "name": "RECON OS PostgreSQL" } }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "CREATE TABLE IF NOT EXISTS reports (\n  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\n  engagement_id UUID REFERENCES engagements(id),\n  report_type TEXT CHECK (report_type IN ('technical','executive','remediation')),\n  status TEXT DEFAULT 'draft' CHECK (status IN ('draft','pending_approval','approved','delivered')),\n  approved_by TEXT,\n  approved_at TIMESTAMPTZ,\n  delivered_at TIMESTAMPTZ,\n  created_at TIMESTAMPTZ DEFAULT NOW(),\n  metadata JSONB DEFAULT '{}'\n);\nCREATE TABLE IF NOT EXISTS report_sections (\n  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\n  report_id UUID REFERENCES reports(id) ON DELETE CASCADE,\n  finding_id UUID REFERENCES normalized_findings(id),\n  section_type TEXT,\n  content JSONB DEFAULT '{}',\n  sort_order INT DEFAULT 0,\n  created_at TIMESTAMPTZ DEFAULT NOW()\n);\nCREATE TABLE IF NOT EXISTS remediation_tickets (\n  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\n  finding_id UUID REFERENCES normalized_findings(id),\n  engagement_id UUID REFERENCES engagements(id),\n  owner TEXT,\n  due_date DATE,\n  status TEXT DEFAULT 'open',\n  external_ticket_id TEXT,\n  notes TEXT,\n  created_at TIMESTAMPTZ DEFAULT NOW(),\n  updated_at TIMESTAMPTZ DEFAULT NOW()\n);\nCREATE TABLE IF NOT EXISTS retest_records (\n  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\n  finding_id UUID REFERENCES normalized_findings(id),\n  engagement_id UUID REFERENCES engagements(id),\n  scheduled_at TIMESTAMPTZ,\n  completed_at TIMESTAMPTZ,\n  result TEXT CHECK (result IN ('pass','fail','partial','cancelled')),\n  retest_evidence TEXT,\n  retested_by TEXT,\n  notes TEXT,\n  created_at TIMESTAMPTZ DEFAULT NOW()\n);\nCREATE TABLE IF NOT EXISTS weakness_patterns (\n  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\n  client_id UUID REFERENCES clients(id),\n  category TEXT,\n  cwe_id TEXT,\n  owasp_category TEXT,\n  occurrence_count INT DEFAULT 1,\n  engagement_count INT DEFAULT 1,\n  first_seen TIMESTAMPTZ DEFAULT NOW(),\n  last_seen TIMESTAMPTZ DEFAULT NOW(),\n  pattern_type TEXT DEFAULT 'recurring' CHECK (pattern_type IN ('systemic','recurring','emerging','resolved')),\n  narrative TEXT,\n  updated_at TIMESTAMPTZ DEFAULT NOW(),\n  UNIQUE(client_id, cwe_id)\n);\nCREATE TABLE IF NOT EXISTS finding_templates (\n  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\n  title TEXT NOT NULL,\n  category TEXT,\n  cwe_id TEXT,\n  owasp_category TEXT,\n  default_severity TEXT,\n  summary_template TEXT,\n  impact_template TEXT,\n  remediation_template TEXT,\n  ext_references TEXT[] DEFAULT '{}',\n  created_by TEXT DEFAULT 'system',\n  created_at TIMESTAMPTZ DEFAULT NOW(),\n  is_active BOOLEAN DEFAULT TRUE\n);\nCREATE TABLE IF NOT EXISTS audit_logs (\n  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\n  event_type TEXT NOT NULL,\n  actor TEXT DEFAULT 'system',\n  engagement_id UUID,\n  entity_type TEXT,\n  entity_id UUID,\n  payload JSONB DEFAULT '{}',\n  ip_address INET,\n  created_at TIMESTAMPTZ DEFAULT NOW()\n);\nCREATE INDEX IF NOT EXISTS idx_audit_engagement ON audit_logs(engagement_id, created_at DESC);\nCREATE INDEX IF NOT EXISTS idx_audit_event ON audit_logs(event_type, created_at DESC);\nCREATE TABLE IF NOT EXISTS engagement_metrics (\n  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\n  engagement_id UUID REFERENCES engagements(id) UNIQUE,\n  total_assets INT DEFAULT 0,\n  assets_tested INT DEFAULT 0,\n  total_findings INT DEFAULT 0,\n  validated_findings INT DEFAULT 0,\n  false_positives INT DEFAULT 0,\n  verified_fixed INT DEFAULT 0,\n  avg_mttr_days NUMERIC(6,2),\n  coverage_pct NUMERIC(5,2),\n  criticals INT DEFAULT 0,\n  highs INT DEFAULT 0,\n  mediums INT DEFAULT 0,\n  lows INT DEFAULT 0,\n  updated_at TIMESTAMPTZ DEFAULT NOW()\n);\nCREATE TABLE IF NOT EXISTS workflow_runs (\n  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\n  workflow_name TEXT NOT NULL,\n  engagement_id UUID,\n  status TEXT CHECK (status IN ('success','failed','partial')),\n  started_at TIMESTAMPTZ DEFAULT NOW(),\n  completed_at TIMESTAMPTZ,\n  error_message TEXT,\n  metadata JSONB DEFAULT '{}'\n);",
+        "options": {}
+      },
+      "id": "pg4",
+      "name": "Schema Part 4",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1120, 300],
+      "credentials": { "postgres": { "id": "oHS3dvjMW1h1PkMp", "name": "RECON OS PostgreSQL" } }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO finding_templates (title, category, cwe_id, owasp_category, default_severity, summary_template, impact_template, remediation_template, references) VALUES\n('Missing Content-Security-Policy Header', 'config', 'CWE-693', 'A05:2021', 'medium', 'No CSP header - XSS risk', 'Script injection possible', 'Add strict CSP header', ARRAY['https://owasp.org/www-project-secure-headers/']),\n('Missing Strict-Transport-Security Header', 'config', 'CWE-319', 'A02:2021', 'medium', 'No HSTS - downgrade risk', 'Traffic can be stripped to HTTP', 'Add HSTS with max-age=31536000', ARRAY['https://owasp.org/']),\n('TLS 1.0 or 1.1 Supported', 'crypto', 'CWE-326', 'A02:2021', 'high', 'Deprecated TLS accepted', 'BEAST/POODLE attacks possible', 'Disable TLS 1.0/1.1, use TLS 1.2+', ARRAY['https://cve.mitre.org/']),\n('SSL Certificate Expiring Soon', 'crypto', 'CWE-298', 'A02:2021', 'medium', 'Cert expires <30 days', 'Service outage risk', 'Renew certificate', ARRAY['https://letsencrypt.org/']),\n('Exposed Admin Panel', 'exposure', 'CWE-284', 'A01:2021', 'high', 'Admin panel publicly accessible', 'Brute force / cred stuffing risk', 'Restrict to authorized IPs, require MFA', ARRAY['https://owasp.org/']),\n('Missing X-Frame-Options Header', 'config', 'CWE-1021', 'A05:2021', 'low', 'No X-Frame-Options', 'Clickjacking possible', 'Add X-Frame-Options: DENY', ARRAY['https://owasp.org/']),\n('Missing X-Content-Type-Options Header', 'config', 'CWE-693', 'A05:2021', 'low', 'No nosniff header', 'MIME sniffing possible', 'Add X-Content-Type-Options: nosniff', ARRAY['https://owasp.org/']),\n('Server Version Disclosure', 'exposure', 'CWE-200', 'A05:2021', 'informational', 'Server version in headers', 'Aids targeted exploitation', 'Suppress version info', ARRAY['https://owasp.org/'])\nON CONFLICT DO NOTHING;\nSELECT COUNT(*) as tables_created FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN ('clients','engagements','scope_rules','assets','normalized_findings','audit_logs','engagement_metrics');",
+        "options": {}
+      },
+      "id": "pg5",
+      "name": "Schema Part 5 Seed",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1340, 300],
+      "credentials": { "postgres": { "id": "oHS3dvjMW1h1PkMp", "name": "RECON OS PostgreSQL" } }
+    }
+  ],
+  "connections": {
+    "Schema Trigger": { "main": [[{ "node": "Schema Part 1", "type": "main", "index": 0 }]] },
+    "Schema Part 1": { "main": [[{ "node": "Schema Part 2", "type": "main", "index": 0 }]] },
+    "Schema Part 2": { "main": [[{ "node": "Schema Part 3", "type": "main", "index": 0 }]] },
+    "Schema Part 3": { "main": [[{ "node": "Schema Part 4", "type": "main", "index": 0 }]] },
+    "Schema Part 4": { "main": [[{ "node": "Schema Part 5 Seed", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" }
+}

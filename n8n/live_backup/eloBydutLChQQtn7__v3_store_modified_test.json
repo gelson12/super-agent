@@ -1,0 +1,97 @@
+﻿{
+    "updatedAt":  "2026-04-19T03:34:30.899Z",
+    "createdAt":  "2026-04-19T03:34:30.899Z",
+    "id":  "eloBydutLChQQtn7",
+    "name":  "V3 Store Modified Test",
+    "description":  null,
+    "active":  false,
+    "isArchived":  false,
+    "nodes":  [
+                  {
+                      "parameters":  {
+                                         "updates":  [
+                                                         "messages"
+                                                     ],
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "whatsapp-trigger",
+                      "name":  "WhatsApp Trigger",
+                      "type":  "n8n-nodes-base.whatsAppTrigger",
+                      "typeVersion":  1,
+                      "position":  [
+                                       208,
+                                       208
+                                   ],
+                      "webhookId":  "9b1af47e-04b8-49d7-b394-53453087ac81",
+                      "credentials":  {
+                                          "whatsAppTriggerApi":  {
+                                                                     "id":  "qWl5Z2MKku7htFew",
+                                                                     "name":  "WhatsApp OAuth account"
+                                                                 }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "INSERT INTO expenses (category, subcategory, vendor, amount, date, due_date, description, anomaly_flag, anomaly_severity, anomaly_reason, anomaly_recommendations, confidence_score, budget_line, source_channel, sender_id, doc_type, priority, action_required, processed_date) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)",
+                                         "options":  {
+                                                         "queryReplacement":  "={{ [$json.category||\u0027Uncategorized\u0027, $json.subcategory||\u0027\u0027, $json.vendor||\u0027Unknown\u0027, $json.amount||0, $json.date||new Date().toISOString().split(\u0027T\u0027)[0], $json.due_date||null, $json.description||\u0027\u0027, $json.anomaly_flag||false, $json.anomaly_severity||\u0027none\u0027, $json.anomaly_reason||\u0027\u0027, $json.anomaly_recommendations||\u0027\u0027, $json.confidence_score||0, $json.budget_line||\u0027\u0027, $json.source_channel||\u0027unknown\u0027, $json.sender_id||\u0027unknown\u0027, $json.doc_type||\u0027invoice\u0027, $json.priority||\u0027low\u0027, $json.action_required||\u0027\u0027, $json.processed_date||new Date().toISOString()] }}"
+                                                     }
+                                     },
+                      "id":  "store-expense",
+                      "name":  "Store in Database",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       3856,
+                                       784
+                                   ],
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "Ae3yvuqjgMnVRrCo",
+                                                           "name":  "Postgres account"
+                                                       }
+                                      }
+                  }
+              ],
+    "connections":  {
+
+                    },
+    "settings":  {
+                     "executionOrder":  "v1",
+                     "callerPolicy":  "workflowsFromSameOwner",
+                     "availableInMCP":  false
+                 },
+    "staticData":  null,
+    "meta":  null,
+    "pinData":  null,
+    "versionId":  "df83884b-00cb-4d6a-a440-1cf97a038ac5",
+    "activeVersionId":  null,
+    "versionCounter":  1,
+    "triggerCount":  0,
+    "shared":  [
+                   {
+                       "updatedAt":  "2026-04-19T03:34:30.899Z",
+                       "createdAt":  "2026-04-19T03:34:30.899Z",
+                       "role":  "workflow:owner",
+                       "workflowId":  "eloBydutLChQQtn7",
+                       "projectId":  "Lrgt6JR85OZiVLcX",
+                       "project":  {
+                                       "updatedAt":  "2026-03-31T09:07:31.366Z",
+                                       "createdAt":  "2026-03-31T08:57:43.789Z",
+                                       "id":  "Lrgt6JR85OZiVLcX",
+                                       "name":  "gelson mascarenhas \u003cgelson_m@hotmail.com\u003e",
+                                       "type":  "personal",
+                                       "icon":  null,
+                                       "description":  null,
+                                       "creatorId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                   }
+                   }
+               ],
+    "tags":  [
+
+             ],
+    "activeVersion":  null
+}

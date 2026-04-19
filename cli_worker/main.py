@@ -1034,6 +1034,9 @@ def get_task(task_id: str):
     Poll task result. Keep polling until status=done or status=failed.
     Typical latency: 2-5s for probe tasks, 5-120s for Claude/Gemini calls.
     """
+    import re as _re
+    if not _re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", task_id or ""):
+        raise HTTPException(400, f"Invalid task_id format: {task_id!r}")
     try:
         with _db_conn() as conn:
             with conn.cursor() as cur:

@@ -1,0 +1,126 @@
+{
+  "name": "RECON OS — WF-09 Validation Queue",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": { "interval": [{ "field": "cronExpression", "expression": "0 8 * * *" }] }
+      },
+      "id": "cron-daily",
+      "name": "Cron Daily 08:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "recon-os/findings/validate",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wh-validate",
+      "name": "Webhook Analyst Review",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 500],
+      "webhookId": "recon-os-findings-validate"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body || $input.first().json;\n// This is an analyst validation submission\nreturn [{ json: {\n  finding_id: body.finding_id,\n  validation_status: body.validation_status,\n  analyst_notes: body.analyst_notes || '',\n  updated_severity: body.updated_severity || null,\n  analyst_id: body.analyst_id || 'unknown'\n} }];"
+      },
+      "id": "prepare-validation",
+      "name": "Prepare Validation Update",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 500]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE normalized_findings SET\n  validation_status = '{{ $json.validation_status }}',\n  validation_notes = '{{ $json.analyst_notes.replace(/'/g,\"''\") }}',\n  validated_by = '{{ $json.analyst_id }}',\n  validated_at = NOW()\n  {{ $json.updated_severity ? \",severity = '\" + $json.updated_severity + \"'\" : '' }}\nWHERE id = '{{ $json.finding_id }}'\nRETURNING id, validation_status, recon_score, priority_bucket;",
+        "options": {}
+      },
+      "id": "pg-update-validation",
+      "name": "Update Validation Status",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [680, 500],
+      "credentials": { "postgres": { "id": "RECON_OS_PG_CRED", "name": "RECON OS PostgreSQL" } }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO validation_history (finding_id, previous_status, new_status, changed_by, notes)\nSELECT '{{ $('Prepare Validation Update').first().json.finding_id }}',\n       validation_status,\n       '{{ $('Prepare Validation Update').first().json.validation_status }}',\n       '{{ $('Prepare Validation Update').first().json.analyst_id }}',\n       '{{ $('Prepare Validation Update').first().json.analyst_notes.replace(/'/g,\"''\") }}'\nFROM normalized_findings WHERE id = '{{ $('Prepare Validation Update').first().json.finding_id }}';",
+        "options": {}
+      },
+      "id": "pg-validation-history",
+      "name": "Record History",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [900, 500],
+      "credentials": { "postgres": { "id": "RECON_OS_PG_CRED", "name": "RECON OS PostgreSQL" } }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, finding_id: $('Prepare Validation Update').first().json.finding_id, new_status: $('Prepare Validation Update').first().json.validation_status }) }}",
+        "options": { "responseCode": 200 }
+      },
+      "id": "respond-ok",
+      "name": "Respond OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1120, 500]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT nf.id, nf.title, nf.severity, nf.recon_score, nf.priority_bucket,\n       nf.validation_status, nf.first_seen, nf.is_recurring,\n       a.asset_value, e.name as engagement_name, c.name as client_name\nFROM normalized_findings nf\nJOIN assets a ON nf.asset_id = a.id\nJOIN engagements e ON nf.engagement_id = e.id\nJOIN clients c ON e.client_id = c.id\nWHERE nf.validation_status = 'pending_analyst'\n  AND e.status = 'active'\nORDER BY nf.recon_score DESC\nLIMIT 50;",
+        "options": {}
+      },
+      "id": "pg-pending-findings",
+      "name": "Get Pending Findings",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [460, 300],
+      "credentials": { "postgres": { "id": "RECON_OS_PG_CRED", "name": "RECON OS PostgreSQL" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "const findings = $input.all().map(i => i.json);\nconst immediate = findings.filter(f => f.priority_bucket === 'immediate_attention');\nconst high = findings.filter(f => f.priority_bucket === 'high_priority');\nconst medium = findings.filter(f => f.priority_bucket === 'medium_priority');\nconst other = findings.filter(f => !['immediate_attention','high_priority','medium_priority'].includes(f.priority_bucket));\n\nconst N8N_URL = 'https://outstanding-blessing-production-1d4b.up.railway.app';\n\nconst formatFinding = f =>\n  `• [${f.severity?.toUpperCase()}] ${f.title}\\n  Asset: ${f.asset_value} | Client: ${f.client_name}\\n  Score: ${f.recon_score} | Validate: POST ${N8N_URL}/webhook/recon-os/findings/validate\\n  Body: {\"finding_id\":\"${f.id}\",\"validation_status\":\"validated\",\"analyst_notes\":\"...\"}`;\n\nconst digest = [\n  `RECON OS — Daily Analyst Queue`,\n  `Date: ${new Date().toISOString().split('T')[0]}`,\n  `Total pending: ${findings.length} findings`,\n  '',\n  immediate.length > 0 ? `🔴 IMMEDIATE ATTENTION (${immediate.length}):\\n${immediate.slice(0,5).map(formatFinding).join('\\n')}` : '',\n  high.length > 0 ? `🟠 HIGH PRIORITY (${high.length}):\\n${high.slice(0,5).map(formatFinding).join('\\n')}` : '',\n  medium.length > 0 ? `🟡 MEDIUM PRIORITY (${medium.length})` : '',\n  other.length > 0 ? `⚪ OTHER (${other.length})` : '',\n  '',\n  `Validation options: validated | analyst_reviewed | likely_false_positive`\n].filter(Boolean).join('\\n');\n\nreturn [{ json: { digest, finding_count: findings.length, immediate_count: immediate.length } }];"
+      },
+      "id": "build-digest",
+      "name": "Build Analyst Digest",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.RECON_OS_SLACK_WEBHOOK || 'https://hooks.slack.com/services/PLACEHOLDER' }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ text: $json.digest, username: 'RECON OS', icon_emoji: ':mag:' }) }}",
+        "options": { "timeout": 10000 }
+      },
+      "id": "send-slack",
+      "name": "Send Slack Digest",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 300]
+    }
+  ],
+  "connections": {
+    "Cron Daily 08:00": { "main": [[{ "node": "Get Pending Findings", "type": "main", "index": 0 }]] },
+    "Get Pending Findings": { "main": [[{ "node": "Build Analyst Digest", "type": "main", "index": 0 }]] },
+    "Build Analyst Digest": { "main": [[{ "node": "Send Slack Digest", "type": "main", "index": 0 }]] },
+    "Webhook Analyst Review": { "main": [[{ "node": "Prepare Validation Update", "type": "main", "index": 0 }]] },
+    "Prepare Validation Update": { "main": [[{ "node": "Update Validation Status", "type": "main", "index": 0 }]] },
+    "Update Validation Status": { "main": [[{ "node": "Record History", "type": "main", "index": 0 }]] },
+    "Record History": { "main": [[{ "node": "Respond OK", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1", "saveManualExecutions": true, "saveExecutionProgress": true },
+  "meta": { "description": "RECON OS WF-09: Validation Queue — daily 08:00 digest of findings pending analyst review sent to Slack. Webhook at /recon-os/findings/validate accepts analyst decisions. POST {finding_id, validation_status, analyst_notes}." }
+}

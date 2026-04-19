@@ -1,0 +1,441 @@
+﻿{
+    "updatedAt":  "2026-04-19T07:27:26.620Z",
+    "createdAt":  "2026-04-19T03:30:19.563Z",
+    "id":  "eqy2ORscC6TVJuxO",
+    "name":  "RECON OS - WF-17 Daily Briefing",
+    "description":  null,
+    "active":  true,
+    "isArchived":  false,
+    "nodes":  [
+                  {
+                      "parameters":  {
+                                         "rule":  {
+                                                      "interval":  [
+                                                                       {
+                                                                           "field":  "cronExpression",
+                                                                           "expression":  "0 7 * * *"
+                                                                       }
+                                                                   ]
+                                                  }
+                                     },
+                      "id":  "cron-daily",
+                      "name":  "Cron Daily 07:00",
+                      "type":  "n8n-nodes-base.scheduleTrigger",
+                      "typeVersion":  1.2,
+                      "position":  [
+                                       240,
+                                       300
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "SELECT\n  (SELECT COUNT(*) FROM normalized_findings WHERE validation_status=\u0027pending_analyst\u0027) as pending_validation,\n  (SELECT COUNT(*) FROM normalized_findings WHERE validation_status=\u0027validated\u0027 AND remediation_status=\u0027open\u0027) as open_validated,\n  (SELECT COUNT(*) FROM normalized_findings WHERE priority_bucket=\u0027immediate_attention\u0027 AND remediation_status NOT IN (\u0027verified_fixed\u0027,\u0027closed\u0027)) as immediate_open,\n  (SELECT COUNT(*) FROM retest_records WHERE result IS NULL AND scheduled_at \u003c NOW()) as overdue_retests,\n  (SELECT COUNT(*) FROM engagements WHERE status=\u0027active\u0027 AND NOW() BETWEEN testing_window_start AND testing_window_end) as active_engagements,\n  (SELECT COUNT(*) FROM normalized_findings WHERE first_seen \u003e= NOW() - INTERVAL \u002724 hours\u0027) as new_findings_24h,\n  (SELECT COUNT(*) FROM normalized_findings WHERE validation_status=\u0027verified_fixed\u0027 AND closed_at \u003e= NOW() - INTERVAL \u002724 hours\u0027) as fixed_24h;",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "pg-get-daily-stats",
+                      "name":  "Get Daily Stats",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       460,
+                                       300
+                                   ],
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "oHS3dvjMW1h1PkMp",
+                                                           "name":  "RECON OS PostgreSQL"
+                                                       }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "SELECT nf.title, nf.severity, nf.recon_score, nf.priority_bucket, a.asset_value, e.name as engagement_name\nFROM normalized_findings nf\nJOIN assets a ON nf.asset_id = a.id\nJOIN engagements e ON nf.engagement_id = e.id\nWHERE nf.validation_status IN (\u0027validated\u0027,\u0027analyst_reviewed\u0027)\n  AND nf.remediation_status = \u0027open\u0027\nORDER BY nf.recon_score DESC\nLIMIT 5;",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "pg-top-risks",
+                      "name":  "Get Top Open Risks",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       680,
+                                       300
+                                   ],
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "oHS3dvjMW1h1PkMp",
+                                                           "name":  "RECON OS PostgreSQL"
+                                                       }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "SELECT nf.id as finding_id, nf.title, nf.severity, a.asset_value,\n       EXTRACT(DAYS FROM NOW() - nf.validated_at) as days_overdue\nFROM normalized_findings nf\nJOIN assets a ON nf.asset_id = a.id\nWHERE nf.validation_status = \u0027validated\u0027\n  AND nf.remediation_status NOT IN (\u0027verified_fixed\u0027,\u0027accepted_risk\u0027)\n  AND (\n    (nf.priority_bucket = \u0027immediate_attention\u0027 AND nf.validated_at \u003c NOW() - INTERVAL \u00277 days\u0027) OR\n    (nf.priority_bucket = \u0027high_priority\u0027 AND nf.validated_at \u003c NOW() - INTERVAL \u002730 days\u0027) OR\n    (nf.priority_bucket = \u0027medium_priority\u0027 AND nf.validated_at \u003c NOW() - INTERVAL \u002790 days\u0027)\n  )\nORDER BY days_overdue DESC\nLIMIT 10;",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "pg-overdue-sla",
+                      "name":  "Get Overdue SLA",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       900,
+                                       300
+                                   ],
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "oHS3dvjMW1h1PkMp",
+                                                           "name":  "RECON OS PostgreSQL"
+                                                       }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "const stats = $(\u0027Get Daily Stats\u0027).first().json;\nconst topRisks = $(\u0027Get Top Open Risks\u0027).all().map(i =\u003e i.json);\nconst overdueSLA = $(\u0027Get Overdue SLA\u0027).all().map(i =\u003e i.json);\nconst today = new Date().toISOString().split(\u0027T\u0027)[0];\n\nconst statusIcon = n =\u003e parseInt(n) === 0 ? \u0027?\u0027 : parseInt(n) \u003c 3 ? \u0027??\u0027 : \u0027??\u0027;\n\nconst topRisksText = topRisks.length \u003e 0\n  ? topRisks.map((f,i) =\u003e `  ${i+1}. [${f.severity.toUpperCase()}] ${f.title}\\n     Asset: ${f.asset_value} | Score: ${f.recon_score}/10`).join(\u0027\\n\u0027)\n  : \u0027  None - clean queue!\u0027;\n\nconst overdueText = overdueSLA.length \u003e 0\n  ? overdueSLA.map(f =\u003e `  ? [${f.severity.toUpperCase()}] ${f.title} - ${Math.round(f.days_overdue)}d overdue`).join(\u0027\\n\u0027)\n  : \u0027  None overdue\u0027;\n\nconst briefing = [\n  `??????????????????????????????????????`,\n  `?? RECON OS - Daily Briefing - ${today}`,\n  `??????????????????????????????????????`,\n  ``,\n  `?? STATUS SNAPSHOT`,\n  `  Active Engagements:    ${stats.active_engagements}`,\n  `  ${statusIcon(stats.immediate_open)} Immediate Attention:  ${stats.immediate_open} open`,\n  `  ${statusIcon(stats.pending_validation)} Pending Validation:   ${stats.pending_validation} findings`,\n  `  ${statusIcon(stats.overdue_retests)} Overdue Retests:      ${stats.overdue_retests}`,\n  `  ?? New Findings (24h): ${stats.new_findings_24h}`,\n  `  ? Fixed (24h):        ${stats.fixed_24h}`,\n  ``,\n  `?? TOP 5 OPEN RISKS`,\n  topRisksText,\n  ``,\n  `? SLA BREACHES`,\n  overdueText,\n  ``,\n  `?? ACTIONS NEEDED`,\n  stats.pending_validation \u003e 0 ? `  ? ${stats.pending_validation} findings awaiting analyst validation` : \u0027\u0027,\n  stats.overdue_retests \u003e 0 ? `  ? ${stats.overdue_retests} retests overdue` : \u0027\u0027,\n  stats.immediate_open \u003e 0 ? `  ? ${stats.immediate_open} IMMEDIATE ATTENTION findings unresolved` : \u0027\u0027,\n  ``,\n  `??????????????????????????????????????`\n].filter(l =\u003e l !== null \u0026\u0026 l !== undefined).join(\u0027\\n\u0027);\n\nreturn [{ json: { briefing, date: today, has_urgency: parseInt(stats.immediate_open) \u003e 0 || parseInt(stats.overdue_retests) \u003e 0 } }];"
+                                     },
+                      "id":  "build-briefing",
+                      "name":  "Build Daily Briefing",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       1120,
+                                       300
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "method":  "POST",
+                                         "url":  "={{ $env.RECON_OS_SLACK_WEBHOOK || \u0027https://hooks.slack.com/services/PLACEHOLDER\u0027 }}",
+                                         "sendBody":  true,
+                                         "specifyBody":  "json",
+                                         "jsonBody":  "={{ JSON.stringify({ text: $json.briefing, username: \u0027RECON OS Daily Brief\u0027, icon_emoji: \u0027:briefcase:\u0027 }) }}",
+                                         "options":  {
+                                                         "timeout":  10000
+                                                     }
+                                     },
+                      "id":  "send-slack",
+                      "name":  "Send to Slack",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.2,
+                      "position":  [
+                                       1340,
+                                       300
+                                   ]
+                  }
+              ],
+    "connections":  {
+                        "Cron Daily 07:00":  {
+                                                 "main":  [
+                                                              [
+                                                                  {
+                                                                      "node":  "Get Daily Stats",
+                                                                      "type":  "main",
+                                                                      "index":  0
+                                                                  }
+                                                              ]
+                                                          ]
+                                             },
+                        "Get Daily Stats":  {
+                                                "main":  [
+                                                             [
+                                                                 {
+                                                                     "node":  "Get Top Open Risks",
+                                                                     "type":  "main",
+                                                                     "index":  0
+                                                                 }
+                                                             ]
+                                                         ]
+                                            },
+                        "Get Top Open Risks":  {
+                                                   "main":  [
+                                                                [
+                                                                    {
+                                                                        "node":  "Get Overdue SLA",
+                                                                        "type":  "main",
+                                                                        "index":  0
+                                                                    }
+                                                                ]
+                                                            ]
+                                               },
+                        "Get Overdue SLA":  {
+                                                "main":  [
+                                                             [
+                                                                 {
+                                                                     "node":  "Build Daily Briefing",
+                                                                     "type":  "main",
+                                                                     "index":  0
+                                                                 }
+                                                             ]
+                                                         ]
+                                            },
+                        "Build Daily Briefing":  {
+                                                     "main":  [
+                                                                  [
+                                                                      {
+                                                                          "node":  "Send to Slack",
+                                                                          "type":  "main",
+                                                                          "index":  0
+                                                                      }
+                                                                  ]
+                                                              ]
+                                                 }
+                    },
+    "settings":  {
+                     "executionOrder":  "v1",
+                     "saveManualExecutions":  true,
+                     "saveExecutionProgress":  true,
+                     "callerPolicy":  "workflowsFromSameOwner",
+                     "availableInMCP":  false
+                 },
+    "staticData":  {
+                       "node:Cron Daily 07:00":  {
+                                                     "recurrenceRules":  [
+
+                                                                         ]
+                                                 }
+                   },
+    "meta":  null,
+    "pinData":  null,
+    "versionId":  "fd87844e-1fae-4053-b146-34da695368c2",
+    "activeVersionId":  "fd87844e-1fae-4053-b146-34da695368c2",
+    "versionCounter":  7,
+    "triggerCount":  1,
+    "shared":  [
+                   {
+                       "updatedAt":  "2026-04-19T03:30:19.563Z",
+                       "createdAt":  "2026-04-19T03:30:19.563Z",
+                       "role":  "workflow:owner",
+                       "workflowId":  "eqy2ORscC6TVJuxO",
+                       "projectId":  "Lrgt6JR85OZiVLcX",
+                       "project":  {
+                                       "updatedAt":  "2026-03-31T09:07:31.366Z",
+                                       "createdAt":  "2026-03-31T08:57:43.789Z",
+                                       "id":  "Lrgt6JR85OZiVLcX",
+                                       "name":  "gelson mascarenhas \u003cgelson_m@hotmail.com\u003e",
+                                       "type":  "personal",
+                                       "icon":  null,
+                                       "description":  null,
+                                       "creatorId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                   }
+                   }
+               ],
+    "tags":  [
+
+             ],
+    "activeVersion":  {
+                          "updatedAt":  "2026-04-19T07:27:26.622Z",
+                          "createdAt":  "2026-04-19T07:27:26.622Z",
+                          "versionId":  "fd87844e-1fae-4053-b146-34da695368c2",
+                          "workflowId":  "eqy2ORscC6TVJuxO",
+                          "nodes":  [
+                                        {
+                                            "parameters":  {
+                                                               "rule":  {
+                                                                            "interval":  [
+                                                                                             {
+                                                                                                 "field":  "cronExpression",
+                                                                                                 "expression":  "0 7 * * *"
+                                                                                             }
+                                                                                         ]
+                                                                        }
+                                                           },
+                                            "id":  "cron-daily",
+                                            "name":  "Cron Daily 07:00",
+                                            "type":  "n8n-nodes-base.scheduleTrigger",
+                                            "typeVersion":  1.2,
+                                            "position":  [
+                                                             240,
+                                                             300
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "operation":  "executeQuery",
+                                                               "query":  "SELECT\n  (SELECT COUNT(*) FROM normalized_findings WHERE validation_status=\u0027pending_analyst\u0027) as pending_validation,\n  (SELECT COUNT(*) FROM normalized_findings WHERE validation_status=\u0027validated\u0027 AND remediation_status=\u0027open\u0027) as open_validated,\n  (SELECT COUNT(*) FROM normalized_findings WHERE priority_bucket=\u0027immediate_attention\u0027 AND remediation_status NOT IN (\u0027verified_fixed\u0027,\u0027closed\u0027)) as immediate_open,\n  (SELECT COUNT(*) FROM retest_records WHERE result IS NULL AND scheduled_at \u003c NOW()) as overdue_retests,\n  (SELECT COUNT(*) FROM engagements WHERE status=\u0027active\u0027 AND NOW() BETWEEN testing_window_start AND testing_window_end) as active_engagements,\n  (SELECT COUNT(*) FROM normalized_findings WHERE first_seen \u003e= NOW() - INTERVAL \u002724 hours\u0027) as new_findings_24h,\n  (SELECT COUNT(*) FROM normalized_findings WHERE validation_status=\u0027verified_fixed\u0027 AND closed_at \u003e= NOW() - INTERVAL \u002724 hours\u0027) as fixed_24h;",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "pg-get-daily-stats",
+                                            "name":  "Get Daily Stats",
+                                            "type":  "n8n-nodes-base.postgres",
+                                            "typeVersion":  2.5,
+                                            "position":  [
+                                                             460,
+                                                             300
+                                                         ],
+                                            "credentials":  {
+                                                                "postgres":  {
+                                                                                 "id":  "oHS3dvjMW1h1PkMp",
+                                                                                 "name":  "RECON OS PostgreSQL"
+                                                                             }
+                                                            }
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "operation":  "executeQuery",
+                                                               "query":  "SELECT nf.title, nf.severity, nf.recon_score, nf.priority_bucket, a.asset_value, e.name as engagement_name\nFROM normalized_findings nf\nJOIN assets a ON nf.asset_id = a.id\nJOIN engagements e ON nf.engagement_id = e.id\nWHERE nf.validation_status IN (\u0027validated\u0027,\u0027analyst_reviewed\u0027)\n  AND nf.remediation_status = \u0027open\u0027\nORDER BY nf.recon_score DESC\nLIMIT 5;",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "pg-top-risks",
+                                            "name":  "Get Top Open Risks",
+                                            "type":  "n8n-nodes-base.postgres",
+                                            "typeVersion":  2.5,
+                                            "position":  [
+                                                             680,
+                                                             300
+                                                         ],
+                                            "credentials":  {
+                                                                "postgres":  {
+                                                                                 "id":  "oHS3dvjMW1h1PkMp",
+                                                                                 "name":  "RECON OS PostgreSQL"
+                                                                             }
+                                                            }
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "operation":  "executeQuery",
+                                                               "query":  "SELECT nf.id as finding_id, nf.title, nf.severity, a.asset_value,\n       EXTRACT(DAYS FROM NOW() - nf.validated_at) as days_overdue\nFROM normalized_findings nf\nJOIN assets a ON nf.asset_id = a.id\nWHERE nf.validation_status = \u0027validated\u0027\n  AND nf.remediation_status NOT IN (\u0027verified_fixed\u0027,\u0027accepted_risk\u0027)\n  AND (\n    (nf.priority_bucket = \u0027immediate_attention\u0027 AND nf.validated_at \u003c NOW() - INTERVAL \u00277 days\u0027) OR\n    (nf.priority_bucket = \u0027high_priority\u0027 AND nf.validated_at \u003c NOW() - INTERVAL \u002730 days\u0027) OR\n    (nf.priority_bucket = \u0027medium_priority\u0027 AND nf.validated_at \u003c NOW() - INTERVAL \u002790 days\u0027)\n  )\nORDER BY days_overdue DESC\nLIMIT 10;",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "pg-overdue-sla",
+                                            "name":  "Get Overdue SLA",
+                                            "type":  "n8n-nodes-base.postgres",
+                                            "typeVersion":  2.5,
+                                            "position":  [
+                                                             900,
+                                                             300
+                                                         ],
+                                            "credentials":  {
+                                                                "postgres":  {
+                                                                                 "id":  "oHS3dvjMW1h1PkMp",
+                                                                                 "name":  "RECON OS PostgreSQL"
+                                                                             }
+                                                            }
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "jsCode":  "const stats = $(\u0027Get Daily Stats\u0027).first().json;\nconst topRisks = $(\u0027Get Top Open Risks\u0027).all().map(i =\u003e i.json);\nconst overdueSLA = $(\u0027Get Overdue SLA\u0027).all().map(i =\u003e i.json);\nconst today = new Date().toISOString().split(\u0027T\u0027)[0];\n\nconst statusIcon = n =\u003e parseInt(n) === 0 ? \u0027?\u0027 : parseInt(n) \u003c 3 ? \u0027??\u0027 : \u0027??\u0027;\n\nconst topRisksText = topRisks.length \u003e 0\n  ? topRisks.map((f,i) =\u003e `  ${i+1}. [${f.severity.toUpperCase()}] ${f.title}\\n     Asset: ${f.asset_value} | Score: ${f.recon_score}/10`).join(\u0027\\n\u0027)\n  : \u0027  None - clean queue!\u0027;\n\nconst overdueText = overdueSLA.length \u003e 0\n  ? overdueSLA.map(f =\u003e `  ? [${f.severity.toUpperCase()}] ${f.title} - ${Math.round(f.days_overdue)}d overdue`).join(\u0027\\n\u0027)\n  : \u0027  None overdue\u0027;\n\nconst briefing = [\n  `??????????????????????????????????????`,\n  `?? RECON OS - Daily Briefing - ${today}`,\n  `??????????????????????????????????????`,\n  ``,\n  `?? STATUS SNAPSHOT`,\n  `  Active Engagements:    ${stats.active_engagements}`,\n  `  ${statusIcon(stats.immediate_open)} Immediate Attention:  ${stats.immediate_open} open`,\n  `  ${statusIcon(stats.pending_validation)} Pending Validation:   ${stats.pending_validation} findings`,\n  `  ${statusIcon(stats.overdue_retests)} Overdue Retests:      ${stats.overdue_retests}`,\n  `  ?? New Findings (24h): ${stats.new_findings_24h}`,\n  `  ? Fixed (24h):        ${stats.fixed_24h}`,\n  ``,\n  `?? TOP 5 OPEN RISKS`,\n  topRisksText,\n  ``,\n  `? SLA BREACHES`,\n  overdueText,\n  ``,\n  `?? ACTIONS NEEDED`,\n  stats.pending_validation \u003e 0 ? `  ? ${stats.pending_validation} findings awaiting analyst validation` : \u0027\u0027,\n  stats.overdue_retests \u003e 0 ? `  ? ${stats.overdue_retests} retests overdue` : \u0027\u0027,\n  stats.immediate_open \u003e 0 ? `  ? ${stats.immediate_open} IMMEDIATE ATTENTION findings unresolved` : \u0027\u0027,\n  ``,\n  `??????????????????????????????????????`\n].filter(l =\u003e l !== null \u0026\u0026 l !== undefined).join(\u0027\\n\u0027);\n\nreturn [{ json: { briefing, date: today, has_urgency: parseInt(stats.immediate_open) \u003e 0 || parseInt(stats.overdue_retests) \u003e 0 } }];"
+                                                           },
+                                            "id":  "build-briefing",
+                                            "name":  "Build Daily Briefing",
+                                            "type":  "n8n-nodes-base.code",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             1120,
+                                                             300
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "method":  "POST",
+                                                               "url":  "={{ $env.RECON_OS_SLACK_WEBHOOK || \u0027https://hooks.slack.com/services/PLACEHOLDER\u0027 }}",
+                                                               "sendBody":  true,
+                                                               "specifyBody":  "json",
+                                                               "jsonBody":  "={{ JSON.stringify({ text: $json.briefing, username: \u0027RECON OS Daily Brief\u0027, icon_emoji: \u0027:briefcase:\u0027 }) }}",
+                                                               "options":  {
+                                                                               "timeout":  10000
+                                                                           }
+                                                           },
+                                            "id":  "send-slack",
+                                            "name":  "Send to Slack",
+                                            "type":  "n8n-nodes-base.httpRequest",
+                                            "typeVersion":  4.2,
+                                            "position":  [
+                                                             1340,
+                                                             300
+                                                         ]
+                                        }
+                                    ],
+                          "connections":  {
+                                              "Cron Daily 07:00":  {
+                                                                       "main":  [
+                                                                                    [
+                                                                                        {
+                                                                                            "node":  "Get Daily Stats",
+                                                                                            "type":  "main",
+                                                                                            "index":  0
+                                                                                        }
+                                                                                    ]
+                                                                                ]
+                                                                   },
+                                              "Get Daily Stats":  {
+                                                                      "main":  [
+                                                                                   [
+                                                                                       {
+                                                                                           "node":  "Get Top Open Risks",
+                                                                                           "type":  "main",
+                                                                                           "index":  0
+                                                                                       }
+                                                                                   ]
+                                                                               ]
+                                                                  },
+                                              "Get Top Open Risks":  {
+                                                                         "main":  [
+                                                                                      [
+                                                                                          {
+                                                                                              "node":  "Get Overdue SLA",
+                                                                                              "type":  "main",
+                                                                                              "index":  0
+                                                                                          }
+                                                                                      ]
+                                                                                  ]
+                                                                     },
+                                              "Get Overdue SLA":  {
+                                                                      "main":  [
+                                                                                   [
+                                                                                       {
+                                                                                           "node":  "Build Daily Briefing",
+                                                                                           "type":  "main",
+                                                                                           "index":  0
+                                                                                       }
+                                                                                   ]
+                                                                               ]
+                                                                  },
+                                              "Build Daily Briefing":  {
+                                                                           "main":  [
+                                                                                        [
+                                                                                            {
+                                                                                                "node":  "Send to Slack",
+                                                                                                "type":  "main",
+                                                                                                "index":  0
+                                                                                            }
+                                                                                        ]
+                                                                                    ]
+                                                                       }
+                                          },
+                          "authors":  "gelson mascarenhas",
+                          "name":  null,
+                          "description":  null,
+                          "autosaved":  false,
+                          "workflowPublishHistory":  [
+                                                         {
+                                                             "createdAt":  "2026-04-19T07:27:26.664Z",
+                                                             "id":  537,
+                                                             "workflowId":  "eqy2ORscC6TVJuxO",
+                                                             "versionId":  "fd87844e-1fae-4053-b146-34da695368c2",
+                                                             "event":  "deactivated",
+                                                             "userId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                                         },
+                                                         {
+                                                             "createdAt":  "2026-04-19T07:27:26.682Z",
+                                                             "id":  538,
+                                                             "workflowId":  "eqy2ORscC6TVJuxO",
+                                                             "versionId":  "fd87844e-1fae-4053-b146-34da695368c2",
+                                                             "event":  "activated",
+                                                             "userId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                                         }
+                                                     ]
+                      }
+}

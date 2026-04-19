@@ -675,6 +675,113 @@
       "typeVersion": 1.1,
       "position": [2160, 1940],
       "parameters": { "options": {}, "respondWith": "json", "responseBody": "={{ JSON.stringify($json) }}" }
+    },
+
+    {
+      "id": "cos-weekly-trig-060",
+      "name": "Weekly Recovery Test",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 2300],
+      "parameters": {
+        "rule": { "interval": [{"field": "cronExpression", "expression": "0 9 * * 1"}] }
+      }
+    },
+
+    {
+      "id": "cos-weekly-submit-061",
+      "name": "Submit Recovery Test Task",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [240, 2300],
+      "parameters": {
+        "method": "POST",
+        "url": "https://inspiring-cat-production.up.railway.app/tasks",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{"name": "Content-Type", "value": "application/json"}] },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={ \"type\": \"shell\", \"payload\": { \"command\": \"python3 /app/scripts/test_recovery_layers.py\", \"cwd\": \"/workspace\" } }"
+      }
+    },
+
+    {
+      "id": "cos-weekly-wait-062",
+      "name": "Wait For Test Completion",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [480, 2300],
+      "parameters": {
+        "resume": "timeInterval",
+        "amount": 90,
+        "unit": "seconds"
+      },
+      "webhookId": "cos-weekly-wait-webhook-062"
+    },
+
+    {
+      "id": "cos-weekly-poll-063",
+      "name": "Poll Test Result",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [720, 2300],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ 'https://inspiring-cat-production.up.railway.app/tasks/' + $('Submit Recovery Test Task').first().json.id }}"
+      }
+    },
+
+    {
+      "id": "cos-weekly-parse-064",
+      "name": "Parse Test Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [960, 2300],
+      "parameters": {
+        "jsCode": "const task = $input.first().json;\nconst result = task.result || task.error || '';\nconst status = task.status || 'unknown';\n\nif (status === 'failed') {\n  return [{json: {failed: true, failedCount: 1, summary: `Task execution failed: ${result.substring(0,300)}`, fullOutput: result, status}}];\n}\n\nif (result.includes('[cli_worker: shell timed out')) {\n  return [{json: {failed: true, failedCount: 1, summary: 'Recovery test TIMED OUT — shell limit exceeded. Test script may need more than 60s.', fullOutput: result, status}}];\n}\n\nif (status === 'pending' || status === 'running') {\n  return [{json: {failed: true, failedCount: 1, summary: `Test still ${status} after 90s wait — something may be stuck.`, fullOutput: result, status}}];\n}\n\n// Parse FAILED count from test_recovery_layers.py output\n// The script outputs \"X tests failed\" or \"FAILED tests: X\" style lines\nconst failedNumMatch = result.match(/(\\d+)\\s+tests?\\s+failed/i) || result.match(/FAILED\\s+tests?:\\s*(\\d+)/i);\nlet failedCount = failedNumMatch ? parseInt(failedNumMatch[1]) : 0;\n\n// If no count found but FAILED keyword present, treat as 1 failure\nif (failedCount === 0 && result.toUpperCase().includes('FAILED')) {\n  failedCount = 1;\n}\n\n// Extract the failing test lines for the email\nconst lines = result.split('\\n');\nconst failedLines = lines.filter(l => /FAIL|ERROR/i.test(l)).slice(0, 8);\nconst summary = failedLines.length > 0 ? failedLines.join('\\n') : (failedCount === 0 ? 'All tests PASSED' : 'Tests failed (see full output)');\n\nreturn [{json: {\n  failed: failedCount > 0,\n  failedCount,\n  summary,\n  fullOutput: result.substring(0, 3000),\n  status,\n  testRunAt: new Date().toISOString()\n}}];"
+      }
+    },
+
+    {
+      "id": "cos-weekly-if-065",
+      "name": "Any Layer Failed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1200, 2300],
+      "parameters": {
+        "conditions": {
+          "options": {"caseSensitive": true, "leftValue": "", "typeValidation": "strict"},
+          "conditions": [{"id": "weekly-fail-check", "leftValue": "={{ $json.failedCount }}", "rightValue": 0, "operator": {"type": "number", "operation": "gt"}}],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+
+    {
+      "id": "cos-weekly-alarm-066",
+      "name": "Send Recovery Layer Alarm",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [1440, 2220],
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "sendTo": "gelsonmascarenhas@gmail.com",
+        "subject": "={{ '🚨 [ALARM] CLI Recovery Layer Test FAILED — ' + $json.failedCount + ' layer(s) broken — ' + new Date().toLocaleDateString('en-GB') }}",
+        "message": "={{ '<div style=\"font-family:Arial,sans-serif;max-width:640px;margin:0 auto;\"><div style=\"background:#7b0000;color:white;padding:20px;border-radius:8px 8px 0 0;\"><h2 style=\"margin:0;\">🚨 Chief of Staff — Recovery Layer Alarm</h2><p style=\"margin:5px 0 0;opacity:0.8;font-size:14px;\">Weekly automated test — ' + new Date().toLocaleString('en-GB') + ' UTC</p></div><div style=\"background:#fff8f8;border:2px solid #ff1744;padding:20px;\"><div style=\"background:#ff1744;color:white;display:inline-block;padding:4px 12px;border-radius:4px;font-weight:bold;margin-bottom:15px;\">' + $json.failedCount + ' LAYER(S) FAILED</div><p><strong>Summary of failures:</strong></p><pre style=\"background:#f5f5f5;padding:12px;border-radius:4px;font-size:13px;white-space:pre-wrap;\">' + $json.summary + '</pre><hr style=\"border:1px solid #eee;\"><p><strong>Full test output:</strong></p><pre style=\"background:#1a1a1a;color:#f0f0f0;padding:12px;border-radius:4px;font-size:12px;white-space:pre-wrap;max-height:400px;overflow:auto;\">' + $json.fullOutput + '</pre><hr style=\"border:1px solid #eee;\"><p style=\"font-size:12px;color:#666;\">Test ran at: ' + $json.testRunAt + '<br>Script: python3 /app/scripts/test_recovery_layers.py<br>Container: inspiring-cat</p></div><div style=\"background:#7b0000;color:white;padding:10px;border-radius:0 0 8px 8px;font-size:12px;text-align:center;\">🧑🏾 Chief of Staff AI | Super-Agent Operations</div></div>' }}",
+        "additionalFields": {"emailType": "html"}
+      },
+      "credentials": { "gmailOAuth2": {"id": "T55BDHntJ3i1NFYw", "name": "Gmail account 2"} }
+    },
+
+    {
+      "id": "cos-weekly-ok-067",
+      "name": "All Recovery Layers Healthy",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [1440, 2420],
+      "parameters": {}
     }
 
   ],
@@ -739,7 +846,19 @@
     "Get Context for General": { "main": [[{"node": "Build General Prompt", "type": "main", "index": 0}]] },
     "Build General Prompt": { "main": [[{"node": "AI General Answer", "type": "main", "index": 0}]] },
     "AI General Answer": { "main": [[{"node": "Parse General Answer", "type": "main", "index": 0}]] },
-    "Parse General Answer": { "main": [[{"node": "Respond: General", "type": "main", "index": 0}]] }
+    "Parse General Answer": { "main": [[{"node": "Respond: General", "type": "main", "index": 0}]] },
+
+    "Weekly Recovery Test": { "main": [[{"node": "Submit Recovery Test Task", "type": "main", "index": 0}]] },
+    "Submit Recovery Test Task": { "main": [[{"node": "Wait For Test Completion", "type": "main", "index": 0}]] },
+    "Wait For Test Completion": { "main": [[{"node": "Poll Test Result", "type": "main", "index": 0}]] },
+    "Poll Test Result": { "main": [[{"node": "Parse Test Output", "type": "main", "index": 0}]] },
+    "Parse Test Output": { "main": [[{"node": "Any Layer Failed?", "type": "main", "index": 0}]] },
+    "Any Layer Failed?": {
+      "main": [
+        [{"node": "Send Recovery Layer Alarm", "type": "main", "index": 0}],
+        [{"node": "All Recovery Layers Healthy", "type": "main", "index": 0}]
+      ]
+    }
   },
 
   "settings": { "executionOrder": "v1" }

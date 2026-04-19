@@ -82,11 +82,20 @@ if [ -f "$_VOLUME_CREDS" ] && [ ! -f /root/.claude/.credentials.json ]; then
     echo "[entrypoint] Claude credentials restored from volume backup ($_VOLUME_CREDS)."
 fi
 
+# Helper: check if claude auth status output confirms claude.ai Pro login.
+# Handles both compact JSON ("authMethod":"claude.ai") and pretty-printed
+# JSON ("authMethod": "claude.ai") because the format varies by CLI version.
+_claude_auth_valid() {
+    local _out
+    _out=$(echo "$1" | tr -d ' ')   # strip all spaces → normalise to compact
+    echo "$_out" | grep -q '"authMethod":"claude.ai"'
+}
+
 # Check if existing credentials are already valid (volume-persisted or from a previous boot)
 if [ -f /root/.claude/.credentials.json ]; then
     _auth_status=$(timeout 15 claude auth status 2>/dev/null || echo "{}")
-    if echo "$_auth_status" | grep -q '"authMethod":"claude.ai"'; then
-        _sub=$(echo "$_auth_status" | grep -o '"subscriptionType":"[^"]*"' | cut -d'"' -f4)
+    if _claude_auth_valid "$_auth_status"; then
+        _sub=$(echo "$_auth_status" | tr -d ' ' | grep -o '"subscriptionType":"[^"]*"' | cut -d'"' -f4)
         echo "[entrypoint] Claude.ai Pro credentials VALID on disk (authMethod=claude.ai subscriptionType=${_sub:-unknown}) — skipping env var restore."
         rm -f "${_CLI_FLAG_DIR}/.pro_cli_down" 2>/dev/null || true
         _claude_valid=true
@@ -104,12 +113,12 @@ if [ "$_claude_valid" = "false" ] && [ -n "$CLAUDE_SESSION_TOKEN" ]; then
     echo "[entrypoint] Claude.ai Pro credentials restored from CLAUDE_SESSION_TOKEN env var."
 
     _auth_status=$(timeout 15 claude auth status 2>/dev/null || echo "{}")
-    if echo "$_auth_status" | grep -q '"authMethod":"claude.ai"'; then
+    if _claude_auth_valid "$_auth_status"; then
         _sub=$(echo "$_auth_status" | grep -o '"subscriptionType":"[^"]*"' | cut -d'"' -f4)
         echo "[entrypoint] Claude.ai Pro token VALID — authMethod=claude.ai subscriptionType=${_sub:-unknown}. CLI ready."
         rm -f "${_CLI_FLAG_DIR}/.pro_cli_down" 2>/dev/null || true
         _claude_valid=true
-    elif echo "$_auth_status" | grep -q '"loggedIn":true'; then
+    elif echo "$_auth_status" | tr -d ' ' | grep -q '"loggedIn":true'; then
         echo "[entrypoint] WARNING: Claude logged in but NOT via claude.ai (API key mode). Pro subscription inactive."
         echo "$(date -u +%Y-%m-%dT%H:%M:%S)|600" > "${_CLI_FLAG_DIR}/.pro_cli_down"
     else

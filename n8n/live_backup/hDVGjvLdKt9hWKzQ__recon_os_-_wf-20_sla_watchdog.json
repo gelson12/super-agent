@@ -1,0 +1,581 @@
+﻿{
+    "updatedAt":  "2026-04-19T07:27:33.077Z",
+    "createdAt":  "2026-04-19T03:30:21.352Z",
+    "id":  "hDVGjvLdKt9hWKzQ",
+    "name":  "RECON OS - WF-20 SLA Watchdog",
+    "description":  null,
+    "active":  true,
+    "isArchived":  false,
+    "nodes":  [
+                  {
+                      "parameters":  {
+                                         "rule":  {
+                                                      "interval":  [
+                                                                       {
+                                                                           "field":  "cronExpression",
+                                                                           "expression":  "30 8 * * *"
+                                                                       }
+                                                                   ]
+                                                  }
+                                     },
+                      "id":  "cron-daily",
+                      "name":  "Cron Daily 08:30",
+                      "type":  "n8n-nodes-base.scheduleTrigger",
+                      "typeVersion":  1.2,
+                      "position":  [
+                                       240,
+                                       300
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "SELECT\n  nf.id as finding_id,\n  nf.title,\n  nf.severity,\n  nf.priority_bucket,\n  nf.validated_at,\n  nf.remediation_owner,\n  a.asset_value,\n  e.name as engagement_name,\n  c.name as client_name,\n  c.contact_email,\n  EXTRACT(DAYS FROM NOW() - nf.validated_at) as days_open,\n  CASE\n    WHEN nf.priority_bucket = \u0027immediate_attention\u0027 THEN 7\n    WHEN nf.priority_bucket = \u0027high_priority\u0027 THEN 30\n    WHEN nf.priority_bucket = \u0027medium_priority\u0027 THEN 90\n    WHEN nf.priority_bucket = \u0027low_priority\u0027 THEN 180\n    ELSE 999\n  END as sla_days,\n  CASE\n    WHEN nf.priority_bucket = \u0027immediate_attention\u0027 THEN EXTRACT(DAYS FROM NOW() - nf.validated_at) - 7\n    WHEN nf.priority_bucket = \u0027high_priority\u0027 THEN EXTRACT(DAYS FROM NOW() - nf.validated_at) - 30\n    WHEN nf.priority_bucket = \u0027medium_priority\u0027 THEN EXTRACT(DAYS FROM NOW() - nf.validated_at) - 90\n    ELSE -999\n  END as days_overdue\nFROM normalized_findings nf\nJOIN assets a ON nf.asset_id = a.id\nJOIN engagements e ON nf.engagement_id = e.id\nJOIN clients c ON e.client_id = c.id\nWHERE nf.validation_status = \u0027validated\u0027\n  AND nf.remediation_status NOT IN (\u0027verified_fixed\u0027,\u0027accepted_risk\u0027)\n  AND nf.validated_at IS NOT NULL\n  AND (\n    (nf.priority_bucket = \u0027immediate_attention\u0027 AND nf.validated_at \u003c NOW() - INTERVAL \u00275 days\u0027) OR\n    (nf.priority_bucket = \u0027high_priority\u0027 AND nf.validated_at \u003c NOW() - INTERVAL \u002724 days\u0027) OR\n    (nf.priority_bucket = \u0027medium_priority\u0027 AND nf.validated_at \u003c NOW() - INTERVAL \u002772 days\u0027)\n  )\nORDER BY days_overdue DESC;",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "pg-get-sla-items",
+                      "name":  "Get SLA Items",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       460,
+                                       300
+                                   ],
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "oHS3dvjMW1h1PkMp",
+                                                           "name":  "RECON OS PostgreSQL"
+                                                       }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "const items = $input.all().map(i =\u003e i.json);\nif (items.length === 0) return [{ json: { has_items: false, digest: \u0027RECON OS SLA Watchdog: All clear - no SLA breaches.\u0027, overdue_critical: 0 } }];\n\nconst overdue = items.filter(i =\u003e parseFloat(i.days_overdue) \u003e 0);\nconst warning = items.filter(i =\u003e parseFloat(i.days_overdue) \u003c= 0);\nconst overdueCritical = overdue.filter(i =\u003e [\u0027immediate_attention\u0027,\u0027high_priority\u0027].includes(i.priority_bucket));\n\nconst formatItem = i =\u003e {\n  const daysOverdue = Math.round(parseFloat(i.days_overdue||0));\n  const tag = daysOverdue \u003e 0 ? `?? ${daysOverdue}d OVERDUE` : `?? ${Math.round(Math.abs(parseFloat(i.days_overdue||0)))}d to SLA`;\n  return `  ${tag} | [${i.severity?.toUpperCase()}] ${i.title}\\n    Client: ${i.client_name} | Asset: ${i.asset_value} | Owner: ${i.remediation_owner || \u0027Unassigned\u0027}`;\n};\n\nconst digest = [\n  `?? RECON OS - SLA Watchdog - ${new Date().toISOString().split(\u0027T\u0027)[0]}`,\n  `Total items at risk: ${items.length} (${overdue.length} overdue, ${warning.length} approaching)`,\n  ``,\n  overdue.length \u003e 0 ? `OVERDUE (${overdue.length}):` : \u0027\u0027,\n  ...overdue.map(formatItem),\n  ``,\n  warning.length \u003e 0 ? `APPROACHING SLA (${warning.length}):` : \u0027\u0027,\n  ...warning.slice(0,5).map(formatItem)\n].filter(l =\u003e l !== null \u0026\u0026 l !== \u0027\u0027).join(\u0027\\n\u0027);\n\nreturn [{ json: {\n  has_items: items.length \u003e 0,\n  digest,\n  overdue_count: overdue.length,\n  warning_count: warning.length,\n  overdue_critical: overdueCritical.length,\n  items\n} }];"
+                                     },
+                      "id":  "build-sla-report",
+                      "name":  "Build SLA Report",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       680,
+                                       300
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "conditions":  {
+                                                            "options":  {
+                                                                            "caseSensitive":  true,
+                                                                            "leftValue":  "",
+                                                                            "typeValidation":  "strict"
+                                                                        },
+                                                            "conditions":  [
+                                                                               {
+                                                                                   "id":  "cond-items",
+                                                                                   "leftValue":  "={{ $json.has_items }}",
+                                                                                   "rightValue":  true,
+                                                                                   "operator":  {
+                                                                                                    "type":  "boolean",
+                                                                                                    "operation":  "true"
+                                                                                                }
+                                                                               }
+                                                                           ],
+                                                            "combinator":  "and"
+                                                        },
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "if-has-items",
+                      "name":  "IF Has SLA Items?",
+                      "type":  "n8n-nodes-base.if",
+                      "typeVersion":  2.2,
+                      "position":  [
+                                       900,
+                                       300
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "method":  "POST",
+                                         "url":  "={{ $env.RECON_OS_SLACK_WEBHOOK || \u0027https://hooks.slack.com/services/PLACEHOLDER\u0027 }}",
+                                         "sendBody":  true,
+                                         "specifyBody":  "json",
+                                         "jsonBody":  "={{ JSON.stringify({ text: $json.digest, username: \u0027RECON OS SLA Watchdog\u0027, icon_emoji: \u0027:alarm_clock:\u0027 }) }}",
+                                         "options":  {
+                                                         "timeout":  10000
+                                                     }
+                                     },
+                      "id":  "send-slack-digest",
+                      "name":  "Send Slack Digest",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.2,
+                      "position":  [
+                                       1120,
+                                       300
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "conditions":  {
+                                                            "options":  {
+                                                                            "caseSensitive":  true,
+                                                                            "leftValue":  "",
+                                                                            "typeValidation":  "strict"
+                                                                        },
+                                                            "conditions":  [
+                                                                               {
+                                                                                   "id":  "cond-crit",
+                                                                                   "leftValue":  "={{ $(\u0027Build SLA Report\u0027).first().json.overdue_critical }}",
+                                                                                   "rightValue":  0,
+                                                                                   "operator":  {
+                                                                                                    "type":  "number",
+                                                                                                    "operation":  "gt"
+                                                                                                }
+                                                                               }
+                                                                           ],
+                                                            "combinator":  "and"
+                                                        },
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "if-overdue-critical",
+                      "name":  "IF Overdue Critical?",
+                      "type":  "n8n-nodes-base.if",
+                      "typeVersion":  2.2,
+                      "position":  [
+                                       1340,
+                                       300
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "INSERT INTO audit_logs (event_type, actor, payload)\nVALUES (\u0027sla_watchdog_run\u0027,\u0027wf20\u0027,\u0027{\"overdue\":{{ $(\u0027Build SLA Report\u0027).first().json.overdue_count }},\"warning\":{{ $(\u0027Build SLA Report\u0027).first().json.warning_count }},\"overdue_critical\":{{ $(\u0027Build SLA Report\u0027).first().json.overdue_critical }}}\u0027::jsonb);",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "pg-audit",
+                      "name":  "Audit Log",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       1120,
+                                       500
+                                   ],
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "oHS3dvjMW1h1PkMp",
+                                                           "name":  "RECON OS PostgreSQL"
+                                                       }
+                                      }
+                  }
+              ],
+    "connections":  {
+                        "Cron Daily 08:30":  {
+                                                 "main":  [
+                                                              [
+                                                                  {
+                                                                      "node":  "Get SLA Items",
+                                                                      "type":  "main",
+                                                                      "index":  0
+                                                                  }
+                                                              ]
+                                                          ]
+                                             },
+                        "Get SLA Items":  {
+                                              "main":  [
+                                                           [
+                                                               {
+                                                                   "node":  "Build SLA Report",
+                                                                   "type":  "main",
+                                                                   "index":  0
+                                                               }
+                                                           ]
+                                                       ]
+                                          },
+                        "Build SLA Report":  {
+                                                 "main":  [
+                                                              [
+                                                                  {
+                                                                      "node":  "IF Has SLA Items?",
+                                                                      "type":  "main",
+                                                                      "index":  0
+                                                                  }
+                                                              ]
+                                                          ]
+                                             },
+                        "IF Has SLA Items?":  {
+                                                  "main":  [
+                                                               [
+                                                                   {
+                                                                       "node":  "Send Slack Digest",
+                                                                       "type":  "main",
+                                                                       "index":  0
+                                                                   }
+                                                               ],
+                                                               [
+                                                                   {
+                                                                       "node":  "Audit Log",
+                                                                       "type":  "main",
+                                                                       "index":  0
+                                                                   }
+                                                               ]
+                                                           ]
+                                              },
+                        "Send Slack Digest":  {
+                                                  "main":  [
+                                                               [
+                                                                   {
+                                                                       "node":  "IF Overdue Critical?",
+                                                                       "type":  "main",
+                                                                       "index":  0
+                                                                   }
+                                                               ]
+                                                           ]
+                                              },
+                        "IF Overdue Critical?":  {
+                                                     "main":  [
+                                                                  [
+                                                                      {
+                                                                          "node":  "Audit Log",
+                                                                          "type":  "main",
+                                                                          "index":  0
+                                                                      }
+                                                                  ],
+                                                                  [
+                                                                      {
+                                                                          "node":  "Audit Log",
+                                                                          "type":  "main",
+                                                                          "index":  0
+                                                                      }
+                                                                  ]
+                                                              ]
+                                                 }
+                    },
+    "settings":  {
+                     "executionOrder":  "v1",
+                     "saveManualExecutions":  true,
+                     "saveExecutionProgress":  true,
+                     "callerPolicy":  "workflowsFromSameOwner",
+                     "availableInMCP":  false
+                 },
+    "staticData":  {
+                       "node:Cron Daily 08:30":  {
+                                                     "recurrenceRules":  [
+
+                                                                         ]
+                                                 }
+                   },
+    "meta":  null,
+    "pinData":  null,
+    "versionId":  "6c04ae5f-e148-4c51-b742-a5d3f457a3bb",
+    "activeVersionId":  "6c04ae5f-e148-4c51-b742-a5d3f457a3bb",
+    "versionCounter":  7,
+    "triggerCount":  1,
+    "shared":  [
+                   {
+                       "updatedAt":  "2026-04-19T03:30:21.352Z",
+                       "createdAt":  "2026-04-19T03:30:21.352Z",
+                       "role":  "workflow:owner",
+                       "workflowId":  "hDVGjvLdKt9hWKzQ",
+                       "projectId":  "Lrgt6JR85OZiVLcX",
+                       "project":  {
+                                       "updatedAt":  "2026-03-31T09:07:31.366Z",
+                                       "createdAt":  "2026-03-31T08:57:43.789Z",
+                                       "id":  "Lrgt6JR85OZiVLcX",
+                                       "name":  "gelson mascarenhas \u003cgelson_m@hotmail.com\u003e",
+                                       "type":  "personal",
+                                       "icon":  null,
+                                       "description":  null,
+                                       "creatorId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                   }
+                   }
+               ],
+    "tags":  [
+
+             ],
+    "activeVersion":  {
+                          "updatedAt":  "2026-04-19T07:27:33.080Z",
+                          "createdAt":  "2026-04-19T07:27:33.080Z",
+                          "versionId":  "6c04ae5f-e148-4c51-b742-a5d3f457a3bb",
+                          "workflowId":  "hDVGjvLdKt9hWKzQ",
+                          "nodes":  [
+                                        {
+                                            "parameters":  {
+                                                               "rule":  {
+                                                                            "interval":  [
+                                                                                             {
+                                                                                                 "field":  "cronExpression",
+                                                                                                 "expression":  "30 8 * * *"
+                                                                                             }
+                                                                                         ]
+                                                                        }
+                                                           },
+                                            "id":  "cron-daily",
+                                            "name":  "Cron Daily 08:30",
+                                            "type":  "n8n-nodes-base.scheduleTrigger",
+                                            "typeVersion":  1.2,
+                                            "position":  [
+                                                             240,
+                                                             300
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "operation":  "executeQuery",
+                                                               "query":  "SELECT\n  nf.id as finding_id,\n  nf.title,\n  nf.severity,\n  nf.priority_bucket,\n  nf.validated_at,\n  nf.remediation_owner,\n  a.asset_value,\n  e.name as engagement_name,\n  c.name as client_name,\n  c.contact_email,\n  EXTRACT(DAYS FROM NOW() - nf.validated_at) as days_open,\n  CASE\n    WHEN nf.priority_bucket = \u0027immediate_attention\u0027 THEN 7\n    WHEN nf.priority_bucket = \u0027high_priority\u0027 THEN 30\n    WHEN nf.priority_bucket = \u0027medium_priority\u0027 THEN 90\n    WHEN nf.priority_bucket = \u0027low_priority\u0027 THEN 180\n    ELSE 999\n  END as sla_days,\n  CASE\n    WHEN nf.priority_bucket = \u0027immediate_attention\u0027 THEN EXTRACT(DAYS FROM NOW() - nf.validated_at) - 7\n    WHEN nf.priority_bucket = \u0027high_priority\u0027 THEN EXTRACT(DAYS FROM NOW() - nf.validated_at) - 30\n    WHEN nf.priority_bucket = \u0027medium_priority\u0027 THEN EXTRACT(DAYS FROM NOW() - nf.validated_at) - 90\n    ELSE -999\n  END as days_overdue\nFROM normalized_findings nf\nJOIN assets a ON nf.asset_id = a.id\nJOIN engagements e ON nf.engagement_id = e.id\nJOIN clients c ON e.client_id = c.id\nWHERE nf.validation_status = \u0027validated\u0027\n  AND nf.remediation_status NOT IN (\u0027verified_fixed\u0027,\u0027accepted_risk\u0027)\n  AND nf.validated_at IS NOT NULL\n  AND (\n    (nf.priority_bucket = \u0027immediate_attention\u0027 AND nf.validated_at \u003c NOW() - INTERVAL \u00275 days\u0027) OR\n    (nf.priority_bucket = \u0027high_priority\u0027 AND nf.validated_at \u003c NOW() - INTERVAL \u002724 days\u0027) OR\n    (nf.priority_bucket = \u0027medium_priority\u0027 AND nf.validated_at \u003c NOW() - INTERVAL \u002772 days\u0027)\n  )\nORDER BY days_overdue DESC;",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "pg-get-sla-items",
+                                            "name":  "Get SLA Items",
+                                            "type":  "n8n-nodes-base.postgres",
+                                            "typeVersion":  2.5,
+                                            "position":  [
+                                                             460,
+                                                             300
+                                                         ],
+                                            "credentials":  {
+                                                                "postgres":  {
+                                                                                 "id":  "oHS3dvjMW1h1PkMp",
+                                                                                 "name":  "RECON OS PostgreSQL"
+                                                                             }
+                                                            }
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "jsCode":  "const items = $input.all().map(i =\u003e i.json);\nif (items.length === 0) return [{ json: { has_items: false, digest: \u0027RECON OS SLA Watchdog: All clear - no SLA breaches.\u0027, overdue_critical: 0 } }];\n\nconst overdue = items.filter(i =\u003e parseFloat(i.days_overdue) \u003e 0);\nconst warning = items.filter(i =\u003e parseFloat(i.days_overdue) \u003c= 0);\nconst overdueCritical = overdue.filter(i =\u003e [\u0027immediate_attention\u0027,\u0027high_priority\u0027].includes(i.priority_bucket));\n\nconst formatItem = i =\u003e {\n  const daysOverdue = Math.round(parseFloat(i.days_overdue||0));\n  const tag = daysOverdue \u003e 0 ? `?? ${daysOverdue}d OVERDUE` : `?? ${Math.round(Math.abs(parseFloat(i.days_overdue||0)))}d to SLA`;\n  return `  ${tag} | [${i.severity?.toUpperCase()}] ${i.title}\\n    Client: ${i.client_name} | Asset: ${i.asset_value} | Owner: ${i.remediation_owner || \u0027Unassigned\u0027}`;\n};\n\nconst digest = [\n  `?? RECON OS - SLA Watchdog - ${new Date().toISOString().split(\u0027T\u0027)[0]}`,\n  `Total items at risk: ${items.length} (${overdue.length} overdue, ${warning.length} approaching)`,\n  ``,\n  overdue.length \u003e 0 ? `OVERDUE (${overdue.length}):` : \u0027\u0027,\n  ...overdue.map(formatItem),\n  ``,\n  warning.length \u003e 0 ? `APPROACHING SLA (${warning.length}):` : \u0027\u0027,\n  ...warning.slice(0,5).map(formatItem)\n].filter(l =\u003e l !== null \u0026\u0026 l !== \u0027\u0027).join(\u0027\\n\u0027);\n\nreturn [{ json: {\n  has_items: items.length \u003e 0,\n  digest,\n  overdue_count: overdue.length,\n  warning_count: warning.length,\n  overdue_critical: overdueCritical.length,\n  items\n} }];"
+                                                           },
+                                            "id":  "build-sla-report",
+                                            "name":  "Build SLA Report",
+                                            "type":  "n8n-nodes-base.code",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             680,
+                                                             300
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "conditions":  {
+                                                                                  "options":  {
+                                                                                                  "caseSensitive":  true,
+                                                                                                  "leftValue":  "",
+                                                                                                  "typeValidation":  "strict"
+                                                                                              },
+                                                                                  "conditions":  [
+                                                                                                     {
+                                                                                                         "id":  "cond-items",
+                                                                                                         "leftValue":  "={{ $json.has_items }}",
+                                                                                                         "rightValue":  true,
+                                                                                                         "operator":  {
+                                                                                                                          "type":  "boolean",
+                                                                                                                          "operation":  "true"
+                                                                                                                      }
+                                                                                                     }
+                                                                                                 ],
+                                                                                  "combinator":  "and"
+                                                                              },
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "if-has-items",
+                                            "name":  "IF Has SLA Items?",
+                                            "type":  "n8n-nodes-base.if",
+                                            "typeVersion":  2.2,
+                                            "position":  [
+                                                             900,
+                                                             300
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "method":  "POST",
+                                                               "url":  "={{ $env.RECON_OS_SLACK_WEBHOOK || \u0027https://hooks.slack.com/services/PLACEHOLDER\u0027 }}",
+                                                               "sendBody":  true,
+                                                               "specifyBody":  "json",
+                                                               "jsonBody":  "={{ JSON.stringify({ text: $json.digest, username: \u0027RECON OS SLA Watchdog\u0027, icon_emoji: \u0027:alarm_clock:\u0027 }) }}",
+                                                               "options":  {
+                                                                               "timeout":  10000
+                                                                           }
+                                                           },
+                                            "id":  "send-slack-digest",
+                                            "name":  "Send Slack Digest",
+                                            "type":  "n8n-nodes-base.httpRequest",
+                                            "typeVersion":  4.2,
+                                            "position":  [
+                                                             1120,
+                                                             300
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "conditions":  {
+                                                                                  "options":  {
+                                                                                                  "caseSensitive":  true,
+                                                                                                  "leftValue":  "",
+                                                                                                  "typeValidation":  "strict"
+                                                                                              },
+                                                                                  "conditions":  [
+                                                                                                     {
+                                                                                                         "id":  "cond-crit",
+                                                                                                         "leftValue":  "={{ $(\u0027Build SLA Report\u0027).first().json.overdue_critical }}",
+                                                                                                         "rightValue":  0,
+                                                                                                         "operator":  {
+                                                                                                                          "type":  "number",
+                                                                                                                          "operation":  "gt"
+                                                                                                                      }
+                                                                                                     }
+                                                                                                 ],
+                                                                                  "combinator":  "and"
+                                                                              },
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "if-overdue-critical",
+                                            "name":  "IF Overdue Critical?",
+                                            "type":  "n8n-nodes-base.if",
+                                            "typeVersion":  2.2,
+                                            "position":  [
+                                                             1340,
+                                                             300
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "operation":  "executeQuery",
+                                                               "query":  "INSERT INTO audit_logs (event_type, actor, payload)\nVALUES (\u0027sla_watchdog_run\u0027,\u0027wf20\u0027,\u0027{\"overdue\":{{ $(\u0027Build SLA Report\u0027).first().json.overdue_count }},\"warning\":{{ $(\u0027Build SLA Report\u0027).first().json.warning_count }},\"overdue_critical\":{{ $(\u0027Build SLA Report\u0027).first().json.overdue_critical }}}\u0027::jsonb);",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "pg-audit",
+                                            "name":  "Audit Log",
+                                            "type":  "n8n-nodes-base.postgres",
+                                            "typeVersion":  2.5,
+                                            "position":  [
+                                                             1120,
+                                                             500
+                                                         ],
+                                            "credentials":  {
+                                                                "postgres":  {
+                                                                                 "id":  "oHS3dvjMW1h1PkMp",
+                                                                                 "name":  "RECON OS PostgreSQL"
+                                                                             }
+                                                            }
+                                        }
+                                    ],
+                          "connections":  {
+                                              "Cron Daily 08:30":  {
+                                                                       "main":  [
+                                                                                    [
+                                                                                        {
+                                                                                            "node":  "Get SLA Items",
+                                                                                            "type":  "main",
+                                                                                            "index":  0
+                                                                                        }
+                                                                                    ]
+                                                                                ]
+                                                                   },
+                                              "Get SLA Items":  {
+                                                                    "main":  [
+                                                                                 [
+                                                                                     {
+                                                                                         "node":  "Build SLA Report",
+                                                                                         "type":  "main",
+                                                                                         "index":  0
+                                                                                     }
+                                                                                 ]
+                                                                             ]
+                                                                },
+                                              "Build SLA Report":  {
+                                                                       "main":  [
+                                                                                    [
+                                                                                        {
+                                                                                            "node":  "IF Has SLA Items?",
+                                                                                            "type":  "main",
+                                                                                            "index":  0
+                                                                                        }
+                                                                                    ]
+                                                                                ]
+                                                                   },
+                                              "IF Has SLA Items?":  {
+                                                                        "main":  [
+                                                                                     [
+                                                                                         {
+                                                                                             "node":  "Send Slack Digest",
+                                                                                             "type":  "main",
+                                                                                             "index":  0
+                                                                                         }
+                                                                                     ],
+                                                                                     [
+                                                                                         {
+                                                                                             "node":  "Audit Log",
+                                                                                             "type":  "main",
+                                                                                             "index":  0
+                                                                                         }
+                                                                                     ]
+                                                                                 ]
+                                                                    },
+                                              "Send Slack Digest":  {
+                                                                        "main":  [
+                                                                                     [
+                                                                                         {
+                                                                                             "node":  "IF Overdue Critical?",
+                                                                                             "type":  "main",
+                                                                                             "index":  0
+                                                                                         }
+                                                                                     ]
+                                                                                 ]
+                                                                    },
+                                              "IF Overdue Critical?":  {
+                                                                           "main":  [
+                                                                                        [
+                                                                                            {
+                                                                                                "node":  "Audit Log",
+                                                                                                "type":  "main",
+                                                                                                "index":  0
+                                                                                            }
+                                                                                        ],
+                                                                                        [
+                                                                                            {
+                                                                                                "node":  "Audit Log",
+                                                                                                "type":  "main",
+                                                                                                "index":  0
+                                                                                            }
+                                                                                        ]
+                                                                                    ]
+                                                                       }
+                                          },
+                          "authors":  "gelson mascarenhas",
+                          "name":  null,
+                          "description":  null,
+                          "autosaved":  false,
+                          "workflowPublishHistory":  [
+                                                         {
+                                                             "createdAt":  "2026-04-19T07:27:33.118Z",
+                                                             "id":  563,
+                                                             "workflowId":  "hDVGjvLdKt9hWKzQ",
+                                                             "versionId":  "6c04ae5f-e148-4c51-b742-a5d3f457a3bb",
+                                                             "event":  "deactivated",
+                                                             "userId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                                         },
+                                                         {
+                                                             "createdAt":  "2026-04-19T07:27:33.137Z",
+                                                             "id":  564,
+                                                             "workflowId":  "hDVGjvLdKt9hWKzQ",
+                                                             "versionId":  "6c04ae5f-e148-4c51-b742-a5d3f457a3bb",
+                                                             "event":  "activated",
+                                                             "userId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                                         }
+                                                     ]
+                      }
+}

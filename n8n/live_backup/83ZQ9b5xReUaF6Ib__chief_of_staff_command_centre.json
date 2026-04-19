@@ -302,21 +302,20 @@
                                                    "lastTimeChecked":  1776511962
                                                },
                        "node:Gmail — Gelson":  {
-                                                   "lastTimeChecked":  1776538613,
+                                                   "lastTimeChecked":  1776589023,
                                                    "possibleDuplicates":  [
-                                                                              "19da1f3f6f2b5d3a",
-                                                                              "19da1d8824f4b1b5"
+                                                                              "19da4f52ab50b97d"
                                                                           ]
                                                },
                        "node:Outlook — Hotmail":  {
-                                                      "lastTimeChecked":  "2026-04-18T19:56:24.003+01:00"
+                                                      "lastTimeChecked":  "2026-04-19T10:03:24.005+01:00"
                                                   }
                    },
     "meta":  null,
     "pinData":  null,
     "versionId":  "547feea8-fc9d-4c9d-9491-ebd649181391",
     "activeVersionId":  "547feea8-fc9d-4c9d-9491-ebd649181391",
-    "versionCounter":  60,
+    "versionCounter":  169,
     "triggerCount":  5,
     "shared":  [
                    {

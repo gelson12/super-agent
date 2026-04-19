@@ -1,0 +1,941 @@
+﻿{
+    "updatedAt":  "2026-04-19T07:27:25.939Z",
+    "createdAt":  "2026-04-19T03:30:18.703Z",
+    "id":  "edTyF8K1pWJjLPdP",
+    "name":  "RECON OS - WF-14 Remediation Tracker",
+    "description":  null,
+    "active":  true,
+    "isArchived":  false,
+    "nodes":  [
+                  {
+                      "parameters":  {
+                                         "httpMethod":  "POST",
+                                         "path":  "recon-os/remediation/update",
+                                         "responseMode":  "responseNode",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "wh-remediation",
+                      "name":  "Webhook Update",
+                      "type":  "n8n-nodes-base.webhook",
+                      "typeVersion":  2,
+                      "position":  [
+                                       240,
+                                       300
+                                   ],
+                      "webhookId":  "recon-os-remediation-update"
+                  },
+                  {
+                      "parameters":  {
+                                         "httpMethod":  "POST",
+                                         "path":  "recon-os/remediation/bulk",
+                                         "responseMode":  "responseNode",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "wh-bulk",
+                      "name":  "Webhook Bulk Import",
+                      "type":  "n8n-nodes-base.webhook",
+                      "typeVersion":  2,
+                      "position":  [
+                                       240,
+                                       500
+                                   ],
+                      "webhookId":  "recon-os-remediation-bulk"
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "const body = $input.first().json.body || $input.first().json;\n\nconst validStatuses = [\u0027open\u0027,\u0027in_progress\u0027,\u0027fixed_pending_retest\u0027,\u0027partially_fixed\u0027,\u0027accepted_risk\u0027];\nif (!body.finding_id) return [{ json: { valid: false, error: \u0027finding_id required\u0027 } }];\nif (body.status \u0026\u0026 !validStatuses.includes(body.status)) {\n  return [{ json: { valid: false, error: `Invalid status. Must be one of: ${validStatuses.join(\u0027, \u0027)}` } }];\n}\n\nreturn [{ json: {\n  valid: true,\n  finding_id: body.finding_id,\n  status: body.status || \u0027in_progress\u0027,\n  owner: body.owner || null,\n  evidence_of_fix: body.evidence_of_fix || null,\n  notes: body.notes || null,\n  external_ticket_id: body.external_ticket_id || null\n} }];"
+                                     },
+                      "id":  "validate-update",
+                      "name":  "Validate Update",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       460,
+                                       300
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "conditions":  {
+                                                            "options":  {
+                                                                            "caseSensitive":  true,
+                                                                            "leftValue":  "",
+                                                                            "typeValidation":  "strict"
+                                                                        },
+                                                            "conditions":  [
+                                                                               {
+                                                                                   "id":  "cond-valid",
+                                                                                   "leftValue":  "={{ $json.valid }}",
+                                                                                   "rightValue":  true,
+                                                                                   "operator":  {
+                                                                                                    "type":  "boolean",
+                                                                                                    "operation":  "true"
+                                                                                                }
+                                                                               }
+                                                                           ],
+                                                            "combinator":  "and"
+                                                        },
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "if-valid",
+                      "name":  "IF Valid?",
+                      "type":  "n8n-nodes-base.if",
+                      "typeVersion":  2.2,
+                      "position":  [
+                                       680,
+                                       300
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "respondWith":  "json",
+                                         "responseBody":  "={{ JSON.stringify({ ok: false, error: $json.error }) }}",
+                                         "options":  {
+                                                         "responseCode":  400
+                                                     }
+                                     },
+                      "id":  "respond-400",
+                      "name":  "Respond 400",
+                      "type":  "n8n-nodes-base.respondToWebhook",
+                      "typeVersion":  1.1,
+                      "position":  [
+                                       900,
+                                       500
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "UPDATE normalized_findings SET\n  remediation_status = \u0027{{ $json.status }}\u0027,\n  remediation_owner = {{ $json.owner ? \"\u0027\" + $json.owner + \"\u0027\" : \u0027remediation_owner\u0027 }},\n  remediation_evidence = {{ $json.evidence_of_fix ? \"\u0027\" + $json.evidence_of_fix.replace(/\u0027/g,\"\u0027\u0027\") + \"\u0027\" : \u0027remediation_evidence\u0027 }},\n  remediation_notes = {{ $json.notes ? \"\u0027\" + $json.notes.replace(/\u0027/g,\"\u0027\u0027\") + \"\u0027\" : \u0027remediation_notes\u0027 }},\n  remediation_updated_at = NOW()\nWHERE id = \u0027{{ $json.finding_id }}\u0027\nRETURNING id, remediation_status, severity, priority_bucket;",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "pg-update-finding",
+                      "name":  "Update Finding Status",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       900,
+                                       300
+                                   ],
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "oHS3dvjMW1h1PkMp",
+                                                           "name":  "RECON OS PostgreSQL"
+                                                       }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "INSERT INTO remediation_tickets (finding_id, engagement_id, owner, status, external_ticket_id, notes)\nSELECT \u0027{{ $(\u0027Validate Update\u0027).first().json.finding_id }}\u0027,\n       engagement_id,\n       {{ $(\u0027Validate Update\u0027).first().json.owner ? \"\u0027\" + $(\u0027Validate Update\u0027).first().json.owner + \"\u0027\" : \u0027NULL\u0027 }},\n       \u0027{{ $(\u0027Validate Update\u0027).first().json.status }}\u0027,\n       {{ $(\u0027Validate Update\u0027).first().json.external_ticket_id ? \"\u0027\" + $(\u0027Validate Update\u0027).first().json.external_ticket_id + \"\u0027\" : \u0027NULL\u0027 }},\n       {{ $(\u0027Validate Update\u0027).first().json.notes ? \"\u0027\" + $(\u0027Validate Update\u0027).first().json.notes.replace(/\u0027/g,\"\u0027\u0027\") + \"\u0027\" : \u0027NULL\u0027 }}\nFROM normalized_findings WHERE id = \u0027{{ $(\u0027Validate Update\u0027).first().json.finding_id }}\u0027\nON CONFLICT DO NOTHING;",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "pg-upsert-ticket",
+                      "name":  "Upsert Ticket",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       1120,
+                                       300
+                                   ],
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "oHS3dvjMW1h1PkMp",
+                                                           "name":  "RECON OS PostgreSQL"
+                                                       }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "conditions":  {
+                                                            "options":  {
+                                                                            "caseSensitive":  true,
+                                                                            "leftValue":  "",
+                                                                            "typeValidation":  "strict"
+                                                                        },
+                                                            "conditions":  [
+                                                                               {
+                                                                                   "id":  "cond-retest",
+                                                                                   "leftValue":  "={{ $(\u0027Validate Update\u0027).first().json.status }}",
+                                                                                   "rightValue":  "fixed_pending_retest",
+                                                                                   "operator":  {
+                                                                                                    "type":  "string",
+                                                                                                    "operation":  "equals"
+                                                                                                }
+                                                                               }
+                                                                           ],
+                                                            "combinator":  "and"
+                                                        },
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "if-retest",
+                      "name":  "IF Fixed Pending Retest?",
+                      "type":  "n8n-nodes-base.if",
+                      "typeVersion":  2.2,
+                      "position":  [
+                                       1340,
+                                       300
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "method":  "POST",
+                                         "url":  "https://outstanding-blessing-production-1d4b.up.railway.app/webhook/recon-os/retests/schedule",
+                                         "sendBody":  true,
+                                         "specifyBody":  "json",
+                                         "jsonBody":  "={{ JSON.stringify({ finding_id: $(\u0027Validate Update\u0027).first().json.finding_id }) }}",
+                                         "options":  {
+                                                         "timeout":  10000
+                                                     }
+                                     },
+                      "id":  "schedule-retest",
+                      "name":  "Schedule Retest",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.2,
+                      "position":  [
+                                       1560,
+                                       200
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "INSERT INTO audit_logs (event_type, actor, entity_type, entity_id, payload)\nVALUES (\u0027remediation_updated\u0027,\u0027wf14\u0027,\u0027finding\u0027,\u0027{{ $(\u0027Validate Update\u0027).first().json.finding_id }}\u0027,\u0027{\"new_status\":\"{{ $(\u0027Validate Update\u0027).first().json.status }}\",\"owner\":\"{{ $(\u0027Validate Update\u0027).first().json.owner || \u0027\u0027 }}\"}\u0027::jsonb);",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "pg-audit",
+                      "name":  "Audit Log",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       1560,
+                                       400
+                                   ],
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "oHS3dvjMW1h1PkMp",
+                                                           "name":  "RECON OS PostgreSQL"
+                                                       }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "respondWith":  "json",
+                                         "responseBody":  "={{ JSON.stringify({ ok: true, finding_id: $(\u0027Validate Update\u0027).first().json.finding_id, new_status: $(\u0027Validate Update\u0027).first().json.status }) }}",
+                                         "options":  {
+                                                         "responseCode":  200
+                                                     }
+                                     },
+                      "id":  "respond-ok",
+                      "name":  "Respond OK",
+                      "type":  "n8n-nodes-base.respondToWebhook",
+                      "typeVersion":  1.1,
+                      "position":  [
+                                       1780,
+                                       300
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "const body = $input.first().json.body || $input.first().json;\nconst updates = Array.isArray(body) ? body : body.updates || [];\nreturn updates.map(u =\u003e ({ json: {\n  finding_id: u.finding_id,\n  status: u.status,\n  owner: u.owner,\n  notes: u.notes\n} }));"
+                                     },
+                      "id":  "parse-bulk",
+                      "name":  "Parse Bulk Updates",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       460,
+                                       500
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "UPDATE normalized_findings SET\n  remediation_status = \u0027{{ $json.status }}\u0027,\n  remediation_owner = {{ $json.owner ? \"\u0027\" + $json.owner + \"\u0027\" : \u0027remediation_owner\u0027 }},\n  remediation_notes = {{ $json.notes ? \"\u0027\" + $json.notes.replace(/\u0027/g,\"\u0027\u0027\") + \"\u0027\" : \u0027remediation_notes\u0027 }},\n  remediation_updated_at = NOW()\nWHERE id = \u0027{{ $json.finding_id }}\u0027;",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "pg-bulk-update",
+                      "name":  "Bulk Update",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       680,
+                                       500
+                                   ],
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "oHS3dvjMW1h1PkMp",
+                                                           "name":  "RECON OS PostgreSQL"
+                                                       }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "respondWith":  "json",
+                                         "responseBody":  "={{ JSON.stringify({ ok: true, updated: $input.all().length }) }}",
+                                         "options":  {
+                                                         "responseCode":  200
+                                                     }
+                                     },
+                      "id":  "respond-bulk-ok",
+                      "name":  "Respond Bulk OK",
+                      "type":  "n8n-nodes-base.respondToWebhook",
+                      "typeVersion":  1.1,
+                      "position":  [
+                                       900,
+                                       500
+                                   ]
+                  }
+              ],
+    "connections":  {
+                        "Webhook Update":  {
+                                               "main":  [
+                                                            [
+                                                                {
+                                                                    "node":  "Validate Update",
+                                                                    "type":  "main",
+                                                                    "index":  0
+                                                                }
+                                                            ]
+                                                        ]
+                                           },
+                        "Webhook Bulk Import":  {
+                                                    "main":  [
+                                                                 [
+                                                                     {
+                                                                         "node":  "Parse Bulk Updates",
+                                                                         "type":  "main",
+                                                                         "index":  0
+                                                                     }
+                                                                 ]
+                                                             ]
+                                                },
+                        "Validate Update":  {
+                                                "main":  [
+                                                             [
+                                                                 {
+                                                                     "node":  "IF Valid?",
+                                                                     "type":  "main",
+                                                                     "index":  0
+                                                                 }
+                                                             ]
+                                                         ]
+                                            },
+                        "IF Valid?":  {
+                                          "main":  [
+                                                       [
+                                                           {
+                                                               "node":  "Update Finding Status",
+                                                               "type":  "main",
+                                                               "index":  0
+                                                           }
+                                                       ],
+                                                       [
+                                                           {
+                                                               "node":  "Respond 400",
+                                                               "type":  "main",
+                                                               "index":  0
+                                                           }
+                                                       ]
+                                                   ]
+                                      },
+                        "Update Finding Status":  {
+                                                      "main":  [
+                                                                   [
+                                                                       {
+                                                                           "node":  "Upsert Ticket",
+                                                                           "type":  "main",
+                                                                           "index":  0
+                                                                       }
+                                                                   ]
+                                                               ]
+                                                  },
+                        "Upsert Ticket":  {
+                                              "main":  [
+                                                           [
+                                                               {
+                                                                   "node":  "IF Fixed Pending Retest?",
+                                                                   "type":  "main",
+                                                                   "index":  0
+                                                               }
+                                                           ]
+                                                       ]
+                                          },
+                        "IF Fixed Pending Retest?":  {
+                                                         "main":  [
+                                                                      [
+                                                                          {
+                                                                              "node":  "Schedule Retest",
+                                                                              "type":  "main",
+                                                                              "index":  0
+                                                                          }
+                                                                      ],
+                                                                      [
+                                                                          {
+                                                                              "node":  "Audit Log",
+                                                                              "type":  "main",
+                                                                              "index":  0
+                                                                          }
+                                                                      ]
+                                                                  ]
+                                                     },
+                        "Schedule Retest":  {
+                                                "main":  [
+                                                             [
+                                                                 {
+                                                                     "node":  "Audit Log",
+                                                                     "type":  "main",
+                                                                     "index":  0
+                                                                 }
+                                                             ]
+                                                         ]
+                                            },
+                        "Audit Log":  {
+                                          "main":  [
+                                                       [
+                                                           {
+                                                               "node":  "Respond OK",
+                                                               "type":  "main",
+                                                               "index":  0
+                                                           }
+                                                       ]
+                                                   ]
+                                      },
+                        "Parse Bulk Updates":  {
+                                                   "main":  [
+                                                                [
+                                                                    {
+                                                                        "node":  "Bulk Update",
+                                                                        "type":  "main",
+                                                                        "index":  0
+                                                                    }
+                                                                ]
+                                                            ]
+                                               },
+                        "Bulk Update":  {
+                                            "main":  [
+                                                         [
+                                                             {
+                                                                 "node":  "Respond Bulk OK",
+                                                                 "type":  "main",
+                                                                 "index":  0
+                                                             }
+                                                         ]
+                                                     ]
+                                        }
+                    },
+    "settings":  {
+                     "executionOrder":  "v1",
+                     "saveManualExecutions":  true,
+                     "saveExecutionProgress":  true,
+                     "callerPolicy":  "workflowsFromSameOwner",
+                     "availableInMCP":  false
+                 },
+    "staticData":  null,
+    "meta":  null,
+    "pinData":  null,
+    "versionId":  "dcf00d7f-e246-4aee-9246-149cd2df4dde",
+    "activeVersionId":  "dcf00d7f-e246-4aee-9246-149cd2df4dde",
+    "versionCounter":  6,
+    "triggerCount":  2,
+    "shared":  [
+                   {
+                       "updatedAt":  "2026-04-19T03:30:18.703Z",
+                       "createdAt":  "2026-04-19T03:30:18.703Z",
+                       "role":  "workflow:owner",
+                       "workflowId":  "edTyF8K1pWJjLPdP",
+                       "projectId":  "Lrgt6JR85OZiVLcX",
+                       "project":  {
+                                       "updatedAt":  "2026-03-31T09:07:31.366Z",
+                                       "createdAt":  "2026-03-31T08:57:43.789Z",
+                                       "id":  "Lrgt6JR85OZiVLcX",
+                                       "name":  "gelson mascarenhas \u003cgelson_m@hotmail.com\u003e",
+                                       "type":  "personal",
+                                       "icon":  null,
+                                       "description":  null,
+                                       "creatorId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                   }
+                   }
+               ],
+    "tags":  [
+
+             ],
+    "activeVersion":  {
+                          "updatedAt":  "2026-04-19T07:27:25.941Z",
+                          "createdAt":  "2026-04-19T07:27:25.941Z",
+                          "versionId":  "dcf00d7f-e246-4aee-9246-149cd2df4dde",
+                          "workflowId":  "edTyF8K1pWJjLPdP",
+                          "nodes":  [
+                                        {
+                                            "parameters":  {
+                                                               "httpMethod":  "POST",
+                                                               "path":  "recon-os/remediation/update",
+                                                               "responseMode":  "responseNode",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "wh-remediation",
+                                            "name":  "Webhook Update",
+                                            "type":  "n8n-nodes-base.webhook",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             240,
+                                                             300
+                                                         ],
+                                            "webhookId":  "recon-os-remediation-update"
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "httpMethod":  "POST",
+                                                               "path":  "recon-os/remediation/bulk",
+                                                               "responseMode":  "responseNode",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "wh-bulk",
+                                            "name":  "Webhook Bulk Import",
+                                            "type":  "n8n-nodes-base.webhook",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             240,
+                                                             500
+                                                         ],
+                                            "webhookId":  "recon-os-remediation-bulk"
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "jsCode":  "const body = $input.first().json.body || $input.first().json;\n\nconst validStatuses = [\u0027open\u0027,\u0027in_progress\u0027,\u0027fixed_pending_retest\u0027,\u0027partially_fixed\u0027,\u0027accepted_risk\u0027];\nif (!body.finding_id) return [{ json: { valid: false, error: \u0027finding_id required\u0027 } }];\nif (body.status \u0026\u0026 !validStatuses.includes(body.status)) {\n  return [{ json: { valid: false, error: `Invalid status. Must be one of: ${validStatuses.join(\u0027, \u0027)}` } }];\n}\n\nreturn [{ json: {\n  valid: true,\n  finding_id: body.finding_id,\n  status: body.status || \u0027in_progress\u0027,\n  owner: body.owner || null,\n  evidence_of_fix: body.evidence_of_fix || null,\n  notes: body.notes || null,\n  external_ticket_id: body.external_ticket_id || null\n} }];"
+                                                           },
+                                            "id":  "validate-update",
+                                            "name":  "Validate Update",
+                                            "type":  "n8n-nodes-base.code",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             460,
+                                                             300
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "conditions":  {
+                                                                                  "options":  {
+                                                                                                  "caseSensitive":  true,
+                                                                                                  "leftValue":  "",
+                                                                                                  "typeValidation":  "strict"
+                                                                                              },
+                                                                                  "conditions":  [
+                                                                                                     {
+                                                                                                         "id":  "cond-valid",
+                                                                                                         "leftValue":  "={{ $json.valid }}",
+                                                                                                         "rightValue":  true,
+                                                                                                         "operator":  {
+                                                                                                                          "type":  "boolean",
+                                                                                                                          "operation":  "true"
+                                                                                                                      }
+                                                                                                     }
+                                                                                                 ],
+                                                                                  "combinator":  "and"
+                                                                              },
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "if-valid",
+                                            "name":  "IF Valid?",
+                                            "type":  "n8n-nodes-base.if",
+                                            "typeVersion":  2.2,
+                                            "position":  [
+                                                             680,
+                                                             300
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "respondWith":  "json",
+                                                               "responseBody":  "={{ JSON.stringify({ ok: false, error: $json.error }) }}",
+                                                               "options":  {
+                                                                               "responseCode":  400
+                                                                           }
+                                                           },
+                                            "id":  "respond-400",
+                                            "name":  "Respond 400",
+                                            "type":  "n8n-nodes-base.respondToWebhook",
+                                            "typeVersion":  1.1,
+                                            "position":  [
+                                                             900,
+                                                             500
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "operation":  "executeQuery",
+                                                               "query":  "UPDATE normalized_findings SET\n  remediation_status = \u0027{{ $json.status }}\u0027,\n  remediation_owner = {{ $json.owner ? \"\u0027\" + $json.owner + \"\u0027\" : \u0027remediation_owner\u0027 }},\n  remediation_evidence = {{ $json.evidence_of_fix ? \"\u0027\" + $json.evidence_of_fix.replace(/\u0027/g,\"\u0027\u0027\") + \"\u0027\" : \u0027remediation_evidence\u0027 }},\n  remediation_notes = {{ $json.notes ? \"\u0027\" + $json.notes.replace(/\u0027/g,\"\u0027\u0027\") + \"\u0027\" : \u0027remediation_notes\u0027 }},\n  remediation_updated_at = NOW()\nWHERE id = \u0027{{ $json.finding_id }}\u0027\nRETURNING id, remediation_status, severity, priority_bucket;",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "pg-update-finding",
+                                            "name":  "Update Finding Status",
+                                            "type":  "n8n-nodes-base.postgres",
+                                            "typeVersion":  2.5,
+                                            "position":  [
+                                                             900,
+                                                             300
+                                                         ],
+                                            "credentials":  {
+                                                                "postgres":  {
+                                                                                 "id":  "oHS3dvjMW1h1PkMp",
+                                                                                 "name":  "RECON OS PostgreSQL"
+                                                                             }
+                                                            }
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "operation":  "executeQuery",
+                                                               "query":  "INSERT INTO remediation_tickets (finding_id, engagement_id, owner, status, external_ticket_id, notes)\nSELECT \u0027{{ $(\u0027Validate Update\u0027).first().json.finding_id }}\u0027,\n       engagement_id,\n       {{ $(\u0027Validate Update\u0027).first().json.owner ? \"\u0027\" + $(\u0027Validate Update\u0027).first().json.owner + \"\u0027\" : \u0027NULL\u0027 }},\n       \u0027{{ $(\u0027Validate Update\u0027).first().json.status }}\u0027,\n       {{ $(\u0027Validate Update\u0027).first().json.external_ticket_id ? \"\u0027\" + $(\u0027Validate Update\u0027).first().json.external_ticket_id + \"\u0027\" : \u0027NULL\u0027 }},\n       {{ $(\u0027Validate Update\u0027).first().json.notes ? \"\u0027\" + $(\u0027Validate Update\u0027).first().json.notes.replace(/\u0027/g,\"\u0027\u0027\") + \"\u0027\" : \u0027NULL\u0027 }}\nFROM normalized_findings WHERE id = \u0027{{ $(\u0027Validate Update\u0027).first().json.finding_id }}\u0027\nON CONFLICT DO NOTHING;",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "pg-upsert-ticket",
+                                            "name":  "Upsert Ticket",
+                                            "type":  "n8n-nodes-base.postgres",
+                                            "typeVersion":  2.5,
+                                            "position":  [
+                                                             1120,
+                                                             300
+                                                         ],
+                                            "credentials":  {
+                                                                "postgres":  {
+                                                                                 "id":  "oHS3dvjMW1h1PkMp",
+                                                                                 "name":  "RECON OS PostgreSQL"
+                                                                             }
+                                                            }
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "conditions":  {
+                                                                                  "options":  {
+                                                                                                  "caseSensitive":  true,
+                                                                                                  "leftValue":  "",
+                                                                                                  "typeValidation":  "strict"
+                                                                                              },
+                                                                                  "conditions":  [
+                                                                                                     {
+                                                                                                         "id":  "cond-retest",
+                                                                                                         "leftValue":  "={{ $(\u0027Validate Update\u0027).first().json.status }}",
+                                                                                                         "rightValue":  "fixed_pending_retest",
+                                                                                                         "operator":  {
+                                                                                                                          "type":  "string",
+                                                                                                                          "operation":  "equals"
+                                                                                                                      }
+                                                                                                     }
+                                                                                                 ],
+                                                                                  "combinator":  "and"
+                                                                              },
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "if-retest",
+                                            "name":  "IF Fixed Pending Retest?",
+                                            "type":  "n8n-nodes-base.if",
+                                            "typeVersion":  2.2,
+                                            "position":  [
+                                                             1340,
+                                                             300
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "method":  "POST",
+                                                               "url":  "https://outstanding-blessing-production-1d4b.up.railway.app/webhook/recon-os/retests/schedule",
+                                                               "sendBody":  true,
+                                                               "specifyBody":  "json",
+                                                               "jsonBody":  "={{ JSON.stringify({ finding_id: $(\u0027Validate Update\u0027).first().json.finding_id }) }}",
+                                                               "options":  {
+                                                                               "timeout":  10000
+                                                                           }
+                                                           },
+                                            "id":  "schedule-retest",
+                                            "name":  "Schedule Retest",
+                                            "type":  "n8n-nodes-base.httpRequest",
+                                            "typeVersion":  4.2,
+                                            "position":  [
+                                                             1560,
+                                                             200
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "operation":  "executeQuery",
+                                                               "query":  "INSERT INTO audit_logs (event_type, actor, entity_type, entity_id, payload)\nVALUES (\u0027remediation_updated\u0027,\u0027wf14\u0027,\u0027finding\u0027,\u0027{{ $(\u0027Validate Update\u0027).first().json.finding_id }}\u0027,\u0027{\"new_status\":\"{{ $(\u0027Validate Update\u0027).first().json.status }}\",\"owner\":\"{{ $(\u0027Validate Update\u0027).first().json.owner || \u0027\u0027 }}\"}\u0027::jsonb);",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "pg-audit",
+                                            "name":  "Audit Log",
+                                            "type":  "n8n-nodes-base.postgres",
+                                            "typeVersion":  2.5,
+                                            "position":  [
+                                                             1560,
+                                                             400
+                                                         ],
+                                            "credentials":  {
+                                                                "postgres":  {
+                                                                                 "id":  "oHS3dvjMW1h1PkMp",
+                                                                                 "name":  "RECON OS PostgreSQL"
+                                                                             }
+                                                            }
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "respondWith":  "json",
+                                                               "responseBody":  "={{ JSON.stringify({ ok: true, finding_id: $(\u0027Validate Update\u0027).first().json.finding_id, new_status: $(\u0027Validate Update\u0027).first().json.status }) }}",
+                                                               "options":  {
+                                                                               "responseCode":  200
+                                                                           }
+                                                           },
+                                            "id":  "respond-ok",
+                                            "name":  "Respond OK",
+                                            "type":  "n8n-nodes-base.respondToWebhook",
+                                            "typeVersion":  1.1,
+                                            "position":  [
+                                                             1780,
+                                                             300
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "jsCode":  "const body = $input.first().json.body || $input.first().json;\nconst updates = Array.isArray(body) ? body : body.updates || [];\nreturn updates.map(u =\u003e ({ json: {\n  finding_id: u.finding_id,\n  status: u.status,\n  owner: u.owner,\n  notes: u.notes\n} }));"
+                                                           },
+                                            "id":  "parse-bulk",
+                                            "name":  "Parse Bulk Updates",
+                                            "type":  "n8n-nodes-base.code",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             460,
+                                                             500
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "operation":  "executeQuery",
+                                                               "query":  "UPDATE normalized_findings SET\n  remediation_status = \u0027{{ $json.status }}\u0027,\n  remediation_owner = {{ $json.owner ? \"\u0027\" + $json.owner + \"\u0027\" : \u0027remediation_owner\u0027 }},\n  remediation_notes = {{ $json.notes ? \"\u0027\" + $json.notes.replace(/\u0027/g,\"\u0027\u0027\") + \"\u0027\" : \u0027remediation_notes\u0027 }},\n  remediation_updated_at = NOW()\nWHERE id = \u0027{{ $json.finding_id }}\u0027;",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "pg-bulk-update",
+                                            "name":  "Bulk Update",
+                                            "type":  "n8n-nodes-base.postgres",
+                                            "typeVersion":  2.5,
+                                            "position":  [
+                                                             680,
+                                                             500
+                                                         ],
+                                            "credentials":  {
+                                                                "postgres":  {
+                                                                                 "id":  "oHS3dvjMW1h1PkMp",
+                                                                                 "name":  "RECON OS PostgreSQL"
+                                                                             }
+                                                            }
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "respondWith":  "json",
+                                                               "responseBody":  "={{ JSON.stringify({ ok: true, updated: $input.all().length }) }}",
+                                                               "options":  {
+                                                                               "responseCode":  200
+                                                                           }
+                                                           },
+                                            "id":  "respond-bulk-ok",
+                                            "name":  "Respond Bulk OK",
+                                            "type":  "n8n-nodes-base.respondToWebhook",
+                                            "typeVersion":  1.1,
+                                            "position":  [
+                                                             900,
+                                                             500
+                                                         ]
+                                        }
+                                    ],
+                          "connections":  {
+                                              "Webhook Update":  {
+                                                                     "main":  [
+                                                                                  [
+                                                                                      {
+                                                                                          "node":  "Validate Update",
+                                                                                          "type":  "main",
+                                                                                          "index":  0
+                                                                                      }
+                                                                                  ]
+                                                                              ]
+                                                                 },
+                                              "Webhook Bulk Import":  {
+                                                                          "main":  [
+                                                                                       [
+                                                                                           {
+                                                                                               "node":  "Parse Bulk Updates",
+                                                                                               "type":  "main",
+                                                                                               "index":  0
+                                                                                           }
+                                                                                       ]
+                                                                                   ]
+                                                                      },
+                                              "Validate Update":  {
+                                                                      "main":  [
+                                                                                   [
+                                                                                       {
+                                                                                           "node":  "IF Valid?",
+                                                                                           "type":  "main",
+                                                                                           "index":  0
+                                                                                       }
+                                                                                   ]
+                                                                               ]
+                                                                  },
+                                              "IF Valid?":  {
+                                                                "main":  [
+                                                                             [
+                                                                                 {
+                                                                                     "node":  "Update Finding Status",
+                                                                                     "type":  "main",
+                                                                                     "index":  0
+                                                                                 }
+                                                                             ],
+                                                                             [
+                                                                                 {
+                                                                                     "node":  "Respond 400",
+                                                                                     "type":  "main",
+                                                                                     "index":  0
+                                                                                 }
+                                                                             ]
+                                                                         ]
+                                                            },
+                                              "Update Finding Status":  {
+                                                                            "main":  [
+                                                                                         [
+                                                                                             {
+                                                                                                 "node":  "Upsert Ticket",
+                                                                                                 "type":  "main",
+                                                                                                 "index":  0
+                                                                                             }
+                                                                                         ]
+                                                                                     ]
+                                                                        },
+                                              "Upsert Ticket":  {
+                                                                    "main":  [
+                                                                                 [
+                                                                                     {
+                                                                                         "node":  "IF Fixed Pending Retest?",
+                                                                                         "type":  "main",
+                                                                                         "index":  0
+                                                                                     }
+                                                                                 ]
+                                                                             ]
+                                                                },
+                                              "IF Fixed Pending Retest?":  {
+                                                                               "main":  [
+                                                                                            [
+                                                                                                {
+                                                                                                    "node":  "Schedule Retest",
+                                                                                                    "type":  "main",
+                                                                                                    "index":  0
+                                                                                                }
+                                                                                            ],
+                                                                                            [
+                                                                                                {
+                                                                                                    "node":  "Audit Log",
+                                                                                                    "type":  "main",
+                                                                                                    "index":  0
+                                                                                                }
+                                                                                            ]
+                                                                                        ]
+                                                                           },
+                                              "Schedule Retest":  {
+                                                                      "main":  [
+                                                                                   [
+                                                                                       {
+                                                                                           "node":  "Audit Log",
+                                                                                           "type":  "main",
+                                                                                           "index":  0
+                                                                                       }
+                                                                                   ]
+                                                                               ]
+                                                                  },
+                                              "Audit Log":  {
+                                                                "main":  [
+                                                                             [
+                                                                                 {
+                                                                                     "node":  "Respond OK",
+                                                                                     "type":  "main",
+                                                                                     "index":  0
+                                                                                 }
+                                                                             ]
+                                                                         ]
+                                                            },
+                                              "Parse Bulk Updates":  {
+                                                                         "main":  [
+                                                                                      [
+                                                                                          {
+                                                                                              "node":  "Bulk Update",
+                                                                                              "type":  "main",
+                                                                                              "index":  0
+                                                                                          }
+                                                                                      ]
+                                                                                  ]
+                                                                     },
+                                              "Bulk Update":  {
+                                                                  "main":  [
+                                                                               [
+                                                                                   {
+                                                                                       "node":  "Respond Bulk OK",
+                                                                                       "type":  "main",
+                                                                                       "index":  0
+                                                                                   }
+                                                                               ]
+                                                                           ]
+                                                              }
+                                          },
+                          "authors":  "gelson mascarenhas",
+                          "name":  null,
+                          "description":  null,
+                          "autosaved":  false,
+                          "workflowPublishHistory":  [
+                                                         {
+                                                             "createdAt":  "2026-04-19T07:27:26.011Z",
+                                                             "id":  535,
+                                                             "workflowId":  "edTyF8K1pWJjLPdP",
+                                                             "versionId":  "dcf00d7f-e246-4aee-9246-149cd2df4dde",
+                                                             "event":  "deactivated",
+                                                             "userId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                                         },
+                                                         {
+                                                             "createdAt":  "2026-04-19T07:27:26.038Z",
+                                                             "id":  536,
+                                                             "workflowId":  "edTyF8K1pWJjLPdP",
+                                                             "versionId":  "dcf00d7f-e246-4aee-9246-149cd2df4dde",
+                                                             "event":  "activated",
+                                                             "userId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                                         }
+                                                     ]
+                      }
+}

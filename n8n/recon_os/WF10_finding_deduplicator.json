@@ -1,0 +1,144 @@
+{
+  "name": "RECON OS — WF-10 Finding Deduplicator",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "recon-os/internal/dedup",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wh-dedup",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "recon-os-internal-dedup"
+    },
+    {
+      "parameters": { "inputSource": "passthrough" },
+      "id": "wf-trigger",
+      "name": "Execute Workflow Trigger",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\nconst body = item.body || item;\n\n// Build dedup fingerprint from normalized title + asset + category\nconst normalizeTitle = t => (t||'').toLowerCase().replace(/[^a-z0-9]/g,' ').replace(/\\s+/g,' ').trim();\nconst cweId = body.cwe_id || 'unknown';\nconst assetId = body.asset_id || 'unknown';\nconst titleNorm = normalizeTitle(body.title);\n\n// Simple hash substitute using string components\nconst fingerprint = btoa(encodeURIComponent(`${titleNorm}|${assetId}|${cweId}`)).substring(0, 64);\n\n// Category from CWE or source\nconst cweToCategory = {\n  'CWE-89':'injection','CWE-79':'xss','CWE-352':'csrf','CWE-918':'ssrf',\n  'CWE-611':'xxe','CWE-22':'path_traversal','CWE-693':'config','CWE-319':'crypto',\n  'CWE-326':'crypto','CWE-200':'exposure','CWE-1021':'config','CWE-639':'access_control'\n};\nconst category = cweToCategory[cweId] || 'other';\n\nreturn [{ json: {\n  raw_finding_id: body.raw_finding_id,\n  engagement_id: body.engagement_id,\n  asset_id: body.asset_id,\n  title: body.title,\n  severity: body.raw_severity || 'medium',\n  cwe_id: cweId === 'unknown' ? null : cweId,\n  owasp_category: body.owasp_category || null,\n  category,\n  raw_evidence: body.raw_evidence || '',\n  dedup_fingerprint: fingerprint,\n  source_tool: body.source_tool\n} }];"
+      },
+      "id": "build-fingerprint",
+      "name": "Build Dedup Fingerprint",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, occurrence_count, raw_finding_ids, validation_status\nFROM normalized_findings\nWHERE dedup_fingerprint = '{{ $json.dedup_fingerprint }}'\n  AND engagement_id = '{{ $json.engagement_id }}'\nLIMIT 1;",
+        "options": {}
+      },
+      "id": "pg-check-existing",
+      "name": "Check Existing Finding",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [680, 300],
+      "credentials": { "postgres": { "id": "RECON_OS_PG_CRED", "name": "RECON OS PostgreSQL" } }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [{ "id": "cond-exists", "leftValue": "={{ $json.id }}", "rightValue": "", "operator": { "type": "string", "operation": "notEmpty" } }],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-exists",
+      "name": "IF Existing Finding?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE normalized_findings SET\n  occurrence_count = occurrence_count + 1,\n  last_seen = NOW(),\n  raw_finding_ids = array_append(raw_finding_ids, '{{ $('Build Dedup Fingerprint').first().json.raw_finding_id }}'::uuid)\nWHERE id = '{{ $json.id }}'\nRETURNING id, occurrence_count;\nUPDATE raw_findings SET status = 'merged' WHERE id = '{{ $('Build Dedup Fingerprint').first().json.raw_finding_id }}';",
+        "options": {}
+      },
+      "id": "pg-merge",
+      "name": "Merge Into Existing",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1120, 200],
+      "credentials": { "postgres": { "id": "RECON_OS_PG_CRED", "name": "RECON OS PostgreSQL" } }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT COUNT(*) as prior_count\nFROM normalized_findings nf\nJOIN engagements e ON nf.engagement_id = e.id\nWHERE e.client_id = (SELECT client_id FROM engagements WHERE id = '{{ $('Build Dedup Fingerprint').first().json.engagement_id }}')\n  AND nf.dedup_fingerprint = '{{ $('Build Dedup Fingerprint').first().json.dedup_fingerprint }}'\n  AND nf.engagement_id != '{{ $('Build Dedup Fingerprint').first().json.engagement_id }}';",
+        "options": {}
+      },
+      "id": "pg-check-recurring",
+      "name": "Check Cross-Engagement Recurrence",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1120, 400],
+      "credentials": { "postgres": { "id": "RECON_OS_PG_CRED", "name": "RECON OS PostgreSQL" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "const fp = $('Build Dedup Fingerprint').first().json;\nconst priorCount = parseInt($('Check Cross-Engagement Recurrence').first().json.prior_count || 0);\nconst isRecurring = priorCount > 0;\nreturn [{ json: { ...fp, is_recurring: isRecurring, recurrence_count: priorCount } }];"
+      },
+      "id": "prepare-new-finding",
+      "name": "Prepare New Finding",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 400]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO normalized_findings (\n  engagement_id, asset_id, raw_finding_ids, title, category, cwe_id, owasp_category,\n  severity, dedup_fingerprint, is_recurring, recurrence_count,\n  evidence_summary, validation_status, first_seen, last_seen\n) VALUES (\n  '{{ $json.engagement_id }}',\n  '{{ $json.asset_id }}',\n  ARRAY['{{ $json.raw_finding_id }}'::uuid],\n  '{{ $json.title.replace(/'/g,\"''\") }}',\n  '{{ $json.category }}',\n  {{ $json.cwe_id ? \"'\" + $json.cwe_id + \"'\" : 'NULL' }},\n  {{ $json.owasp_category ? \"'\" + $json.owasp_category + \"'\" : 'NULL' }},\n  '{{ $json.severity }}',\n  '{{ $json.dedup_fingerprint }}',\n  {{ $json.is_recurring }},\n  {{ $json.recurrence_count }},\n  '{{ $json.raw_evidence.replace(/'/g,\"''\").substring(0,500) }}',\n  'pending_analyst',\n  NOW(), NOW()\n)\nRETURNING id;\nUPDATE raw_findings SET status='deduplicated' WHERE id='{{ $json.raw_finding_id }}';",
+        "options": {}
+      },
+      "id": "pg-insert-normalized",
+      "name": "Insert Normalized Finding",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1560, 400],
+      "credentials": { "postgres": { "id": "RECON_OS_PG_CRED", "name": "RECON OS PostgreSQL" } }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://outstanding-blessing-production-1d4b.up.railway.app/webhook/recon-os/internal/score",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ finding_id: $('Insert Normalized Finding').first().json.id, engagement_id: $('Build Dedup Fingerprint').first().json.engagement_id }) }}",
+        "options": { "timeout": 15000 }
+      },
+      "id": "call-scorer",
+      "name": "Trigger Risk Scorer",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1780, 400]
+    }
+  ],
+  "connections": {
+    "Webhook": { "main": [[{ "node": "Build Dedup Fingerprint", "type": "main", "index": 0 }]] },
+    "Execute Workflow Trigger": { "main": [[{ "node": "Build Dedup Fingerprint", "type": "main", "index": 0 }]] },
+    "Build Dedup Fingerprint": { "main": [[{ "node": "Check Existing Finding", "type": "main", "index": 0 }]] },
+    "Check Existing Finding": { "main": [[{ "node": "IF Existing Finding?", "type": "main", "index": 0 }]] },
+    "IF Existing Finding?": { "main": [
+      [{ "node": "Merge Into Existing", "type": "main", "index": 0 }],
+      [{ "node": "Check Cross-Engagement Recurrence", "type": "main", "index": 0 }]
+    ]},
+    "Check Cross-Engagement Recurrence": { "main": [[{ "node": "Prepare New Finding", "type": "main", "index": 0 }]] },
+    "Prepare New Finding": { "main": [[{ "node": "Insert Normalized Finding", "type": "main", "index": 0 }]] },
+    "Insert Normalized Finding": { "main": [[{ "node": "Trigger Risk Scorer", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1", "saveManualExecutions": true, "saveExecutionProgress": true },
+  "meta": { "description": "RECON OS WF-10: Finding Deduplicator — fingerprints raw findings, merges duplicates, checks cross-engagement recurrence, inserts new normalized findings, triggers risk scoring." }
+}

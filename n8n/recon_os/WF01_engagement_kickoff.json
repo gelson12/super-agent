@@ -1,0 +1,170 @@
+{
+  "name": "RECON OS — WF-01 Engagement Kickoff",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "recon-os/engagement/new",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wh-kickoff",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "recon-os-engagement-new"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body || $input.first().json;\nconst required = ['client_name','engagement_name','authorized_targets','testing_window_start','testing_window_end'];\nconst missing = required.filter(f => !body[f]);\nif (missing.length > 0) return [{ json: { valid: false, missing, body } }];\nif (!Array.isArray(body.authorized_targets) || body.authorized_targets.length === 0)\n  return [{ json: { valid: false, missing: ['authorized_targets must be non-empty array'], body } }];\nreturn [{ json: { valid: true, body } }];"
+      },
+      "id": "validate-fields",
+      "name": "Validate Fields",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [{ "id": "cond-valid", "leftValue": "={{ $json.valid }}", "rightValue": true, "operator": { "type": "boolean", "operation": "true" } }],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-valid",
+      "name": "IF Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: false, errors: $json.missing }) }}",
+        "options": { "responseCode": 400 }
+      },
+      "id": "respond-400",
+      "name": "Respond 400",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [900, 500]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO clients (name, contact_name, contact_email)\nVALUES ('{{ $json.body.client_name.replace(/'/g, \"''\") }}',\n        '{{ ($json.body.contact_name || '').replace(/'/g, \"''\") }}',\n        '{{ ($json.body.contact_email || '').replace(/'/g, \"''\") }}')\nON CONFLICT (name) DO UPDATE SET contact_name = EXCLUDED.contact_name, contact_email = EXCLUDED.contact_email\nRETURNING id, name;",
+        "options": {}
+      },
+      "id": "pg-upsert-client",
+      "name": "Upsert Client",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [900, 300],
+      "credentials": { "postgres": { "id": "RECON_OS_PG_CRED", "name": "RECON OS PostgreSQL" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "const client = $('Upsert Client').first().json;\nconst body = $('Validate Fields').first().json.body;\nconst prohibitedJson = JSON.stringify(body.prohibited_actions || []).replace(/'/g, \"''\");\nreturn [{ json: {\n  client_id: client.id,\n  engagement_name: body.engagement_name,\n  type: body.type || 'web_app',\n  testing_window_start: body.testing_window_start,\n  testing_window_end: body.testing_window_end,\n  rate_limit_profile: body.rate_limit_profile || 'standard',\n  prohibited_actions: prohibitedJson,\n  roe_document_url: body.roe_document_url || null,\n  evidence_handling_notes: body.evidence_handling_notes || null,\n  emergency_contact: (body.contacts || [])[0]?.email || '',\n  authorized_targets: body.authorized_targets\n} }];"
+      },
+      "id": "prepare-engagement",
+      "name": "Prepare Engagement",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO engagements (client_id, name, type, testing_window_start, testing_window_end, rate_limit_profile, prohibited_actions, evidence_handling_notes, emergency_contact)\nVALUES (\n  '{{ $json.client_id }}',\n  '{{ $json.engagement_name.replace(/'/g, \"''\") }}',\n  '{{ $json.type }}',\n  '{{ $json.testing_window_start }}'::timestamptz,\n  '{{ $json.testing_window_end }}'::timestamptz,\n  '{{ $json.rate_limit_profile }}',\n  '[{{ $json.prohibited_actions }}]'::jsonb,\n  {{ $json.evidence_handling_notes ? \"'\" + $json.evidence_handling_notes + \"'\" : 'NULL' }},\n  '{{ $json.emergency_contact }}'\n)\nRETURNING id;",
+        "options": {}
+      },
+      "id": "pg-insert-engagement",
+      "name": "Insert Engagement",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1340, 300],
+      "credentials": { "postgres": { "id": "RECON_OS_PG_CRED", "name": "RECON OS PostgreSQL" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "const engId = $('Insert Engagement').first().json.id;\nconst targets = $('Prepare Engagement').first().json.authorized_targets;\nconst rows = targets.map(t =>\n  `('${engId}', '${t.value.replace(/'/g,\"''\")}', '${t.scope_type}', true, '${(t.notes||'').replace(/'/g,\"''\")}')`\n).join(',\\n');\nreturn [{ json: { engagement_id: engId, insert_sql: rows } }];"
+      },
+      "id": "prepare-scope",
+      "name": "Prepare Scope SQL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1560, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO scope_rules (engagement_id, value, scope_type, in_scope, notes)\nVALUES {{ $json.insert_sql }}\nRETURNING id;",
+        "options": {}
+      },
+      "id": "pg-insert-scope",
+      "name": "Insert Scope Rules",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1780, 300],
+      "credentials": { "postgres": { "id": "RECON_OS_PG_CRED", "name": "RECON OS PostgreSQL" } }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO engagement_metrics (engagement_id) VALUES ('{{ $('Prepare Scope SQL').first().json.engagement_id }}') ON CONFLICT (engagement_id) DO NOTHING;",
+        "options": {}
+      },
+      "id": "pg-init-metrics",
+      "name": "Init Metrics Row",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [2000, 300],
+      "credentials": { "postgres": { "id": "RECON_OS_PG_CRED", "name": "RECON OS PostgreSQL" } }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO audit_logs (event_type, actor, engagement_id, entity_type, entity_id, payload)\nVALUES ('engagement_created', 'api', '{{ $('Prepare Scope SQL').first().json.engagement_id }}', 'engagement', '{{ $('Prepare Scope SQL').first().json.engagement_id }}', '{\"source\":\"WF01\"}'::jsonb);",
+        "options": {}
+      },
+      "id": "pg-audit",
+      "name": "Audit Log",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [2220, 300],
+      "credentials": { "postgres": { "id": "RECON_OS_PG_CRED", "name": "RECON OS PostgreSQL" } }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, engagement_id: $('Prepare Scope SQL').first().json.engagement_id, message: 'Engagement created. Scope rules loaded. Recon will begin at next scheduled window.' }) }}",
+        "options": { "responseCode": 201 }
+      },
+      "id": "respond-201",
+      "name": "Respond 201",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2440, 300]
+    }
+  ],
+  "connections": {
+    "Webhook": { "main": [[{ "node": "Validate Fields", "type": "main", "index": 0 }]] },
+    "Validate Fields": { "main": [[{ "node": "IF Valid?", "type": "main", "index": 0 }]] },
+    "IF Valid?": { "main": [
+      [{ "node": "Upsert Client", "type": "main", "index": 0 }],
+      [{ "node": "Respond 400", "type": "main", "index": 0 }]
+    ]},
+    "Upsert Client": { "main": [[{ "node": "Prepare Engagement", "type": "main", "index": 0 }]] },
+    "Prepare Engagement": { "main": [[{ "node": "Insert Engagement", "type": "main", "index": 0 }]] },
+    "Insert Engagement": { "main": [[{ "node": "Prepare Scope SQL", "type": "main", "index": 0 }]] },
+    "Prepare Scope SQL": { "main": [[{ "node": "Insert Scope Rules", "type": "main", "index": 0 }]] },
+    "Insert Scope Rules": { "main": [[{ "node": "Init Metrics Row", "type": "main", "index": 0 }]] },
+    "Init Metrics Row": { "main": [[{ "node": "Audit Log", "type": "main", "index": 0 }]] },
+    "Audit Log": { "main": [[{ "node": "Respond 201", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1", "saveManualExecutions": true, "saveExecutionProgress": true },
+  "meta": { "description": "RECON OS WF-01: Creates a new pentest engagement with scope, authorization rules, and testing windows. POST /webhook/recon-os/engagement/new" }
+}

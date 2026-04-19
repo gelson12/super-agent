@@ -2231,16 +2231,22 @@ def _push_token_to_railway() -> None:
         # dependency, no Cloudflare, no token needed beyond DATABASE_URL.
         _save_credentials_to_db()
 
-        from .pro_token_keeper import _update_railway_variable, _update_via_cli
-        ok, msg = _update_railway_variable("CLAUDE_SESSION_TOKEN", encoded)
-        if ok:
-            _log("Token pushed to Railway Variables via API ✓")
+        from .pro_token_keeper import _update_railway_variable, _update_via_cli, _is_valid_railway_token
+        _rtoken = os.environ.get("RAILWAY_TOKEN", "")
+        if not _is_valid_railway_token(_rtoken):
+            _log("Railway push skipped — RAILWAY_TOKEN is empty or too short. "
+                 "Volume + PostgreSQL backups already completed above.")
         else:
-            ok2, msg2 = _update_via_cli("CLAUDE_SESSION_TOKEN", encoded)
-            if ok2:
-                _log("Token pushed to Railway Variables via CLI ✓")
+            ok, msg = _update_railway_variable("CLAUDE_SESSION_TOKEN", encoded)
+            if ok:
+                _log("Token pushed to Railway Variables via API ✓")
             else:
-                _log(f"FAILED to push token to Railway: API={msg}, CLI={msg2}")
+                ok2, msg2 = _update_via_cli("CLAUDE_SESSION_TOKEN", encoded)
+                if ok2:
+                    _log("Token pushed to Railway Variables via CLI ✓")
+                else:
+                    _log(f"Railway push failed (non-critical — volume+PG already persisted): "
+                         f"API={msg}, CLI={msg2}")
 
         # Also push to inspiring-cat if configured
         cli_worker_sid = os.environ.get("CLI_WORKER_SERVICE_ID", "")
@@ -2407,13 +2413,11 @@ def _try_direct_refresh() -> bool:
             "client_id": client_id,
         }).encode()
 
-        # Attempt 1: JSON body with browser-like headers on the confirmed real OAuth host.
-        # Logs showed 405 (Method Not Allowed) on form-encoded — the endpoint exists but
-        # likely requires JSON + Origin header. Try this before the form-encoded fallback.
-        # Removed endpoints that always fail:
-        #   api.claude.ai      → DNS nonexistent
-        #   claude.ai/api/     → 403 Cloudflare
-        #   api.anthropic.com  → 404
+        # Attempt 1: JSON body on the confirmed real OAuth host.
+        # History: always returns 405 (Method Not Allowed) from Railway IPs.
+        # 405 = the endpoint does not accept this grant type from external clients.
+        # This is NOT a Cloudflare IP block (which returns 403) — 405 means the
+        # server actively rejects the method/grant. No relay can bypass a 405.
         _json_req = urllib.request.Request(
             "https://claude.com/cai/oauth/token",
             data=_json_body,
@@ -2425,16 +2429,15 @@ def _try_direct_refresh() -> bool:
             },
             method="POST",
         )
+        _got_405 = False  # track whether to skip GH relay
         try:
             with urllib.request.urlopen(_json_req, timeout=15) as _jresp:
                 _jresult = json.loads(_jresp.read().decode())
                 if _jresult.get("access_token"):
                     _log("Direct refresh SUCCESS via claude.com/cai/oauth/token (JSON) ✓")
-                    # Reuse the success/update block below by injecting into result loop
                     result = _jresult
                     new_access = result.get("access_token")
                     new_refresh = result.get("refresh_token", refresh_token)
-                    # (update creds and return — same logic as loop below)
                     for _top_key in ("accessToken", "access_token"):
                         if _top_key in creds:
                             creds[_top_key] = new_access
@@ -2471,84 +2474,89 @@ def _try_direct_refresh() -> bool:
             except Exception:
                 _jbody = "(unreadable)"
             _log(f"Direct refresh (JSON): claude.com returned HTTP {_je.code} — body: {_jbody}")
+            if _je.code == 405:
+                # 405 = endpoint rejects this grant type entirely, not an IP block.
+                # GH relay would get the same 405 — skip the 90-second wait entirely.
+                _got_405 = True
+                _log("Direct refresh: HTTP 405 means endpoint does not support this grant type "
+                     "— skipping GitHub relay (relay cannot bypass 405, only 403 Cloudflare blocks).")
         except Exception as _je:
             _log(f"Direct refresh (JSON): claude.com error — {_je}")
 
         # Attempt 2: form-encoded fallback on claude.ai (same path, different host)
-        endpoints = [
-            "https://claude.ai/cai/oauth/token",
-        ]
+        # Only try if we didn't already get 405 (which proves the endpoint itself rejects this)
+        if not _got_405:
+            endpoints = [
+                "https://claude.ai/cai/oauth/token",
+            ]
 
-        for endpoint in endpoints:
-            try:
-                req = urllib.request.Request(
-                    endpoint,
-                    data=_form_body,
-                    headers={
-                        "Content-Type": "application/x-www-form-urlencoded",
-                        "User-Agent": "claude-cli/1.0",
-                    },
-                    method="POST",
-                )
-                with urllib.request.urlopen(req, timeout=15) as resp:
-                    result = json.loads(resp.read().decode())
-                    new_access = result.get("access_token")
-                    new_refresh = result.get("refresh_token", refresh_token)
-
-                    if new_access:
-                        _log(f"Direct refresh SUCCESS via {endpoint} ✓")
-                        # Update all known credential key patterns so whatever
-                        # the CLI version expects is updated.
-                        for _top_key in ("accessToken", "access_token"):
-                            if _top_key in creds:
-                                creds[_top_key] = new_access
-                        for _top_key in ("refreshToken", "refresh_token", "oauthRefreshToken"):
-                            if _top_key in creds:
-                                creds[_top_key] = new_refresh
-                        for _nested_key in ("claudeAiOauth", "claudeAiOAuth", "oauth", "session", "credentials"):
-                            _nested = creds.get(_nested_key, {})
-                            if isinstance(_nested, dict):
-                                for _ak in ("accessToken", "access_token"):
-                                    if _ak in _nested:
-                                        _nested[_ak] = new_access
-                                for _rk in ("refreshToken", "refresh_token"):
-                                    if _rk in _nested:
-                                        _nested[_rk] = new_refresh
-                                # Also update expiresAt if returned
-                                _new_exp = result.get("expires_in")
-                                if _new_exp:
-                                    import time as _t
-                                    _exp_ts = int((_t.time() + _new_exp) * 1000)
-                                    for _ek in ("expiresAt", "expires_at"):
-                                        if _ek in _nested:
-                                            _nested[_ek] = _exp_ts
-                                creds[_nested_key] = _nested
-
-                        _CREDS_FILE.write_text(json.dumps(creds, indent=2))
-                        _CREDS_FILE.chmod(0o600)
-                        _push_token_to_railway()
-                        return True
-                    else:
-                        _log(f"Direct refresh: {endpoint} returned 200 but no access_token — "
-                             f"response keys: {list(result.keys())}")
-
-            except urllib.error.HTTPError as e:
-                # Log the full response body — critical for diagnosing wrong endpoint
+            for endpoint in endpoints:
                 try:
-                    _body = e.read().decode("utf-8", errors="replace")[:300]
-                except Exception:
-                    _body = "(unreadable)"
-                _log(f"Direct refresh: {endpoint} returned HTTP {e.code} — body: {_body}")
-                continue
-            except Exception as e:
-                _log(f"Direct refresh: {endpoint} error — {e}")
-                continue
+                    req = urllib.request.Request(
+                        endpoint,
+                        data=_form_body,
+                        headers={
+                            "Content-Type": "application/x-www-form-urlencoded",
+                            "User-Agent": "claude-cli/1.0",
+                        },
+                        method="POST",
+                    )
+                    with urllib.request.urlopen(req, timeout=15) as resp:
+                        result = json.loads(resp.read().decode())
+                        new_access = result.get("access_token")
+                        new_refresh = result.get("refresh_token", refresh_token)
 
-        # ── Attempt 3: GitHub Actions relay (bypasses Cloudflare WAF) ───────────
-        # Cloudflare blocks POSTs to claude.com/cai/oauth/token from Railway's
-        # NL datacenter IPs with HTTP 405. GitHub-hosted runners use Azure IPs
-        # which are NOT on Anthropic's block list — so we dispatch a GH Actions
-        # workflow to make the POST on our behalf and POST the result back here.
+                        if new_access:
+                            _log(f"Direct refresh SUCCESS via {endpoint} ✓")
+                            for _top_key in ("accessToken", "access_token"):
+                                if _top_key in creds:
+                                    creds[_top_key] = new_access
+                            for _top_key in ("refreshToken", "refresh_token", "oauthRefreshToken"):
+                                if _top_key in creds:
+                                    creds[_top_key] = new_refresh
+                            for _nested_key in ("claudeAiOauth", "claudeAiOAuth", "oauth", "session", "credentials"):
+                                _nested = creds.get(_nested_key, {})
+                                if isinstance(_nested, dict):
+                                    for _ak in ("accessToken", "access_token"):
+                                        if _ak in _nested:
+                                            _nested[_ak] = new_access
+                                    for _rk in ("refreshToken", "refresh_token"):
+                                        if _rk in _nested:
+                                            _nested[_rk] = new_refresh
+                                    _new_exp = result.get("expires_in")
+                                    if _new_exp:
+                                        import time as _t
+                                        _exp_ts = int((_t.time() + _new_exp) * 1000)
+                                        for _ek in ("expiresAt", "expires_at"):
+                                            if _ek in _nested:
+                                                _nested[_ek] = _exp_ts
+                                    creds[_nested_key] = _nested
+
+                            _CREDS_FILE.write_text(json.dumps(creds, indent=2))
+                            _CREDS_FILE.chmod(0o600)
+                            _push_token_to_railway()
+                            return True
+                        else:
+                            _log(f"Direct refresh: {endpoint} returned 200 but no access_token — "
+                                 f"response keys: {list(result.keys())}")
+
+                except urllib.error.HTTPError as e:
+                    try:
+                        _body = e.read().decode("utf-8", errors="replace")[:300]
+                    except Exception:
+                        _body = "(unreadable)"
+                    _log(f"Direct refresh: {endpoint} returned HTTP {e.code} — body: {_body}")
+                    if e.code == 405:
+                        _got_405 = True
+                    continue
+                except Exception as e:
+                    _log(f"Direct refresh: {endpoint} error — {e}")
+                    continue
+
+        # ── Attempt 3: GitHub Actions relay (bypasses Cloudflare WAF on 403) ─────
+        # ONLY useful when Cloudflare returns 403 from Railway IPs (IP reputation block).
+        # A 405 response means the OAuth endpoint rejects the grant type itself —
+        # a relay from Azure IPs will get the same 405. We skip it in that case.
         #
         # Required env vars (in inspiring-cat Railway service):
         #   GITHUB_PAT          — personal access token with repo scope
@@ -2560,7 +2568,9 @@ def _try_direct_refresh() -> bool:
         _self_url = os.environ.get("SELF_URL", "").rstrip("/") or \
                     "https://inspiring-cat-production.up.railway.app"
 
-        if not _github_pat:
+        if _got_405:
+            _log("Direct refresh (GH relay): skipped — 405 from OAuth endpoint means relay cannot help.")
+        elif not _github_pat:
             _log("Direct refresh (GH relay): GITHUB_PAT not set — skipping GitHub Actions relay")
         else:
             import secrets as _secrets

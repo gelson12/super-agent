@@ -1,0 +1,583 @@
+﻿{
+    "updatedAt":  "2026-04-19T07:27:26.976Z",
+    "createdAt":  "2026-04-19T03:30:13.667Z",
+    "id":  "Q3bwCkll3SrMDBhm",
+    "name":  "RECON OS - WF-09 Validation Queue",
+    "description":  null,
+    "active":  true,
+    "isArchived":  false,
+    "nodes":  [
+                  {
+                      "parameters":  {
+                                         "rule":  {
+                                                      "interval":  [
+                                                                       {
+                                                                           "field":  "cronExpression",
+                                                                           "expression":  "0 8 * * *"
+                                                                       }
+                                                                   ]
+                                                  }
+                                     },
+                      "id":  "cron-daily",
+                      "name":  "Cron Daily 08:00",
+                      "type":  "n8n-nodes-base.scheduleTrigger",
+                      "typeVersion":  1.2,
+                      "position":  [
+                                       240,
+                                       300
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "httpMethod":  "POST",
+                                         "path":  "recon-os/findings/validate",
+                                         "responseMode":  "responseNode",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "wh-validate",
+                      "name":  "Webhook Analyst Review",
+                      "type":  "n8n-nodes-base.webhook",
+                      "typeVersion":  2,
+                      "position":  [
+                                       240,
+                                       500
+                                   ],
+                      "webhookId":  "recon-os-findings-validate"
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "const body = $input.first().json.body || $input.first().json;\n// This is an analyst validation submission\nreturn [{ json: {\n  finding_id: body.finding_id,\n  validation_status: body.validation_status,\n  analyst_notes: body.analyst_notes || \u0027\u0027,\n  updated_severity: body.updated_severity || null,\n  analyst_id: body.analyst_id || \u0027unknown\u0027\n} }];"
+                                     },
+                      "id":  "prepare-validation",
+                      "name":  "Prepare Validation Update",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       460,
+                                       500
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "UPDATE normalized_findings SET\n  validation_status = \u0027{{ $json.validation_status }}\u0027,\n  validation_notes = \u0027{{ $json.analyst_notes.replace(/\u0027/g,\"\u0027\u0027\") }}\u0027,\n  validated_by = \u0027{{ $json.analyst_id }}\u0027,\n  validated_at = NOW()\n  {{ $json.updated_severity ? \",severity = \u0027\" + $json.updated_severity + \"\u0027\" : \u0027\u0027 }}\nWHERE id = \u0027{{ $json.finding_id }}\u0027\nRETURNING id, validation_status, recon_score, priority_bucket;",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "pg-update-validation",
+                      "name":  "Update Validation Status",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       680,
+                                       500
+                                   ],
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "oHS3dvjMW1h1PkMp",
+                                                           "name":  "RECON OS PostgreSQL"
+                                                       }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "INSERT INTO validation_history (finding_id, previous_status, new_status, changed_by, notes)\nSELECT \u0027{{ $(\u0027Prepare Validation Update\u0027).first().json.finding_id }}\u0027,\n       validation_status,\n       \u0027{{ $(\u0027Prepare Validation Update\u0027).first().json.validation_status }}\u0027,\n       \u0027{{ $(\u0027Prepare Validation Update\u0027).first().json.analyst_id }}\u0027,\n       \u0027{{ $(\u0027Prepare Validation Update\u0027).first().json.analyst_notes.replace(/\u0027/g,\"\u0027\u0027\") }}\u0027\nFROM normalized_findings WHERE id = \u0027{{ $(\u0027Prepare Validation Update\u0027).first().json.finding_id }}\u0027;",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "pg-validation-history",
+                      "name":  "Record History",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       900,
+                                       500
+                                   ],
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "oHS3dvjMW1h1PkMp",
+                                                           "name":  "RECON OS PostgreSQL"
+                                                       }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "respondWith":  "json",
+                                         "responseBody":  "={{ JSON.stringify({ ok: true, finding_id: $(\u0027Prepare Validation Update\u0027).first().json.finding_id, new_status: $(\u0027Prepare Validation Update\u0027).first().json.validation_status }) }}",
+                                         "options":  {
+                                                         "responseCode":  200
+                                                     }
+                                     },
+                      "id":  "respond-ok",
+                      "name":  "Respond OK",
+                      "type":  "n8n-nodes-base.respondToWebhook",
+                      "typeVersion":  1.1,
+                      "position":  [
+                                       1120,
+                                       500
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "operation":  "executeQuery",
+                                         "query":  "SELECT nf.id, nf.title, nf.severity, nf.recon_score, nf.priority_bucket,\n       nf.validation_status, nf.first_seen, nf.is_recurring,\n       a.asset_value, e.name as engagement_name, c.name as client_name\nFROM normalized_findings nf\nJOIN assets a ON nf.asset_id = a.id\nJOIN engagements e ON nf.engagement_id = e.id\nJOIN clients c ON e.client_id = c.id\nWHERE nf.validation_status = \u0027pending_analyst\u0027\n  AND e.status = \u0027active\u0027\nORDER BY nf.recon_score DESC\nLIMIT 50;",
+                                         "options":  {
+
+                                                     }
+                                     },
+                      "id":  "pg-pending-findings",
+                      "name":  "Get Pending Findings",
+                      "type":  "n8n-nodes-base.postgres",
+                      "typeVersion":  2.5,
+                      "position":  [
+                                       460,
+                                       300
+                                   ],
+                      "credentials":  {
+                                          "postgres":  {
+                                                           "id":  "oHS3dvjMW1h1PkMp",
+                                                           "name":  "RECON OS PostgreSQL"
+                                                       }
+                                      }
+                  },
+                  {
+                      "parameters":  {
+                                         "jsCode":  "const findings = $input.all().map(i =\u003e i.json);\nconst immediate = findings.filter(f =\u003e f.priority_bucket === \u0027immediate_attention\u0027);\nconst high = findings.filter(f =\u003e f.priority_bucket === \u0027high_priority\u0027);\nconst medium = findings.filter(f =\u003e f.priority_bucket === \u0027medium_priority\u0027);\nconst other = findings.filter(f =\u003e ![\u0027immediate_attention\u0027,\u0027high_priority\u0027,\u0027medium_priority\u0027].includes(f.priority_bucket));\n\nconst N8N_URL = \u0027https://outstanding-blessing-production-1d4b.up.railway.app\u0027;\n\nconst formatFinding = f =\u003e\n  `. [${f.severity?.toUpperCase()}] ${f.title}\\n  Asset: ${f.asset_value} | Client: ${f.client_name}\\n  Score: ${f.recon_score} | Validate: POST ${N8N_URL}/webhook/recon-os/findings/validate\\n  Body: {\"finding_id\":\"${f.id}\",\"validation_status\":\"validated\",\"analyst_notes\":\"...\"}`;\n\nconst digest = [\n  `RECON OS - Daily Analyst Queue`,\n  `Date: ${new Date().toISOString().split(\u0027T\u0027)[0]}`,\n  `Total pending: ${findings.length} findings`,\n  \u0027\u0027,\n  immediate.length \u003e 0 ? `?? IMMEDIATE ATTENTION (${immediate.length}):\\n${immediate.slice(0,5).map(formatFinding).join(\u0027\\n\u0027)}` : \u0027\u0027,\n  high.length \u003e 0 ? `?? HIGH PRIORITY (${high.length}):\\n${high.slice(0,5).map(formatFinding).join(\u0027\\n\u0027)}` : \u0027\u0027,\n  medium.length \u003e 0 ? `?? MEDIUM PRIORITY (${medium.length})` : \u0027\u0027,\n  other.length \u003e 0 ? `? OTHER (${other.length})` : \u0027\u0027,\n  \u0027\u0027,\n  `Validation options: validated | analyst_reviewed | likely_false_positive`\n].filter(Boolean).join(\u0027\\n\u0027);\n\nreturn [{ json: { digest, finding_count: findings.length, immediate_count: immediate.length } }];"
+                                     },
+                      "id":  "build-digest",
+                      "name":  "Build Analyst Digest",
+                      "type":  "n8n-nodes-base.code",
+                      "typeVersion":  2,
+                      "position":  [
+                                       680,
+                                       300
+                                   ]
+                  },
+                  {
+                      "parameters":  {
+                                         "method":  "POST",
+                                         "url":  "={{ $env.RECON_OS_SLACK_WEBHOOK || \u0027https://hooks.slack.com/services/PLACEHOLDER\u0027 }}",
+                                         "sendBody":  true,
+                                         "specifyBody":  "json",
+                                         "jsonBody":  "={{ JSON.stringify({ text: $json.digest, username: \u0027RECON OS\u0027, icon_emoji: \u0027:mag:\u0027 }) }}",
+                                         "options":  {
+                                                         "timeout":  10000
+                                                     }
+                                     },
+                      "id":  "send-slack",
+                      "name":  "Send Slack Digest",
+                      "type":  "n8n-nodes-base.httpRequest",
+                      "typeVersion":  4.2,
+                      "position":  [
+                                       900,
+                                       300
+                                   ]
+                  }
+              ],
+    "connections":  {
+                        "Cron Daily 08:00":  {
+                                                 "main":  [
+                                                              [
+                                                                  {
+                                                                      "node":  "Get Pending Findings",
+                                                                      "type":  "main",
+                                                                      "index":  0
+                                                                  }
+                                                              ]
+                                                          ]
+                                             },
+                        "Get Pending Findings":  {
+                                                     "main":  [
+                                                                  [
+                                                                      {
+                                                                          "node":  "Build Analyst Digest",
+                                                                          "type":  "main",
+                                                                          "index":  0
+                                                                      }
+                                                                  ]
+                                                              ]
+                                                 },
+                        "Build Analyst Digest":  {
+                                                     "main":  [
+                                                                  [
+                                                                      {
+                                                                          "node":  "Send Slack Digest",
+                                                                          "type":  "main",
+                                                                          "index":  0
+                                                                      }
+                                                                  ]
+                                                              ]
+                                                 },
+                        "Webhook Analyst Review":  {
+                                                       "main":  [
+                                                                    [
+                                                                        {
+                                                                            "node":  "Prepare Validation Update",
+                                                                            "type":  "main",
+                                                                            "index":  0
+                                                                        }
+                                                                    ]
+                                                                ]
+                                                   },
+                        "Prepare Validation Update":  {
+                                                          "main":  [
+                                                                       [
+                                                                           {
+                                                                               "node":  "Update Validation Status",
+                                                                               "type":  "main",
+                                                                               "index":  0
+                                                                           }
+                                                                       ]
+                                                                   ]
+                                                      },
+                        "Update Validation Status":  {
+                                                         "main":  [
+                                                                      [
+                                                                          {
+                                                                              "node":  "Record History",
+                                                                              "type":  "main",
+                                                                              "index":  0
+                                                                          }
+                                                                      ]
+                                                                  ]
+                                                     },
+                        "Record History":  {
+                                               "main":  [
+                                                            [
+                                                                {
+                                                                    "node":  "Respond OK",
+                                                                    "type":  "main",
+                                                                    "index":  0
+                                                                }
+                                                            ]
+                                                        ]
+                                           }
+                    },
+    "settings":  {
+                     "executionOrder":  "v1",
+                     "saveManualExecutions":  true,
+                     "saveExecutionProgress":  true,
+                     "callerPolicy":  "workflowsFromSameOwner",
+                     "availableInMCP":  false
+                 },
+    "staticData":  {
+                       "node:Cron Daily 08:00":  {
+                                                     "recurrenceRules":  [
+
+                                                                         ]
+                                                 }
+                   },
+    "meta":  null,
+    "pinData":  null,
+    "versionId":  "68bb188c-24fb-42a3-81e6-6ea28dc0fee2",
+    "activeVersionId":  "68bb188c-24fb-42a3-81e6-6ea28dc0fee2",
+    "versionCounter":  7,
+    "triggerCount":  2,
+    "shared":  [
+                   {
+                       "updatedAt":  "2026-04-19T03:30:13.667Z",
+                       "createdAt":  "2026-04-19T03:30:13.667Z",
+                       "role":  "workflow:owner",
+                       "workflowId":  "Q3bwCkll3SrMDBhm",
+                       "projectId":  "Lrgt6JR85OZiVLcX",
+                       "project":  {
+                                       "updatedAt":  "2026-03-31T09:07:31.366Z",
+                                       "createdAt":  "2026-03-31T08:57:43.789Z",
+                                       "id":  "Lrgt6JR85OZiVLcX",
+                                       "name":  "gelson mascarenhas \u003cgelson_m@hotmail.com\u003e",
+                                       "type":  "personal",
+                                       "icon":  null,
+                                       "description":  null,
+                                       "creatorId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                   }
+                   }
+               ],
+    "tags":  [
+
+             ],
+    "activeVersion":  {
+                          "updatedAt":  "2026-04-19T07:27:26.980Z",
+                          "createdAt":  "2026-04-19T07:27:26.980Z",
+                          "versionId":  "68bb188c-24fb-42a3-81e6-6ea28dc0fee2",
+                          "workflowId":  "Q3bwCkll3SrMDBhm",
+                          "nodes":  [
+                                        {
+                                            "parameters":  {
+                                                               "rule":  {
+                                                                            "interval":  [
+                                                                                             {
+                                                                                                 "field":  "cronExpression",
+                                                                                                 "expression":  "0 8 * * *"
+                                                                                             }
+                                                                                         ]
+                                                                        }
+                                                           },
+                                            "id":  "cron-daily",
+                                            "name":  "Cron Daily 08:00",
+                                            "type":  "n8n-nodes-base.scheduleTrigger",
+                                            "typeVersion":  1.2,
+                                            "position":  [
+                                                             240,
+                                                             300
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "httpMethod":  "POST",
+                                                               "path":  "recon-os/findings/validate",
+                                                               "responseMode":  "responseNode",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "wh-validate",
+                                            "name":  "Webhook Analyst Review",
+                                            "type":  "n8n-nodes-base.webhook",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             240,
+                                                             500
+                                                         ],
+                                            "webhookId":  "recon-os-findings-validate"
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "jsCode":  "const body = $input.first().json.body || $input.first().json;\n// This is an analyst validation submission\nreturn [{ json: {\n  finding_id: body.finding_id,\n  validation_status: body.validation_status,\n  analyst_notes: body.analyst_notes || \u0027\u0027,\n  updated_severity: body.updated_severity || null,\n  analyst_id: body.analyst_id || \u0027unknown\u0027\n} }];"
+                                                           },
+                                            "id":  "prepare-validation",
+                                            "name":  "Prepare Validation Update",
+                                            "type":  "n8n-nodes-base.code",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             460,
+                                                             500
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "operation":  "executeQuery",
+                                                               "query":  "UPDATE normalized_findings SET\n  validation_status = \u0027{{ $json.validation_status }}\u0027,\n  validation_notes = \u0027{{ $json.analyst_notes.replace(/\u0027/g,\"\u0027\u0027\") }}\u0027,\n  validated_by = \u0027{{ $json.analyst_id }}\u0027,\n  validated_at = NOW()\n  {{ $json.updated_severity ? \",severity = \u0027\" + $json.updated_severity + \"\u0027\" : \u0027\u0027 }}\nWHERE id = \u0027{{ $json.finding_id }}\u0027\nRETURNING id, validation_status, recon_score, priority_bucket;",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "pg-update-validation",
+                                            "name":  "Update Validation Status",
+                                            "type":  "n8n-nodes-base.postgres",
+                                            "typeVersion":  2.5,
+                                            "position":  [
+                                                             680,
+                                                             500
+                                                         ],
+                                            "credentials":  {
+                                                                "postgres":  {
+                                                                                 "id":  "oHS3dvjMW1h1PkMp",
+                                                                                 "name":  "RECON OS PostgreSQL"
+                                                                             }
+                                                            }
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "operation":  "executeQuery",
+                                                               "query":  "INSERT INTO validation_history (finding_id, previous_status, new_status, changed_by, notes)\nSELECT \u0027{{ $(\u0027Prepare Validation Update\u0027).first().json.finding_id }}\u0027,\n       validation_status,\n       \u0027{{ $(\u0027Prepare Validation Update\u0027).first().json.validation_status }}\u0027,\n       \u0027{{ $(\u0027Prepare Validation Update\u0027).first().json.analyst_id }}\u0027,\n       \u0027{{ $(\u0027Prepare Validation Update\u0027).first().json.analyst_notes.replace(/\u0027/g,\"\u0027\u0027\") }}\u0027\nFROM normalized_findings WHERE id = \u0027{{ $(\u0027Prepare Validation Update\u0027).first().json.finding_id }}\u0027;",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "pg-validation-history",
+                                            "name":  "Record History",
+                                            "type":  "n8n-nodes-base.postgres",
+                                            "typeVersion":  2.5,
+                                            "position":  [
+                                                             900,
+                                                             500
+                                                         ],
+                                            "credentials":  {
+                                                                "postgres":  {
+                                                                                 "id":  "oHS3dvjMW1h1PkMp",
+                                                                                 "name":  "RECON OS PostgreSQL"
+                                                                             }
+                                                            }
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "respondWith":  "json",
+                                                               "responseBody":  "={{ JSON.stringify({ ok: true, finding_id: $(\u0027Prepare Validation Update\u0027).first().json.finding_id, new_status: $(\u0027Prepare Validation Update\u0027).first().json.validation_status }) }}",
+                                                               "options":  {
+                                                                               "responseCode":  200
+                                                                           }
+                                                           },
+                                            "id":  "respond-ok",
+                                            "name":  "Respond OK",
+                                            "type":  "n8n-nodes-base.respondToWebhook",
+                                            "typeVersion":  1.1,
+                                            "position":  [
+                                                             1120,
+                                                             500
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "operation":  "executeQuery",
+                                                               "query":  "SELECT nf.id, nf.title, nf.severity, nf.recon_score, nf.priority_bucket,\n       nf.validation_status, nf.first_seen, nf.is_recurring,\n       a.asset_value, e.name as engagement_name, c.name as client_name\nFROM normalized_findings nf\nJOIN assets a ON nf.asset_id = a.id\nJOIN engagements e ON nf.engagement_id = e.id\nJOIN clients c ON e.client_id = c.id\nWHERE nf.validation_status = \u0027pending_analyst\u0027\n  AND e.status = \u0027active\u0027\nORDER BY nf.recon_score DESC\nLIMIT 50;",
+                                                               "options":  {
+
+                                                                           }
+                                                           },
+                                            "id":  "pg-pending-findings",
+                                            "name":  "Get Pending Findings",
+                                            "type":  "n8n-nodes-base.postgres",
+                                            "typeVersion":  2.5,
+                                            "position":  [
+                                                             460,
+                                                             300
+                                                         ],
+                                            "credentials":  {
+                                                                "postgres":  {
+                                                                                 "id":  "oHS3dvjMW1h1PkMp",
+                                                                                 "name":  "RECON OS PostgreSQL"
+                                                                             }
+                                                            }
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "jsCode":  "const findings = $input.all().map(i =\u003e i.json);\nconst immediate = findings.filter(f =\u003e f.priority_bucket === \u0027immediate_attention\u0027);\nconst high = findings.filter(f =\u003e f.priority_bucket === \u0027high_priority\u0027);\nconst medium = findings.filter(f =\u003e f.priority_bucket === \u0027medium_priority\u0027);\nconst other = findings.filter(f =\u003e ![\u0027immediate_attention\u0027,\u0027high_priority\u0027,\u0027medium_priority\u0027].includes(f.priority_bucket));\n\nconst N8N_URL = \u0027https://outstanding-blessing-production-1d4b.up.railway.app\u0027;\n\nconst formatFinding = f =\u003e\n  `. [${f.severity?.toUpperCase()}] ${f.title}\\n  Asset: ${f.asset_value} | Client: ${f.client_name}\\n  Score: ${f.recon_score} | Validate: POST ${N8N_URL}/webhook/recon-os/findings/validate\\n  Body: {\"finding_id\":\"${f.id}\",\"validation_status\":\"validated\",\"analyst_notes\":\"...\"}`;\n\nconst digest = [\n  `RECON OS - Daily Analyst Queue`,\n  `Date: ${new Date().toISOString().split(\u0027T\u0027)[0]}`,\n  `Total pending: ${findings.length} findings`,\n  \u0027\u0027,\n  immediate.length \u003e 0 ? `?? IMMEDIATE ATTENTION (${immediate.length}):\\n${immediate.slice(0,5).map(formatFinding).join(\u0027\\n\u0027)}` : \u0027\u0027,\n  high.length \u003e 0 ? `?? HIGH PRIORITY (${high.length}):\\n${high.slice(0,5).map(formatFinding).join(\u0027\\n\u0027)}` : \u0027\u0027,\n  medium.length \u003e 0 ? `?? MEDIUM PRIORITY (${medium.length})` : \u0027\u0027,\n  other.length \u003e 0 ? `? OTHER (${other.length})` : \u0027\u0027,\n  \u0027\u0027,\n  `Validation options: validated | analyst_reviewed | likely_false_positive`\n].filter(Boolean).join(\u0027\\n\u0027);\n\nreturn [{ json: { digest, finding_count: findings.length, immediate_count: immediate.length } }];"
+                                                           },
+                                            "id":  "build-digest",
+                                            "name":  "Build Analyst Digest",
+                                            "type":  "n8n-nodes-base.code",
+                                            "typeVersion":  2,
+                                            "position":  [
+                                                             680,
+                                                             300
+                                                         ]
+                                        },
+                                        {
+                                            "parameters":  {
+                                                               "method":  "POST",
+                                                               "url":  "={{ $env.RECON_OS_SLACK_WEBHOOK || \u0027https://hooks.slack.com/services/PLACEHOLDER\u0027 }}",
+                                                               "sendBody":  true,
+                                                               "specifyBody":  "json",
+                                                               "jsonBody":  "={{ JSON.stringify({ text: $json.digest, username: \u0027RECON OS\u0027, icon_emoji: \u0027:mag:\u0027 }) }}",
+                                                               "options":  {
+                                                                               "timeout":  10000
+                                                                           }
+                                                           },
+                                            "id":  "send-slack",
+                                            "name":  "Send Slack Digest",
+                                            "type":  "n8n-nodes-base.httpRequest",
+                                            "typeVersion":  4.2,
+                                            "position":  [
+                                                             900,
+                                                             300
+                                                         ]
+                                        }
+                                    ],
+                          "connections":  {
+                                              "Cron Daily 08:00":  {
+                                                                       "main":  [
+                                                                                    [
+                                                                                        {
+                                                                                            "node":  "Get Pending Findings",
+                                                                                            "type":  "main",
+                                                                                            "index":  0
+                                                                                        }
+                                                                                    ]
+                                                                                ]
+                                                                   },
+                                              "Get Pending Findings":  {
+                                                                           "main":  [
+                                                                                        [
+                                                                                            {
+                                                                                                "node":  "Build Analyst Digest",
+                                                                                                "type":  "main",
+                                                                                                "index":  0
+                                                                                            }
+                                                                                        ]
+                                                                                    ]
+                                                                       },
+                                              "Build Analyst Digest":  {
+                                                                           "main":  [
+                                                                                        [
+                                                                                            {
+                                                                                                "node":  "Send Slack Digest",
+                                                                                                "type":  "main",
+                                                                                                "index":  0
+                                                                                            }
+                                                                                        ]
+                                                                                    ]
+                                                                       },
+                                              "Webhook Analyst Review":  {
+                                                                             "main":  [
+                                                                                          [
+                                                                                              {
+                                                                                                  "node":  "Prepare Validation Update",
+                                                                                                  "type":  "main",
+                                                                                                  "index":  0
+                                                                                              }
+                                                                                          ]
+                                                                                      ]
+                                                                         },
+                                              "Prepare Validation Update":  {
+                                                                                "main":  [
+                                                                                             [
+                                                                                                 {
+                                                                                                     "node":  "Update Validation Status",
+                                                                                                     "type":  "main",
+                                                                                                     "index":  0
+                                                                                                 }
+                                                                                             ]
+                                                                                         ]
+                                                                            },
+                                              "Update Validation Status":  {
+                                                                               "main":  [
+                                                                                            [
+                                                                                                {
+                                                                                                    "node":  "Record History",
+                                                                                                    "type":  "main",
+                                                                                                    "index":  0
+                                                                                                }
+                                                                                            ]
+                                                                                        ]
+                                                                           },
+                                              "Record History":  {
+                                                                     "main":  [
+                                                                                  [
+                                                                                      {
+                                                                                          "node":  "Respond OK",
+                                                                                          "type":  "main",
+                                                                                          "index":  0
+                                                                                      }
+                                                                                  ]
+                                                                              ]
+                                                                 }
+                                          },
+                          "authors":  "gelson mascarenhas",
+                          "name":  null,
+                          "description":  null,
+                          "autosaved":  false,
+                          "workflowPublishHistory":  [
+                                                         {
+                                                             "createdAt":  "2026-04-19T07:27:27.042Z",
+                                                             "id":  539,
+                                                             "workflowId":  "Q3bwCkll3SrMDBhm",
+                                                             "versionId":  "68bb188c-24fb-42a3-81e6-6ea28dc0fee2",
+                                                             "event":  "deactivated",
+                                                             "userId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                                         },
+                                                         {
+                                                             "createdAt":  "2026-04-19T07:27:27.071Z",
+                                                             "id":  540,
+                                                             "workflowId":  "Q3bwCkll3SrMDBhm",
+                                                             "versionId":  "68bb188c-24fb-42a3-81e6-6ea28dc0fee2",
+                                                             "event":  "activated",
+                                                             "userId":  "09977cda-9140-4e68-a948-e88d1f400c18"
+                                                         }
+                                                     ]
+                      }
+}

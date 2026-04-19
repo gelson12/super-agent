@@ -1,0 +1,142 @@
+{
+  "name": "RECON OS — WF-08 Vulnerability Ingest",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "recon-os/findings/submit",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wh-finding",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "recon-os-findings-submit"
+    },
+    {
+      "parameters": { "inputSource": "passthrough" },
+      "id": "wf-trigger",
+      "name": "Execute Workflow Trigger",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\nconst body = item.body || item;\nconst required = ['engagement_id','asset_id','source_tool','title'];\nconst missing = required.filter(f => !body[f]);\nif (missing.length > 0) return [{ json: { valid: false, missing, body } }];\nreturn [{ json: { valid: true, body } }];"
+      },
+      "id": "validate",
+      "name": "Validate Schema",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [{ "id": "cond-valid", "leftValue": "={{ $json.valid }}", "rightValue": true, "operator": { "type": "boolean", "operation": "true" } }],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-valid",
+      "name": "IF Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: false, errors: $json.missing }) }}",
+        "options": { "responseCode": 400 }
+      },
+      "id": "respond-400",
+      "name": "Respond 400",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [900, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $('Validate Schema').first().json.body;\n\n// Severity normalization\nconst sevMap = {\n  critical: 'critical', high: 'high', medium: 'medium', moderate: 'medium',\n  low: 'low', info: 'informational', informational: 'informational', note: 'informational'\n};\nconst severity = sevMap[(body.raw_severity || body.severity || 'medium').toLowerCase()] || 'medium';\n\n// CWE mapping from common titles\nconst cweMap = {\n  'sql injection': 'CWE-89', 'xss': 'CWE-79', 'cross-site scripting': 'CWE-79',\n  'csrf': 'CWE-352', 'ssrf': 'CWE-918', 'xxe': 'CWE-611',\n  'path traversal': 'CWE-22', 'idor': 'CWE-639', 'open redirect': 'CWE-601',\n  'csp': 'CWE-693', 'content-security-policy': 'CWE-693',\n  'hsts': 'CWE-319', 'strict-transport': 'CWE-319',\n  'tls 1.0': 'CWE-326', 'tls 1.1': 'CWE-326', 'ssl': 'CWE-326',\n  'version disclosure': 'CWE-200', 'x-frame': 'CWE-1021',\n  'clickjacking': 'CWE-1021', 'x-content-type': 'CWE-693'\n};\nconst titleLower = (body.title || '').toLowerCase();\nlet cweId = body.cwe_id || null;\nif (!cweId) {\n  for (const [keyword, cwe] of Object.entries(cweMap)) {\n    if (titleLower.includes(keyword)) { cweId = cwe; break; }\n  }\n}\n\n// OWASP mapping\nconst owaspMap = {\n  'CWE-89': 'A03:2021', 'CWE-79': 'A03:2021', 'CWE-352': 'A01:2021',\n  'CWE-918': 'A10:2021', 'CWE-611': 'A05:2021', 'CWE-22': 'A01:2021',\n  'CWE-639': 'A01:2021', 'CWE-693': 'A05:2021', 'CWE-319': 'A02:2021',\n  'CWE-326': 'A02:2021', 'CWE-200': 'A05:2021', 'CWE-1021': 'A04:2021'\n};\nconst owaspCategory = body.owasp_category || (cweId ? owaspMap[cweId] : null);\n\n// Sanitize evidence (remove potential credentials)\nlet rawEvidence = body.raw_evidence || '';\nrawEvidence = rawEvidence.replace(/password[\"']?\\s*[=:]\\s*[^\\s&\"',]+/gi, 'password=[REDACTED]');\nrawEvidence = rawEvidence.replace(/authorization:\\s*bearer\\s+[a-z0-9._-]+/gi, 'Authorization: Bearer [REDACTED]');\nrawEvidence = rawEvidence.replace(/api[_-]?key[\"']?\\s*[=:]\\s*[^\\s&\"',]+/gi, 'api_key=[REDACTED]');\n\nreturn [{ json: {\n  engagement_id: body.engagement_id,\n  asset_id: body.asset_id,\n  source_tool: body.source_tool,\n  title: body.title,\n  raw_severity: severity,\n  raw_evidence: rawEvidence.substring(0, 5000),\n  raw_data: body.raw_data || {},\n  cwe_id: cweId,\n  owasp_category: owaspCategory\n} }];"
+      },
+      "id": "normalize-finding",
+      "name": "Normalize Finding",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO raw_findings (engagement_id, asset_id, source_tool, title, raw_severity, raw_evidence, raw_data, status)\nVALUES (\n  '{{ $json.engagement_id }}',\n  '{{ $json.asset_id }}',\n  '{{ $json.source_tool }}',\n  '{{ $json.title.replace(/'/g,\"''\") }}',\n  '{{ $json.raw_severity }}',\n  '{{ $json.raw_evidence.replace(/'/g,\"''\").replace(/\\n/g,' ') }}',\n  '{{ JSON.stringify($json.raw_data || {}).replace(/'/g,\"''\") }}'::jsonb,\n  'pending_dedup'\n)\nRETURNING id;",
+        "options": {}
+      },
+      "id": "pg-insert-raw",
+      "name": "Insert Raw Finding",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1120, 300],
+      "credentials": { "postgres": { "id": "RECON_OS_PG_CRED", "name": "RECON OS PostgreSQL" } }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://outstanding-blessing-production-1d4b.up.railway.app/webhook/recon-os/internal/dedup",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ raw_finding_id: $('Insert Raw Finding').first().json.id, ...$('Normalize Finding').first().json }) }}",
+        "options": { "timeout": 15000 }
+      },
+      "id": "call-dedup",
+      "name": "Call Deduplicator",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1340, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO audit_logs (event_type, actor, engagement_id, entity_type, entity_id, payload)\nVALUES ('finding_ingested','wf08','{{ $('Normalize Finding').first().json.engagement_id }}','raw_finding','{{ $('Insert Raw Finding').first().json.id }}','{\"title\":\"{{ $('Normalize Finding').first().json.title.replace(/'/g,\"''\").replace(/\"/g,'\\\\\"') }}\",\"source\":\"{{ $('Normalize Finding').first().json.source_tool }}\"}'::jsonb);",
+        "options": {}
+      },
+      "id": "pg-audit",
+      "name": "Audit Log",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1560, 300],
+      "credentials": { "postgres": { "id": "RECON_OS_PG_CRED", "name": "RECON OS PostgreSQL" } }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, raw_finding_id: $('Insert Raw Finding').first().json.id, message: 'Finding ingested and queued for deduplication.' }) }}",
+        "options": { "responseCode": 201 }
+      },
+      "id": "respond-201",
+      "name": "Respond 201",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1780, 300]
+    }
+  ],
+  "connections": {
+    "Webhook": { "main": [[{ "node": "Validate Schema", "type": "main", "index": 0 }]] },
+    "Execute Workflow Trigger": { "main": [[{ "node": "Validate Schema", "type": "main", "index": 0 }]] },
+    "Validate Schema": { "main": [[{ "node": "IF Valid?", "type": "main", "index": 0 }]] },
+    "IF Valid?": { "main": [
+      [{ "node": "Normalize Finding", "type": "main", "index": 0 }],
+      [{ "node": "Respond 400", "type": "main", "index": 0 }]
+    ]},
+    "Normalize Finding": { "main": [[{ "node": "Insert Raw Finding", "type": "main", "index": 0 }]] },
+    "Insert Raw Finding": { "main": [[{ "node": "Call Deduplicator", "type": "main", "index": 0 }]] },
+    "Call Deduplicator": { "main": [[{ "node": "Audit Log", "type": "main", "index": 0 }]] },
+    "Audit Log": { "main": [[{ "node": "Respond 201", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1", "saveManualExecutions": true, "saveExecutionProgress": true },
+  "meta": { "description": "RECON OS WF-08: Vulnerability Ingest — receives scanner output and manual findings, normalizes severity/CWE/OWASP, sanitizes evidence, stores as raw finding, triggers deduplication." }
+}
