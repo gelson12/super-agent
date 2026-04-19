@@ -98,17 +98,18 @@ main{flex:1;padding:24px 28px;display:flex;flex-direction:column;gap:24px;max-wi
 
 /* ── Section headers ──────────────────────────────────────────────────── */
 .section-label{
-  font-family:var(--font-hud);font-size:10px;letter-spacing:4px;color:var(--cyan);
-  text-transform:uppercase;margin-bottom:12px;display:flex;align-items:center;gap:10px;
+  font-family:var(--font-hud);font-size:12px;letter-spacing:4px;color:var(--cyan);
+  text-transform:uppercase;margin-bottom:14px;display:flex;align-items:center;gap:10px;
 }
-.section-label::after{content:'';flex:1;height:1px;background:var(--border)}
+.section-label::before{content:'▸';opacity:0.6;font-size:10px}
+.section-label::after{content:'';flex:1;height:1px;background:linear-gradient(90deg,var(--border),transparent)}
 
 /* ── Stat cards row ───────────────────────────────────────────────────── */
 #stat-row{display:grid;grid-template-columns:repeat(4,1fr);gap:16px}
 .stat-card{
-  background:var(--glass);border:1px solid var(--border);border-radius:8px;
-  padding:20px;backdrop-filter:blur(8px);position:relative;overflow:hidden;
-  transition:border-color 0.3s,box-shadow 0.3s;
+  background:var(--glass);border:1px solid var(--border);border-radius:10px;
+  padding:22px 24px;backdrop-filter:blur(8px);position:relative;overflow:hidden;
+  transition:border-color 0.3s,box-shadow 0.3s,transform 0.2s;
 }
 .stat-card::before{
   content:'';position:absolute;top:0;left:0;right:0;height:2px;
@@ -116,24 +117,25 @@ main{flex:1;padding:24px 28px;display:flex;flex-direction:column;gap:24px;max-wi
   animation:topScan 3s linear infinite;
 }
 @keyframes topScan{0%{transform:translateX(-100%)}100%{transform:translateX(100%)}}
-.stat-card:hover{border-color:var(--cyan-dim);box-shadow:0 0 20px rgba(0,212,255,0.1)}
-.stat-num{font-family:var(--font-hud);font-size:32px;font-weight:900;line-height:1;margin-bottom:6px}
-.stat-label{font-size:10px;letter-spacing:2px;color:var(--text-dim);text-transform:uppercase}
-.stat-num.ok{color:var(--green)}
-.stat-num.warn{color:var(--yellow)}
-.stat-num.err{color:var(--red)}
-.stat-num.neu{color:var(--cyan)}
+.stat-card:hover{border-color:var(--cyan-dim);box-shadow:0 0 24px rgba(0,212,255,0.12);transform:translateY(-2px)}
+.stat-num{font-family:var(--font-hud);font-size:40px;font-weight:900;line-height:1;margin-bottom:8px;letter-spacing:-1px}
+.stat-label{font-size:11px;letter-spacing:2px;color:var(--text-dim);text-transform:uppercase}
+.stat-num.ok{color:var(--green);text-shadow:0 0 20px rgba(0,255,136,0.4)}
+.stat-num.warn{color:var(--yellow);text-shadow:0 0 20px rgba(255,204,0,0.4)}
+.stat-num.err{color:var(--red);text-shadow:0 0 20px rgba(255,45,85,0.4)}
+.stat-num.neu{color:var(--cyan);text-shadow:0 0 20px rgba(0,212,255,0.4)}
 
 /* ── System health grid ───────────────────────────────────────────────── */
 #health-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
 .health-card{
-  background:var(--glass);border:1px solid var(--border);border-radius:8px;
-  padding:20px;backdrop-filter:blur(8px);
+  background:var(--glass);border:1px solid var(--border);border-radius:10px;
+  padding:22px;backdrop-filter:blur(8px);transition:border-color 0.3s,box-shadow 0.3s;
 }
-.health-card-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
-.health-card-title{font-family:var(--font-hud);font-size:11px;letter-spacing:2px;color:var(--text);text-transform:uppercase}
+.health-card:hover{border-color:rgba(0,212,255,0.2);box-shadow:0 4px 20px rgba(0,0,0,0.3)}
+.health-card-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}
+.health-card-title{font-family:var(--font-hud);font-size:12px;letter-spacing:2px;color:var(--text);text-transform:uppercase}
 .status-orb{
-  width:12px;height:12px;border-radius:50%;flex-shrink:0;
+  width:14px;height:14px;border-radius:50%;flex-shrink:0;
 }
 .orb-green{background:var(--green);box-shadow:0 0 8px var(--green),0 0 16px rgba(0,255,136,0.4);animation:orbPulse 2s infinite}
 .orb-yellow{background:var(--yellow);box-shadow:0 0 8px var(--yellow);animation:orbPulse 1.5s infinite}
@@ -195,43 +197,44 @@ main{flex:1;padding:24px 28px;display:flex;flex-direction:column;gap:24px;max-wi
 
 #suggestions-list{display:flex;flex-direction:column;gap:10px}
 .suggestion-card{
-  background:var(--glass);border-radius:8px;padding:18px 20px;
+  background:var(--glass);border-radius:10px;padding:20px 22px;
   display:flex;gap:16px;align-items:flex-start;
-  transition:border-color 0.2s,box-shadow 0.2s;
+  transition:border-color 0.2s,box-shadow 0.2s,transform 0.15s;
   border:1px solid var(--border);
 }
-.suggestion-card.sev-critical{border-left:3px solid var(--red)}
-.suggestion-card.sev-high{border-left:3px solid var(--yellow)}
-.suggestion-card.sev-medium{border-left:3px solid var(--cyan)}
-.suggestion-card.sev-low{border-left:3px solid var(--text-dim)}
+.suggestion-card:hover{transform:translateX(3px);box-shadow:4px 0 20px rgba(0,0,0,0.2)}
+.suggestion-card.sev-critical{border-left:4px solid var(--red);background:rgba(255,45,85,0.03)}
+.suggestion-card.sev-high{border-left:4px solid var(--yellow);background:rgba(255,204,0,0.02)}
+.suggestion-card.sev-medium{border-left:4px solid var(--cyan)}
+.suggestion-card.sev-low{border-left:4px solid var(--text-dim)}
 .sug-sev{
-  font-family:var(--font-hud);font-size:9px;letter-spacing:1px;font-weight:700;
-  padding:3px 8px;border-radius:3px;flex-shrink:0;margin-top:2px;text-transform:uppercase;
+  font-family:var(--font-hud);font-size:10px;letter-spacing:1px;font-weight:700;
+  padding:4px 10px;border-radius:4px;flex-shrink:0;margin-top:2px;text-transform:uppercase;
 }
 .sev-critical .sug-sev{background:rgba(255,45,85,0.15);color:var(--red);border:1px solid rgba(255,45,85,0.4)}
 .sev-high .sug-sev{background:rgba(255,204,0,0.12);color:var(--yellow);border:1px solid rgba(255,204,0,0.4)}
 .sev-medium .sug-sev{background:rgba(0,212,255,0.1);color:var(--cyan);border:1px solid rgba(0,212,255,0.3)}
 .sev-low .sug-sev{background:rgba(90,112,144,0.1);color:var(--text-dim);border:1px solid rgba(90,112,144,0.3)}
 .sug-body{flex:1;min-width:0}
-.sug-system{font-size:10px;color:var(--text-dim);letter-spacing:1px;text-transform:uppercase;margin-bottom:4px}
-.sug-title{font-size:13px;color:var(--text);font-weight:500;margin-bottom:6px}
-.sug-desc{font-size:11px;color:var(--text-dim);line-height:1.6;margin-bottom:8px}
+.sug-system{font-size:11px;color:var(--text-dim);letter-spacing:1px;text-transform:uppercase;margin-bottom:6px}
+.sug-title{font-size:14px;color:var(--text);font-weight:600;margin-bottom:8px;line-height:1.4}
+.sug-desc{font-size:12px;color:var(--text-dim);line-height:1.7;margin-bottom:10px}
 .sug-fix{
-  font-size:11px;color:var(--cyan);background:rgba(0,212,255,0.05);
-  border:1px solid rgba(0,212,255,0.15);border-radius:4px;
-  padding:8px 12px;line-height:1.6;
+  font-size:12px;color:var(--cyan);background:rgba(0,212,255,0.05);
+  border:1px solid rgba(0,212,255,0.15);border-radius:6px;
+  padding:10px 14px;line-height:1.6;
 }
 .sug-fix::before{content:'FIX ▶  ';font-weight:700;opacity:0.6}
-.sug-actions{display:flex;gap:8px;margin-top:10px}
+.sug-actions{display:flex;gap:10px;margin-top:12px}
 .btn-approve,.btn-reject{
-  font-family:var(--font-hud);font-size:9px;letter-spacing:2px;font-weight:700;
-  padding:6px 16px;border-radius:4px;cursor:pointer;
+  font-family:var(--font-hud);font-size:10px;letter-spacing:2px;font-weight:700;
+  padding:8px 20px;border-radius:5px;cursor:pointer;
   transition:all 0.2s;text-transform:uppercase;border:1px solid;
 }
 .btn-approve{color:var(--green);border-color:var(--green);background:transparent}
-.btn-approve:hover{background:rgba(0,255,136,0.1);box-shadow:0 0 12px rgba(0,255,136,0.2)}
+.btn-approve:hover{background:rgba(0,255,136,0.12);box-shadow:0 0 16px rgba(0,255,136,0.25)}
 .btn-reject{color:var(--red);border-color:var(--red);background:transparent}
-.btn-reject:hover{background:rgba(255,45,85,0.1)}
+.btn-reject:hover{background:rgba(255,45,85,0.1);box-shadow:0 0 12px rgba(255,45,85,0.2)}
 .btn-approve:disabled,.btn-reject:disabled{opacity:0.3;cursor:not-allowed}
 .sug-status-tag{
   font-family:var(--font-hud);font-size:9px;letter-spacing:2px;padding:4px 10px;border-radius:3px;
@@ -480,7 +483,13 @@ async function loadStatus() {
   try {
     const r = await fetch(`${API}/status`);
     const d = await r.json();
-    if (d.status === 'no_data') return;
+    if (d.status === 'no_data') {
+      ['checks-n8n','checks-agent','checks-crypto'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.innerHTML = `<div class="empty" style="padding:20px"><div class="empty-msg">No data yet — run a check to populate</div></div>`;
+      });
+      return;
+    }
 
     // Update badge
     const badge = document.getElementById('overall-badge');
@@ -493,7 +502,7 @@ async function loadStatus() {
     document.getElementById('stat-failed').textContent = d.checks_failed ?? '—';
 
     // Health cards orbs
-    const orbMap = {n8n: d.n8n_status, agent: d.agent_status};
+    const orbMap = {n8n: d.n8n_status, agent: d.agent_status, crypto: d.crypto_status};
     for (const [key, status] of Object.entries(orbMap)) {
       const orb = document.getElementById(`orb-${key}`);
       if (orb) { orb.className = 'status-orb ' + orbClass(status); }
@@ -502,6 +511,13 @@ async function loadStatus() {
     // Populate check lists from data.checks
     if (d.data && d.data.checks) {
       populateCheckCards(d.data.checks);
+    } else {
+      ['checks-n8n','checks-agent','checks-crypto'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el && el.querySelector('.loading')) {
+          el.innerHTML = `<div class="empty" style="padding:20px"><div class="empty-msg">No checks in last snapshot</div></div>`;
+        }
+      });
     }
 
     // CLI layers from checks
@@ -512,6 +528,16 @@ async function loadStatus() {
     document.getElementById('last-update').textContent = 'Last updated: ' + timeAgo(d.created_at);
   } catch(e) {
     console.error('Status load error', e);
+    ['checks-n8n','checks-agent','checks-crypto'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el && el.querySelector('.loading')) {
+        el.innerHTML = `<div class="empty" style="padding:20px"><div class="empty-msg" style="color:var(--red)">⚠ Could not reach monitoring API</div></div>`;
+      }
+    });
+    const badge = document.getElementById('overall-badge');
+    if (badge && badge.className === 'badge-unknown') {
+      badge.textContent = 'API ERROR';
+    }
   }
 }
 

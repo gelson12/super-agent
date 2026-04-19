@@ -42,16 +42,22 @@
     }
 
     .header h1 {
-      font-size: 0.7rem;
+      font-size: 0.9rem;
       color: #c9a96e;
-      letter-spacing: 1px;
+      letter-spacing: 2px;
+      text-shadow: 0 0 12px rgba(201,169,110,0.3);
     }
 
     .header .back-link {
-      font-size: 0.5rem;
+      font-size: 0.55rem;
       color: #6cb4ff;
       text-decoration: none;
+      padding: 6px 12px;
+      border: 1px solid rgba(108,180,255,0.2);
+      border-radius: 4px;
+      transition: all 0.2s;
     }
+    .header .back-link:hover { background: rgba(108,180,255,0.08); border-color: rgba(108,180,255,0.4); text-decoration: none; }
 
     .header .back-link:hover { text-decoration: underline; }
 
@@ -89,13 +95,14 @@
 
     /* ── Section labels ──────────────────────────────────────────── */
     .section-label {
-      font-size: 0.5rem;
-      color: #8b7355;
+      font-size: 0.65rem;
+      color: #c9a96e;
       text-transform: uppercase;
-      letter-spacing: 2px;
-      margin-bottom: 16px;
-      padding-left: 8px;
-      border-left: 3px solid #6b5337;
+      letter-spacing: 3px;
+      margin-bottom: 18px;
+      padding-left: 12px;
+      border-left: 3px solid #c9a96e;
+      display: flex; align-items: center; gap: 8px;
     }
 
     /* ── Desk grid ───────────────────────────────────────────────── */
@@ -129,7 +136,7 @@
 
     /* Worker name */
     .desk .name {
-      font-size: 0.45rem;
+      font-size: 0.55rem;
       color: #d4b896;
       text-align: center;
       margin-bottom: 6px;
@@ -138,9 +145,9 @@
 
     /* Status label */
     .desk .status-label {
-      font-size: 0.4rem;
-      padding: 2px 6px;
-      border-radius: 2px;
+      font-size: 0.5rem;
+      padding: 3px 8px;
+      border-radius: 3px;
       margin-bottom: 8px;
       text-transform: lowercase;
     }
@@ -610,12 +617,12 @@
     }
 
     .stat-item {
-      font-size: 0.4rem;
+      font-size: 0.52rem;
       color: #8b7355;
     }
 
     .stat-item .stat-value {
-      font-size: 0.55rem;
+      font-size: 0.65rem;
       color: #c9a96e;
       margin-left: 6px;
     }
@@ -1689,6 +1696,25 @@
     <div class="shortcut-hint">[R] refresh</div>
   </div>
 
+  <!-- Credits depleted banner (shown dynamically) -->
+  <div id="no-credits-banner" style="display:none;
+    margin: 0 0 18px 0; padding: 12px 18px;
+    background: linear-gradient(135deg, rgba(255,45,85,0.12), rgba(255,140,0,0.08));
+    border: 1px solid rgba(255,45,85,0.4); border-radius: 8px;
+    display: none; align-items: center; gap: 12px;
+    font-size: 0.32rem; color: #ff2d55; animation: banner-pulse 2s ease-in-out infinite;
+  ">
+    <span style="font-size:1.2rem;">⚡</span>
+    <div>
+      <div style="font-weight:700;letter-spacing:1px;">API CREDITS DEPLETED</div>
+      <div style="font-size:0.26rem;color:#ff8c00;margin-top:3px;">Anthropic API balance exhausted — agents on strike. Top up credits to restore service.</div>
+    </div>
+    <span id="no-credits-count" style="margin-left:auto;background:rgba(255,45,85,0.2);padding:4px 10px;border-radius:4px;font-size:0.3rem;color:#ff6b6b;border:1px solid rgba(255,45,85,0.3);"></span>
+  </div>
+  <style>
+  @keyframes banner-pulse { 0%,100%{box-shadow:0 0 0 rgba(255,45,85,0)} 50%{box-shadow:0 0 20px rgba(255,45,85,0.15)} }
+  </style>
+
   <!-- Models section -->
   <div class="section-label"><i class="s-icon">🧠</i>LLM Models</div>
   <div class="desks" id="models-desks"></div>
@@ -2170,6 +2196,19 @@ function renderAll(workers) {
   document.getElementById("count-sleeping").textContent = counts.sleeping;
   document.getElementById("count-issues").textContent   = counts.issues;
 
+  // Show/hide NO CREDITS banner
+  const strikeWorkers = allWorkers.filter(w => w.state === "strike");
+  const banner = document.getElementById("no-credits-banner");
+  if (banner) {
+    if (strikeWorkers.length > 0) {
+      banner.style.display = "flex";
+      const countEl = document.getElementById("no-credits-count");
+      if (countEl) countEl.textContent = strikeWorkers.length + " agent" + (strikeWorkers.length > 1 ? "s" : "") + " offline";
+    } else {
+      banner.style.display = "none";
+    }
+  }
+
   document.getElementById("models-desks").innerHTML =
     MODEL_WORKERS.map(id => renderDesk(
       workerMap[id] || { id, state: "sleeping", last_worked: 0, last_worked_ago: null, talking_to: null, task: "" }
@@ -2559,16 +2598,22 @@ setInterval(fetchDetailedHealth, 10000);  // 10s — token TTL needs fresher upd
 // ── Memory panel ──────────────────────────────────────────────────────────
 
 async function fetchMemoryStats() {
+  const breakdown = document.getElementById("mem-source-breakdown");
   try {
     const resp = await fetch("/memory/health");
-    if (!resp.ok) return;
+    if (!resp.ok) {
+      breakdown.textContent = "Memory API unavailable (HTTP " + resp.status + ")";
+      return;
+    }
     const d = await resp.json();
-    if (d.error) return;
+    if (d.error) {
+      breakdown.textContent = "Memory store error: " + d.error;
+      return;
+    }
     document.getElementById("mem-total").textContent = (d.total || 0).toLocaleString();
     document.getElementById("mem-24h").textContent = "+" + (d.last_24h || 0);
     document.getElementById("mem-embedding").textContent = (d.embedding_coverage_pct || 0) + "%";
     document.getElementById("mem-sources").textContent = (d.by_source || []).length;
-    const breakdown = document.getElementById("mem-source-breakdown");
     if (d.by_source && d.by_source.length > 0) {
       breakdown.innerHTML = d.by_source.map(s =>
         `<span style="color:#10b981;font-weight:600;">${s.source}</span>
@@ -2578,7 +2623,9 @@ async function fetchMemoryStats() {
     } else {
       breakdown.textContent = "No memories yet";
     }
-  } catch (_) { /* non-critical */ }
+  } catch (_) {
+    breakdown.textContent = "Memory store offline — retrying...";
+  }
 }
 
 fetchMemoryStats();
