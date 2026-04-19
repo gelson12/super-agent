@@ -28,6 +28,7 @@ from datetime import datetime, timedelta, timezone
 import psycopg2
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
 from . import migrations, task_runner
@@ -497,6 +498,19 @@ def _read_token_expiry() -> dict:
     except Exception:
         pass
     return {"expires_in_s": None, "expires_at_ms": None}
+
+
+_SUPER_AGENT_URL = os.environ.get("SUPER_AGENT_URL", "https://super-agent-production.up.railway.app")
+
+@app.get("/observability")
+@app.get("/intelligence")
+@app.get("/monitoring")
+@app.get("/agents")
+@app.get("/spend")
+def redirect_to_super_agent_dashboard(request: Request):
+    """Redirect inspiring-cat dashboard links to the super-agent dashboards."""
+    path = request.url.path
+    return RedirectResponse(url=f"{_SUPER_AGENT_URL}{path}", status_code=302)
 
 
 @app.get("/health")
