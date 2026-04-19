@@ -1,0 +1,100 @@
+{
+  "name": "RECON OS — WF-02 Scope Guardian",
+  "nodes": [
+    {
+      "parameters": { "inputSource": "passthrough" },
+      "id": "wf-trigger",
+      "name": "Execute Workflow Trigger",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, status, testing_window_start, testing_window_end, rate_limit_profile\nFROM engagements\nWHERE id = '{{ $json.engagement_id }}'\nLIMIT 1;",
+        "options": {}
+      },
+      "id": "pg-get-engagement",
+      "name": "Get Engagement",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [460, 300],
+      "credentials": { "postgres": { "id": "RECON_OS_PG_CRED", "name": "RECON OS PostgreSQL" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "const eng = $input.first().json;\nconst asset = $('Execute Workflow Trigger').first().json.asset_value || '';\nif (!eng || !eng.id) {\n  return [{ json: { allowed: false, reason: 'engagement_not_found', asset_value: asset } }];\n}\nif (eng.status !== 'active') {\n  return [{ json: { allowed: false, reason: 'engagement_not_active', status: eng.status, asset_value: asset } }];\n}\nconst now = new Date();\nconst start = new Date(eng.testing_window_start);\nconst end = new Date(eng.testing_window_end);\nif (now < start || now > end) {\n  return [{ json: { allowed: false, reason: 'outside_testing_window', window_start: eng.testing_window_start, window_end: eng.testing_window_end, asset_value: asset } }];\n}\nreturn [{ json: { engagement_ok: true, engagement_id: eng.id, rate_limit_profile: eng.rate_limit_profile, asset_value: asset } }];"
+      },
+      "id": "check-engagement",
+      "name": "Check Engagement Status",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [{ "id": "cond-eng", "leftValue": "={{ $json.engagement_ok }}", "rightValue": true, "operator": { "type": "boolean", "operation": "true" } }],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-eng-ok",
+      "name": "IF Engagement OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, value, scope_type, in_scope\nFROM scope_rules\nWHERE engagement_id = '{{ $json.engagement_id }}'\nAND in_scope = true;",
+        "options": {}
+      },
+      "id": "pg-get-scope",
+      "name": "Get Scope Rules",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1120, 300],
+      "credentials": { "postgres": { "id": "RECON_OS_PG_CRED", "name": "RECON OS PostgreSQL" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "const rules = $input.all().map(i => i.json);\nconst triggerData = $('Execute Workflow Trigger').first().json;\nconst assetValue = (triggerData.asset_value || '').toLowerCase().trim().replace(/\\.$/,'');\nconst engId = $('Check Engagement Status').first().json.engagement_id;\nconst rateProfile = $('Check Engagement Status').first().json.rate_limit_profile;\n\nfunction normalizeHost(h) {\n  return h.toLowerCase().trim().replace(/\\.$/,'').replace(/^https?:\\/\\//,'').split('/')[0];\n}\n\nlet matched = null;\nfor (const rule of rules) {\n  const ruleVal = normalizeHost(rule.value);\n  if (rule.scope_type === 'domain' || rule.scope_type === 'web_app' || rule.scope_type === 'api') {\n    if (assetValue === ruleVal) { matched = rule; break; }\n  } else if (rule.scope_type === 'subdomain_wildcard') {\n    const base = ruleVal.replace(/^\\*\\./, '');\n    if (assetValue === base || assetValue.endsWith('.' + base)) { matched = rule; break; }\n  } else if (rule.scope_type === 'ip') {\n    if (assetValue === ruleVal) { matched = rule; break; }\n  } else if (rule.scope_type === 'cidr') {\n    // Basic CIDR check — for production use a proper CIDR library\n    const [network, bits] = ruleVal.split('/');\n    matched = null; // placeholder — analyst should verify IP scope manually\n  } else if (rule.scope_type === 'environment') {\n    if (assetValue.includes(ruleVal)) { matched = rule; break; }\n  }\n}\n\nif (!matched) {\n  return [{ json: { allowed: false, reason: 'out_of_scope', asset_value: assetValue, engagement_id: engId } }];\n}\n\nreturn [{ json: { allowed: true, scope_rule_id: matched.id, scope_type: matched.scope_type, asset_value: assetValue, engagement_id: engId, rate_limit_profile: rateProfile } }];"
+      },
+      "id": "check-scope",
+      "name": "Check Asset Scope",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO audit_logs (event_type, actor, engagement_id, entity_type, payload)\nVALUES ('oos_attempt_blocked', 'scope_guardian', '{{ $json.engagement_id }}', 'asset', '{\"asset_value\":\"{{ $json.asset_value }}\",\"reason\":\"{{ $json.reason }}\"}'::jsonb);",
+        "options": {}
+      },
+      "id": "pg-audit-block",
+      "name": "Audit OOS Block",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1120, 500],
+      "credentials": { "postgres": { "id": "RECON_OS_PG_CRED", "name": "RECON OS PostgreSQL" } }
+    }
+  ],
+  "connections": {
+    "Execute Workflow Trigger": { "main": [[{ "node": "Get Engagement", "type": "main", "index": 0 }]] },
+    "Get Engagement": { "main": [[{ "node": "Check Engagement Status", "type": "main", "index": 0 }]] },
+    "Check Engagement Status": { "main": [[{ "node": "IF Engagement OK?", "type": "main", "index": 0 }]] },
+    "IF Engagement OK?": { "main": [
+      [{ "node": "Get Scope Rules", "type": "main", "index": 0 }],
+      [{ "node": "Audit OOS Block", "type": "main", "index": 0 }]
+    ]},
+    "Get Scope Rules": { "main": [[{ "node": "Check Asset Scope", "type": "main", "index": 0 }]] },
+    "Check Asset Scope": { "main": [[{ "node": "Audit OOS Block", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1", "saveManualExecutions": true, "saveExecutionProgress": true },
+  "meta": { "description": "RECON OS WF-02: Scope Guardian — validates every asset against engagement status, time window, and scope rules. Called as sub-workflow from all other RECON OS workflows. Returns {allowed, reason, scope_rule_id}." }
+}

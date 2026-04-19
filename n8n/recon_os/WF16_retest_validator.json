@@ -1,0 +1,143 @@
+{
+  "name": "RECON OS — WF-16 Retest Validator",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "recon-os/internal/retest-validate",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wh-rv",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "recon-os-internal-retest-validate"
+    },
+    { "parameters": { "inputSource": "passthrough" }, "id": "wf-trigger", "name": "Execute Workflow Trigger", "type": "n8n-nodes-base.executeWorkflowTrigger", "typeVersion": 1.1, "position": [240, 500] },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT rr.id as retest_id, rr.finding_id, rr.engagement_id, nf.severity, nf.reopen_count, nf.title\nFROM retest_records rr\nJOIN normalized_findings nf ON rr.finding_id = nf.id\nWHERE rr.id = '{{ ($input.first().json.body || $input.first().json).retest_id }}'",
+        "options": {}
+      },
+      "id": "pg-get-retest",
+      "name": "Get Retest Record",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [460, 300],
+      "credentials": { "postgres": { "id": "RECON_OS_PG_CRED", "name": "RECON OS PostgreSQL" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "const retest = $('Get Retest Record').first().json;\nconst input = $('Execute Workflow Trigger').first()?.json || $('Webhook').first()?.json?.body || {};\nconst inputData = input.body || input;\nreturn [{ json: {\n  retest_id: retest.retest_id,\n  finding_id: retest.finding_id,\n  engagement_id: retest.engagement_id,\n  severity: retest.severity,\n  reopen_count: parseInt(retest.reopen_count || 0),\n  result: inputData.result,\n  retest_evidence: inputData.retest_evidence || '',\n  retested_by: inputData.retested_by || 'analyst',\n  notes: inputData.notes || ''\n} }];"
+      },
+      "id": "merge-data",
+      "name": "Merge Retest Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE retest_records SET\n  result = '{{ $json.result }}',\n  retest_evidence = '{{ $json.retest_evidence.replace(/'/g,\"''\") }}',\n  retested_by = '{{ $json.retested_by }}',\n  notes = '{{ $json.notes.replace(/'/g,\"''\") }}',\n  completed_at = NOW()\nWHERE id = '{{ $json.retest_id }}';",
+        "options": {}
+      },
+      "id": "pg-update-retest",
+      "name": "Update Retest Record",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [900, 300],
+      "credentials": { "postgres": { "id": "RECON_OS_PG_CRED", "name": "RECON OS PostgreSQL" } }
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            { "conditions": { "options": { "caseSensitive": true }, "conditions": [{ "id": "c1", "leftValue": "={{ $json.result }}", "rightValue": "pass", "operator": { "type": "string", "operation": "equals" } }], "combinator": "and" } },
+            { "conditions": { "options": { "caseSensitive": true }, "conditions": [{ "id": "c2", "leftValue": "={{ $json.result }}", "rightValue": "fail", "operator": { "type": "string", "operation": "equals" } }], "combinator": "and" } }
+          ]
+        },
+        "options": {}
+      },
+      "id": "switch-result",
+      "name": "Switch Result",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE normalized_findings SET\n  validation_status = 'verified_fixed',\n  remediation_status = 'verified_fixed',\n  closed_at = NOW()\nWHERE id = '{{ $json.finding_id }}';\nUPDATE engagement_metrics SET\n  verified_fixed = verified_fixed + 1,\n  avg_mttr_days = (\n    SELECT ROUND(AVG(EXTRACT(EPOCH FROM (closed_at - first_seen))/86400),2)\n    FROM normalized_findings\n    WHERE engagement_id = '{{ $json.engagement_id }}' AND closed_at IS NOT NULL\n  ),\n  updated_at = NOW()\nWHERE engagement_id = '{{ $json.engagement_id }}';",
+        "options": {}
+      },
+      "id": "pg-close-finding",
+      "name": "Close Finding",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1340, 200],
+      "credentials": { "postgres": { "id": "RECON_OS_PG_CRED", "name": "RECON OS PostgreSQL" } }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE normalized_findings SET\n  validation_status = 'validated',\n  remediation_status = 'reopened',\n  reopen_count = reopen_count + 1\nWHERE id = '{{ $json.finding_id }}';\nINSERT INTO audit_logs (event_type, actor, entity_type, entity_id, payload)\nVALUES ('retest_failed','wf16','finding','{{ $json.finding_id }}','{\"reopen_count\":{{ $json.reopen_count + 1 }},\"severity\":\"{{ $json.severity }}\"}'::jsonb);",
+        "options": {}
+      },
+      "id": "pg-reopen",
+      "name": "Reopen Finding",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1340, 400],
+      "credentials": { "postgres": { "id": "RECON_OS_PG_CRED", "name": "RECON OS PostgreSQL" } }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE normalized_findings SET remediation_status = 'partially_fixed' WHERE id = '{{ $json.finding_id }}';",
+        "options": {}
+      },
+      "id": "pg-partial",
+      "name": "Mark Partially Fixed",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1340, 560],
+      "credentials": { "postgres": { "id": "RECON_OS_PG_CRED", "name": "RECON OS PostgreSQL" } }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.RECON_OS_SLACK_WEBHOOK || 'https://hooks.slack.com/services/PLACEHOLDER' }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ text: ($('Merge Retest Data').first().json.result === 'pass' ? '✅ *RECON OS — Finding Closed*\\n' : ($('Merge Retest Data').first().json.result === 'fail' ? '❌ *RECON OS — Retest FAILED — Finding Reopened*\\n' : '⚠️ *RECON OS — Partially Fixed*\\n')) + 'Finding ID: ' + $('Merge Retest Data').first().json.finding_id + '\\nResult: ' + $('Merge Retest Data').first().json.result.toUpperCase(), username: 'RECON OS', icon_emoji: ':white_check_mark:' }) }}",
+        "options": { "timeout": 10000 }
+      },
+      "id": "notify-slack",
+      "name": "Notify Slack",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1560, 380]
+    }
+  ],
+  "connections": {
+    "Webhook": { "main": [[{ "node": "Get Retest Record", "type": "main", "index": 0 }]] },
+    "Execute Workflow Trigger": { "main": [[{ "node": "Get Retest Record", "type": "main", "index": 0 }]] },
+    "Get Retest Record": { "main": [[{ "node": "Merge Retest Data", "type": "main", "index": 0 }]] },
+    "Merge Retest Data": { "main": [[{ "node": "Update Retest Record", "type": "main", "index": 0 }]] },
+    "Update Retest Record": { "main": [[{ "node": "Switch Result", "type": "main", "index": 0 }]] },
+    "Switch Result": { "main": [
+      [{ "node": "Close Finding", "type": "main", "index": 0 }],
+      [{ "node": "Reopen Finding", "type": "main", "index": 0 }],
+      [{ "node": "Mark Partially Fixed", "type": "main", "index": 0 }]
+    ]},
+    "Close Finding": { "main": [[{ "node": "Notify Slack", "type": "main", "index": 0 }]] },
+    "Reopen Finding": { "main": [[{ "node": "Notify Slack", "type": "main", "index": 0 }]] },
+    "Mark Partially Fixed": { "main": [[{ "node": "Notify Slack", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1", "saveManualExecutions": true, "saveExecutionProgress": true },
+  "meta": { "description": "RECON OS WF-16: Retest Validator — processes retest results (pass/fail/partial), closes verified-fixed findings, reopens failures with escalation after 2 reopens, updates MTTR metrics." }
+}

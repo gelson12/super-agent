@@ -1,0 +1,170 @@
+{
+  "name": "RECON OS — WF-15 Retest Scheduler",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "recon-os/retests/schedule",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wh-retest",
+      "name": "Webhook Schedule",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "recon-os-retests-schedule"
+    },
+    {
+      "parameters": {
+        "rule": { "interval": [{ "field": "cronExpression", "expression": "0 9 * * 1" }] }
+      },
+      "id": "cron-weekly",
+      "name": "Cron Weekly Monday",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 500]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT nf.id as finding_id, nf.title, nf.severity, nf.priority_bucket,\n       nf.evidence_summary, nf.remediation_evidence,\n       nf.engagement_id, a.asset_value\nFROM normalized_findings nf\nJOIN assets a ON nf.asset_id = a.id\nWHERE nf.remediation_status = 'fixed_pending_retest'\n  AND NOT EXISTS (SELECT 1 FROM retest_records rr WHERE rr.finding_id = nf.id AND rr.result IS NULL)\nLIMIT 20;",
+        "options": {}
+      },
+      "id": "pg-get-pending-retests",
+      "name": "Get Pending Retests",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [460, 500],
+      "credentials": { "postgres": { "id": "RECON_OS_PG_CRED", "name": "RECON OS PostgreSQL" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body || $input.first().json;\nreturn [{ json: { finding_id: body.finding_id } }];"
+      },
+      "id": "normalize-wh",
+      "name": "Normalize Webhook Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT nf.id as finding_id, nf.title, nf.severity, nf.priority_bucket, nf.evidence_summary, nf.remediation_evidence, nf.engagement_id, a.asset_value\nFROM normalized_findings nf\nJOIN assets a ON nf.asset_id = a.id\nWHERE nf.id = '{{ $json.finding_id }}'\nLIMIT 1;",
+        "options": {}
+      },
+      "id": "pg-get-single",
+      "name": "Get Single Finding",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [680, 300],
+      "credentials": { "postgres": { "id": "RECON_OS_PG_CRED", "name": "RECON OS PostgreSQL" } }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO retest_records (finding_id, engagement_id, scheduled_at)\nVALUES ('{{ $json.finding_id }}','{{ $json.engagement_id }}',NOW() + INTERVAL '24 hours')\nRETURNING id;",
+        "options": {}
+      },
+      "id": "pg-create-retest",
+      "name": "Create Retest Record",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [900, 300],
+      "credentials": { "postgres": { "id": "RECON_OS_PG_CRED", "name": "RECON OS PostgreSQL" } }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.RECON_OS_SLACK_WEBHOOK || 'https://hooks.slack.com/services/PLACEHOLDER' }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  text: '🔄 *RECON OS — Retest Scheduled*\\nFinding: ' + $('Get Single Finding').first().json.title + '\\nAsset: ' + $('Get Single Finding').first().json.asset_value + '\\nSeverity: ' + $('Get Single Finding').first().json.severity.toUpperCase() + '\\nRetest ID: ' + $('Create Retest Record').first().json.id + '\\nSubmit result: POST /webhook/recon-os/retests/result\\n{\"retest_id\":\"' + $('Create Retest Record').first().json.id + '\",\"result\":\"pass|fail|partial\",\"retest_evidence\":\"...\"}',\n  username: 'RECON OS',\n  icon_emoji: ':repeat:'\n}) }}",
+        "options": { "timeout": 10000 }
+      },
+      "id": "notify-analyst",
+      "name": "Notify Analyst",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, retest_id: $('Create Retest Record').first().json.id, scheduled_at: 'In 24 hours', finding_id: $('Get Single Finding').first().json.finding_id }) }}",
+        "options": { "responseCode": 201 }
+      },
+      "id": "respond-201",
+      "name": "Respond 201",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1340, 300]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "recon-os/retests/result",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wh-result",
+      "name": "Webhook Retest Result",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 700],
+      "webhookId": "recon-os-retests-result"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body || $input.first().json;\nif (!body.retest_id || !body.result) return [{ json: { valid: false, error: 'retest_id and result required' } }];\nif (!['pass','fail','partial'].includes(body.result)) return [{ json: { valid: false, error: 'result must be pass, fail, or partial' } }];\nreturn [{ json: {\n  valid: true,\n  retest_id: body.retest_id,\n  result: body.result,\n  retest_evidence: body.retest_evidence || '',\n  retested_by: body.retested_by || 'analyst',\n  notes: body.notes || ''\n} }];"
+      },
+      "id": "validate-result",
+      "name": "Validate Result Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 700]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://outstanding-blessing-production-1d4b.up.railway.app/webhook/recon-os/internal/retest-validate",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": { "timeout": 15000 }
+      },
+      "id": "call-retest-validator",
+      "name": "Call Retest Validator",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 700]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, retest_id: $('Validate Result Input').first().json.retest_id, result: $('Validate Result Input').first().json.result }) }}",
+        "options": { "responseCode": 200 }
+      },
+      "id": "respond-result-ok",
+      "name": "Respond Result OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [900, 700]
+    }
+  ],
+  "connections": {
+    "Webhook Schedule": { "main": [[{ "node": "Normalize Webhook Input", "type": "main", "index": 0 }]] },
+    "Cron Weekly Monday": { "main": [[{ "node": "Get Pending Retests", "type": "main", "index": 0 }]] },
+    "Get Pending Retests": { "main": [[{ "node": "Create Retest Record", "type": "main", "index": 0 }]] },
+    "Normalize Webhook Input": { "main": [[{ "node": "Get Single Finding", "type": "main", "index": 0 }]] },
+    "Get Single Finding": { "main": [[{ "node": "Create Retest Record", "type": "main", "index": 0 }]] },
+    "Create Retest Record": { "main": [[{ "node": "Notify Analyst", "type": "main", "index": 0 }]] },
+    "Notify Analyst": { "main": [[{ "node": "Respond 201", "type": "main", "index": 0 }]] },
+    "Webhook Retest Result": { "main": [[{ "node": "Validate Result Input", "type": "main", "index": 0 }]] },
+    "Validate Result Input": { "main": [[{ "node": "Call Retest Validator", "type": "main", "index": 0 }]] },
+    "Call Retest Validator": { "main": [[{ "node": "Respond Result OK", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1", "saveManualExecutions": true, "saveExecutionProgress": true },
+  "meta": { "description": "RECON OS WF-15: Retest Scheduler — schedules retests for fixed_pending_retest findings (webhook or weekly cron). Also receives analyst retest results at /recon-os/retests/result and calls WF-16 validator." }
+}

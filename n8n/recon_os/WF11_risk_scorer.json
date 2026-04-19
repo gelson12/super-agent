@@ -1,0 +1,106 @@
+{
+  "name": "RECON OS — WF-11 Risk Scorer",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "recon-os/internal/score",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wh-score",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "recon-os-internal-score"
+    },
+    {
+      "parameters": { "inputSource": "passthrough" },
+      "id": "wf-trigger",
+      "name": "Execute Workflow Trigger",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 500]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  nf.id, nf.title, nf.severity, nf.category, nf.cwe_id, nf.owasp_category,\n  nf.validation_status, nf.is_recurring, nf.recurrence_count, nf.occurrence_count,\n  nf.first_seen,\n  a.business_criticality, a.scope_status, a.environment, a.auth_required, a.asset_type,\n  e.rate_limit_profile,\n  c.industry\nFROM normalized_findings nf\nJOIN assets a ON nf.asset_id = a.id\nJOIN engagements e ON nf.engagement_id = e.id\nJOIN clients c ON e.client_id = c.id\nWHERE nf.id = '{{ ($input.first().json.body || $input.first().json).finding_id }}'",
+        "options": {}
+      },
+      "id": "pg-get-finding",
+      "name": "Get Finding + Context",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [460, 300],
+      "credentials": { "postgres": { "id": "RECON_OS_PG_CRED", "name": "RECON OS PostgreSQL" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "const f = $input.first().json;\n\n// ── Technical Severity (0–10) ──────────────────────────────────\nconst sevScore = { critical: 10, high: 8, medium: 5, low: 2, informational: 0 };\nconst technicalSeverity = sevScore[f.severity] ?? 5;\n\n// ── Validation Confidence (0–10) ──────────────────────────────\nconst valScore = { validated: 10, analyst_reviewed: 7, scanner_only: 4, pending_analyst: 4, likely_false_positive: 1 };\nconst validationConfidence = valScore[f.validation_status] ?? 4;\n\n// ── Internet Exposure (0–10) ───────────────────────────────────\nlet internetExposure = 5;\nif (f.scope_status === 'in_scope' && f.environment === 'production') internetExposure = 10;\nelse if (f.environment === 'staging') internetExposure = 6;\nelse if (f.environment === 'development') internetExposure = 3;\nif (f.auth_required) internetExposure = Math.max(2, internetExposure - 3);\n\n// ── Asset Criticality (0–10) ──────────────────────────────────\nconst critScore = { critical: 10, high: 7, medium: 4, low: 1 };\nconst assetCriticality = critScore[f.business_criticality] ?? 4;\n\n// ── Data Sensitivity (0–10) ───────────────────────────────────\nconst sensitiveCategories = ['injection','auth','access_control','crypto','exposure'];\nconst dataSensitivity = sensitiveCategories.includes(f.category) ? 8 : 4;\n\n// ── Ease of Exploitation (0–10) ───────────────────────────────\nconst easyExploit = ['xss','injection','config','exposure'];\nconst hardExploit = ['ssrf','xxe','path_traversal'];\nlet easeOfExploitation = 5;\nif (easyExploit.includes(f.category)) easeOfExploitation = 8;\nelse if (hardExploit.includes(f.category)) easeOfExploitation = 3;\n\n// ── Recurrence Bonus ──────────────────────────────────────────\nconst recurrenceBonus = f.is_recurring ? Math.min(4, (f.recurrence_count || 0) * 2) : 0;\n\n// ── Breadth (across assets) ───────────────────────────────────\nconst breadthBonus = f.occurrence_count > 5 ? 3 : f.occurrence_count > 2 ? 1 : 0;\n\n// ── Auth Boundary Bonus ───────────────────────────────────────\nconst authBoundaryBonus = (f.auth_required === false && f.category !== 'config') ? 2 : 0;\n\n// ── Composite Score (0–10 scale) ─────────────────────────────\nconst weighted =\n  technicalSeverity   * 0.20 +\n  validationConfidence * 0.15 +\n  internetExposure    * 0.15 +\n  assetCriticality    * 0.15 +\n  dataSensitivity     * 0.10 +\n  easeOfExploitation  * 0.10;\n\nconst reconScore = Math.min(10, Math.max(0,\n  weighted + (recurrenceBonus * 0.08) + (breadthBonus * 0.07) + authBoundaryBonus\n));\n\nconst roundedScore = Math.round(reconScore * 100) / 100;\n\n// ── Priority Bucket ───────────────────────────────────────────\nlet priorityBucket;\nif (roundedScore >= 8.5)      priorityBucket = 'immediate_attention';\nelse if (roundedScore >= 7.0) priorityBucket = 'high_priority';\nelse if (roundedScore >= 5.0) priorityBucket = 'medium_priority';\nelse if (roundedScore >= 3.0) priorityBucket = 'low_priority';\nelse if (roundedScore >= 1.0) priorityBucket = 'monitor';\nelse                          priorityBucket = 'likely_false_positive';\n\n// ── Score Explanation ─────────────────────────────────────────\nconst reasons = [];\nif (technicalSeverity >= 8) reasons.push(`High technical severity (${f.severity})`);\nif (validationConfidence >= 8) reasons.push('Analyst validated');\nif (internetExposure >= 8) reasons.push('Internet-exposed production asset');\nif (assetCriticality >= 8) reasons.push(`Critical asset (${f.business_criticality} criticality)`);\nif (recurrenceBonus >= 2) reasons.push(`Recurring finding (${f.recurrence_count} prior engagement(s))`);\nif (breadthBonus > 0) reasons.push(`Affects ${f.occurrence_count} assets (breadth)`);\nif (authBoundaryBonus > 0) reasons.push('No authentication required');\nif (validationConfidence <= 4) reasons.push('Confidence capped — pending analyst review');\n\nconst scoreExplanation = reasons.length > 0\n  ? `Score ${roundedScore}/10 (${priorityBucket.replace(/_/g,' ')}): ${reasons.join('; ')}.`\n  : `Score ${roundedScore}/10 (${priorityBucket.replace(/_/g,' ')})`;\n\nconst scoreBreakdown = {\n  technical_severity: technicalSeverity,\n  validation_confidence: validationConfidence,\n  internet_exposure: internetExposure,\n  asset_criticality: assetCriticality,\n  data_sensitivity: dataSensitivity,\n  ease_of_exploitation: easeOfExploitation,\n  recurrence_bonus: recurrenceBonus,\n  breadth_bonus: breadthBonus,\n  auth_boundary_bonus: authBoundaryBonus\n};\n\nreturn [{ json: {\n  finding_id: f.id,\n  recon_score: roundedScore,\n  priority_bucket: priorityBucket,\n  score_explanation: scoreExplanation,\n  score_breakdown: scoreBreakdown,\n  severity: f.severity,\n  is_immediate: priorityBucket === 'immediate_attention'\n} }];"
+      },
+      "id": "compute-score",
+      "name": "Compute RECON Score",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE normalized_findings SET\n  recon_score = {{ $json.recon_score }},\n  priority_bucket = '{{ $json.priority_bucket }}',\n  score_explanation = '{{ $json.score_explanation.replace(/'/g,\"''\") }}'\nWHERE id = '{{ $json.finding_id }}';\nINSERT INTO risk_score_history (finding_id, recon_score, priority_bucket, score_breakdown)\nVALUES ('{{ $json.finding_id }}', {{ $json.recon_score }}, '{{ $json.priority_bucket }}', '{{ JSON.stringify($json.score_breakdown).replace(/'/g,\"''\") }}'::jsonb);",
+        "options": {}
+      },
+      "id": "pg-save-score",
+      "name": "Save Score",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [900, 300],
+      "credentials": { "postgres": { "id": "RECON_OS_PG_CRED", "name": "RECON OS PostgreSQL" } }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [{ "id": "cond-imm", "leftValue": "={{ $json.is_immediate }}", "rightValue": true, "operator": { "type": "boolean", "operation": "true" } }],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-immediate",
+      "name": "IF Immediate Attention?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.RECON_OS_SLACK_WEBHOOK || 'https://hooks.slack.com/services/PLACEHOLDER' }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ text: '🚨 *RECON OS — IMMEDIATE ATTENTION*\\nFinding: ' + $('Compute RECON Score').first().json.finding_id + '\\nScore: ' + $('Compute RECON Score').first().json.recon_score + '/10\\n' + $('Compute RECON Score').first().json.score_explanation, username: 'RECON OS Alerts', icon_emoji: ':rotating_light:' }) }}",
+        "options": { "timeout": 10000 }
+      },
+      "id": "slack-urgent",
+      "name": "Slack Urgent Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1340, 200]
+    }
+  ],
+  "connections": {
+    "Webhook": { "main": [[{ "node": "Get Finding + Context", "type": "main", "index": 0 }]] },
+    "Execute Workflow Trigger": { "main": [[{ "node": "Get Finding + Context", "type": "main", "index": 0 }]] },
+    "Get Finding + Context": { "main": [[{ "node": "Compute RECON Score", "type": "main", "index": 0 }]] },
+    "Compute RECON Score": { "main": [[{ "node": "Save Score", "type": "main", "index": 0 }]] },
+    "Save Score": { "main": [[{ "node": "IF Immediate Attention?", "type": "main", "index": 0 }]] },
+    "IF Immediate Attention?": { "main": [
+      [{ "node": "Slack Urgent Alert", "type": "main", "index": 0 }],
+      []
+    ]}
+  },
+  "settings": { "executionOrder": "v1", "saveManualExecutions": true, "saveExecutionProgress": true },
+  "meta": { "description": "RECON OS WF-11: Risk Scorer — multi-dimensional RECON score (0–10) using severity, confidence, exposure, criticality, recurrence, breadth. Alerts on immediate_attention findings. Not CVSS-only." }
+}

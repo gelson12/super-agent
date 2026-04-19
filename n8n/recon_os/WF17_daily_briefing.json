@@ -1,0 +1,88 @@
+{
+  "name": "RECON OS — WF-17 Daily Briefing",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": { "interval": [{ "field": "cronExpression", "expression": "0 7 * * *" }] }
+      },
+      "id": "cron-daily",
+      "name": "Cron Daily 07:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  (SELECT COUNT(*) FROM normalized_findings WHERE validation_status='pending_analyst') as pending_validation,\n  (SELECT COUNT(*) FROM normalized_findings WHERE validation_status='validated' AND remediation_status='open') as open_validated,\n  (SELECT COUNT(*) FROM normalized_findings WHERE priority_bucket='immediate_attention' AND remediation_status NOT IN ('verified_fixed','closed')) as immediate_open,\n  (SELECT COUNT(*) FROM retest_records WHERE result IS NULL AND scheduled_at < NOW()) as overdue_retests,\n  (SELECT COUNT(*) FROM engagements WHERE status='active' AND NOW() BETWEEN testing_window_start AND testing_window_end) as active_engagements,\n  (SELECT COUNT(*) FROM normalized_findings WHERE first_seen >= NOW() - INTERVAL '24 hours') as new_findings_24h,\n  (SELECT COUNT(*) FROM normalized_findings WHERE validation_status='verified_fixed' AND closed_at >= NOW() - INTERVAL '24 hours') as fixed_24h;",
+        "options": {}
+      },
+      "id": "pg-get-daily-stats",
+      "name": "Get Daily Stats",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [460, 300],
+      "credentials": { "postgres": { "id": "RECON_OS_PG_CRED", "name": "RECON OS PostgreSQL" } }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT nf.title, nf.severity, nf.recon_score, nf.priority_bucket, a.asset_value, e.name as engagement_name\nFROM normalized_findings nf\nJOIN assets a ON nf.asset_id = a.id\nJOIN engagements e ON nf.engagement_id = e.id\nWHERE nf.validation_status IN ('validated','analyst_reviewed')\n  AND nf.remediation_status = 'open'\nORDER BY nf.recon_score DESC\nLIMIT 5;",
+        "options": {}
+      },
+      "id": "pg-top-risks",
+      "name": "Get Top Open Risks",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [680, 300],
+      "credentials": { "postgres": { "id": "RECON_OS_PG_CRED", "name": "RECON OS PostgreSQL" } }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT nf.id as finding_id, nf.title, nf.severity, a.asset_value,\n       EXTRACT(DAYS FROM NOW() - nf.validated_at) as days_overdue\nFROM normalized_findings nf\nJOIN assets a ON nf.asset_id = a.id\nWHERE nf.validation_status = 'validated'\n  AND nf.remediation_status NOT IN ('verified_fixed','accepted_risk')\n  AND (\n    (nf.priority_bucket = 'immediate_attention' AND nf.validated_at < NOW() - INTERVAL '7 days') OR\n    (nf.priority_bucket = 'high_priority' AND nf.validated_at < NOW() - INTERVAL '30 days') OR\n    (nf.priority_bucket = 'medium_priority' AND nf.validated_at < NOW() - INTERVAL '90 days')\n  )\nORDER BY days_overdue DESC\nLIMIT 10;",
+        "options": {}
+      },
+      "id": "pg-overdue-sla",
+      "name": "Get Overdue SLA",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [900, 300],
+      "credentials": { "postgres": { "id": "RECON_OS_PG_CRED", "name": "RECON OS PostgreSQL" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "const stats = $('Get Daily Stats').first().json;\nconst topRisks = $('Get Top Open Risks').all().map(i => i.json);\nconst overdueSLA = $('Get Overdue SLA').all().map(i => i.json);\nconst today = new Date().toISOString().split('T')[0];\n\nconst statusIcon = n => parseInt(n) === 0 ? '✅' : parseInt(n) < 3 ? '⚠️' : '🔴';\n\nconst topRisksText = topRisks.length > 0\n  ? topRisks.map((f,i) => `  ${i+1}. [${f.severity.toUpperCase()}] ${f.title}\\n     Asset: ${f.asset_value} | Score: ${f.recon_score}/10`).join('\\n')\n  : '  None — clean queue!';\n\nconst overdueText = overdueSLA.length > 0\n  ? overdueSLA.map(f => `  ⏰ [${f.severity.toUpperCase()}] ${f.title} — ${Math.round(f.days_overdue)}d overdue`).join('\\n')\n  : '  None overdue';\n\nconst briefing = [\n  `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,\n  `🎯 RECON OS — Daily Briefing — ${today}`,\n  `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,\n  ``,\n  `📊 STATUS SNAPSHOT`,\n  `  Active Engagements:    ${stats.active_engagements}`,\n  `  ${statusIcon(stats.immediate_open)} Immediate Attention:  ${stats.immediate_open} open`,\n  `  ${statusIcon(stats.pending_validation)} Pending Validation:   ${stats.pending_validation} findings`,\n  `  ${statusIcon(stats.overdue_retests)} Overdue Retests:      ${stats.overdue_retests}`,\n  `  📥 New Findings (24h): ${stats.new_findings_24h}`,\n  `  ✅ Fixed (24h):        ${stats.fixed_24h}`,\n  ``,\n  `🔥 TOP 5 OPEN RISKS`,\n  topRisksText,\n  ``,\n  `⏰ SLA BREACHES`,\n  overdueText,\n  ``,\n  `📋 ACTIONS NEEDED`,\n  stats.pending_validation > 0 ? `  → ${stats.pending_validation} findings awaiting analyst validation` : '',\n  stats.overdue_retests > 0 ? `  → ${stats.overdue_retests} retests overdue` : '',\n  stats.immediate_open > 0 ? `  → ${stats.immediate_open} IMMEDIATE ATTENTION findings unresolved` : '',\n  ``,\n  `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`\n].filter(l => l !== null && l !== undefined).join('\\n');\n\nreturn [{ json: { briefing, date: today, has_urgency: parseInt(stats.immediate_open) > 0 || parseInt(stats.overdue_retests) > 0 } }];"
+      },
+      "id": "build-briefing",
+      "name": "Build Daily Briefing",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.RECON_OS_SLACK_WEBHOOK || 'https://hooks.slack.com/services/PLACEHOLDER' }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ text: $json.briefing, username: 'RECON OS Daily Brief', icon_emoji: ':briefcase:' }) }}",
+        "options": { "timeout": 10000 }
+      },
+      "id": "send-slack",
+      "name": "Send to Slack",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1340, 300]
+    }
+  ],
+  "connections": {
+    "Cron Daily 07:00": { "main": [[{ "node": "Get Daily Stats", "type": "main", "index": 0 }]] },
+    "Get Daily Stats": { "main": [[{ "node": "Get Top Open Risks", "type": "main", "index": 0 }]] },
+    "Get Top Open Risks": { "main": [[{ "node": "Get Overdue SLA", "type": "main", "index": 0 }]] },
+    "Get Overdue SLA": { "main": [[{ "node": "Build Daily Briefing", "type": "main", "index": 0 }]] },
+    "Build Daily Briefing": { "main": [[{ "node": "Send to Slack", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1", "saveManualExecutions": true, "saveExecutionProgress": true },
+  "meta": { "description": "RECON OS WF-17: Daily Briefing — 07:00 Slack digest covering active engagements, immediate risks, pending validations, overdue SLAs, new findings, and closures from the last 24h." }
+}

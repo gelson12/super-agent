@@ -1,0 +1,112 @@
+{
+  "name": "RECON OS — WF-20 SLA Watchdog",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": { "interval": [{ "field": "cronExpression", "expression": "30 8 * * *" }] }
+      },
+      "id": "cron-daily",
+      "name": "Cron Daily 08:30",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  nf.id as finding_id,\n  nf.title,\n  nf.severity,\n  nf.priority_bucket,\n  nf.validated_at,\n  nf.remediation_owner,\n  a.asset_value,\n  e.name as engagement_name,\n  c.name as client_name,\n  c.contact_email,\n  EXTRACT(DAYS FROM NOW() - nf.validated_at) as days_open,\n  CASE\n    WHEN nf.priority_bucket = 'immediate_attention' THEN 7\n    WHEN nf.priority_bucket = 'high_priority' THEN 30\n    WHEN nf.priority_bucket = 'medium_priority' THEN 90\n    WHEN nf.priority_bucket = 'low_priority' THEN 180\n    ELSE 999\n  END as sla_days,\n  CASE\n    WHEN nf.priority_bucket = 'immediate_attention' THEN EXTRACT(DAYS FROM NOW() - nf.validated_at) - 7\n    WHEN nf.priority_bucket = 'high_priority' THEN EXTRACT(DAYS FROM NOW() - nf.validated_at) - 30\n    WHEN nf.priority_bucket = 'medium_priority' THEN EXTRACT(DAYS FROM NOW() - nf.validated_at) - 90\n    ELSE -999\n  END as days_overdue\nFROM normalized_findings nf\nJOIN assets a ON nf.asset_id = a.id\nJOIN engagements e ON nf.engagement_id = e.id\nJOIN clients c ON e.client_id = c.id\nWHERE nf.validation_status = 'validated'\n  AND nf.remediation_status NOT IN ('verified_fixed','accepted_risk')\n  AND nf.validated_at IS NOT NULL\n  AND (\n    (nf.priority_bucket = 'immediate_attention' AND nf.validated_at < NOW() - INTERVAL '5 days') OR\n    (nf.priority_bucket = 'high_priority' AND nf.validated_at < NOW() - INTERVAL '24 days') OR\n    (nf.priority_bucket = 'medium_priority' AND nf.validated_at < NOW() - INTERVAL '72 days')\n  )\nORDER BY days_overdue DESC;",
+        "options": {}
+      },
+      "id": "pg-get-sla-items",
+      "name": "Get SLA Items",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [460, 300],
+      "credentials": { "postgres": { "id": "RECON_OS_PG_CRED", "name": "RECON OS PostgreSQL" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all().map(i => i.json);\nif (items.length === 0) return [{ json: { has_items: false, digest: 'RECON OS SLA Watchdog: All clear — no SLA breaches.', overdue_critical: 0 } }];\n\nconst overdue = items.filter(i => parseFloat(i.days_overdue) > 0);\nconst warning = items.filter(i => parseFloat(i.days_overdue) <= 0);\nconst overdueCritical = overdue.filter(i => ['immediate_attention','high_priority'].includes(i.priority_bucket));\n\nconst formatItem = i => {\n  const daysOverdue = Math.round(parseFloat(i.days_overdue||0));\n  const tag = daysOverdue > 0 ? `🔴 ${daysOverdue}d OVERDUE` : `⚠️ ${Math.round(Math.abs(parseFloat(i.days_overdue||0)))}d to SLA`;\n  return `  ${tag} | [${i.severity?.toUpperCase()}] ${i.title}\\n    Client: ${i.client_name} | Asset: ${i.asset_value} | Owner: ${i.remediation_owner || 'Unassigned'}`;\n};\n\nconst digest = [\n  `🚨 RECON OS — SLA Watchdog — ${new Date().toISOString().split('T')[0]}`,\n  `Total items at risk: ${items.length} (${overdue.length} overdue, ${warning.length} approaching)`,\n  ``,\n  overdue.length > 0 ? `OVERDUE (${overdue.length}):` : '',\n  ...overdue.map(formatItem),\n  ``,\n  warning.length > 0 ? `APPROACHING SLA (${warning.length}):` : '',\n  ...warning.slice(0,5).map(formatItem)\n].filter(l => l !== null && l !== '').join('\\n');\n\nreturn [{ json: {\n  has_items: items.length > 0,\n  digest,\n  overdue_count: overdue.length,\n  warning_count: warning.length,\n  overdue_critical: overdueCritical.length,\n  items\n} }];"
+      },
+      "id": "build-sla-report",
+      "name": "Build SLA Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [{ "id": "cond-items", "leftValue": "={{ $json.has_items }}", "rightValue": true, "operator": { "type": "boolean", "operation": "true" } }],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-has-items",
+      "name": "IF Has SLA Items?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.RECON_OS_SLACK_WEBHOOK || 'https://hooks.slack.com/services/PLACEHOLDER' }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ text: $json.digest, username: 'RECON OS SLA Watchdog', icon_emoji: ':alarm_clock:' }) }}",
+        "options": { "timeout": 10000 }
+      },
+      "id": "send-slack-digest",
+      "name": "Send Slack Digest",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [{ "id": "cond-crit", "leftValue": "={{ $('Build SLA Report').first().json.overdue_critical }}", "rightValue": 0, "operator": { "type": "number", "operation": "gt" } }],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-overdue-critical",
+      "name": "IF Overdue Critical?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1340, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO audit_logs (event_type, actor, payload)\nVALUES ('sla_watchdog_run','wf20','{\"overdue\":{{ $('Build SLA Report').first().json.overdue_count }},\"warning\":{{ $('Build SLA Report').first().json.warning_count }},\"overdue_critical\":{{ $('Build SLA Report').first().json.overdue_critical }}}'::jsonb);",
+        "options": {}
+      },
+      "id": "pg-audit",
+      "name": "Audit Log",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1120, 500],
+      "credentials": { "postgres": { "id": "RECON_OS_PG_CRED", "name": "RECON OS PostgreSQL" } }
+    }
+  ],
+  "connections": {
+    "Cron Daily 08:30": { "main": [[{ "node": "Get SLA Items", "type": "main", "index": 0 }]] },
+    "Get SLA Items": { "main": [[{ "node": "Build SLA Report", "type": "main", "index": 0 }]] },
+    "Build SLA Report": { "main": [[{ "node": "IF Has SLA Items?", "type": "main", "index": 0 }]] },
+    "IF Has SLA Items?": { "main": [
+      [{ "node": "Send Slack Digest", "type": "main", "index": 0 }],
+      [{ "node": "Audit Log", "type": "main", "index": 0 }]
+    ]},
+    "Send Slack Digest": { "main": [[{ "node": "IF Overdue Critical?", "type": "main", "index": 0 }]] },
+    "IF Overdue Critical?": { "main": [
+      [{ "node": "Audit Log", "type": "main", "index": 0 }],
+      [{ "node": "Audit Log", "type": "main", "index": 0 }]
+    ]}
+  },
+  "settings": { "executionOrder": "v1", "saveManualExecutions": true, "saveExecutionProgress": true },
+  "meta": { "description": "RECON OS WF-20: SLA Watchdog — daily 08:30 scan for validated findings approaching or breaching SLA windows (7/30/90/180 days by priority). Alerts Slack with overdue and warning digest." }
+}

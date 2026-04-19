@@ -1,0 +1,207 @@
+{
+  "name": "RECON OS — WF-14 Remediation Tracker",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "recon-os/remediation/update",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wh-remediation",
+      "name": "Webhook Update",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "recon-os-remediation-update"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "recon-os/remediation/bulk",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wh-bulk",
+      "name": "Webhook Bulk Import",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 500],
+      "webhookId": "recon-os-remediation-bulk"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body || $input.first().json;\n\nconst validStatuses = ['open','in_progress','fixed_pending_retest','partially_fixed','accepted_risk'];\nif (!body.finding_id) return [{ json: { valid: false, error: 'finding_id required' } }];\nif (body.status && !validStatuses.includes(body.status)) {\n  return [{ json: { valid: false, error: `Invalid status. Must be one of: ${validStatuses.join(', ')}` } }];\n}\n\nreturn [{ json: {\n  valid: true,\n  finding_id: body.finding_id,\n  status: body.status || 'in_progress',\n  owner: body.owner || null,\n  evidence_of_fix: body.evidence_of_fix || null,\n  notes: body.notes || null,\n  external_ticket_id: body.external_ticket_id || null\n} }];"
+      },
+      "id": "validate-update",
+      "name": "Validate Update",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [{ "id": "cond-valid", "leftValue": "={{ $json.valid }}", "rightValue": true, "operator": { "type": "boolean", "operation": "true" } }],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-valid",
+      "name": "IF Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: false, error: $json.error }) }}",
+        "options": { "responseCode": 400 }
+      },
+      "id": "respond-400",
+      "name": "Respond 400",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [900, 500]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE normalized_findings SET\n  remediation_status = '{{ $json.status }}',\n  remediation_owner = {{ $json.owner ? \"'\" + $json.owner + \"'\" : 'remediation_owner' }},\n  remediation_evidence = {{ $json.evidence_of_fix ? \"'\" + $json.evidence_of_fix.replace(/'/g,\"''\") + \"'\" : 'remediation_evidence' }},\n  remediation_notes = {{ $json.notes ? \"'\" + $json.notes.replace(/'/g,\"''\") + \"'\" : 'remediation_notes' }},\n  remediation_updated_at = NOW()\nWHERE id = '{{ $json.finding_id }}'\nRETURNING id, remediation_status, severity, priority_bucket;",
+        "options": {}
+      },
+      "id": "pg-update-finding",
+      "name": "Update Finding Status",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [900, 300],
+      "credentials": { "postgres": { "id": "RECON_OS_PG_CRED", "name": "RECON OS PostgreSQL" } }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO remediation_tickets (finding_id, engagement_id, owner, status, external_ticket_id, notes)\nSELECT '{{ $('Validate Update').first().json.finding_id }}',\n       engagement_id,\n       {{ $('Validate Update').first().json.owner ? \"'\" + $('Validate Update').first().json.owner + \"'\" : 'NULL' }},\n       '{{ $('Validate Update').first().json.status }}',\n       {{ $('Validate Update').first().json.external_ticket_id ? \"'\" + $('Validate Update').first().json.external_ticket_id + \"'\" : 'NULL' }},\n       {{ $('Validate Update').first().json.notes ? \"'\" + $('Validate Update').first().json.notes.replace(/'/g,\"''\") + \"'\" : 'NULL' }}\nFROM normalized_findings WHERE id = '{{ $('Validate Update').first().json.finding_id }}'\nON CONFLICT DO NOTHING;",
+        "options": {}
+      },
+      "id": "pg-upsert-ticket",
+      "name": "Upsert Ticket",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1120, 300],
+      "credentials": { "postgres": { "id": "RECON_OS_PG_CRED", "name": "RECON OS PostgreSQL" } }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [{ "id": "cond-retest", "leftValue": "={{ $('Validate Update').first().json.status }}", "rightValue": "fixed_pending_retest", "operator": { "type": "string", "operation": "equals" } }],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-retest",
+      "name": "IF Fixed Pending Retest?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1340, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://outstanding-blessing-production-1d4b.up.railway.app/webhook/recon-os/retests/schedule",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ finding_id: $('Validate Update').first().json.finding_id }) }}",
+        "options": { "timeout": 10000 }
+      },
+      "id": "schedule-retest",
+      "name": "Schedule Retest",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1560, 200]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO audit_logs (event_type, actor, entity_type, entity_id, payload)\nVALUES ('remediation_updated','wf14','finding','{{ $('Validate Update').first().json.finding_id }}','{\"new_status\":\"{{ $('Validate Update').first().json.status }}\",\"owner\":\"{{ $('Validate Update').first().json.owner || '' }}\"}'::jsonb);",
+        "options": {}
+      },
+      "id": "pg-audit",
+      "name": "Audit Log",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1560, 400],
+      "credentials": { "postgres": { "id": "RECON_OS_PG_CRED", "name": "RECON OS PostgreSQL" } }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, finding_id: $('Validate Update').first().json.finding_id, new_status: $('Validate Update').first().json.status }) }}",
+        "options": { "responseCode": 200 }
+      },
+      "id": "respond-ok",
+      "name": "Respond OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1780, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body || $input.first().json;\nconst updates = Array.isArray(body) ? body : body.updates || [];\nreturn updates.map(u => ({ json: {\n  finding_id: u.finding_id,\n  status: u.status,\n  owner: u.owner,\n  notes: u.notes\n} }));"
+      },
+      "id": "parse-bulk",
+      "name": "Parse Bulk Updates",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 500]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE normalized_findings SET\n  remediation_status = '{{ $json.status }}',\n  remediation_owner = {{ $json.owner ? \"'\" + $json.owner + \"'\" : 'remediation_owner' }},\n  remediation_notes = {{ $json.notes ? \"'\" + $json.notes.replace(/'/g,\"''\") + \"'\" : 'remediation_notes' }},\n  remediation_updated_at = NOW()\nWHERE id = '{{ $json.finding_id }}';",
+        "options": {}
+      },
+      "id": "pg-bulk-update",
+      "name": "Bulk Update",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [680, 500],
+      "credentials": { "postgres": { "id": "RECON_OS_PG_CRED", "name": "RECON OS PostgreSQL" } }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: true, updated: $input.all().length }) }}",
+        "options": { "responseCode": 200 }
+      },
+      "id": "respond-bulk-ok",
+      "name": "Respond Bulk OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [900, 500]
+    }
+  ],
+  "connections": {
+    "Webhook Update": { "main": [[{ "node": "Validate Update", "type": "main", "index": 0 }]] },
+    "Webhook Bulk Import": { "main": [[{ "node": "Parse Bulk Updates", "type": "main", "index": 0 }]] },
+    "Validate Update": { "main": [[{ "node": "IF Valid?", "type": "main", "index": 0 }]] },
+    "IF Valid?": { "main": [
+      [{ "node": "Update Finding Status", "type": "main", "index": 0 }],
+      [{ "node": "Respond 400", "type": "main", "index": 0 }]
+    ]},
+    "Update Finding Status": { "main": [[{ "node": "Upsert Ticket", "type": "main", "index": 0 }]] },
+    "Upsert Ticket": { "main": [[{ "node": "IF Fixed Pending Retest?", "type": "main", "index": 0 }]] },
+    "IF Fixed Pending Retest?": { "main": [
+      [{ "node": "Schedule Retest", "type": "main", "index": 0 }],
+      [{ "node": "Audit Log", "type": "main", "index": 0 }]
+    ]},
+    "Schedule Retest": { "main": [[{ "node": "Audit Log", "type": "main", "index": 0 }]] },
+    "Audit Log": { "main": [[{ "node": "Respond OK", "type": "main", "index": 0 }]] },
+    "Parse Bulk Updates": { "main": [[{ "node": "Bulk Update", "type": "main", "index": 0 }]] },
+    "Bulk Update": { "main": [[{ "node": "Respond Bulk OK", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1", "saveManualExecutions": true, "saveExecutionProgress": true },
+  "meta": { "description": "RECON OS WF-14: Remediation Tracker — updates finding remediation status, validates state transitions, auto-schedules retest on fixed_pending_retest. Supports bulk import from client teams." }
+}
