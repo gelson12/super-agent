@@ -162,11 +162,11 @@
     .mastery-count { font-size: 10px; color: var(--muted); width: 50px; text-align: right; flex-shrink: 0; }
 
     /* ── Accuracy gauge ── */
-    .accuracy-wrap { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 10px 0; }
-    .accuracy-gauge { position: relative; width: 140px; height: 140px; }
+    .accuracy-wrap { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 10px 0; }
+    .accuracy-gauge { position: relative; width: 140px; height: 76px; overflow: hidden; }
     .accuracy-gauge canvas { position: absolute; top: 0; left: 0; }
-    .accuracy-center { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); text-align: center; }
-    .accuracy-pct   { font-family: var(--font-game); font-size: 1rem; color: var(--green); }
+    .accuracy-center { text-align: center; }
+    .accuracy-pct   { font-family: var(--font-game); font-size: 1.1rem; color: var(--green); }
     .accuracy-label { font-size: 9px; color: var(--muted); }
     .accuracy-sub   { font-size: 11px; color: var(--muted); text-align: center; }
 
@@ -424,7 +424,7 @@
       <div class="stat-label">Agent Calls</div>
       <div class="stat-sub" id="s-vault">— vault writes</div>
     </div>
-    <div class="stat-card purple" data-tt="Achievements|Milestones unlocked by reaching specific usage thresholds. Each one awards bonus XP.<br><br>Examples:<br>• MIND READER — first correct prediction (+50 XP)<br>• TIME LORD — time patterns active (+75 XP)<br>• ORACLE — 50 correct predictions (+200 XP)<br>• OMNISCIENT — reach Level 10 (+500 XP)<br><br>Scroll down to the Achievements grid to see all 15.">
+    <div class="stat-card purple" data-tt="Achievements|Milestones unlocked by reaching specific usage thresholds. Each one awards bonus XP.<br><br>Examples:<br>• MIND READER — first correct prediction (+50 XP)<br>• TIME LORD — time patterns active (+75 XP)<br>• ORACLE — 100 correct predictions (+200 XP)<br>• OMNISCIENT — reach Level 10 (+500 XP)<br><br>Scroll down to the Achievements grid to see all 15.">
       <div class="stat-value" id="s-ach">—</div>
       <div class="stat-label">Achievements</div>
       <div class="stat-sub" id="s-ach-sub">— / — unlocked</div>
@@ -468,10 +468,10 @@
       <div class="accuracy-wrap">
         <div class="accuracy-gauge" data-tt="Accuracy Gauge|Visual accuracy meter. Shows prediction correctness as a half-circle arc.<br><br>Color thresholds:<br>🟢 Green = ≥75% — the system knows your habits well<br>🟡 Gold = ≥50% — reliably better than random<br>🟠 Orange = ≥25% — still learning<br>🔴 Red = &lt;25% — early data, not reliable yet<br><br>Minimum 20 predictions needed for a statistically meaningful score.">
           <canvas id="gauge-chart" width="140" height="140"></canvas>
-          <div class="accuracy-center">
-            <div class="accuracy-pct" id="gauge-pct">—</div>
-            <div class="accuracy-label">ACCURACY</div>
-          </div>
+        </div>
+        <div class="accuracy-center">
+          <div class="accuracy-pct" id="gauge-pct">—</div>
+          <div class="accuracy-label">ACCURACY</div>
         </div>
         <div class="accuracy-sub" id="gauge-sub">Awaiting predictions...</div>
       </div>

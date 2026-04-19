@@ -39,7 +39,7 @@ def _do_prewarm(agent_key: str) -> None:
         import asyncio
         from mcp.client.sse import sse_client
         from mcp import ClientSession
-        _URL = "http://obsidian-vault.railway.internal:22360/sse"
+        from ..tools.obsidian_tools import VAULT_MCP_URL as _URL
 
         async def _fetch():
             async with sse_client(url=_URL) as (r, w):

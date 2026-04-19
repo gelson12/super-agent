@@ -19,7 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from starlette.middleware.base import BaseHTTPMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
@@ -235,6 +235,15 @@ async def _lifespan(app: FastAPI):
         _pl.bootstrap(_prompts_module)
     except Exception:
         pass
+
+    # Warn if OWNER_SAFE_WORD is not set — write operations will be unprotected
+    from .config import settings as _startup_settings
+    if not _startup_settings.owner_safe_word:
+        bg_log(
+            "WARNING: OWNER_SAFE_WORD is not set — all critical write operations "
+            "(GitHub, n8n, shell) are unprotected. Set OWNER_SAFE_WORD in Railway env vars.",
+            source="startup",
+        )
 
     # Validate session DB is reachable — log result so silent failures are visible
     def _validate_session_db():
@@ -2257,6 +2266,24 @@ def intelligence_metrics_api():
         result["hot_agent"] = get_hot_agent()
     except Exception:
         result["hot_agent"] = None
+    # Model preference scores — show what user ratings have taught the system
+    try:
+        from .learning.adapter import adapter as _adapt
+        _prefs = _adapt._wisdom.get("model_preferences", {})
+        result["model_preferences"] = {
+            model: {
+                "score": round(entry.get("score", 0), 3),
+                "rated_interactions": entry.get("count", 0),
+                "routing_active": entry.get("count", 0) >= 5 and entry.get("score", 0) > 1.0,
+            }
+            for model, entry in _prefs.items()
+        }
+        result["drift_swap_count"] = getattr(
+            __import__("app.routing.dispatcher", fromlist=["_drift_swap_count"]),
+            "_drift_swap_count", 0,
+        )
+    except Exception:
+        result["model_preferences"] = {}
     return result
 
 
@@ -4851,8 +4878,27 @@ class _MemoryItem(BaseModel):
     source: str = "external"
     session_id: str = "sync"
 
+    @field_validator("importance")
+    @classmethod
+    def clamp_importance(cls, v: int) -> int:
+        return max(0, min(5, v))
+
+    @field_validator("content")
+    @classmethod
+    def validate_content(cls, v: str) -> str:
+        if len(v) > 2000:
+            return v[:2000]
+        return v
+
 class _MemoryIngestRequest(BaseModel):
     memories: list[_MemoryItem]
+
+    @field_validator("memories")
+    @classmethod
+    def limit_batch_size(cls, v: list) -> list:
+        if len(v) > 200:
+            raise ValueError("Batch size exceeds maximum of 200 memories per request")
+        return v
 
 
 @app.post("/memory/ingest", tags=["memory"])
@@ -4891,9 +4937,11 @@ def memory_export(limit: int = 100, min_importance: int = 3):
     Export recent important memories from the shared DB for cross-agent sync.
     No auth required — read-only, non-sensitive summaries only.
     """
+    limit = max(1, min(limit, 500))
+    min_importance = max(0, min(min_importance, 5))
     try:
         from .memory.vector_memory import export_memories
-        memories = export_memories(limit=min(limit, 500), min_importance=min_importance)
+        memories = export_memories(limit=limit, min_importance=min_importance)
         return {"memories": memories, "count": len(memories)}
     except Exception as e:
         raise HTTPException(500, f"Memory export failed: {e}")

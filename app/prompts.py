@@ -92,7 +92,7 @@ def _fetch_vault_global() -> str:
         import datetime as _dt
         from mcp.client.sse import sse_client as _sse
         from mcp import ClientSession as _CS
-        _URL = "http://obsidian-vault.railway.internal:22360/sse"
+        from .tools.obsidian_tools import VAULT_MCP_URL as _URL
         _today = _dt.datetime.utcnow().strftime("%Y-%m-%d")
 
         async def _do_fetch():
@@ -166,7 +166,7 @@ def get_vault_context_block(topic_hint: str = "", agent_type: str = "", include_
             import asyncio as _asyncio
             from mcp.client.sse import sse_client as _sse
             from mcp import ClientSession as _CS
-            _URL = "http://obsidian-vault.railway.internal:22360/sse"
+            from .tools.obsidian_tools import VAULT_MCP_URL as _URL
 
             async def _fetch_all():
                 import asyncio as _aio_inner
@@ -276,7 +276,7 @@ def get_todays_briefing() -> str:
         import asyncio as _asyncio
         from mcp.client.sse import sse_client as _sse
         from mcp import ClientSession as _CS
-        _URL = "http://obsidian-vault.railway.internal:22360/sse"
+        from .tools.obsidian_tools import VAULT_MCP_URL as _URL
 
         async def _fetch():
             async with _sse(url=_URL) as (_r, _w):

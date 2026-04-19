@@ -23,8 +23,9 @@ class Settings(BaseSettings):
 
     # Owner safe word — required to authorize critical write operations
     # (GitHub writes, n8n workflow edits, shell write commands)
-    # Set via Railway env var OWNER_SAFE_WORD — never hardcode the real value.
-    owner_safe_word: str = "alpha0"
+    # MUST be set via Railway env var OWNER_SAFE_WORD. Empty string disables
+    # safe-word protection entirely — do not leave unset in production.
+    owner_safe_word: str = ""
 
     # Red team / adversarial challenge mode
     # When True, Haiku attacks every response (complexity >= 3) looking for flaws.

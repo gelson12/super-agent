@@ -54,7 +54,7 @@ async def list_tools() -> list[Tool]:
         Tool(name="read_file",        description="Read full content of a note. Pass relative path e.g. 'Welcome.md'.",          inputSchema={"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}),
         Tool(name="write_file",       description="Create or overwrite a note. path=relative .md path, content=markdown text.",  inputSchema={"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}),
         Tool(name="append_to_file",   description="Append text to a note without overwriting. Creates file if missing.",         inputSchema={"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}),
-        Tool(name="search_files",     description="Full-text search across all notes. Case-insensitive.",                        inputSchema={"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}),
+        Tool(name="search_files",     description="Full-text search across all notes. Case-insensitive. max_results caps file matches (default 50, max 200).", inputSchema={"type":"object","properties":{"query":{"type":"string"},"max_results":{"type":"integer","default":50}},"required":["query"]}),
         Tool(name="delete_file",      description="Delete a note from the vault.",                                               inputSchema={"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}),
         Tool(name="get_vault_info",   description="Vault stats: note count, size, folders. Use to verify vault is accessible.",  inputSchema={"type":"object","properties":{},"required":[]}),
         Tool(name="list_folders",     description="List all folder names in the vault (no files). Use to navigate the vault structure.", inputSchema={"type":"object","properties":{},"required":[]}),
@@ -119,9 +119,12 @@ def _dispatch(name: str, args: dict) -> str:
 
     elif name == "search_files":
         query = args["query"]
+        max_results = max(1, min(int(args.get("max_results", 50)), 200))
         pattern = re.compile(re.escape(query), re.IGNORECASE)
         results = []
         for md in sorted(VAULT_PATH.rglob("*.md")):
+            if len(results) >= max_results:
+                break
             if any(p.startswith(".") for p in md.parts):
                 continue
             try:
@@ -130,8 +133,9 @@ def _dispatch(name: str, args: dict) -> str:
                 continue
             hits = [f"  line {i+1}: {l.strip()}" for i, l in enumerate(text.splitlines()) if pattern.search(l)]
             if hits:
-                results.append(str(md.relative_to(VAULT_PATH)) + ":\n" + "\n".join(hits))
-        return "\n\n".join(results) if results else f"No matches for: {query}"
+                results.append(str(md.relative_to(VAULT_PATH)) + ":\n" + "\n".join(hits[:20]))
+        suffix = f"\n\n(results capped at {max_results})" if len(results) >= max_results else ""
+        return ("\n\n".join(results) + suffix) if results else f"No matches for: {query}"
 
     elif name == "delete_file":
         target = _rel(args["path"])
@@ -158,7 +162,7 @@ def _dispatch(name: str, args: dict) -> str:
         return "\n".join(result) if result else "(no folders found)"
 
     elif name == "get_recent_notes":
-        n = int(args.get("n", 10))
+        n = max(1, min(int(args.get("n", 10)), 100))
         notes = [
             p for p in VAULT_PATH.rglob("*.md")
             if not any(part.startswith(".") for part in p.parts)
@@ -561,6 +565,7 @@ def _dispatch(name: str, args: dict) -> str:
             "total_outgoing": len(wikilinks) + len(md_links),
         }, indent=2)
 
+    logger.warning("vault_mcp: unknown tool requested: %s (args: %s)", name, list(args.keys()))
     return f"Unknown tool: {name}"
 
 

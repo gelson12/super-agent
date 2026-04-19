@@ -15,6 +15,7 @@ keeping token usage bounded on long sessions.
 """
 import logging
 import os
+import threading
 import time as _time
 from langchain_community.chat_message_histories import SQLChatMessageHistory
 from langchain_core.messages import BaseMessage
@@ -25,6 +26,7 @@ _log = logging.getLogger("session")
 # Avoids calling Haiku on every request for long sessions.
 # Key: session_id → (summary_text, epoch_ts, msg_count_at_compression)
 _compress_cache: dict[str, tuple[str, float, int]] = {}
+_compress_cache_lock = threading.Lock()
 _COMPRESS_TTL = 1800  # 30 minutes
 
 
@@ -55,11 +57,16 @@ def get_session_history(session_id: str) -> SQLChatMessageHistory:
     )
 
 
+def _cache_invalidate(session_id: str) -> None:
+    with _compress_cache_lock:
+        _compress_cache.pop(session_id, None)
+
+
 def clear_session(session_id: str) -> None:
     """Wipe all messages for a given session."""
     history = get_session_history(session_id)
     history.clear()
-    _compress_cache.pop(session_id, None)
+    _cache_invalidate(session_id)
 
 
 def append_exchange(session_id: str, user_msg: str, ai_msg: str) -> None:
@@ -69,7 +76,7 @@ def append_exchange(session_id: str, user_msg: str, ai_msg: str) -> None:
         history.add_user_message(user_msg)
         history.add_ai_message(ai_msg)
         # Invalidate compression cache — new messages make the cached summary stale
-        _compress_cache.pop(session_id, None)
+        _cache_invalidate(session_id)
     except Exception as e:
         _log.warning("append_exchange failed for session %s: %s", session_id, e)
 
@@ -113,7 +120,8 @@ def get_compressed_context(session_id: str) -> str:
     # ── Compression cache check ───────────────────────────────────────────────
     # Reuse a cached summary if it's less than 30 min old AND message count
     # hasn't grown (i.e. no new messages have been pushed into old_msgs).
-    _cached = _compress_cache.get(session_id)
+    with _compress_cache_lock:
+        _cached = _compress_cache.get(session_id)
     if _cached is not None:
         _cached_summary, _cached_ts, _cached_count = _cached
         if (
@@ -133,7 +141,8 @@ def get_compressed_context(session_id: str) -> str:
         summary_prompt = COMPRESSION_PROMPT.format(history=history_text)
         summary = ask_internal_fast(summary_prompt)
         # Cache the successful result
-        _compress_cache[session_id] = (summary, _time.time(), len(old_msgs))
+        with _compress_cache_lock:
+            _compress_cache[session_id] = (summary, _time.time(), len(old_msgs))
     except Exception as e:
         _log.warning("Haiku compression failed for session: %s", e)
         # Fallback: keep the last 5 old messages so critical context isn't lost

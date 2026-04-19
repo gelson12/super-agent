@@ -378,6 +378,56 @@ class InsightLog:
             "error_rate_pct": error_rate,
         }
 
+    def get_error_rates_by_route(self, last_n: int = 50) -> dict[str, float]:
+        """
+        Return {routed_by → error_rate} for the last `last_n` dispatches.
+        Only routes with >= 3 samples are included. Used by the dispatcher to
+        skip routes that have been consistently failing (> 60% error rate).
+        """
+        with _pg_lock:
+            pg_ok = _pg_enabled
+        if pg_ok:
+            conn = _pg_conn()
+            if conn:
+                try:
+                    with conn.cursor() as cur:
+                        cur.execute("""
+                            SELECT routed_by,
+                                   COUNT(*) FILTER (WHERE error) AS errs,
+                                   COUNT(*) AS total
+                            FROM (
+                                SELECT routed_by, error
+                                FROM agent_insights
+                                ORDER BY ts DESC
+                                LIMIT %s
+                            ) sub
+                            GROUP BY routed_by
+                        """, (last_n,))
+                        rows = cur.fetchall()
+                    conn.close()
+                    return {
+                        r[0]: round(r[1] / r[2], 3)
+                        for r in rows if r[2] >= 3
+                    }
+                except Exception:
+                    try: conn.close()
+                    except Exception: pass
+        # File fallback
+        entries = self._load_all()[-last_n:]
+        route_stats: dict[str, dict] = {}
+        for e in entries:
+            route = e.get("routed_by", "unknown")
+            if route not in route_stats:
+                route_stats[route] = {"total": 0, "errors": 0}
+            route_stats[route]["total"] += 1
+            if e.get("error"):
+                route_stats[route]["errors"] += 1
+        return {
+            r: round(v["errors"] / v["total"], 3)
+            for r, v in route_stats.items()
+            if v["total"] >= 3
+        }
+
     def get_latency_percentiles(self, hours: float = 24.0) -> dict:
         cutoff = time.time() - hours * 3600
         latencies_ms = sorted([

@@ -66,6 +66,63 @@ def _init_pg() -> bool:
 
 _init_pg()
 
+# ── Connection pool (psycopg2 ThreadedConnectionPool) ─────────────────────────
+# Replaces per-call psycopg2.connect() in hot paths to avoid exhausting PG
+# connection limits under concurrent requests.
+
+import logging as _vmlog_mod
+_vmlog = _vmlog_mod.getLogger("vector_memory")
+
+_pool = None
+_pool_lock = None
+
+def _init_pool() -> None:
+    global _pool, _pool_lock
+    if not _pg_enabled or not _conn_str:
+        return
+    try:
+        import psycopg2.pool
+        import threading as _thr_vm
+        _pool = psycopg2.pool.ThreadedConnectionPool(1, 10, _conn_str)
+        _pool_lock = _thr_vm.Lock()
+        _vmlog.info("vector_memory: connection pool initialised (min=1, max=10)")
+    except Exception as exc:
+        _vmlog.warning("vector_memory: pool init failed, falling back to direct connections: %s", exc)
+
+_init_pool()
+
+
+from contextlib import contextmanager as _contextmanager
+
+@_contextmanager
+def _pg_conn_ctx(autocommit: bool = False):
+    """Context manager: borrow a connection from the pool (or create one as fallback)."""
+    conn = None
+    from_pool = False
+    try:
+        if _pool is not None:
+            conn = _pool.getconn()
+            from_pool = True
+        else:
+            import psycopg2
+            conn = psycopg2.connect(_conn_str)
+        conn.autocommit = autocommit
+        yield conn
+        if not autocommit:
+            conn.commit()
+    except Exception:
+        if conn and not autocommit:
+            try: conn.rollback()
+            except Exception: pass
+        raise
+    finally:
+        if conn:
+            if from_pool:
+                _pool.putconn(conn)
+            else:
+                try: conn.close()
+                except Exception: pass
+
 
 def _embed(text: str) -> list[float] | None:
     # Read API key directly from env so this works from any context
@@ -84,7 +141,8 @@ def _embed(text: str) -> list[float] | None:
         client = google_genai.Client(api_key=api_key)
         result = client.models.embed_content(model="text-embedding-004", contents=text)
         return result.embeddings[0].values
-    except Exception:
+    except Exception as exc:
+        _vmlog.debug("vector_memory: embed failed (storing without vector): %s", exc)
         return None
 
 
@@ -146,8 +204,8 @@ def _ensure_source_columns() -> None:
         """)
         cur.close()
         conn.close()
-    except Exception:
-        pass
+    except Exception as exc:
+        _vmlog.warning("vector_memory: schema migration warning: %s", exc)
 
 
 def upgrade_memory_importance(content_prefix: str, delta: int = 1) -> bool:
@@ -219,40 +277,40 @@ def _pg_store(session_id: str, content: str,
     try:
         embedding = _embed(content)  # None is acceptable — stored as NULL
         chash = _content_hash(content)
-        import psycopg2
-        conn = psycopg2.connect(_conn_str)
-        cur = conn.cursor()
-        if embedding is not None:
-            cur.execute(
-                """INSERT INTO agent_memories
-                   (session_id, content, embedding, source, memory_type, importance, content_hash)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s)
-                   ON CONFLICT (content_hash) DO NOTHING""",
-                (session_id, content[:1000], json.dumps(embedding),
-                 source[:64], memory_type[:32], importance, chash),
-            )
-        else:
-            # Store without embedding — text search still works, vector search skips these
-            cur.execute(
-                """INSERT INTO agent_memories
-                   (session_id, content, source, memory_type, importance, content_hash)
-                   VALUES (%s, %s, %s, %s, %s, %s)
-                   ON CONFLICT (content_hash) DO NOTHING""",
-                (session_id, content[:1000],
-                 source[:64], memory_type[:32], importance, chash),
-            )
-        conn.commit()
-        cur.close()
-        conn.close()
+        with _pg_conn_ctx() as conn:
+            cur = conn.cursor()
+            if embedding is not None:
+                cur.execute(
+                    """INSERT INTO agent_memories
+                       (session_id, content, embedding, source, memory_type, importance, content_hash)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s)
+                       ON CONFLICT (content_hash) DO NOTHING""",
+                    (session_id, content[:1000], json.dumps(embedding),
+                     source[:64], memory_type[:32], importance, chash),
+                )
+            else:
+                # Store without embedding — text search still works, vector search skips these
+                cur.execute(
+                    """INSERT INTO agent_memories
+                       (session_id, content, source, memory_type, importance, content_hash)
+                       VALUES (%s, %s, %s, %s, %s, %s)
+                       ON CONFLICT (content_hash) DO NOTHING""",
+                    (session_id, content[:1000],
+                     source[:64], memory_type[:32], importance, chash),
+                )
+            cur.close()
         return True
-    except Exception:
+    except Exception as exc:
+        _vmlog.warning("vector_memory: _pg_store failed: %s", exc)
         return False
 
 
 # Minimum cosine similarity for a memory to be injected into context.
-# Below this the memory is considered too unrelated and is dropped.
-# Hit/miss counts are logged to _RETRIEVAL_STATS_PATH for weekly tuning.
+# Starts at 0.72; auto-tuned at runtime by tune_similarity_threshold().
+# Clamped to [0.55, 0.92] to prevent runaway drift.
 _SIMILARITY_THRESHOLD = 0.72
+_THRESHOLD_FLOOR = 0.55
+_THRESHOLD_CEIL  = 0.92
 
 
 def _retrieval_stats_path() -> str:
@@ -275,6 +333,78 @@ def _log_retrieval_stats(hits: int, misses: int, session_id: str | None) -> None
             f.write(json.dumps(record) + "\n")
     except Exception:
         pass
+
+
+def get_memory_stats(last_n: int = 200) -> dict:
+    """
+    Summarise memory retrieval performance from the stats log.
+    Returns hit_rate, miss_rate, current_threshold, and a recommendation.
+    """
+    path = _retrieval_stats_path()
+    records = []
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                try:
+                    records.append(json.loads(line.strip()))
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    records = records[-last_n:]
+    if not records:
+        return {"samples": 0, "current_threshold": _SIMILARITY_THRESHOLD}
+    total_hits   = sum(r.get("hits", 0)   for r in records)
+    total_misses = sum(r.get("misses", 0) for r in records)
+    total        = total_hits + total_misses
+    hit_rate     = round(total_hits / total, 3) if total else 0.0
+    miss_rate    = round(total_misses / total, 3) if total else 0.0
+    if total < 20:
+        recommendation = "insufficient_data"
+    elif miss_rate > 0.55:
+        recommendation = "lower_threshold"   # too restrictive, losing useful memories
+    elif miss_rate < 0.10 and hit_rate > 0.90:
+        recommendation = "raise_threshold"   # too permissive, injecting noise
+    else:
+        recommendation = "keep"
+    return {
+        "samples":           len(records),
+        "total_retrievals":  total,
+        "hits":              total_hits,
+        "misses":            total_misses,
+        "hit_rate":          hit_rate,
+        "miss_rate":         miss_rate,
+        "current_threshold": _SIMILARITY_THRESHOLD,
+        "recommendation":    recommendation,
+    }
+
+
+def tune_similarity_threshold() -> dict:
+    """
+    Auto-tune _SIMILARITY_THRESHOLD based on recent retrieval statistics.
+    Adjusts by +/- 0.02 per call (max drift ±0.17 from the 0.72 baseline).
+    Returns {"old": float, "new": float, "reason": str}.
+    Called by nightly_review once per day — never blocks the request path.
+    """
+    global _SIMILARITY_THRESHOLD
+    stats = get_memory_stats(last_n=300)
+    old = _SIMILARITY_THRESHOLD
+    reason = stats.get("recommendation", "keep")
+    if reason == "lower_threshold" and stats.get("samples", 0) >= 20:
+        new = round(max(_THRESHOLD_FLOOR, old - 0.02), 4)
+    elif reason == "raise_threshold" and stats.get("samples", 0) >= 20:
+        new = round(min(_THRESHOLD_CEIL,  old + 0.02), 4)
+    else:
+        new = old
+    if new != old:
+        _SIMILARITY_THRESHOLD = new
+        _vmlog.info(
+            "vector_memory: threshold auto-tuned %.3f → %.3f (%s, hit_rate=%.1f%%, miss_rate=%.1f%%)",
+            old, new, reason,
+            stats.get("hit_rate", 0) * 100,
+            stats.get("miss_rate", 0) * 100,
+        )
+    return {"old": old, "new": new, "reason": reason, "stats": stats}
 
 
 def _pg_retrieve(query: str, top_k: int = 5, session_id: str | None = None) -> list[str]:
@@ -675,35 +805,33 @@ def search_memories(query: str, limit: int = 20, min_importance: int = 1,
     results = []
     if _pg_enabled and _conn_str:
         try:
-            import psycopg2
-            conn = psycopg2.connect(_conn_str)
-            cur = conn.cursor()
-            source_clause = "AND source = %s" if source else ""
-            params = [f"%{query}%", min_importance]
-            if source:
-                params.append(source)
-            params.append(limit)
-            cur.execute(f"""
-                SELECT content, source, memory_type, importance, created_at
-                FROM agent_memories
-                WHERE content ILIKE %s
-                  AND importance >= %s
-                  {source_clause}
-                ORDER BY importance DESC, created_at DESC
-                LIMIT %s
-            """, params)
-            for row in cur.fetchall():
-                results.append({
-                    "content": row[0],
-                    "source": row[1] or "unknown",
-                    "memory_type": row[2] or "general",
-                    "importance": row[3] or 3,
-                    "created_at": row[4].isoformat() if row[4] else None,
-                })
-            cur.close()
-            conn.close()
-        except Exception:
-            pass
+            with _pg_conn_ctx() as conn:
+                cur = conn.cursor()
+                source_clause = "AND source = %s" if source else ""
+                params = [f"%{query}%", min_importance]
+                if source:
+                    params.append(source)
+                params.append(limit)
+                cur.execute(f"""
+                    SELECT content, source, memory_type, importance, created_at
+                    FROM agent_memories
+                    WHERE content ILIKE %s
+                      AND importance >= %s
+                      {source_clause}
+                    ORDER BY importance DESC, created_at DESC
+                    LIMIT %s
+                """, params)
+                for row in cur.fetchall():
+                    results.append({
+                        "content": row[0],
+                        "source": row[1] or "unknown",
+                        "memory_type": row[2] or "general",
+                        "importance": row[3] or 3,
+                        "created_at": row[4].isoformat() if row[4] else None,
+                    })
+                cur.close()
+        except Exception as exc:
+            _vmlog.warning("vector_memory: search_memories failed: %s", exc)
     return results
 
 

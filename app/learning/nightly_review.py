@@ -98,6 +98,24 @@ def _collect_todays_data() -> dict:
     except Exception:
         pass
 
+    # Memory retrieval health + threshold recommendation
+    memory_stats = {}
+    try:
+        from ..memory.vector_memory import get_memory_stats, tune_similarity_threshold
+        memory_stats = get_memory_stats(last_n=300)
+        # Auto-tune once per nightly run
+        tune_result = tune_similarity_threshold()
+        memory_stats["threshold_tune_result"] = tune_result
+    except Exception:
+        pass
+
+    # Per-route error rates (last 50 dispatches) for routing health snapshot
+    route_error_rates = {}
+    try:
+        route_error_rates = insight_log.get_error_rates_by_route(last_n=50)
+    except Exception:
+        pass
+
     return {
         "date": datetime.datetime.utcnow().strftime("%Y-%m-%d"),
         "total_interactions_today": len(today),
@@ -109,6 +127,8 @@ def _collect_todays_data() -> dict:
         "top_errors_today": top_errors,
         "top_complex_interactions": top_complex,
         "pending_outcome_snapshots": pending_after,
+        "memory_retrieval_stats":   memory_stats,
+        "route_error_rates_50":     route_error_rates,
     }
 
 
@@ -404,9 +424,38 @@ def auto_apply_safe_suggestions(review: dict) -> list[dict]:
 
             _log(f"VOTE APPROVED ({vote_result['yes_count']}/5): {feature_name}")
 
+        elif priority == "high" and _is_core_file(file_to_change):
+            # Core file with high-priority suggestion: require 4/5 supermajority vote.
+            # Previously all core files were unconditionally skipped, blocking 70-85%
+            # of real improvements from ever being applied.
+            _log(f"HIGH + core file — calling 5-model vote (need 4/5): {feature_name}")
+            try:
+                vote_result = vote_on_suggestion(s)
+                if vote_result.get("yes_count", 0) >= 4:
+                    authorized = True
+                    _log(f"CORE VOTE APPROVED ({vote_result['yes_count']}/5): {feature_name}")
+                else:
+                    _log(f"CORE VOTE REJECTED ({vote_result['yes_count']}/5 < 4): {feature_name}")
+                    applied.append({
+                        "feature_number": s.get("feature_number"),
+                        "feature_name": feature_name,
+                        "file_to_change": file_to_change,
+                        "status": "core_vote_rejected",
+                        "vote_result": vote_result,
+                    })
+                    continue
+            except Exception as _e:
+                applied.append({
+                    "feature_number": s.get("feature_number"),
+                    "feature_name": feature_name,
+                    "file_to_change": file_to_change,
+                    "status": "vote_error",
+                    "error": str(_e),
+                })
+                continue
         else:
-            # Core file — skip regardless of priority
-            _log(f"SKIPPED (core file): {feature_name} → {file_to_change}")
+            # Low/medium priority core file — skip (too risky for automated changes)
+            _log(f"SKIPPED (core file, priority={priority}): {feature_name} → {file_to_change}")
             continue
 
         # ── Build rollback branch name ─────────────────────────────────────────

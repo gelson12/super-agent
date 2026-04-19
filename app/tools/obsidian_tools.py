@@ -27,7 +27,10 @@ from langchain.tools import tool
 
 logger = logging.getLogger(__name__)
 
-_OBSIDIAN_URL = os.environ.get("OBSIDIAN_MCP_URL", "http://obsidian-vault.railway.internal:22360/sse")
+# Single source of truth for the vault MCP URL.
+# Override in Railway: set OBSIDIAN_MCP_URL env var.
+VAULT_MCP_URL = os.environ.get("OBSIDIAN_MCP_URL", "http://obsidian-vault.railway.internal:22360/sse")
+_OBSIDIAN_URL = VAULT_MCP_URL  # internal alias kept for backward compat
 
 # ── Calling-agent context (set by agent dispatch layer) ──────────────────────
 _agent_ctx = threading.local()

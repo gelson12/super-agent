@@ -1,6 +1,9 @@
+import logging as _logging
 import os as _os
 import time as _time
 from pathlib import Path as _Path
+
+_log = _logging.getLogger("dispatcher")
 
 from .classifier import classify_request
 from .preprocessor import detect_trivial, score_complexity, model_for_complexity
@@ -73,7 +76,8 @@ try:
         record_turn as _traj_record,
         predict_next as _traj_predict,
     )
-except Exception:
+except Exception as _e:
+    _log.debug("trajectory_predictor unavailable: %s", _e)
     def _traj_record(s, a): pass
     def _traj_predict(s): return None, 0.0
 
@@ -83,14 +87,16 @@ try:
         predict_after as _bp_predict_after,
         predict_from_time as _bp_predict_time,
     )
-except Exception:
+except Exception as _e:
+    _log.debug("behavior_patterns unavailable: %s", _e)
     def _bp_record(a): pass
     def _bp_predict_after(a): return None, 0.0
     def _bp_predict_time(): return None, 0.0
 
 try:
     from ..learning.context_prewarm import prewarm_for_agent as _prewarm
-except Exception:
+except Exception as _e:
+    _log.debug("context_prewarm unavailable: %s", _e)
     def _prewarm(a): pass
 
 try:
@@ -98,7 +104,8 @@ try:
         store_prediction as _store_pred,
         evaluate_prediction as _eval_pred,
     )
-except Exception:
+except Exception as _e:
+    _log.debug("prediction_tracker unavailable: %s", _e)
     def _store_pred(s, a): pass
     def _eval_pred(s, a): pass
 
@@ -107,19 +114,20 @@ try:
         record_agent_call as _iq_agent_call,
         record_new_pattern as _iq_new_pattern,
     )
-except Exception:
+except Exception as _e:
+    _log.debug("intelligence_score unavailable: %s", _e)
     def _iq_agent_call(s): pass
+    def _iq_new_pattern(): pass
 
 try:
     from ..learning.agent_leaderboard import (
         record_call as _lb_record_call,
         record_prediction_result as _lb_record_pred,
     )
-except Exception:
+except Exception as _e:
+    _log.debug("agent_leaderboard unavailable: %s", _e)
     def _lb_record_call(a, s, ms, ok=True): pass
     def _lb_record_pred(pred, actual): pass
-
-    def _iq_new_pattern(): pass
 
 # ── Active task tracker (per-session, in-memory) ─────────────────────────────
 # Written before any long-running agent call so follow-up queries always know
@@ -484,7 +492,7 @@ def _persist_routing_confidence_snapshot() -> None:
         import asyncio as _aio2
         from mcp.client.sse import sse_client as _sse2
         from mcp import ClientSession as _CS2
-        _URL2 = "http://obsidian-vault.railway.internal:22360/sse"
+        from ..tools.obsidian_tools import VAULT_MCP_URL as _URL2
 
         async def _write():
             async with _sse2(url=_URL2) as (_r, _w):
@@ -586,10 +594,14 @@ _AGENT_TIMEOUTS: dict[str, int] = {
 
 
 def _vault_log_outcome(agent_type: str, message: str, response: str, session_id: str) -> None:
-    """Log agent outcome to Obsidian vault — fire-and-forget, never raises."""
+    """Log agent outcome AND extract winning patterns to Obsidian vault. Fire-and-forget."""
     try:
-        from ..learning.vault_insight_hook import log_agent_outcome as _vlo
+        from ..learning.vault_insight_hook import (
+            log_agent_outcome as _vlo,
+            extract_and_write_pattern as _ewp,
+        )
         _vlo(agent_type, message, response, session_id)
+        _ewp(agent_type, message, response, session_id)
     except Exception:
         pass
 
@@ -728,6 +740,33 @@ def _parse_classify_result(result: str) -> tuple[str, float]:
     return category, confidence
 
 
+def _build_classifier_prompt(message: str) -> str:
+    """
+    Build the routing classifier prompt, enriched with learned history context.
+    The learned context tells the classifier which agent has been most effective
+    recently — biasing it toward the right route without changing the output format.
+    """
+    history_hint = ""
+    try:
+        _ctx = adapter.get_learned_context()
+        if _ctx:
+            # Trim to 300 chars max — just enough for the classifier to use as a hint
+            history_hint = f"\n\nContext from past interactions (use as routing hint):\n{_ctx[:300]}\n"
+    except Exception:
+        pass
+
+    return (
+        f'Classify this user message into exactly one category.\n'
+        f'Message: "{message}"\n'
+        f'{history_hint}\n'
+        f'Categories: SHELL, GITHUB, N8N, SELF_IMPROVE, SEARCH, GENERAL\n'
+        f'Confidence: 0.0 to 1.0\n\n'
+        f'Reply in exactly this format (two lines only, nothing else):\n'
+        f'CATEGORY: <category>\n'
+        f'CONFIDENCE: <0.0-1.0>'
+    )
+
+
 def _classify_route_with_confidence(message: str) -> tuple[str, float]:
     """
     Feature 5: Classify the route using a 3-tier CLI-first strategy.
@@ -737,16 +776,10 @@ def _classify_route_with_confidence(message: str) -> tuple[str, float]:
     Tier 3 — Haiku API       (last resort — costs money)
 
     Falls back to ("GENERAL", 0.0) on total failure — never blocks dispatch.
+    The prompt is enriched with learned_context so routing history influences
+    the classification (e.g. "SHELL has been most effective this week").
     """
-    prompt = (
-        f'Classify this user message into exactly one category.\n'
-        f'Message: "{message}"\n\n'
-        f'Categories: SHELL, GITHUB, N8N, SELF_IMPROVE, SEARCH, GENERAL\n'
-        f'Confidence: 0.0 to 1.0\n\n'
-        f'Reply in exactly this format (two lines only, nothing else):\n'
-        f'CATEGORY: <category>\n'
-        f'CONFIDENCE: <0.0-1.0>'
-    )
+    prompt = _build_classifier_prompt(message)
 
     # ── Tier 1: Claude CLI Pro ────────────────────────────────────────────────
     try:
@@ -1688,8 +1721,32 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
     else:
         _kw_route = None  # falls through to complexity-based model selection
 
+    # ── 5b. Trajectory-prediction routing tie-breaker ─────────────────────────
+    # When BOTH keyword detection AND classifier fail to produce a confident
+    # agent route, use the trajectory predictor's session history to fill the
+    # gap. Zero API cost — pure pattern-match on learned session sequences.
+    # Only applied when: no keywords matched + classifier confidence < 0.55
+    # + predictor confidence >= 0.75 + message is short/ambiguous (<=60 chars).
+    _AGENT_ROUTES = {"SHELL", "GITHUB", "N8N", "SELF_IMPROVE"}
+    if _kw_route not in _AGENT_ROUTES and _ai_conf < 0.55:
+        try:
+            _traj_route, _traj_conf = _traj_predict(session_id)
+            if (
+                _traj_route
+                and _traj_conf >= 0.75
+                and _traj_route in _AGENT_ROUTES
+                and len(message.split()) <= 60  # only for short/ambiguous messages
+            ):
+                _kw_route = _traj_route
+                _log.debug(
+                    "Trajectory tie-breaker: routing to %s (conf=%.2f, session=%s)",
+                    _traj_route, _traj_conf, session_id,
+                )
+        except Exception:
+            pass
+
     # Low-confidence or timed-out classifier: escalate complexity
-    if _ai_conf < 0.4 and _kw_route is None:
+    if _ai_conf < 0.4 and _kw_route not in _AGENT_ROUTES:
         complexity = max(complexity, 4)  # escalate to peer-review tier
     # Session context failure also escalates (set earlier in 0e)
     if _ctx_injection_failed:
@@ -2010,6 +2067,45 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
                 routed_by = f"{routed_by}_algo"
     except Exception:
         pass  # Never let algorithm routing crash dispatch
+
+    # ── 6c. User preference override ─────────────────────────────────────────
+    # adapter.record_preference() accumulates per-model rating signals from the
+    # /feedback endpoint. If a model has >= 5 rated exchanges and a clear positive
+    # score (> 1.0 above baseline), prefer it over the drift/algo choice.
+    # This is what makes user ratings actually change future routing behaviour.
+    # Only active for text-model choices (CLAUDE / GEMINI / DEEPSEEK / HAIKU) —
+    # never overrides agent routes (SHELL / GITHUB / N8N / SELF_IMPROVE).
+    _TEXT_MODELS = {"CLAUDE", "GEMINI", "DEEPSEEK", "HAIKU"}
+    if model in _TEXT_MODELS:
+        try:
+            _pref_model = adapter.get_preferred_model(list(_TEXT_MODELS))
+            if _pref_model and _pref_model != model:
+                _log.debug(
+                    "Preference override: %s → %s (routed_by=%s)",
+                    model, _pref_model, routed_by,
+                )
+                model = _pref_model
+                routed_by = f"{routed_by}_preference"
+        except Exception:
+            pass
+
+    # ── 6d. Route quality gate ────────────────────────────────────────────────
+    # If the chosen routing path has had > 60% errors in the last 50 dispatches,
+    # escalate complexity to trigger peer review — the route is unreliable.
+    # Only applies to text-model routes; agent routes manage their own CB.
+    if model in _TEXT_MODELS:
+        try:
+            _route_error_rates = insight_log.get_error_rates_by_route(last_n=50)
+            _route_err = _route_error_rates.get(routed_by, 0.0)
+            if _route_err > 0.60:
+                complexity = max(complexity, 4)
+                routed_by = f"{routed_by}_route_degraded"
+                _log.debug(
+                    "Route quality gate: %s has %.0f%% error rate in last 50 — escalating to complexity 4",
+                    routed_by, _route_err * 100,
+                )
+        except Exception:
+            pass
 
     # ── 7. Cache lookup ───────────────────────────────────────────────────────
     if model in _CACHEABLE_MODELS:

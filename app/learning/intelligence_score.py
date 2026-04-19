@@ -20,8 +20,8 @@ Combo multiplier (consecutive correct predictions):
 import threading
 import time
 
-# Level thresholds (cumulative XP to reach that level)
-_LEVEL_THRESHOLDS = [0, 100, 250, 500, 800, 1200, 1800, 2600, 3600, 5000]
+# Level thresholds (cumulative XP to reach that level) — each step is ~2-3× the previous span
+_LEVEL_THRESHOLDS = [0, 300, 800, 1800, 3300, 5500, 8500, 12500, 18000, 25000]
 _LEVEL_NAMES = [
     "NEWBORN", "AWARE", "LEARNING", "ADAPTING", "PERCEPTIVE",
     "INTUITIVE", "PREDICTIVE", "PRESCIENT", "ORACLE", "OMNISCIENT",
@@ -36,24 +36,24 @@ XP_REWARDS = {
 }
 
 ALL_ACHIEVEMENTS = {
-    "first_prediction":    {"name": "FIRST STEPS",        "desc": "Made the first prediction",       "icon": "🎯", "xp": 25},
-    "first_correct":       {"name": "MIND READER",        "desc": "First correct prediction",        "icon": "🧠", "xp": 50},
-    "ten_correct":         {"name": "LEARNING MACHINE",   "desc": "10 correct predictions",          "icon": "⚡", "xp": 100},
-    "fifty_correct":       {"name": "ORACLE",             "desc": "50 correct predictions",          "icon": "🔮", "xp": 200},
-    "pattern_seeker":      {"name": "PATTERN SEEKER",     "desc": "10 sequence patterns stored",     "icon": "🔍", "xp": 50},
-    "pattern_master":      {"name": "PATTERN MASTER",     "desc": "50 sequence patterns stored",     "icon": "🏛️",  "xp": 100},
-    "time_lord":           {"name": "TIME LORD",          "desc": "Time-based patterns active",      "icon": "⏰", "xp": 75},
-    "transition_master":   {"name": "TRANSITION MASTER",  "desc": "5+ agent transition patterns",    "icon": "🔀", "xp": 75},
-    "vault_keeper":        {"name": "VAULT KEEPER",       "desc": "100 vault outcome writes",        "icon": "📚", "xp": 75},
-    "session_sage":        {"name": "SESSION SAGE",       "desc": "50 unique sessions tracked",      "icon": "💫", "xp": 100},
-    "accuracy_50":         {"name": "SHARP MIND",         "desc": "50%+ prediction accuracy (20+ samples)", "icon": "🎖️",  "xp": 100},
-    "accuracy_75":         {"name": "CLAIRVOYANT",        "desc": "75%+ prediction accuracy (20+ samples)", "icon": "✨", "xp": 200},
-    "level_5":             {"name": "PERCEPTIVE",         "desc": "Reached Level 5",                 "icon": "⭐", "xp": 150},
-    "level_8":             {"name": "PRESCIENT",          "desc": "Reached Level 8",                 "icon": "🌟", "xp": 250},
-    "omniscient":          {"name": "OMNISCIENT",         "desc": "Reached maximum Level 10",        "icon": "👑", "xp": 500},
+    "first_prediction":    {"name": "FIRST STEPS",        "desc": "Made the first prediction",              "icon": "🎯", "xp": 25},
+    "first_correct":       {"name": "MIND READER",        "desc": "First correct prediction",               "icon": "🧠", "xp": 50},
+    "ten_correct":         {"name": "LEARNING MACHINE",   "desc": "25 correct predictions",                 "icon": "⚡", "xp": 100},
+    "fifty_correct":       {"name": "ORACLE",             "desc": "100 correct predictions",                "icon": "🔮", "xp": 200},
+    "pattern_seeker":      {"name": "PATTERN SEEKER",     "desc": "25 sequence patterns stored",            "icon": "🔍", "xp": 50},
+    "pattern_master":      {"name": "PATTERN MASTER",     "desc": "100 sequence patterns stored",           "icon": "🏛️",  "xp": 100},
+    "time_lord":           {"name": "TIME LORD",          "desc": "Time-based patterns active (10+ samples)","icon": "⏰", "xp": 75},
+    "transition_master":   {"name": "TRANSITION MASTER",  "desc": "20+ agent transition patterns",          "icon": "🔀", "xp": 75},
+    "vault_keeper":        {"name": "VAULT KEEPER",       "desc": "100 vault outcome writes",               "icon": "📚", "xp": 75},
+    "session_sage":        {"name": "SESSION SAGE",       "desc": "50 unique sessions tracked",             "icon": "💫", "xp": 100},
+    "accuracy_50":         {"name": "SHARP MIND",         "desc": "50%+ prediction accuracy (30+ samples)", "icon": "🎖️",  "xp": 100},
+    "accuracy_75":         {"name": "CLAIRVOYANT",        "desc": "75%+ prediction accuracy (30+ samples)", "icon": "✨", "xp": 200},
+    "level_5":             {"name": "PERCEPTIVE",         "desc": "Reached Level 5",                        "icon": "⭐", "xp": 150},
+    "level_8":             {"name": "PRESCIENT",          "desc": "Reached Level 8",                        "icon": "🌟", "xp": 250},
+    "omniscient":          {"name": "OMNISCIENT",         "desc": "Reached maximum Level 10",               "icon": "👑", "xp": 500},
     # Combo achievements
-    "combo_5":             {"name": "ON FIRE",            "desc": "5× prediction combo streak",      "icon": "🔥", "xp": 75},
-    "combo_10":            {"name": "UNSTOPPABLE",        "desc": "10× prediction combo streak",     "icon": "💥", "xp": 150},
+    "combo_5":             {"name": "ON FIRE",            "desc": "8× prediction combo streak",             "icon": "🔥", "xp": 75},
+    "combo_10":            {"name": "UNSTOPPABLE",        "desc": "15× prediction combo streak",            "icon": "💥", "xp": 150},
 }
 
 _state: dict = {
@@ -112,19 +112,27 @@ def get_level_info() -> dict:
     level = min(level, 10)
     name = _LEVEL_NAMES[level - 1]
     current_floor = _LEVEL_THRESHOLDS[level - 1]
-    next_ceiling  = _LEVEL_THRESHOLDS[level] if level < 10 else _LEVEL_THRESHOLDS[-1]
-    xp_in_level   = xp - current_floor
-    xp_span       = next_ceiling - current_floor
-    pct = min(100, round(xp_in_level / xp_span * 100, 1)) if xp_span > 0 else 100
+    is_max = level == 10
+    if is_max:
+        # Keep accumulating XP beyond max; show as overflow prestige XP
+        xp_in_level = xp - current_floor
+        xp_span     = 0
+        pct         = 100
+    else:
+        next_ceiling = _LEVEL_THRESHOLDS[level]
+        xp_in_level  = xp - current_floor
+        xp_span      = next_ceiling - current_floor
+        pct          = min(100, round(xp_in_level / xp_span * 100, 1))
     return {
         "level":        level,
         "name":         name,
         "xp_total":     xp,
         "xp_in_level":  xp_in_level,
-        "xp_to_next":   xp_span - xp_in_level,
+        "xp_to_next":   0 if is_max else (xp_span - xp_in_level),
         "xp_span":      xp_span,
         "progress_pct": pct,
-        "is_max":       level == 10,
+        "is_max":       is_max,
+        "prestige_xp":  xp_in_level if is_max else 0,
     }
 
 
@@ -205,14 +213,14 @@ def _check_achievements() -> None:
 
     if total   >= 1:  _unlock("first_prediction")
     if correct >= 1:  _unlock("first_correct")
-    if correct >= 10: _unlock("ten_correct")
-    if correct >= 50: _unlock("fifty_correct")
+    if correct >= 25: _unlock("ten_correct")
+    if correct >= 100: _unlock("fifty_correct")
     if sessions >= 50: _unlock("session_sage")
     if vw >= 100:     _unlock("vault_keeper")
-    if combo >= 5:    _unlock("combo_5")
-    if combo >= 10:   _unlock("combo_10")
+    if combo >= 8:    _unlock("combo_5")
+    if combo >= 15:   _unlock("combo_10")
 
-    if total >= 20:
+    if total >= 30:
         acc = correct / total
         if acc >= 0.50: _unlock("accuracy_50")
         if acc >= 0.75: _unlock("accuracy_75")
@@ -220,19 +228,19 @@ def _check_achievements() -> None:
     try:
         from .trajectory_predictor import _sequence_store
         n = len(_sequence_store)
-        if n >= 10: _unlock("pattern_seeker")
-        if n >= 50: _unlock("pattern_master")
+        if n >= 25:  _unlock("pattern_seeker")
+        if n >= 100: _unlock("pattern_master")
     except Exception:
         pass
 
     try:
         from .behavior_patterns import _time_counts, _transitions
         for _, counts in _time_counts.items():
-            if sum(counts.values()) >= 5:
+            if sum(counts.values()) >= 10:
                 _unlock("time_lord")
                 break
         total_tr = sum(sum(v.values()) for v in _transitions.values())
-        if total_tr >= 5: _unlock("transition_master")
+        if total_tr >= 20: _unlock("transition_master")
     except Exception:
         pass
 

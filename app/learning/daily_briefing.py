@@ -53,25 +53,121 @@ def promote_patterns_if_needed() -> None:
 
 
 def _run_promotion(today: str) -> None:
-    """Ask self_improve_agent to extract repeated successful patterns from outcome logs."""
+    """
+    Extract repeated successful patterns from outcome logs and write them to
+    patterns.md files. Two-stage: deterministic extraction first (zero API cost),
+    then self_improve_agent for deeper synthesis if outcomes have enough data.
+    """
+    # Stage 1 — deterministic: read outcomes, find OK entries with repeated tags,
+    # write structured pattern entries directly to patterns.md via MCP.
+    _deterministic_promote(today)
+
+    # Stage 2 — LLM synthesis: ask self_improve_agent to do a deeper pass.
     try:
         promotion_prompt = (
             f"[WEEKLY PATTERN PROMOTION — {today}]\n\n"
-            f"Scan last 7 days of agent outcomes and promote repeated success patterns.\n\n"
+            f"Deep-scan last 7 days of agent outcomes and promote repeated success patterns.\n\n"
             f"Steps:\n"
-            f"1. obsidian_read_note('KnowledgeBase/n8n/outcomes.md')\n"
+            f"1. obsidian_read_note('KnowledgeBase/n8n/outcomes.md') — look for repeated OK entries\n"
             f"2. obsidian_read_note('KnowledgeBase/Shell/outcomes.md')\n"
             f"3. obsidian_read_note('KnowledgeBase/GitHub/outcomes.md')\n"
-            f"4. For each agent: find tasks with outcome=OK that share the same approach 3+ times\n"
-            f"5. For each identified pattern:\n"
-            f"   - obsidian_append_to_note('<agent>/patterns.md',\n"
-            f"     '\\n## [Promoted {today}] <pattern title>\\n<description>\\n#promoted')\n"
-            f"   Only promote reusable technical patterns (commands, API calls, config steps).\n"
-            f"   Skip one-off or overly specific tasks.\n\n"
-            f"If no patterns qualify for promotion, just log: 'No patterns promoted this week.'"
+            f"4. For each agent: find tasks with outcome=OK that share the same approach 2+ times\n"
+            f"5. For each identified pattern, append to '<agent>/patterns.md':\n"
+            f"   Format: '### [Promoted {today}] <title> #promoted\\n"
+            f"   **Pattern:** <what worked>\\n**Commands:** <key commands if any>\\n'\n"
+            f"   Only promote reusable patterns (commands, API calls, config steps, workflows).\n"
+            f"   Skip one-off or session-specific tasks.\n\n"
+            f"6. obsidian_append_to_note('KnowledgeBase/errors.md', any recurring errors found)\n\n"
+            f"If no patterns qualify: append one line to 'KnowledgeBase/SelfImprove/outcomes.md': "
+            f"'[{today}] Weekly promotion ran — no new patterns identified.'"
         )
         from ..agents.self_improve_agent import run_self_improve_agent
         run_self_improve_agent(promotion_prompt, authorized=False)
+    except Exception:
+        pass
+
+
+def _deterministic_promote(today: str) -> None:
+    """
+    Zero-LLM pattern promotion: read outcomes.md files via vault MCP, find tags
+    that appear in 2+ OK entries within the last 7 days, and write a structured
+    pattern note to patterns.md. Runs synchronously inside a daemon thread.
+    """
+    import asyncio
+    import re
+
+    _AGENT_PAIRS = [
+        ("KnowledgeBase/Shell/outcomes.md",  "Shell/patterns.md",  "Shell"),
+        ("KnowledgeBase/n8n/outcomes.md",    "n8n/patterns.md",    "N8N"),
+        ("KnowledgeBase/GitHub/outcomes.md", "GitHub/patterns.md", "GitHub"),
+    ]
+
+    async def _promote():
+        try:
+            from mcp.client.sse import sse_client
+            from mcp import ClientSession
+            from ..tools.obsidian_tools import VAULT_MCP_URL as _URL
+
+            async with sse_client(url=_URL) as (r, w):
+                async with ClientSession(r, w) as s:
+                    await s.initialize()
+                    for outcomes_path, patterns_path, agent_name in _AGENT_PAIRS:
+                        res = await s.call_tool("read_file", {"path": outcomes_path})
+                        text = res.content[0].text if res.content else ""
+                        if not text or "not found" in text.lower() or len(text) < 100:
+                            continue
+
+                        # Parse ## YYYY-MM-DD HH:MM — OK sections
+                        entries = re.findall(
+                            r"## (\d{4}-\d{2}-\d{2}) \d{2}:\d{2} — (OK|ERROR)\n\n"
+                            r"\*\*Task:\*\* (.+?)\n\n\*\*Result:\*\* (.+?)\n\n"
+                            r"(?:\*\*Tags:\*\* (.+?)\n)?",
+                            text,
+                            re.DOTALL,
+                        )
+                        # Filter to OK entries from last 7 days
+                        from datetime import date, timedelta
+                        cutoff = (date.today() - timedelta(days=7)).isoformat()
+                        ok_entries = [
+                            e for e in entries if e[1] == "OK" and e[0] >= cutoff
+                        ]
+                        if len(ok_entries) < 2:
+                            continue
+
+                        # Count tags across OK entries
+                        tag_counts: dict[str, int] = {}
+                        tag_examples: dict[str, list] = {}
+                        for entry in ok_entries:
+                            tags_raw = entry[4] or ""
+                            tags = [t.strip().lstrip("#") for t in tags_raw.split(",") if t.strip()]
+                            for tag in tags:
+                                tag_counts[tag] = tag_counts.get(tag, 0) + 1
+                                tag_examples.setdefault(tag, []).append(entry[2][:80])
+
+                        # Tags appearing 2+ times = promoted pattern
+                        promoted_tags = {t: c for t, c in tag_counts.items() if c >= 2}
+                        if not promoted_tags:
+                            continue
+
+                        for tag, count in promoted_tags.items():
+                            examples = tag_examples.get(tag, [])[:2]
+                            pattern_note = (
+                                f"\n### [Auto-promoted {today}] {agent_name} #{tag} "
+                                f"({count} successful uses)\n"
+                                f"**Pattern:** This approach succeeded {count}x this week.\n"
+                                f"**Example tasks:**\n"
+                                + "\n".join(f"  - {ex}" for ex in examples)
+                                + "\n#promoted #auto\n"
+                            )
+                            await s.call_tool("append_to_file", {
+                                "path": patterns_path,
+                                "content": pattern_note,
+                            })
+        except Exception:
+            pass
+
+    try:
+        asyncio.run(_promote())
     except Exception:
         pass
 
@@ -82,7 +178,7 @@ def _generate_briefing(today: str) -> None:
         import asyncio
         from mcp.client.sse import sse_client
         from mcp import ClientSession
-        _URL = "http://obsidian-vault.railway.internal:22360/sse"
+        from ..tools.obsidian_tools import VAULT_MCP_URL as _URL
 
         async def _check_exists():
             async with sse_client(url=_URL) as (r, w):
