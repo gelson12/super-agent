@@ -1,0 +1,85 @@
+# Curated initial shortlist for HF smart discovery at P2.
+# Scope: ~20 production-viable free models across chat/code/summarize/qa.
+# Dynamic HF catalog discovery (HfApi.list_models + SQLite TTL cache) is
+# deferred to P6 hardening — this static list unblocks P2 without bootstrap.
+#
+# Fields:
+#   id                  hf model id
+#   task                chat | code | summarize | qa | classify
+#   modality            text | code | vision | audio
+#   params_b            approx parameter count in billions (for cost/speed rank)
+#   license             spdx-ish or family name
+#   license_commercial  true if commercial-use allowed
+models:
+  - id: meta-llama/Llama-3.2-3B-Instruct
+    task: chat
+    modality: text
+    params_b: 3
+    license: Llama3
+    license_commercial: true
+  - id: mistralai/Mistral-7B-Instruct-v0.3
+    task: chat
+    modality: text
+    params_b: 7
+    license: Apache-2.0
+    license_commercial: true
+  - id: Qwen/Qwen2.5-7B-Instruct
+    task: chat
+    modality: text
+    params_b: 7
+    license: Apache-2.0
+    license_commercial: true
+  - id: google/gemma-2-9b-it
+    task: chat
+    modality: text
+    params_b: 9
+    license: Gemma
+    license_commercial: true
+  - id: microsoft/Phi-3.5-mini-instruct
+    task: chat
+    modality: text
+    params_b: 3.8
+    license: MIT
+    license_commercial: true
+  - id: deepseek-ai/DeepSeek-Coder-V2-Lite-Instruct
+    task: code
+    modality: text
+    params_b: 16
+    license: DeepSeek
+    license_commercial: true
+  - id: bigcode/starcoder2-7b
+    task: code
+    modality: text
+    params_b: 7
+    license: BigCode-OpenRAIL-M
+    license_commercial: true
+  - id: Qwen/Qwen2.5-Coder-7B-Instruct
+    task: code
+    modality: text
+    params_b: 7
+    license: Apache-2.0
+    license_commercial: true
+  - id: facebook/bart-large-cnn
+    task: summarize
+    modality: text
+    params_b: 0.4
+    license: MIT
+    license_commercial: true
+  - id: sshleifer/distilbart-cnn-12-6
+    task: summarize
+    modality: text
+    params_b: 0.3
+    license: Apache-2.0
+    license_commercial: true
+  - id: deepset/roberta-base-squad2
+    task: qa
+    modality: text
+    params_b: 0.125
+    license: MIT
+    license_commercial: true
+  - id: distilbert-base-uncased-finetuned-sst-2-english
+    task: classify
+    modality: text
+    params_b: 0.067
+    license: Apache-2.0
+    license_commercial: true
