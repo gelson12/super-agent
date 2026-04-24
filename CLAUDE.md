@@ -1,5 +1,5 @@
 # Super-Agent — Claude CLI Context
-**Last updated:** 2026-04-18
+**Last updated:** 2026-04-23
 
 This file is auto-loaded by `claude -p` on every invocation inside this repo.
 It gives Claude CLI situational awareness of the system architecture.
@@ -169,7 +169,7 @@ The Claude CLI login flow in container/headless mode:
 
 ---
 
-## PENDING ISSUES (as of 2026-04-18)
+## PENDING ISSUES (as of 2026-04-23)
 
 - **Health:** nominal — nightly review found no regressions.
 - **Priorities for tomorrow:** none.

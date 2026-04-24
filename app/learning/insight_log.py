@@ -299,7 +299,14 @@ class InsightLog:
 
     # ── Analytics ─────────────────────────────────────────────────────────────
 
+    # Hard floor: below this many outcomes, a model is "untested" and must be
+    # excluded from win-rate reporting. Without this guard, a fallback model
+    # (e.g. duckduckgo) with a handful of early failures gets a 0.0 win rate
+    # and is effectively locked out of future selection.
+    _COLD_START_THRESHOLD = 20
+
     def get_model_win_rates(self, min_samples: int = 20) -> dict[str, float]:
+        threshold = max(min_samples, self._COLD_START_THRESHOLD)
         entries = self._load_all()
         counts: dict[str, dict] = {}
         for e in entries:
@@ -312,7 +319,7 @@ class InsightLog:
         return {
             m: round(1.0 - (v["errors"] / v["total"]), 3)
             for m, v in counts.items()
-            if v["total"] >= min_samples
+            if v["total"] >= threshold
         }
 
     def summary(self) -> dict:
