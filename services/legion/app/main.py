@@ -13,6 +13,7 @@ from app.agents.gemini_b import GeminiBAgent
 from app.agents.hf import HFAgent
 from app.agents.kimi import KimiAgent
 from app.agents.ollama import OllamaAgent
+from app.agents.qwen import QwenAgent
 from app.auth import require_hmac
 from app.beacon import router as beacon_router
 from app.config import settings
@@ -51,6 +52,7 @@ async def lifespan(app: FastAPI):
     _AGENTS["hf"] = HFAgent()
     _AGENTS["claude_b"] = ClaudeBAgent()
     _AGENTS["chatgpt"] = ChatGPTAgent()
+    _AGENTS["qwen"] = QwenAgent()
     enabled = [aid for aid, a in _AGENTS.items() if getattr(a, "enabled", False)]
     log.info(
         "legion started: LEGION_ENABLED=%s, registered=%s, enabled=%s",

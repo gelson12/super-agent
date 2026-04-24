@@ -23,6 +23,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN npm install -g --no-audit --no-fund \
       @anthropic-ai/claude-code \
       @google/gemini-cli \
+      @qwen-code/qwen-code \
     && npm cache clean --force
 
 # Kimi CLI — re-enabled P7.1. Root cause of earlier failures was the Kimi
