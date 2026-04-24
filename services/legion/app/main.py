@@ -16,6 +16,7 @@ from app.agents.ollama import OllamaAgent
 from app.auth import require_hmac
 from app.beacon import router as beacon_router
 from app.config import settings
+from app.healing.cli_creds import restore_all as restore_cli_creds
 from app.hive_engine import LegionExhausted, run_round
 from app.models import RespondRequest, RespondResponse
 from app.redact import install_root_filter
@@ -34,6 +35,15 @@ _AGENTS: dict[str, object] = {}
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Restore CLI subscription credentials from base64 env blobs (Kimi,
+    # Gemini-B, optional Claude-B tar) BEFORE agents initialise so their
+    # subprocess lookups find the right session files on first call.
+    try:
+        creds_results = restore_cli_creds()
+        log.info("cli_creds restore: %s", creds_results)
+    except Exception as exc:
+        log.warning("cli_creds restore failed: %s", type(exc).__name__)
+
     await db.startup()
     _AGENTS["kimi"] = KimiAgent()
     _AGENTS["gemini_b"] = GeminiBAgent()

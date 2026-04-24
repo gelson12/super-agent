@@ -57,6 +57,8 @@ RUN python -m playwright install --with-deps chromium \
 
 COPY app /app/app
 COPY migrations /app/migrations
+COPY scripts /app/scripts
+RUN chmod +x /app/scripts/*.sh 2>/dev/null || true
 COPY supervisord.conf /etc/supervisor/supervisord.conf
 COPY nginx.conf /etc/nginx/nginx.conf
 COPY legion_config.yaml /app/legion_config.yaml
