@@ -25,12 +25,24 @@ RUN npm install -g --no-audit --no-fund \
       @google/gemini-cli \
     && npm cache clean --force
 
-# Kimi CLI install deferred to P2 (when KIMI_ENABLED flips on).
-# Current P0/P1 image does not need kimi/uv at runtime because KIMI_ENABLED=false
-# gates every Kimi code path. Skipping this install shaves ~200MB off the image
-# and removes the most fragile step (upstream installer has quirky PATH/hash
-# behavior with `command -v uv` in non-interactive shells).
-# When re-enabling: install uv first, then kimi via bash -c 'hash -r && ...'.
+# Kimi CLI — re-enabled P7.1. Root cause of earlier failures was the Kimi
+# install script's post-install `command -v uv` check failing because
+# astral's uv installer drops the binary into $HOME/.local/bin without
+# updating the current shell's PATH. We fix this deterministically by
+# pre-installing uv AND symlinking it into /usr/local/bin so it's on the
+# default PATH regardless of ENV propagation quirks across subshells.
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
+    && ln -sf /root/.local/bin/uv  /usr/local/bin/uv  \
+    && ln -sf /root/.local/bin/uvx /usr/local/bin/uvx \
+    && uv --version
+
+# Now Kimi's `command -v uv` finds /usr/local/bin/uv immediately and the
+# script skips its own install path entirely (see install.sh first `if`).
+RUN curl -fsSL code.kimi.com/install.sh -o /tmp/kimi-install.sh \
+    && sha256sum /tmp/kimi-install.sh > /opt/kimi-install.sha256 \
+    && bash /tmp/kimi-install.sh \
+    && rm /tmp/kimi-install.sh \
+    && ( [ -f /root/.local/bin/kimi ] && ln -sf /root/.local/bin/kimi /usr/local/bin/kimi || true )
 
 # Ollama
 RUN curl -fsSL https://ollama.com/install.sh | sh
