@@ -1,0 +1,37 @@
+[project]
+name = "legion-engineer"
+version = "0.1.0"
+description = "Fallback hive orchestration container — secondary responder behind inspiring-cat Claude CLI"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "httpx>=0.27",
+    "psycopg[binary]>=3.2",
+    "pydantic>=2.8",
+    "pydantic-settings>=2.4",
+    "tenacity>=9.0",
+    "pyyaml>=6.0",
+    "playwright>=1.47",
+    "huggingface-hub>=0.24",
+    "ollama>=0.3",
+    "websockets>=13",
+    "prometheus-client>=0.20",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.6",
+]
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"

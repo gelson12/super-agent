@@ -1,0 +1,49 @@
+ranking:
+  weights:
+    alpha_historical: 0.35
+    beta_suitability: 0.30
+    gamma_latency: 0.15
+    delta_reliability: 0.15
+    epsilon_cost: 0.05
+  min_acceptable_score: 0.35
+  cold_start_sample_threshold: 30
+
+hive:
+  shortlist_k: 3
+  shortlist_max: 5
+  deadlines_ms:
+    claude_b: 8000
+    kimi: 6000
+    gemini_b: 5000
+    ollama: 4000
+    hf: 6000
+  early_termination:
+    confidence_min: 0.85
+    latency_fraction_max: 0.4
+
+failover:
+  primary_to_legion:
+    auth_fail_count: 2
+    auth_fail_window_s: 60
+    consecutive_5xx: 3
+    stale_backlog_s: 300
+  legion_to_primary:
+    consecutive_healthy_beacons: 3
+    min_account_a_health: 0.7
+    min_dwell_in_legion_s: 90
+
+circuit:
+  error_threshold: 5
+  cooldown_s:
+    claude_b: 300
+    kimi: 120
+    gemini_b: 60
+    ollama: 15
+    hf: 60
+
+modality_priors:
+  code:
+    claude_b: 0.10
+    kimi: 0.10
+  chat:
+    gemini_b: 0.10
