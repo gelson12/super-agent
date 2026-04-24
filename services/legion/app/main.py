@@ -19,6 +19,7 @@ from app.config import settings
 from app.hive_engine import LegionExhausted, run_round
 from app.models import RespondRequest, RespondResponse
 from app.redact import install_root_filter
+from app.webhook import router as webhook_router
 
 install_root_filter()
 logging.basicConfig(
@@ -51,6 +52,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Legion Engineer", version=__version__, lifespan=lifespan)
 app.include_router(beacon_router)
+app.include_router(webhook_router)
 
 
 @app.get("/health")
