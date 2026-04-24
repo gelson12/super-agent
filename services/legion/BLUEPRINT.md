@@ -299,6 +299,9 @@ Full table in `~/.claude/plans/design-and-implement-a-jaunty-wave.md` §11. Top 
 | P1 single-agent (Kimi) | complete | super-agent `0ac87a2` (imported via subtree) |
 | P1 Track B n8n patch | complete | super-agent `ba80a2b` + `61e8497` |
 | Monorepo consolidation | complete | super-agent `985d3e8` (subtree merge) |
+| Railway deploy hardening | complete | super-agent `4eac54c` + `a2932ec` + `94281fc` + `2a277bb` + `005e2a2` + `82839c3` — PATH, Kimi/uv deferral, railway.toml removal, zstd for Ollama, supervisord autostart=false for feature-gated programs |
+| **Legion live 2026-04-24** | — | https://legion-production-36db.up.railway.app/health returns 200 (deployment 948f7836) |
+| P2 hive fan-out | complete | super-agent `6e8d3a7` — rank engine, config loader, suitability classifier, hive orchestrator, Gemini-B + Ollama + HF adapters, curated.yaml, tests. Stays dormant until LEGION_ENABLED flips. |
 | P2 hive fan-out | pending | — |
 | P3 dual-Claude | pending | — |
 | P4 L5 DevBrowser-CDP | pending | — |
