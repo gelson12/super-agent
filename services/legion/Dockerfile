@@ -25,24 +25,13 @@ RUN npm install -g --no-audit --no-fund \
       @google/gemini-cli \
     && npm cache clean --force
 
-# Kimi CLI — re-enabled P7.1. Root cause of earlier failures was the Kimi
-# install script's post-install `command -v uv` check failing because
-# astral's uv installer drops the binary into $HOME/.local/bin without
-# updating the current shell's PATH. We fix this deterministically by
-# pre-installing uv AND symlinking it into /usr/local/bin so it's on the
-# default PATH regardless of ENV propagation quirks across subshells.
+# Kimi CLI removed 2026-04-24: Moonshot made `kimi` CLI paid-subscription-only
+# (402 Payment Required on login). uv is kept because it's still useful for
+# pip-alternative workflows and is small (~5 MB).
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
     && ln -sf /root/.local/bin/uv  /usr/local/bin/uv  \
     && ln -sf /root/.local/bin/uvx /usr/local/bin/uvx \
     && uv --version
-
-# Now Kimi's `command -v uv` finds /usr/local/bin/uv immediately and the
-# script skips its own install path entirely (see install.sh first `if`).
-RUN curl -fsSL code.kimi.com/install.sh -o /tmp/kimi-install.sh \
-    && sha256sum /tmp/kimi-install.sh > /opt/kimi-install.sha256 \
-    && bash /tmp/kimi-install.sh \
-    && rm /tmp/kimi-install.sh \
-    && ( [ -f /root/.local/bin/kimi ] && ln -sf /root/.local/bin/kimi /usr/local/bin/kimi || true )
 
 # Ollama
 RUN curl -fsSL https://ollama.com/install.sh | sh

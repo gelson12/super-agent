@@ -20,9 +20,6 @@ set -euo pipefail
 
 TARGET="${1:-}"
 case "$TARGET" in
-  kimi)
-    PATHS="/root/.kimi /root/.local/share/kimi-cli /root/.config/kimi"
-    ;;
   gemini_b|gemini)
     PATHS="/root/.gemini /root/.config/gemini"
     ;;
@@ -30,7 +27,7 @@ case "$TARGET" in
     PATHS="/root/.claude"
     ;;
   *)
-    echo "Usage: $0 {kimi|gemini_b|claude_b}" >&2
+    echo "Usage: $0 {gemini_b|claude_b}" >&2
     exit 1
     ;;
 esac

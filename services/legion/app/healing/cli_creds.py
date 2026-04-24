@@ -55,13 +55,11 @@ def restore_tarball(env_var: str, label: str) -> bool:
                 "/root/.config/",
                 "/root/.gemini/",
                 "/root/.claude/",
-                "/root/.kimi/",
                 "/workspace/legion/",
                 "root/.local/share/",
                 "root/.config/",
                 "root/.gemini/",
                 "root/.claude/",
-                "root/.kimi/",
                 "workspace/legion/",
             )
             members = []
@@ -85,7 +83,6 @@ def restore_tarball(env_var: str, label: str) -> bool:
 def restore_all() -> dict[str, bool]:
     """Restore all configured CLI credentials. Returns {label: success}."""
     results = {
-        "kimi":     restore_tarball("KIMI_SESSION_TOKEN",     "kimi"),
         "gemini_b": restore_tarball("GEMINI_B_SESSION_TOKEN", "gemini_b"),
         # Claude-B already uses single-JSON L2 path in app.healing.l2_env.
         # If the operator prefers the tarball pattern for Claude too, set

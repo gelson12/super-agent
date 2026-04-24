@@ -11,7 +11,6 @@ from app.agents.chatgpt import ChatGPTAgent
 from app.agents.claude_b import ClaudeBAgent
 from app.agents.gemini_b import GeminiBAgent
 from app.agents.hf import HFAgent
-from app.agents.kimi import KimiAgent
 from app.agents.ollama import OllamaAgent
 from app.auth import require_hmac
 from app.beacon import router as beacon_router
@@ -45,7 +44,6 @@ async def lifespan(app: FastAPI):
         log.warning("cli_creds restore failed: %s", type(exc).__name__)
 
     await db.startup()
-    _AGENTS["kimi"] = KimiAgent()
     _AGENTS["gemini_b"] = GeminiBAgent()
     _AGENTS["ollama"] = OllamaAgent()
     _AGENTS["hf"] = HFAgent()

@@ -312,6 +312,19 @@ Full table in `~/.claude/plans/design-and-implement-a-jaunty-wave.md` §11. Top 
 | P7.2 CLI credential provisioning | complete | super-agent `2ec17e5` — `app/healing/cli_creds.py` decodes base64 tar.gz env vars on lifespan startup and extracts to /root/.<cli>/. `scripts/capture_cli_creds.sh` (operator helper) tars only `*.json/*.yaml/*.toml` and warns if >32KB Railway var limit (fix `bc561ed`). |
 | Legion Volume attached | complete | via Railway GraphQL `volumeCreate` — `legion-volume` (id `b9ad72e4-993c-416c-a1db-aff887f21c7b`) mounts at `/workspace/legion` on the Legion service. Critical prerequisite for L1 to actually persist state: without it L1 was a permanent no-op, L4 magic-link re-logins would die on every restart, and the healing chain would collapse into L2-env-var-only. |
 | Qwen agent removed | reverted | super-agent `TBD` — tried `@qwen-code/qwen-code` but Qwen OAuth subscription is discontinued (paid Alibaba Cloud Coding Plan or API-key only). User chose to skip Qwen rather than pay or use API path. Removed from Dockerfile, main.py registry, suitability heuristic, cli_creds, capture script, .env.example. |
+| Kimi agent removed | reverted | super-agent `TBD` — Moonshot moved Kimi CLI login to paid Coding Plan only (`kimi login` returns 402 Payment Required on the free path). Removed all Kimi code; uv install retained. Reinstate from commits 4d70f93 + 2c55033 if you ever buy the plan. |
+
+## Self-healing token coverage per agent (post-P7)
+
+| agent | auth store | volume-backed? | env-var restore | L1..L5 healing chain | if token expires |
+|---|---|---|---|---|---|
+| **claude_b** | `/root/.claude/credentials.json` | ✅ (legion-volume) | ✅ `CLAUDE_ACCOUNT_B_SESSION_TOKEN` / `CLAUDE_ACCOUNT_B_SESSION_TAR` | ✅ **full chain** — L1 volume, L2 env, L3 OAuth stub, L4 Playwright magic-link, L5 DevBrowser-CDP | claude_b_watchdog triggers chain automatically; Playwright re-login via n8n workflow `jxnZZwTqJ7naPKc6` |
+| **gemini_b** | `/root/.gemini/` | ✅ (legion-volume) | ✅ `GEMINI_B_SESSION_TOKEN` | ❌ not wired — Google OAuth is more complex than Claude magic-link | manual re-login required: `railway ssh -- gemini` + re-capture. Refresh tokens usually valid for months. |
+| **ollama** | no auth | ✅ model files persisted | n/a | n/a | n/a — local process |
+| **hf** | `HF_API_KEY` | n/a (env var only) | ✅ stored in Railway | n/a — keys don't expire unless revoked | manual: revoke + generate new key at huggingface.co/settings/tokens |
+| **chatgpt** | `OPENAI_API_KEY` | n/a | ✅ stored in Railway | n/a | manual: new key at platform.openai.com/api-keys |
+
+**P7 gap:** Gemini-B has no automated re-login. Google's OAuth anti-bot measures make L4-Playwright-style headless login unreliable. Acceptable for now because Google OAuth refresh tokens typically live for 6+ months; if we start seeing tokens expire in practice, add a probing daemon that alerts on `gemini` invocation failures and prompts operator to re-login via SSH.
 | P2 hive fan-out | pending | — |
 | P3 dual-Claude | pending | — |
 | P4 L5 DevBrowser-CDP | pending | — |
