@@ -25,11 +25,18 @@ RUN npm install -g --no-audit --no-fund \
       @google/gemini-cli \
     && npm cache clean --force
 
+# uv is a prerequisite for Kimi CLI. Installing it explicitly first guarantees
+# it's on disk AND PATH before the Kimi install script runs its own uv check.
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
+    && /root/.local/bin/uv --version
+
 # Kimi CLI — pin to a fetched snapshot to avoid silent upstream drift.
 # TODO(P1): replace with pinned SHA after first verified install.
+# hash -r forces bash to forget cached command lookups so it re-scans PATH
+# after uv was just installed.
 RUN curl -fsSL code.kimi.com/install.sh -o /tmp/kimi-install.sh \
     && sha256sum /tmp/kimi-install.sh > /opt/kimi-install.sha256 \
-    && bash /tmp/kimi-install.sh \
+    && bash -c "hash -r && bash /tmp/kimi-install.sh" \
     && rm /tmp/kimi-install.sh
 
 # Ollama
