@@ -19,7 +19,6 @@ RUBRIC_SYSTEM = (
 
 
 def _heuristic(query: str, agent_ids: list[str]) -> dict[str, float]:
-    q_lower = query.lower()
     is_code = bool(re.search(
         r"\b(def |class |function|import |const |let |var |SELECT |curl |```)",
         query,
@@ -27,10 +26,12 @@ def _heuristic(query: str, agent_ids: list[str]) -> dict[str, float]:
     is_chat = len(query) < 200 and not is_code
     scores: dict[str, float] = {}
     for aid in agent_ids:
-        if is_code and aid in ("claude_b", "kimi"):
-            scores[aid] = 0.75
-        elif is_chat and aid in ("gemini_b", "ollama"):
+        if is_code and aid in ("claude_b", "kimi", "chatgpt"):
+            scores[aid] = 0.80 if aid == "claude_b" else 0.75
+        elif is_chat and aid in ("gemini_b", "ollama", "chatgpt"):
             scores[aid] = 0.70
+        elif aid == "chatgpt":
+            scores[aid] = 0.65  # general-purpose default
         elif aid == "hf":
             scores[aid] = 0.45
         else:

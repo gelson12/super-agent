@@ -3,11 +3,13 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import os
 import time
 import uuid
 
 from app import db
 from app.agents.base import run_with_deadline
+from app.beacon import primary_healthy
 from app.config_loader import load_config
 from app.models import AgentResponse, RespondRequest, RespondResponse
 from app.rank import AgentProfile, pick_winner
@@ -24,6 +26,15 @@ async def run_round(req: RespondRequest, agents: dict[str, object]) -> RespondRe
     cfg = load_config()
     round_id = str(uuid.uuid4())
     start = time.monotonic()
+
+    # P3 failover guard: if inspiring-cat recently beaconed as healthy, defer.
+    # The dispatcher in super-agent should have fronted the primary first and
+    # only called us on fallback; this check catches misrouted traffic where
+    # the primary is actually fine. Skipped when DUAL_ACCOUNT_ENABLED is off
+    # so P0-P2 behaviour is unchanged.
+    if os.environ.get("DUAL_ACCOUNT_ENABLED", "false").lower() == "true":
+        if primary_healthy():
+            raise LegionExhausted("primary_is_healthy_defer_upstream")
 
     if req.shortlist_override:
         candidates = [
