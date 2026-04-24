@@ -286,6 +286,7 @@ _KNOWN_WORKERS = [
     "GitHub Agent",
     "N8N Agent",
     "Self-Improve Agent",
+    "Legion Engineer",
     # Services
     "Daphney",
 ]
@@ -315,7 +316,7 @@ _API_MODELS  = {"Anthropic Haiku", "Sonnet Anthropic", "Opus Anthropic", "DeepSe
 # CLI workers: auth-dependent, token can expire — degrade over time.
 _CLI_WORKERS = {"Claude CLI Pro", "Gemini CLI"}
 # Agents: demand-triggered — moderate thresholds, no coffee_break.
-_AGENTS      = {"Shell Agent", "GitHub Agent", "N8N Agent", "Self-Improve Agent", "Daphney"}
+_AGENTS      = {"Shell Agent", "GitHub Agent", "N8N Agent", "Self-Improve Agent", "Daphney", "Legion Engineer"}
 
 # CLI worker idle thresholds
 _CLI_BREAK_AFTER    = 30 * 60    # 30 min  → break

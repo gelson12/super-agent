@@ -931,6 +931,11 @@ _cli_detailed_cache: dict = {}
 _cli_detailed_cache_ts: float = 0.0
 _CLI_DETAILED_CACHE_TTL = 30  # seconds
 
+# Cache for Legion container /health/detailed. Same 15s budget as CLI health.
+_legion_health_cache: dict = {}
+_legion_health_cache_ts: float = 0.0
+_LEGION_HEALTH_CACHE_TTL = 15  # seconds
+
 
 def _fetch_cli_worker_health() -> dict:
     """
@@ -967,6 +972,35 @@ def _fetch_cli_worker_health() -> dict:
         pass
     _cli_health_cache = result
     _cli_health_cache_ts = _t.time()
+    return result
+
+
+def _fetch_legion_health() -> dict:
+    """
+    Fetch Legion container /health/detailed with a 15s cache.
+    Returns {} on any error so callers treat missing fields as unknown.
+
+    Expected fields from Legion: status, version, uptime_s, legion_enabled,
+    l5_enabled, dual_account_enabled, agents (dict), pg_configured.
+    """
+    global _legion_health_cache, _legion_health_cache_ts
+    import time as _t
+    import urllib.request
+    import json as _j
+    if _t.time() - _legion_health_cache_ts < _LEGION_HEALTH_CACHE_TTL:
+        return _legion_health_cache
+    legion_url = os.environ.get(
+        "LEGION_BASE_URL",
+        "https://legion-production-36db.up.railway.app",
+    ).rstrip("/")
+    result: dict = {}
+    try:
+        with urllib.request.urlopen(f"{legion_url}/health/detailed", timeout=3) as _r:
+            result = _j.loads(_r.read().decode())
+    except Exception:
+        pass
+    _legion_health_cache = result
+    _legion_health_cache_ts = _t.time()
     return result
 
 
@@ -1046,6 +1080,27 @@ def agents_status():
                 # and by seed_live_status() which already calls mark_done() when credits
                 # are confirmed. Inject api_available field so UI can show correct reason.
                 _w["api_available"] = _cli_health.get("api_available")  # may be None if unknown
+
+            elif _wid == "Legion Engineer":
+                # Legion is a sibling Railway service; poll its /health/detailed
+                # so the dashboard shows real state rather than the tracker's
+                # default "sleeping".
+                _legion = _fetch_legion_health()
+                if _legion.get("status") == "ok":
+                    _agents = _legion.get("agents", {}) or {}
+                    _enabled_agents = [a for a, ok in _agents.items() if ok]
+                    _w["state"] = "working" if _enabled_agents else "idle"
+                    _w["legion_enabled"] = _legion.get("legion_enabled", False)
+                    _w["dual_account_enabled"] = _legion.get("dual_account_enabled", False)
+                    _w["l5_enabled"] = _legion.get("l5_enabled", False)
+                    _w["agents_registered"] = list(_agents.keys())
+                    _w["agents_enabled"] = _enabled_agents
+                    _w["pg_configured"] = _legion.get("pg_configured", False)
+                    _w["legion_uptime_s"] = _legion.get("uptime_s")
+                    _w["error_detail"] = None
+                else:
+                    _w["state"] = "sick"
+                    _w["error_detail"] = "legion unreachable"
 
     except Exception:
         pass
