@@ -55,13 +55,15 @@ Three independently deployed services, one shared data plane.
 
 ## 2. Services inventory
 
-| service | repo | purpose | deploys from |
+| service | repo location | purpose | deploys from |
 |---|---|---|---|
-| `super-agent` | GitHub:`gelson12/super-agent` | API gateway, request routing, dashboard UI, n8n tool definitions | Dockerfile |
-| `inspiring-cat` | same repo, separate Railway service | Claude CLI (Account A) + Gemini CLI host with 4-layer session healing | same repo, different start cmd |
-| `legion` (this) | GitHub:`gelson12/legion-engineer` | Hive fallback container, Claude CLI Account B, Kimi, Ollama, HF, Gemini-B | Dockerfile |
+| `super-agent` | GitHub:`gelson12/super-agent` (root) | API gateway, request routing, dashboard UI, n8n tool definitions | repo root `Dockerfile` |
+| `inspiring-cat` | same repo, separate Railway service | Claude CLI (Account A) + Gemini CLI host with 4-layer session healing | repo root, different start cmd |
+| `legion` (this) | same repo, `services/legion/` subdir | Hive fallback container, Claude CLI Account B, Kimi, Ollama, HF, Gemini-B | Railway Root Directory = `services/legion` |
 | `n8n` | Railway template | Workflow engine: magic-link extraction, trash purge, business automations | Railway template |
 | `Postgres` | Railway managed PG | Shared data plane for all services | Railway PG plugin |
+
+**Isolation model:** Legion shares the super-agent GitHub repo but is a **completely independent Railway service** with its own Dockerfile, own container, own crash domain, own env vars. The repo is shared for monorepo convenience (one PR surface, shared tooling); runtime isolation is enforced by Railway treating each service's `rootDirectory` independently. Legion code must **not** import from super-agent's Python modules — the boundary is convention-enforced, not physical.
 
 ---
 
@@ -69,7 +71,7 @@ Three independently deployed services, one shared data plane.
 
 | dependency | what you need | where |
 |---|---|---|
-| GitHub account | Two repos (`super-agent`, `legion-engineer`) private | github.com |
+| GitHub account | One repo (`super-agent`, private) — Legion lives in `services/legion/` | github.com |
 | Railway account | One project, five services | railway.app |
 | Claude Account A | Email `gelsonmascarenhas@gmail.com` (or your A), Pro subscription | claude.ai |
 | Claude Account B | Email `e.remote.demands@gmail.com` (or your B), Pro subscription | claude.ai |
@@ -166,7 +168,7 @@ Two repos contribute additive schemas to the single shared PG. Apply in order.
 | file | source repo | contents |
 |---|---|---|
 | super-agent's existing migrations | `super-agent/migrations/` | agent_activity, agent_interactions, self_improve_*, intelligence_*, unified_memory, bridge.* schema |
-| `legion-engineer/migrations/0001_legion_base.sql` | this repo | `claude_account_state`, `hive_rounds`, `hive_agent_scores`, `agent_quota` |
+| `services/legion/migrations/0001_legion_base.sql` | this repo | `claude_account_state`, `hive_rounds`, `hive_agent_scores`, `agent_quota` |
 
 All schemas are `CREATE IF NOT EXISTS` and safe to re-run.
 
@@ -196,8 +198,8 @@ Import via `super-agent/scripts/import_legion_n8n.ps1`. Outlook OAuth credential
 4. **Configure Outlook OAuth in n8n UI** → Credentials → add Microsoft Outlook OAuth2. Record the credential id; you'll need it if you ever re-import workflows that reference it.
 5. **Push `super-agent` repo** to GitHub. Create Railway service from it. Create a second Railway service from the same repo with a different start command for `inspiring-cat`. Set all env vars from §4.2 and §4.3.
 6. **Apply super-agent migrations**: `psql "$PG_DSN" -f super-agent/migrations/*.sql` in filename order.
-7. **Push `legion-engineer` repo** to GitHub. Create Railway service. Set env vars from §4.4 (all feature flags stay `false` on first deploy).
-8. **Apply Legion migration**: `scripts/apply_migrations.ps1` with `PG_DSN` set, OR paste `migrations/0001_legion_base.sql` into Railway's PG query tab.
+7. **Create Legion Railway service** pointing at the same `super-agent` repo, with **Root Directory = `services/legion`**. Set env vars from §4.4 (all feature flags stay `false` on first deploy).
+8. **Apply Legion migration**: `services/legion/scripts/apply_migrations.ps1` with `PG_DSN` set, OR paste `services/legion/migrations/0001_legion_base.sql` into Railway's PG query tab.
 9. **Import n8n workflows**: `super-agent/scripts/import_legion_n8n.ps1` with `N8N_BASE_URL` + `N8N_API_KEY` set.
 10. **Set n8n service vars** from §4.5.
 11. **Smoke test**: `curl https://<legion-host>/health` → expect `legion_enabled: false`. Dashboard should render all three widgets.
@@ -246,7 +248,7 @@ services:
     depends_on: [postgres, n8n]
 
   legion:
-    build: ./legion-engineer
+    build: ./super-agent/services/legion
     env_file: .env.legion
     depends_on: [postgres, n8n]
 
@@ -293,9 +295,10 @@ Full table in `~/.claude/plans/design-and-implement-a-jaunty-wave.md` §11. Top 
 
 | phase | status | git tag / commit |
 |---|---|---|
-| P0 scaffolding | complete | legion `34d8097` |
-| P1 single-agent (Kimi) | complete | legion `0ac87a2` |
+| P0 scaffolding | complete | super-agent `34d8097` (imported via subtree) |
+| P1 single-agent (Kimi) | complete | super-agent `0ac87a2` (imported via subtree) |
 | P1 Track B n8n patch | complete | super-agent `ba80a2b` + `61e8497` |
+| Monorepo consolidation | complete | super-agent `985d3e8` (subtree merge) |
 | P2 hive fan-out | pending | — |
 | P3 dual-Claude | pending | — |
 | P4 L5 DevBrowser-CDP | pending | — |

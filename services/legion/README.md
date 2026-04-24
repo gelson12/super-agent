@@ -8,9 +8,11 @@ that fan out in parallel and return the best-ranked answer. Also owns Claude
 Account B's session lifecycle so the two Claude accounts can fail over to each
 other without going cold.
 
-**Isolation rule:** this repo is standalone. It does not share code, deployment,
-or Dockerfile with `super-agent` or `inspiring-cat`. Coordination is via HTTP
-(HMAC-signed) and shared Postgres tables only.
+**Isolation rule:** Legion lives inside the `super-agent` repo as `services/legion/`
+but deploys as a **completely independent Railway service** — own Dockerfile,
+own container, own crash domain, own env vars. Legion code must never import
+from super-agent's Python modules; coordination is via HTTP (HMAC-signed) and
+shared Postgres tables only.
 
 ## Response priority
 
@@ -50,10 +52,12 @@ curl http://127.0.0.1:8010/health
 
 ## Deploy
 
-Railway service is standalone. Apply migration once:
+Railway service has its own runtime isolation. In the Railway dashboard, create
+a new service pointing at the `super-agent` repo and set **Root Directory =
+`services/legion`**. Apply migration once:
 
 ```bash
-psql "$PG_DSN" -f migrations/0001_legion_base.sql
+psql "$PG_DSN" -f services/legion/migrations/0001_legion_base.sql
 ```
 
 All secrets live in Railway env vars — see `.env.example` for the list of
