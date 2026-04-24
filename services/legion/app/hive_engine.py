@@ -7,7 +7,7 @@ import os
 import time
 import uuid
 
-from app import db
+from app import circuit, db
 from app.agents.base import run_with_deadline
 from app.beacon import primary_healthy
 from app.config_loader import load_config
@@ -53,11 +53,25 @@ async def run_round(req: RespondRequest, agents: dict[str, object]) -> RespondRe
         if aid in suitability_scores:
             suitability_scores[aid] = min(1.0, suitability_scores[aid] + bonus)
 
-    entered = shortlist(
+    picked = shortlist(
         suitability_scores,
         k=cfg.hive.shortlist_k,
         max_k=cfg.hive.shortlist_max,
     )
+
+    # Filter by circuit breaker — skip OPEN agents, admit HALF_OPEN probes.
+    entered: list[str] = []
+    skipped_open: list[str] = []
+    for aid in picked:
+        if await circuit.allow(aid):
+            entered.append(aid)
+        else:
+            skipped_open.append(aid)
+    if skipped_open:
+        log.info("hive: skipping OPEN-breaker agents: %s", skipped_open)
+
+    if not entered:
+        raise LegionExhausted(f"all_shortlisted_agents_circuit_open:{skipped_open}")
 
     deadlines = cfg.hive.deadlines_ms
     tasks: dict[str, asyncio.Task[AgentResponse]] = {}
@@ -91,6 +105,13 @@ async def run_round(req: RespondRequest, agents: dict[str, object]) -> RespondRe
                 early_terminated = True
                 pending = set()
                 break
+
+    # Update circuit breakers based on what came back.
+    for r in responses:
+        if r.success:
+            await circuit.record_success(r.agent_id)
+        else:
+            await circuit.record_failure(r.agent_id)
 
     profiles = await _load_profiles(entered)
     winner, scores = pick_winner(
