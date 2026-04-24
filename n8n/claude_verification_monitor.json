@@ -75,7 +75,7 @@
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
-        "jsCode": "// Extract magic link URL and/or 6-digit verification code from full email body.\n// New Anthropic flow (2026+): the magic link page shows a 6-digit code to enter on the\n// original OAuth page. We extract both: the URL for the browser to navigate in a new tab,\n// and a direct code if Anthropic ever puts it in the email body.\nconst items = $input.all();\nconst results = [];\nfor (const item of items) {\n  const bodyHtml = (item.json.body && item.json.body.content) || '';\n  const bodyText = item.json.bodyPreview || '';\n  const searchIn = bodyHtml + ' ' + bodyText;\n  // Strip HTML tags for cleaner text matching\n  const plainText = bodyHtml.replace(/<[^>]+>/g, ' ').replace(/&amp;/g, '&').replace(/&nbsp;/g, ' ');\n  let magicUrl = null;\n  const patterns = [\n    /https:\\/\\/claude\\.ai\\/magic-link[^\\s\"'<>)\\\\]+/i,\n    /https:\\/\\/platform\\.claude\\.com\\/magic-link[^\\s\"'<>)\\\\]+/i,\n    /https:\\/\\/claude\\.ai\\/verify[^\\s\"'<>)\\\\]+/i,\n    /https:\\/\\/claude\\.ai\\/login[^\\s\"'<>)\\\\]+token[^\\s\"'<>)\\\\]+/i,\n    /https:\\/\\/platform\\.claude\\.com\\/[^\\s\"'<>)\\\\]+/i,\n    /https:\\/\\/claude\\.com\\/[^\\s\"'<>)\\\\]*(?:magic|verify|link|token)[^\\s\"'<>)\\\\]+/i,\n    /https:\\/\\/[^\\s\"'<>)\\\\]+\\.claude\\.(?:ai|com)\\/[^\\s\"'<>)\\\\]+/i,\n  ];\n  for (const pattern of patterns) {\n    const m = searchIn.match(pattern);\n    if (m) { magicUrl = m[0].replace(/&amp;/g, '&').replace(/[.,;!?]+$/, ''); break; }\n  }\n  // Try to extract a 6-digit verification code directly from email body.\n  // Patterns: 'verification code: 123456', 'code: 123456', standalone '123456' near 'code'\n  let directCode = null;\n  const codePatterns = [\n    /verification\\s+code[:\\s]+([0-9]{6})\\b/i,\n    /use\\s+code[:\\s]+([0-9]{6})\\b/i,\n    /your\\s+code\\s+is[:\\s]+([0-9]{6})\\b/i,\n    /code[:\\s]+([0-9]{6})\\b/i,\n  ];\n  for (const cp of codePatterns) {\n    const cm = plainText.match(cp);\n    if (cm) { directCode = cm[1]; break; }\n  }\n  // Post the URL if found (browser will extract code from it via new tab).\n  // Also include directCode if found (browser will use it directly, skipping new-tab).\n  if (magicUrl) {\n    results.push({ json: { url: magicUrl, directCode: directCode, subject: item.json.subject, messageId: item.json.id } });\n  } else if (directCode) {\n    // No URL but we have a code — post the code directly\n    results.push({ json: { url: directCode, directCode: directCode, subject: item.json.subject, messageId: item.json.id } });\n  }\n}\nreturn results.length ? results : [];"
+        "jsCode": "// Extract magic link URL and/or 6-digit verification code from full email body.\n// Also determines which Claude account (A = inspiring-cat, B = legion) the email targets,\n// so the POST step can route to the correct container.\nconst ACCOUNT_A = 'gelsonmascarenhas@gmail.com';\nconst ACCOUNT_B = 'e.remote.demands@gmail.com';\nconst items = $input.all();\nconst results = [];\nfor (const item of items) {\n  const bodyHtml = (item.json.body && item.json.body.content) || '';\n  const bodyText = item.json.bodyPreview || '';\n  const searchIn = bodyHtml + ' ' + bodyText;\n  const plainText = bodyHtml.replace(/<[^>]+>/g, ' ').replace(/&amp;/g, '&').replace(/&nbsp;/g, ' ');\n  // Determine target account: scan recipients (toRecipients) + body text for A/B email.\n  const toList = (item.json.toRecipients || []).map(r => ((r.emailAddress && r.emailAddress.address) || '').toLowerCase()).join(' ');\n  const allText = (toList + ' ' + plainText).toLowerCase();\n  let accountTarget = null;\n  if (allText.includes(ACCOUNT_B)) accountTarget = 'B';\n  else if (allText.includes(ACCOUNT_A)) accountTarget = 'A';\n  else accountTarget = 'A'; // default for backward compat; most historic mail is account A\n  let magicUrl = null;\n  const patterns = [\n    /https:\\/\\/claude\\.ai\\/magic-link[^\\s\"'<>)\\\\]+/i,\n    /https:\\/\\/platform\\.claude\\.com\\/magic-link[^\\s\"'<>)\\\\]+/i,\n    /https:\\/\\/claude\\.ai\\/verify[^\\s\"'<>)\\\\]+/i,\n    /https:\\/\\/claude\\.ai\\/login[^\\s\"'<>)\\\\]+token[^\\s\"'<>)\\\\]+/i,\n    /https:\\/\\/platform\\.claude\\.com\\/[^\\s\"'<>)\\\\]+/i,\n    /https:\\/\\/claude\\.com\\/[^\\s\"'<>)\\\\]*(?:magic|verify|link|token)[^\\s\"'<>)\\\\]+/i,\n    /https:\\/\\/[^\\s\"'<>)\\\\]+\\.claude\\.(?:ai|com)\\/[^\\s\"'<>)\\\\]+/i,\n  ];\n  for (const pattern of patterns) {\n    const m = searchIn.match(pattern);\n    if (m) { magicUrl = m[0].replace(/&amp;/g, '&').replace(/[.,;!?]+$/, ''); break; }\n  }\n  let directCode = null;\n  const codePatterns = [\n    /verification\\s+code[:\\s]+([0-9]{6})\\b/i,\n    /use\\s+code[:\\s]+([0-9]{6})\\b/i,\n    /your\\s+code\\s+is[:\\s]+([0-9]{6})\\b/i,\n    /code[:\\s]+([0-9]{6})\\b/i,\n  ];\n  for (const cp of codePatterns) {\n    const cm = plainText.match(cp);\n    if (cm) { directCode = cm[1]; break; }\n  }\n  if (magicUrl) {\n    results.push({ json: { url: magicUrl, directCode: directCode, accountTarget: accountTarget, subject: item.json.subject, messageId: item.json.id } });\n  } else if (directCode) {\n    results.push({ json: { url: directCode, directCode: directCode, accountTarget: accountTarget, subject: item.json.subject, messageId: item.json.id } });\n  }\n}\nreturn results.length ? results : [];"
       },
       "id": "extract-code",
       "name": "Extract Magic Link URL",
@@ -86,23 +86,32 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://inspiring-cat-production.up.railway.app/webhook/verification-code",
+        "url": "={{ $json.accountTarget === 'B' ? ($env.LEGION_WEBHOOK_URL || '') : ($env.INSPIRING_CAT_WEBHOOK_URL || 'https://inspiring-cat-production.up.railway.app/webhook/verification-code') }}",
         "authentication": "none",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
               "name": "X-Webhook-Secret",
-              "value": "={{ $env.WEBHOOK_SECRET }}"
+              "value": "={{ $json.accountTarget === 'B' ? $env.LEGION_WEBHOOK_SECRET : $env.WEBHOOK_SECRET }}"
+            },
+            {
+              "name": "X-Account-Target",
+              "value": "={{ $json.accountTarget }}"
             }
           ]
         },
         "sendBody": true,
         "contentType": "json",
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify($json.directCode ? { url: $json.url, code: $json.directCode } : { url: $json.url }) }}",
+        "jsonBody": "={{ JSON.stringify($json.directCode ? { url: $json.url, code: $json.directCode, account: $json.accountTarget } : { url: $json.url, account: $json.accountTarget }) }}",
         "options": {
-          "timeout": 10000
+          "timeout": 10000,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
         }
       },
       "id": "post-code",

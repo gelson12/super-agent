@@ -1,0 +1,138 @@
+{
+  "name": "Claude Inbox Trash Purge",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 6
+            }
+          ]
+        }
+      },
+      "id": "schedule-6h",
+      "name": "Every 6 Hours",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "resource": "folder",
+        "operation": "getAll",
+        "returnAll": false,
+        "limit": 50,
+        "filters": {}
+      },
+      "id": "list-folders",
+      "name": "List Mail Folders",
+      "type": "n8n-nodes-base.microsoftOutlook",
+      "typeVersion": 2,
+      "position": [460, 300],
+      "credentials": {
+        "microsoftOutlookOAuth2Api": {
+          "id": "9paQ8IJLgiLbjEYI",
+          "name": "Microsoft Outlook account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Resolve the 'Deleted Items' folder id so we can enumerate messages inside it.\n// Outlook returns displayName and wellKnownName/childFolderCount per folder.\nconst folders = $input.all();\nconst wanted = ['deleted items', 'trash', 'junk email', 'junk'];\nconst results = [];\nfor (const f of folders) {\n  const name = (f.json.displayName || '').toLowerCase();\n  if (!wanted.includes(name)) continue;\n  if (!f.json.id) continue;\n  results.push({ json: { folderId: f.json.id, folderName: f.json.displayName } });\n}\nreturn results;"
+      },
+      "id": "pick-trash",
+      "name": "Pick Trash-class Folders",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "getAll",
+        "returnAll": false,
+        "limit": 200,
+        "filters": {
+          "folderId": "={{ $json.folderId }}"
+        },
+        "options": {}
+      },
+      "id": "list-in-trash",
+      "name": "List Messages in Trash",
+      "type": "n8n-nodes-base.microsoftOutlook",
+      "typeVersion": 2,
+      "position": [900, 300],
+      "credentials": {
+        "microsoftOutlookOAuth2Api": {
+          "id": "9paQ8IJLgiLbjEYI",
+          "name": "Microsoft Outlook account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Pass through only messages older than 15 minutes so we don't race with in-flight\n// delete/retry of a magic link the verification workflow is still processing.\nconst items = $input.all();\nconst out = [];\nfor (const it of items) {\n  const recv = new Date(it.json.receivedDateTime || it.json.createdDateTime || 0);\n  if (Date.now() - recv.getTime() < 15 * 60 * 1000) continue;\n  if (!it.json.id) continue;\n  out.push({ json: { messageId: it.json.id, subject: it.json.subject } });\n}\nreturn out;"
+      },
+      "id": "filter-age",
+      "name": "Skip Recent Messages",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "operation": "delete",
+        "messageId": "={{ $json.messageId }}"
+      },
+      "id": "hard-delete",
+      "name": "Hard-delete Message",
+      "type": "n8n-nodes-base.microsoftOutlook",
+      "typeVersion": 2,
+      "position": [1340, 300],
+      "credentials": {
+        "microsoftOutlookOAuth2Api": {
+          "id": "9paQ8IJLgiLbjEYI",
+          "name": "Microsoft Outlook account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Every 6 Hours": {
+      "main": [
+        [{ "node": "List Mail Folders", "type": "main", "index": 0 }]
+      ]
+    },
+    "List Mail Folders": {
+      "main": [
+        [{ "node": "Pick Trash-class Folders", "type": "main", "index": 0 }]
+      ]
+    },
+    "Pick Trash-class Folders": {
+      "main": [
+        [{ "node": "List Messages in Trash", "type": "main", "index": 0 }]
+      ]
+    },
+    "List Messages in Trash": {
+      "main": [
+        [{ "node": "Skip Recent Messages", "type": "main", "index": 0 }]
+      ]
+    },
+    "Skip Recent Messages": {
+      "main": [
+        [{ "node": "Hard-delete Message", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  }
+}
