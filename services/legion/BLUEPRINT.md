@@ -302,6 +302,7 @@ Full table in `~/.claude/plans/design-and-implement-a-jaunty-wave.md` §11. Top 
 | Railway deploy hardening | complete | super-agent `4eac54c` + `a2932ec` + `94281fc` + `2a277bb` + `005e2a2` + `82839c3` — PATH, Kimi/uv deferral, railway.toml removal, zstd for Ollama, supervisord autostart=false for feature-gated programs |
 | **Legion live 2026-04-24** | — | https://legion-production-36db.up.railway.app/health returns 200 (deployment 948f7836) |
 | P2 hive fan-out | complete | super-agent `6e8d3a7` — rank engine, config loader, suitability classifier, hive orchestrator, Gemini-B + Ollama + HF adapters, curated.yaml, tests. Stays dormant until LEGION_ENABLED flips. |
+| P3 dual-Claude + ChatGPT | complete | super-agent `530a7e7` — state machine (`claude_account_state` row-lock coordination), `claude_b` CLI agent (HOME-scoped), healing chain L1/L2 fully wired + L3/L4 stubs, `claude_b_watchdog` daemon (DUAL_ACCOUNT_ENABLED gated), HMAC primary-beacon endpoint, failover guard in hive engine, bonus ChatGPT agent via OpenAI Chat Completions (registered under CHATGPT_ACCOUNT_EMAIL label). 6 agents now registered. |
 | P2 hive fan-out | pending | — |
 | P3 dual-Claude | pending | — |
 | P4 L5 DevBrowser-CDP | pending | — |
