@@ -29,11 +29,8 @@ case "$TARGET" in
   claude_b|claude)
     PATHS="/root/.claude"
     ;;
-  qwen)
-    PATHS="/root/.qwen /root/.config/qwen"
-    ;;
   *)
-    echo "Usage: $0 {kimi|gemini_b|claude_b|qwen}" >&2
+    echo "Usage: $0 {kimi|gemini_b|claude_b}" >&2
     exit 1
     ;;
 esac
