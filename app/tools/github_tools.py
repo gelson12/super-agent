@@ -1,4 +1,5 @@
 import base64
+import requests
 from github import Github, GithubException
 from langchain_core.tools import tool
 from ..config import settings
@@ -139,4 +140,50 @@ def github_create_pull_request(
         pr = repo.create_pull(title=title, body=body, head=head_branch, base=base_branch)
         return f"Pull request created: {pr.html_url}"
     except GithubException as e:
+        return f"[GitHub error: {e}]"
+
+
+@tool
+def github_create_repo(
+    repo_name: str,
+    description: str = "",
+    private: bool = False,
+    auto_init: bool = True,
+) -> str:
+    """Create a new GitHub repository under gelson12. auto_init=True seeds main with a README so Pages can be enabled immediately."""
+    try:
+        user = _client().get_user()
+        repo = user.create_repo(
+            name=repo_name,
+            description=description,
+            private=private,
+            auto_init=auto_init,
+        )
+        return f"Created repo {repo.full_name} (default_branch={repo.default_branch}, html_url={repo.html_url})."
+    except GithubException as e:
+        return f"[GitHub error: {e}]"
+
+
+@tool
+def github_enable_pages(
+    repo_name: str,
+    branch: str = "main",
+    path: str = "/",
+) -> str:
+    """Enable GitHub Pages on a repo. Source = the given branch/path. URL becomes https://gelson12.github.io/{repo_name}/."""
+    url = f"https://api.github.com/repos/gelson12/{repo_name}/pages"
+    headers = {
+        "Authorization": f"Bearer {settings.github_pat}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    body = {"source": {"branch": branch, "path": path}}
+    try:
+        r = requests.post(url, headers=headers, json=body, timeout=15)
+        if r.status_code in (201, 204):
+            return f"Pages enabled on gelson12/{repo_name} ({branch}{path}). URL: https://gelson12.github.io/{repo_name}/"
+        if r.status_code == 409:
+            return f"Pages already enabled on gelson12/{repo_name}. URL: https://gelson12.github.io/{repo_name}/"
+        return f"[GitHub error: {r.status_code} {r.text}]"
+    except requests.RequestException as e:
         return f"[GitHub error: {e}]"

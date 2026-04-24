@@ -1,0 +1,534 @@
+{
+  "name": "bridge_researcher",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "bridge-research-trigger",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "node_trigger",
+      "name": "Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        400
+      ],
+      "webhookId": "bridge-research-trigger"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- Webhook body may provide campaign_target_id (UUID), OR niche+city, OR neither.\n-- We pad unused params with the sentinel string '__BRIDGE_NONE__' in the\n-- queryReplacement expression because n8n drops leading empty values when\n-- comma-splitting queryReplacement \u2014 that would cause \"there is no parameter $3\".\n-- Comparisons use NULLIF(..., '__BRIDGE_NONE__') so the sentinel becomes NULL.\n-- We compare UUID via column::text rather than CAST($1 AS UUID) \u2014 the latter\n-- raises \"invalid input syntax for type uuid\" for any non-UUID string, even\n-- when guarded by NULLIF.\nWITH\n  explicit_by_id AS (\n    SELECT *\n    FROM bridge.campaign_targets\n    WHERE NULLIF($1, '__BRIDGE_NONE__') IS NOT NULL\n      AND campaign_target_id::text = NULLIF($1, '__BRIDGE_NONE__')\n    LIMIT 1\n  ),\n  explicit_by_nc AS (\n    SELECT *\n    FROM bridge.campaign_targets\n    WHERE NULLIF($2, '__BRIDGE_NONE__') IS NOT NULL\n      AND NULLIF($3, '__BRIDGE_NONE__') IS NOT NULL\n      AND LOWER(niche) = LOWER($2)\n      AND LOWER(city)  = LOWER($3)\n    LIMIT 1\n  ),\n  auto_pick AS (\n    SELECT ct.*\n    FROM bridge.campaign_targets ct\n    WHERE ct.active_flag = TRUE\n      AND NOT EXISTS (SELECT 1 FROM explicit_by_id)\n      AND NOT EXISTS (SELECT 1 FROM explicit_by_nc)\n    ORDER BY ct.priority DESC, ct.updated_at ASC\n    LIMIT 1\n  ),\n  combined AS (\n    SELECT * FROM explicit_by_id\n    UNION ALL SELECT * FROM explicit_by_nc\n    UNION ALL SELECT * FROM auto_pick\n  )\nSELECT c.*,\n       (SELECT COUNT(*)::int FROM bridge.leads l\n          WHERE LOWER(l.city) = LOWER(c.city)\n            AND l.category = c.niche\n            AND l.created_at >= date_trunc('day', NOW())) AS leads_today\nFROM combined c\nLIMIT 1;",
+        "options": {
+          "queryReplacement": "={{$json.body?.campaign_target_id || '__BRIDGE_NONE__'}},{{$json.body?.niche || '__BRIDGE_NONE__'}},{{$json.body?.city || '__BRIDGE_NONE__'}}"
+        }
+      },
+      "id": "node_pick_campaign",
+      "name": "Pick campaign",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        460,
+        400
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "Ae3yvuqjgMnVRrCo",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://maps.googleapis.com/maps/api/place/textsearch/json",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "query",
+              "value": "={{$json.niche}} in {{$json.city}}, {{$json.country === 'GB' ? 'United Kingdom' : $json.country}}"
+            },
+            {
+              "name": "region",
+              "value": "={{$json.country === 'GB' ? 'uk' : ($json.country || '').toLowerCase()}}"
+            },
+            {
+              "name": "language",
+              "value": "en"
+            },
+            {
+              "name": "key",
+              "value": "={{$env.GOOGLE_PLACES_API_KEY}}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "node_text_search",
+      "name": "Places textsearch (legacy)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        680,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Input: one item with $json = { status, results: [...] }.\n// Output: one item per place, capped at (daily_lead_target - leads_today).\nconst campaign = $('Pick campaign').first().json;\nconst input = $input.first().json;\nconst results = Array.isArray(input.results) ? input.results : [];\nif (input.status && input.status !== 'OK' && input.status !== 'ZERO_RESULTS') {\n  throw new Error('Google Places textsearch returned status=' + input.status + ' ' + (input.error_message || ''));\n}\nconst cap = Math.max(0, (campaign.daily_lead_target || 20) - (campaign.leads_today || 0));\nconst limited = results.slice(0, cap);\nreturn limited.map(r => ({ json: r }));",
+        "mode": "runOnceForAllItems"
+      },
+      "id": "node_split_limit",
+      "name": "Split + limit results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://maps.googleapis.com/maps/api/place/details/json",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "place_id",
+              "value": "={{$json.place_id}}"
+            },
+            {
+              "name": "fields",
+              "value": "place_id,name,formatted_address,address_components,website,formatted_phone_number,international_phone_number,opening_hours/weekday_text,business_status,price_level,rating,user_ratings_total,types,url"
+            },
+            {
+              "name": "language",
+              "value": "en"
+            },
+            {
+              "name": "key",
+              "value": "={{$env.GOOGLE_PLACES_API_KEY}}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "node_place_details",
+      "name": "Place Details (legacy)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1120,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Input (per item): $json is Place Details response: { status, result: {...} }.\n// We also have access to the original search result via the upstream node so we\n// keep the place_id + address + types + rating even if Details skipped fields.\n\nconst campaign = $('Pick campaign').first().json;\nconst searchHit = $('Split + limit results').itemMatching($itemIndex).json;\nconst details  = ($json && $json.status === 'OK' && $json.result) ? $json.result : {};\n\nfunction digits(s) { return (s || '').replace(/\\D+/g, ''); }\nfunction lower(s) { return (s || '').toString().toLowerCase(); }\nfunction stripCompanyFluff(name) {\n  return lower(name || '')\n    .replace(/\\b(ltd|limited|llc|plc|inc|co|company|the|services?|group)\\b/g, '')\n    .replace(/[^a-z0-9]+/g, ' ')\n    .trim();\n}\nfunction extractDomain(url) {\n  if (!url) return null;\n  try {\n    const u = new URL(url);\n    return u.hostname.replace(/^www\\./, '').toLowerCase();\n  } catch { return null; }\n}\nfunction findAddr(components, type) {\n  if (!Array.isArray(components)) return null;\n  const m = components.find(c => Array.isArray(c.types) && c.types.includes(type));\n  return m ? (m.long_name || m.short_name || null) : null;\n}\n\nconst name = details.name || searchHit.name || null;\nconst addr = details.formatted_address || searchHit.formatted_address || null;\nconst comps = details.address_components || [];\nconst phoneIntl = details.international_phone_number || details.formatted_phone_number || null;\nconst website = details.website || null;\nconst mapsUrl = details.url || null;\n\n// runOnceForEachItem: return a bare {json: {...}} object, NOT an array wrapper.\nreturn {\n  json: {\n    // Campaign context\n    campaign_target_id: campaign.campaign_target_id,\n    campaign_niche: campaign.niche,\n    campaign_city: campaign.city,\n    campaign_country: campaign.country || 'GB',\n\n    // Identifiers\n    place_id: details.place_id || searchHit.place_id || null,\n    raw_payload: { search: searchHit, details },\n\n    // Lead fields\n    business_name: name,\n    normalized_business_name: stripCompanyFluff(name),\n    category: campaign.niche,\n    subcategory: Array.isArray(details.types) ? details.types[0] : null,\n    address_line_1: addr,\n    city:   findAddr(comps, 'postal_town') || findAddr(comps, 'locality') || campaign.city,\n    region: findAddr(comps, 'administrative_area_level_2') || null,\n    postcode: findAddr(comps, 'postal_code') || null,\n    country: findAddr(comps, 'country')\n               ? String(findAddr(comps, 'country')).substring(0,2).toUpperCase()\n               : (campaign.country || 'GB'),\n    phone_raw: phoneIntl,\n    phone_normalized: phoneIntl ? digits(phoneIntl) : null,\n    email: null,\n    website_url_found: website,\n    website_domain: extractDomain(website),\n    maps_url: mapsUrl,\n    source_listing_url: mapsUrl,\n    reviews_count: details.user_ratings_total ?? searchHit.user_ratings_total ?? null,\n    reviews_rating: details.rating ?? searchHit.rating ?? null,\n    business_status: details.business_status || searchHit.business_status || null,\n    price_level: details.price_level ?? null,\n    has_opening_hours: !!(details.opening_hours && Array.isArray(details.opening_hours.weekday_text)),\n    business_description: null,\n    service_list: null,\n    social_links: null,\n    logo_url: null,\n  }\n};",
+        "mode": "runOnceForEachItem"
+      },
+      "id": "node_normalize",
+      "name": "Normalize places",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1340,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH p AS (SELECT $1::jsonb AS d),\nins AS (\n  INSERT INTO bridge.leads (\n    business_name, normalized_business_name, category, subcategory,\n    address_line_1, city, region, postcode, country,\n    phone_raw, phone_normalized, email, email_status,\n    maps_url, source_listing_url, website_url_found, website_domain,\n    reviews_count, reviews_rating, opening_hours,\n    research_status, website_status, marketing_status, finance_status, project_status\n  )\n  SELECT\n    d->>'business_name',\n    d->>'normalized_business_name',\n    d->>'category',\n    d->>'subcategory',\n    d->>'address_line_1',\n    d->>'city',\n    NULLIF(d->>'region', ''),\n    NULLIF(d->>'postcode', ''),\n    UPPER(SUBSTRING(COALESCE(NULLIF(d->>'country',''), 'GB'), 1, 2)),\n    NULLIF(d->>'phone_raw', ''),\n    NULLIF(d->>'phone_normalized', ''),\n    NULLIF(d->>'email', ''),\n    CASE WHEN NULLIF(d->>'email','') IS NULL THEN 'missing' ELSE 'present' END,\n    NULLIF(d->>'maps_url', ''),\n    NULLIF(d->>'source_listing_url', ''),\n    NULLIF(d->>'website_url_found', ''),\n    NULLIF(d->>'website_domain', ''),\n    CAST(NULLIF(d->>'reviews_count','') AS INTEGER),\n    CAST(NULLIF(d->>'reviews_rating','') AS NUMERIC(3,2)),\n    CASE WHEN (d->>'has_opening_hours')::boolean THEN '{\"present\": true}'::jsonb ELSE NULL END,\n    'New', 'Queued', 'Queued', 'N/A', 'Planned'\n  FROM p\n  ON CONFLICT DO NOTHING\n  RETURNING lead_id, 'inserted' AS outcome\n)\nSELECT * FROM ins;",
+        "options": {
+          "queryReplacement": "={{JSON.stringify($json)}}"
+        }
+      },
+      "id": "node_insert_lead",
+      "name": "Insert lead (skip dupes)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1560,
+        400
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "Ae3yvuqjgMnVRrCo",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "c_inserted",
+              "leftValue": "={{$json.outcome}}",
+              "rightValue": "inserted",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "node_if_inserted",
+      "name": "If inserted",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1340,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://super-agent-production.up.railway.app/chat/direct",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Token",
+              "value": "={{$env.SUPER_AGENT_PASSWORD}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={ \"message\": \"You are a lead qualification analyst for UK local service businesses (plumbing, HVAC, roofing, solar, pest control, tree service, concrete, pool companies, property management). Classify each prospect as one of: no_website | weak_website | present | needs_review | rejected. Be conservative. Output ONLY a single JSON object matching the schema below \u2014 no prose, no code fences. Schema: {\\\"decision\\\": \\\"no_website|weak_website|present|needs_review|rejected\\\", \\\"confidence_0_to_100\\\": <int>, \\\"website_presence_status\\\": \\\"no_website|weak_website|present|uncertain\\\", \\\"website_quality_score_0_to_100\\\": <int>, \\\"reasons\\\": [\\\"...\\\", ...], \\\"recommended_next_step\\\": \\\"qualify_for_demo|manual_review|skip\\\"}. Rules: 'no_website' = no website_url AND no domain. 'weak_website' = website exists but (rating<3.5 with reviews>5) OR (domain on wixsite/godaddysites/weebly/blogspot/facebook) OR (no https) OR (reviews<3 with parked-looking domain). 'present' = legitimate domain + rating>=4.0 + reviews>=5 \u2192 skip. 'rejected' = not a local-service business. Always fill reasons with short, specific justifications. CLASSIFY THIS BUSINESS: business_name={{$('Normalize places').itemMatching($itemIndex).json.business_name}} category={{$('Normalize places').itemMatching($itemIndex).json.category}} city={{$('Normalize places').itemMatching($itemIndex).json.city}} address={{$('Normalize places').itemMatching($itemIndex).json.address_line_1}} phone={{$('Normalize places').itemMatching($itemIndex).json.phone_raw}} website={{$('Normalize places').itemMatching($itemIndex).json.website_url_found ?? 'null'}} rating={{$('Normalize places').itemMatching($itemIndex).json.reviews_rating ?? 'null'}} reviews_count={{$('Normalize places').itemMatching($itemIndex).json.reviews_count ?? 0}} types={{JSON.stringify($('Normalize places').itemMatching($itemIndex).json.raw_payload?.types ?? [])}} business_status={{$('Normalize places').itemMatching($itemIndex).json.business_status ?? 'UNKNOWN'}} Return single JSON object only.\", \"model\": \"HAIKU\", \"session_id\": \"bridge-qualify-{{$json.lead_id}}\" }",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "node_qualify",
+      "name": "super-agent qualify",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1560,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// The super-agent response shape is { response: \"<json-string>\", ... }.\n// Parse the inner JSON; on failure mark the lead Needs Review with reasons.\nconst api = $json;\nconst leadId = $('Insert lead (skip dupes)').itemMatching($itemIndex).json.lead_id;\nlet parsed = null;\nlet parseError = null;\ntry {\n  const raw = (api.response || '').trim()\n    .replace(/^```json\\s*/, '').replace(/```$/, '').trim();\n  parsed = JSON.parse(raw);\n} catch (e) { parseError = e.message; }\n\nif (!parsed) {\n  return { json: {\n    lead_id: leadId,\n    decision: 'needs_review',\n    confidence_0_to_100: 0,\n    website_presence_status: 'uncertain',\n    website_quality_score_0_to_100: 0,\n    reasons: ['qualifier response not JSON: ' + (parseError || 'empty')],\n    recommended_next_step: 'manual_review',\n    research_status: 'Needs Review',   // NOT NULL in bridge.leads\n    api_meta: { model_used: api.model_used, complexity: api.complexity }\n  }};\n}\n\n// Map decision -> research_status.\nconst map = {\n  no_website:    'No Website Detected',\n  weak_website:  'Weak Website Detected',\n  needs_review:  'Needs Review',\n  present:       'Rejected',    // good website already -> skip\n  rejected:      'Rejected',\n};\nconst research_status = map[parsed.decision] || 'Needs Review';\n\nreturn { json: {\n  lead_id: leadId,\n  decision: parsed.decision,\n  confidence_0_to_100: parsed.confidence_0_to_100 ?? 0,\n  website_presence_status: parsed.website_presence_status ?? 'uncertain',\n  website_quality_score_0_to_100: parsed.website_quality_score_0_to_100 ?? 0,\n  reasons: parsed.reasons ?? [],\n  recommended_next_step: parsed.recommended_next_step ?? 'manual_review',\n  research_status,\n  api_meta: { model_used: api.model_used, complexity: api.complexity }\n}};",
+        "mode": "runOnceForEachItem"
+      },
+      "id": "node_parse_qualify",
+      "name": "Parse qualify JSON",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1780,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH p AS (SELECT $1::jsonb AS d)\nUPDATE bridge.leads SET\n  research_status              = d->>'research_status',\n  website_presence_status      = d->>'website_presence_status',\n  website_presence_confidence  = CAST(NULLIF(d->>'confidence_0_to_100','') AS INTEGER),\n  website_quality_score        = CAST(NULLIF(d->>'website_quality_score_0_to_100','') AS INTEGER),\n  lead_score                   = CAST(NULLIF(d->>'confidence_0_to_100','') AS INTEGER),\n  assigned_workflow            = 'researcher'\nFROM p\nWHERE lead_id = (d->>'lead_id')::uuid\nRETURNING lead_id, research_status;",
+        "options": {
+          "queryReplacement": "={{JSON.stringify($json)}}"
+        }
+      },
+      "id": "node_update_lead",
+      "name": "Update lead status",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2000,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "Ae3yvuqjgMnVRrCo",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH p AS (SELECT $1::jsonb AS d)\nINSERT INTO bridge.workflow_events\n  (lead_id, workflow_name, event_type, old_status, new_status, details_json)\nSELECT\n  (d->>'lead_id')::uuid,\n  'researcher',\n  'qualified',\n  'New',\n  d->>'research_status',\n  jsonb_build_object(\n    'decision', d->>'decision',\n    'confidence', CAST(NULLIF(d->>'confidence_0_to_100','') AS INTEGER),\n    'reasons', COALESCE(d->'reasons', '[]'::jsonb),\n    'model', COALESCE(d#>>'{api_meta,model_used}', 'unknown')\n  )\nFROM p\nRETURNING event_id;",
+        "options": {
+          "queryReplacement": "={{JSON.stringify($json)}}"
+        }
+      },
+      "id": "node_event_insert",
+      "name": "Log workflow_events",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2220,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "Ae3yvuqjgMnVRrCo",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  jsonb_build_object(\n    'campaign_niche', $1,\n    'campaign_city',  $2,\n    'total_seen',     (SELECT COUNT(*)::int FROM bridge.leads l\n                         WHERE LOWER(l.city)=LOWER($2) AND l.category=$1\n                           AND l.created_at >= date_trunc('day', NOW())),\n    'no_website',     (SELECT COUNT(*)::int FROM bridge.leads l\n                         WHERE LOWER(l.city)=LOWER($2) AND l.category=$1\n                           AND l.research_status='No Website Detected'\n                           AND l.created_at >= date_trunc('day', NOW())),\n    'weak_website',   (SELECT COUNT(*)::int FROM bridge.leads l\n                         WHERE LOWER(l.city)=LOWER($2) AND l.category=$1\n                           AND l.research_status='Weak Website Detected'\n                           AND l.created_at >= date_trunc('day', NOW())),\n    'needs_review',   (SELECT COUNT(*)::int FROM bridge.leads l\n                         WHERE LOWER(l.city)=LOWER($2) AND l.category=$1\n                           AND l.research_status='Needs Review'\n                           AND l.created_at >= date_trunc('day', NOW())),\n    'rejected',       (SELECT COUNT(*)::int FROM bridge.leads l\n                         WHERE LOWER(l.city)=LOWER($2) AND l.category=$1\n                           AND l.research_status='Rejected'\n                           AND l.created_at >= date_trunc('day', NOW()))\n  ) AS summary;",
+        "options": {
+          "queryReplacement": "={{$('Pick campaign').first().json.niche}},{{$('Pick campaign').first().json.city}}"
+        }
+      },
+      "id": "node_summary",
+      "name": "Run summary",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2440,
+        400
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "Ae3yvuqjgMnVRrCo",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{$env.BRIDGE_PM_BOT_TOKEN}}/sendMessage",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json; charset=utf-8"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={ \"chat_id\": {{$env.BRIDGE_ADMIN_TELEGRAM_CHAT_ID}}, \"parse_mode\": \"Markdown\", \"text\": \"*Bridge Researcher run complete*\\nCampaign: `{{$json.summary.campaign_niche}} / {{$json.summary.campaign_city}}`\\n\\nSeen today: {{$json.summary.total_seen}}\\n  \\u2022 No website: {{$json.summary.no_website}}\\n  \\u2022 Weak website: {{$json.summary.weak_website}}\\n  \\u2022 Needs review: {{$json.summary.needs_review}}\\n  \\u2022 Rejected: {{$json.summary.rejected}}\\n\\nNext: review leads in `bridge.leads` and APPROVE the ones to pass to Workflow C (website builder). Approval endpoint coming in Phase 1.5.\" }",
+        "options": {
+          "timeout": 20000
+        }
+      },
+      "id": "node_pm_notify",
+      "name": "PM bot summary",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2660,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={ \"status\": \"ok\", \"summary\": {{ JSON.stringify($(\"Run summary\").first().json.summary) }} }",
+        "options": {}
+      },
+      "id": "node_respond",
+      "name": "Respond OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2880,
+        400
+      ]
+    }
+  ],
+  "connections": {
+    "Trigger": {
+      "main": [
+        [
+          {
+            "node": "Pick campaign",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pick campaign": {
+      "main": [
+        [
+          {
+            "node": "Places textsearch (legacy)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Places textsearch (legacy)": {
+      "main": [
+        [
+          {
+            "node": "Split + limit results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split + limit results": {
+      "main": [
+        [
+          {
+            "node": "Place Details (legacy)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Place Details (legacy)": {
+      "main": [
+        [
+          {
+            "node": "Normalize places",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize places": {
+      "main": [
+        [
+          {
+            "node": "Insert lead (skip dupes)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert lead (skip dupes)": {
+      "main": [
+        [
+          {
+            "node": "If inserted",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If inserted": {
+      "main": [
+        [
+          {
+            "node": "super-agent qualify",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "super-agent qualify": {
+      "main": [
+        [
+          {
+            "node": "Parse qualify JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse qualify JSON": {
+      "main": [
+        [
+          {
+            "node": "Update lead status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update lead status": {
+      "main": [
+        [
+          {
+            "node": "Log workflow_events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log workflow_events": {
+      "main": [
+        [
+          {
+            "node": "Run summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run summary": {
+      "main": [
+        [
+          {
+            "node": "PM bot summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PM bot summary": {
+      "main": [
+        [
+          {
+            "node": "Respond OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

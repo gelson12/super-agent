@@ -1903,6 +1903,124 @@ def chat_direct(req: DirectChatRequest, request: Request):
     return _chat_response_from_result(result, req.session_id)
 
 
+# ─────────────────────────── Bridge Company — tool endpoints ───────────────────
+# Thin HTTP wrappers around github_tools helpers so n8n workflows can commit
+# demo websites to bridge_websites_demos without needing the GITHUB_PAT in the
+# n8n service env. Auth via the existing X-Token middleware.
+
+class BridgeCommitDemoFile(BaseModel):
+    path: str = Field(..., description="Path inside the target repo, e.g. 'slug/index.html'")
+    content: str = Field(..., description="Full file contents (UTF-8 text)")
+
+
+class BridgeCommitDemoRequest(BaseModel):
+    repo: str = Field(default="bridge_websites_demos", description="Target repo under gelson12")
+    branch: str = Field(default="main")
+    commit_message: str = Field(..., min_length=1, max_length=200)
+    files: list[BridgeCommitDemoFile] = Field(..., min_length=1, max_length=20)
+
+
+class BridgeCommitDemoResponse(BaseModel):
+    ok: bool
+    repo: str
+    branch: str
+    committed: list[str]
+    errors: list[str] = Field(default_factory=list)
+
+
+@app.post("/tools/github_commit_demo", response_model=BridgeCommitDemoResponse, tags=["tools"])
+def github_commit_demo(req: BridgeCommitDemoRequest):
+    """Commit (create or update) one or more files to a GitHub repo in a single
+    logical batch. Used by Bridge Workflow C (website builder). Each file is its
+    own commit (atomic-per-file); order matters only for ordering in repo history.
+    Auth: X-Token via existing AuthMiddleware.
+    """
+    from .tools.github_tools import github_create_or_update_file  # LangChain @tool
+    committed: list[str] = []
+    errors: list[str] = []
+    for f in req.files:
+        try:
+            # github_create_or_update_file is a LangChain tool — invoke via .invoke
+            result = github_create_or_update_file.invoke({
+                "repo_name": req.repo,
+                "file_path": f.path,
+                "content": f.content,
+                "commit_message": req.commit_message,
+                "branch": req.branch,
+            })
+            if isinstance(result, str) and result.startswith("[GitHub error"):
+                errors.append(f"{f.path}: {result}")
+            else:
+                committed.append(f.path)
+        except Exception as e:
+            errors.append(f"{f.path}: {type(e).__name__}: {e}")
+    return BridgeCommitDemoResponse(
+        ok=len(errors) == 0,
+        repo=req.repo,
+        branch=req.branch,
+        committed=committed,
+        errors=errors,
+    )
+
+
+class BridgeDeleteDemoRequest(BaseModel):
+    repo: str = Field(default="bridge_websites_demos")
+    branch: str = Field(default="main")
+    slug: str = Field(..., min_length=1, max_length=200,
+                      description="Demo slug; all files under {slug}/ are deleted")
+    commit_message: str = Field(default="chore: archive expired demo")
+
+
+@app.post("/tools/github_delete_demo", tags=["tools"])
+def github_delete_demo(req: BridgeDeleteDemoRequest):
+    """Delete every file under {slug}/ in the demos repo. Used by the 12-hour
+    TTL sweeper and the Marketing workflow on Not Interested / No Response.
+    """
+    from .tools.github_tools import (
+        github_list_files,
+        github_delete_file,
+    )
+    # LangChain tools — invoke via .invoke
+    listing = github_list_files.invoke({
+        "repo_name": req.repo,
+        "path": req.slug,
+        "branch": req.branch,
+    })
+    if isinstance(listing, str) and listing.startswith("[GitHub error"):
+        return {"ok": False, "slug": req.slug, "deleted": [], "error": listing}
+
+    # github_list_files returns "[FILE] slug/x.html\n[DIR] slug/css" etc.
+    paths: list[str] = []
+    for line in (listing or "").splitlines():
+        if line.startswith("[FILE] "):
+            paths.append(line.removeprefix("[FILE] ").strip())
+        elif line.startswith("[DIR] "):
+            # Recurse one level (_template has css/); sufficient for our demos
+            sub = github_list_files.invoke({
+                "repo_name": req.repo,
+                "path": line.removeprefix("[DIR] ").strip(),
+                "branch": req.branch,
+            })
+            for ln in (sub or "").splitlines():
+                if ln.startswith("[FILE] "):
+                    paths.append(ln.removeprefix("[FILE] ").strip())
+
+    deleted: list[str] = []
+    errors: list[str] = []
+    for p in paths:
+        result = github_delete_file.invoke({
+            "repo_name": req.repo,
+            "file_path": p,
+            "commit_message": req.commit_message,
+            "branch": req.branch,
+        })
+        if isinstance(result, str) and result.startswith("[GitHub error"):
+            errors.append(f"{p}: {result}")
+        else:
+            deleted.append(p)
+    return {"ok": len(errors) == 0, "slug": req.slug, "deleted": deleted, "errors": errors}
+
+
 @app.get("/history/{session_id}", response_model=list[HistoryMessage], tags=["memory"])
 def get_history(session_id: str):
     """Retrieve all messages for a session."""
