@@ -41,7 +41,7 @@ def main() -> int:
             cur.execute(
                 "SELECT tablename FROM pg_tables "
                 "WHERE tablename IN ('claude_account_state','hive_rounds',"
-                "'hive_agent_scores','agent_quota') "
+                "'hive_agent_scores','agent_quota','agent_health') "
                 "ORDER BY tablename"
             )
             tables = [r[0] for r in cur.fetchall()]

@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, HTTPException
 
-from app import __version__, db
+from app import __version__, db, quota_state
 from app.agents.cerebras import CerebrasAgent
 from app.agents.chatgpt import ChatGPTAgent
 from app.agents.claude_b import ClaudeBAgent
@@ -84,12 +84,19 @@ def health() -> dict:
 
 
 @app.get("/health/detailed")
-def health_detailed() -> dict:
-    return {
+async def health_detailed() -> dict:
+    base = {
         **health(),
         "agents": {aid: getattr(a, "enabled", False) for aid, a in _AGENTS.items()},
         "pg_configured": bool(settings.PG_DSN),
+        "quota_state": quota_state.snapshot(),
     }
+    try:
+        base["agent_health"] = await db.fetch_agent_health()
+    except Exception as exc:
+        log.warning("agent_health fetch failed: %s", type(exc).__name__)
+        base["agent_health"] = []
+    return base
 
 
 @app.post("/v1/respond", response_model=RespondResponse, dependencies=[Depends(require_hmac)])
