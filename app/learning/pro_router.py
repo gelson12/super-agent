@@ -338,6 +338,38 @@ def _verify_cli_health() -> bool:
         return False
 
 
+# Minimum age (seconds) of the BURST flag before we'll consider clearing it
+# via a live health probe. Anthropic burst throttles typically last 1-2 min;
+# we wait 5 min to respect the cooldown before testing recovery, but clear
+# early when the API is actually responsive again rather than burning the
+# full 30-min window for no reason.
+_BURST_MIN_AGE_BEFORE_PROBE = 5 * 60
+
+
+def _burst_stale_and_clearable() -> bool:
+    """
+    True iff BURST has been active long enough to safely probe AND the live
+    health endpoint reports the CLI is up. Conservative — never clears BURST
+    in its first 5 min even if probe passes (avoid hammering a recovering API).
+    """
+    try:
+        if not _BURST_FLAG.exists():
+            return False
+        age = time.time() - _BURST_FLAG.stat().st_mtime
+        if age < _BURST_MIN_AGE_BEFORE_PROBE:
+            return False
+        if _verify_cli_health():
+            _log(f"BURST flag is {int(age)}s old and /health reports up — clearing stale BURST.")
+            try:
+                _BURST_FLAG.unlink(missing_ok=True)
+            except Exception:
+                pass
+            return True
+    except Exception:
+        pass
+    return False
+
+
 def is_pro_available() -> bool:
     """
     True if Pro subscription can be used right now.
@@ -345,10 +377,13 @@ def is_pro_available() -> bool:
     If the CLI_DOWN flag is set, we verify against the LIVE /health endpoint
     before trusting it — stale flags are auto-cleared when the CLI is actually up.
     This prevents false negatives that push traffic to the Anthropic API
-    unnecessarily (and burn credits).
+    unnecessarily (and burn credits). Same self-clearing pass applies to
+    BURST flags older than _BURST_MIN_AGE_BEFORE_PROBE.
     """
-    if _daily_flag_active() or _flag_active(_BURST_FLAG, _BURST_TTL):
-        return False  # Daily/burst limits are legitimate — no override needed
+    if _daily_flag_active():
+        return False  # Daily quota is hard — no override
+    if _flag_active(_BURST_FLAG, _BURST_TTL) and not _burst_stale_and_clearable():
+        return False
 
     if _flag_active(_CLI_DOWN_FLAG, _CLI_DOWN_TTL):
         # Flag says CLI is down — but verify against live /health before trusting it

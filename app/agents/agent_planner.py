@@ -218,9 +218,25 @@ def compete_and_plan(task: str, agent_type: str, tools: list[str]) -> str:
         if not failed
     ]
 
+    def _log_plan_source(label: str, plan_excerpt: str) -> None:
+        """G3: emit a thin attribution row so future analytics can correlate
+        plan author with eventual dispatch outcome."""
+        try:
+            insight_log.record(
+                message=task[:200],
+                model=f"PLAN_{label}",
+                response=plan_excerpt[:200],
+                routed_by="plan_source",
+                complexity=0,
+                session=f"plan_{agent_type}",
+            )
+        except Exception:
+            pass
+
     if not available:
         return f"Execute directly: {task}"
     if len(available) == 1:
+        _log_plan_source(available[0][1], available[0][0])
         return available[0][0]
 
     # Feature 6: Haiku synthesizes the best plan (not just picks a winner)
@@ -238,8 +254,13 @@ def compete_and_plan(task: str, agent_type: str, tools: list[str]) -> str:
             log_claude_code_result(prompt, plan_c, True, agent_type)
 
         plan_section = _extract_plan_section(adjudication)
-        return plan_section if plan_section else available[0][0]
+        if plan_section:
+            _log_plan_source("S", plan_section)  # S = synthesised
+            return plan_section
+        _log_plan_source(available[0][1], available[0][0])
+        return available[0][0]
     except Exception:
+        _log_plan_source(available[0][1], available[0][0])
         return available[0][0]
 
 

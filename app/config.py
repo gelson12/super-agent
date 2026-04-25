@@ -83,5 +83,53 @@ class Settings(BaseSettings):
     notify_email: str = "bridge.digital.solution@gmail.com"  # recipient
     n8n_contact_webhook_url: str = ""  # set via N8N_CONTACT_WEBHOOK_URL Railway var
 
+    # ── Service registry (I2 — replaces hardcoded hostnames) ─────────────────
+    # Single source of truth for the URLs of sibling Railway services.
+    # Default values match the production layout; override per env via
+    # CLI_WORKER_URL / OBSIDIAN_MCP_URL / LEGION_BASE_URL / N8N_BASE_URL etc.
+    # Use config.service_url("name") to read at call-sites instead of hardcoding.
+    obsidian_mcp_url: str = "http://obsidian-vault.railway.internal:22360/sse"
+    inspiring_cat_url: str = "https://inspiring-cat-production.up.railway.app"
+    legion_base_url: str = ""              # set via LEGION_BASE_URL when distributed Haiku is on
+    legion_api_shared_secret: str = ""
+
+    # Multi-framework orchestration (LangGraph custom graphs, AutoGen, CrewAI)
+    # Global kill switch for the /chat/graph, /chat/crew, /chat/groupchat endpoints.
+    frameworks_enabled: bool = True
+    # PostgresSaver DSN for LangGraph checkpointing — falls back to database_url.
+    langgraph_checkpointer_dsn: str = ""
+    # AutoGen group-chat termination cap (messages).
+    autogen_max_turns: int = 12
+    # CrewAI process model — "sequential" or "hierarchical".
+    crewai_process: str = "hierarchical"
+
 
 settings = Settings()
+
+
+# ── Service registry helpers (I2) ─────────────────────────────────────────────
+# Logical service-name → URL lookup. New code should call service_url("name")
+# instead of hardcoding hostnames. Old call sites can migrate gradually.
+
+_SERVICE_REGISTRY = {
+    "cli_worker":     lambda: settings.cli_worker_url or settings.inspiring_cat_url,
+    "inspiring_cat":  lambda: settings.inspiring_cat_url,
+    "obsidian_vault": lambda: settings.obsidian_mcp_url,
+    "n8n":            lambda: settings.n8n_base_url,
+    "legion":         lambda: settings.legion_base_url,
+    "self":           lambda: (
+        f"https://{settings.railway_public_domain}"
+        if settings.railway_public_domain else ""
+    ),
+}
+
+
+def service_url(name: str) -> str:
+    """Resolve a logical service name to a URL. Returns '' if unknown/unset."""
+    fn = _SERVICE_REGISTRY.get(name)
+    return fn() if fn else ""
+
+
+def list_services() -> dict[str, str]:
+    """Snapshot of all known services and their resolved URLs (for /admin/services)."""
+    return {name: fn() for name, fn in _SERVICE_REGISTRY.items()}

@@ -791,6 +791,21 @@ def flutter_build_apk(project_path: str) -> str:
     try:
         upload_data = _json.loads(upload_result)
         download_url = upload_data.get("url", "")
+        # G4: record the winning recipe so future builds of this project replay
+        # the proven pipeline instead of re-planning from scratch.
+        try:
+            from ..learning.build_recipes import save_recipe
+            save_recipe(
+                project_name=project_name,
+                steps=[
+                    f"flutter pub get  (in {project_path})",
+                    f"flutter build apk --debug  (in {project_path})",
+                    f"upload_build_artifact → builds/{project_name}_<ts>",
+                ],
+                notes=f"size_mb={size_mb}; cloudinary_url={download_url}",
+            )
+        except Exception:
+            pass
         return (
             f"✅ APK built successfully!\n\n"
             f"📦 Size: {size_mb} MB\n"

@@ -193,11 +193,20 @@ def _categorize_error(response: str) -> str:
 
 
 def _normalize_model(raw: str) -> str:
+    """
+    Canonicalise the `model` field for win-rate aggregation.
+
+    Tool-using agents (SHELL/GITHUB/N8N/SELF_IMPROVE) keep their own labels —
+    they are NOT pure Claude API calls; rolling them into CLAUDE corrupts
+    Claude's win rate (the audit caught this). Only fold true aliases that
+    point at the same underlying provider.
+    """
     m = (raw or "UNKNOWN").upper()
     _MAP = {
-        "CLAUDE+SEARCH": "CLAUDE", "SELF_IMPROVE": "CLAUDE",
-        "SHELL": "CLAUDE", "GITHUB": "CLAUDE", "N8N": "CLAUDE",
+        "CLAUDE+SEARCH": "CLAUDE",
         "GEMINI_CLI": "GEMINI",
+        "CLAUDE_CLI": "CLAUDE",
+        "HAIKU": "CLAUDE",          # Haiku is still Anthropic
     }
     return _MAP.get(m, m)
 
@@ -226,6 +235,7 @@ class InsightLog:
         memory_hits: int = 0,
         cache_hit: bool = False,
     ) -> None:
+        sid = session or "default"
         entry: dict = {
             "ts":        round(time.time(), 2),
             "msg_words": len(message.split()),
@@ -234,7 +244,8 @@ class InsightLog:
             "complexity": complexity,
             "resp_len":  len(response),
             "error":     response.startswith("[") and response.endswith("]"),
-            "session":   session or "default",
+            "session":    sid,
+            "session_id": sid,
             "message_prefix": message[:200],
         }
         if entry["error"]:
@@ -494,8 +505,10 @@ class InsightLog:
             all_entries = self._load_all()
             msg_prefix = message[:80].lower()
             for entry in reversed(all_entries):
+                # Tolerate both "session" (legacy file format) and "session_id" (PG read).
+                entry_sid = entry.get("session_id") or entry.get("session")
                 if (
-                    entry.get("session_id") == session_id
+                    entry_sid == session_id
                     and entry.get("message", "")[:80].lower() == msg_prefix
                 ):
                     entry["error"] = is_error

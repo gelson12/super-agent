@@ -125,6 +125,34 @@ def _get_deepseek_llm():
     )
 
 
+# ── Recursion guard ──────────────────────────────────────────────────────────
+# tiered_agent_invoke is called by every operational agent. Some of those agents
+# (notably self_improve) can themselves invoke other agents, so without a depth
+# guard a misbehaving plan can spin up an unbounded recursive chain — each level
+# costs a Sonnet/Opus call and a tool-loop. We use a thread-local counter (works
+# under FastAPI's threadpool dispatch) and hard-fail above the limit.
+
+import threading as _threading
+
+_invoke_depth = _threading.local()
+_MAX_AGENT_DEPTH = 3
+
+
+def _get_depth() -> int:
+    return getattr(_invoke_depth, "n", 0)
+
+
+def _bump_depth() -> int:
+    n = _get_depth() + 1
+    _invoke_depth.n = n
+    return n
+
+
+def _drop_depth() -> None:
+    n = max(0, _get_depth() - 1)
+    _invoke_depth.n = n
+
+
 def tiered_agent_invoke(
     message: str,
     system_prompt: str,
@@ -142,8 +170,54 @@ def tiered_agent_invoke(
       Tier 3 (Anthropic LangGraph) → Tier 3b (DeepSeek LangGraph)
 
     Returns a response string — never raises.
+
+    Hard-fails when nested deeper than _MAX_AGENT_DEPTH levels in the same
+    thread (recursion guard). The error message is plain text so the upstream
+    LLM can read it and adapt instead of looping again.
     """
+    depth = _bump_depth()
+    if depth > _MAX_AGENT_DEPTH:
+        _drop_depth()
+        msg = (
+            f"[recursion guard] tiered_agent_invoke depth {depth} exceeds "
+            f"limit {_MAX_AGENT_DEPTH} (agent_type={agent_type}, source={source}). "
+            "An agent is calling another agent in a loop. Returning instead of recursing."
+        )
+        try:
+            from ..activity_log import bg_log as _bg
+            _bg(msg, source="agent_routing")
+        except Exception:
+            pass
+        return msg
+
     _source = source or f"{agent_type}_agent"
+    try:
+        return _tiered_agent_invoke_inner(message, system_prompt, tools, agent_type, _source)
+    finally:
+        _drop_depth()
+
+
+def _tiered_agent_invoke_inner(
+    message: str,
+    system_prompt: str,
+    tools: list,
+    agent_type: str,
+    _source: str,
+) -> str:
+    # ── Routing advisor (G1) — non-binding hint logged + soft-applied ────────
+    advisor_hint = None
+    try:
+        from ..routing.routing_advisor import recommend
+        advisor_hint = recommend(message, classification=agent_type)
+        _log(
+            f"advisor: tier={advisor_hint.budget_tier} "
+            f"prefer={advisor_hint.preferred_model} "
+            f"depri={advisor_hint.deprioritize} "
+            f"reason='{advisor_hint.reason}'",
+            _source,
+        )
+    except Exception as _e:
+        _log(f"advisor unavailable: {_e}", _source)
 
     # ── Set Obsidian vault calling-agent context for talking-line tracking ──
     _AGENT_TYPE_TO_WORKER = {
@@ -224,7 +298,18 @@ def tiered_agent_invoke(
         _log("No DEEPSEEK_API_KEY — skipping to Anthropic API", _source)
 
     # ── Tier 4: LangGraph + Anthropic API (expensive, last resort) ──────
-    if settings.anthropic_api_key:
+    # G8: under critical budget, skip Sonnet entirely if the advisor flagged
+    # CLAUDE for deprioritization. DeepSeek tier already ran above; if it
+    # failed, we still try Sonnet — never let cost concerns cause a hard fail.
+    _skip_sonnet = bool(
+        advisor_hint
+        and advisor_hint.budget_tier == "critical"
+        and "CLAUDE" in advisor_hint.deprioritize
+        and settings.deepseek_api_key
+    )
+    if _skip_sonnet:
+        _log("budget critical + advisor deprioritized CLAUDE → skipping Sonnet tier", _source)
+    if settings.anthropic_api_key and not _skip_sonnet:
         try:
             _log(f"Using LangGraph (Anthropic API) — full tool access", _source)
             _track("Sonnet Anthropic", message[:100])
