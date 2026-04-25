@@ -1,5 +1,5 @@
 # Super-Agent — Gemini CLI Context
-**Last updated:** 2026-04-24
+**Last updated:** 2026-04-25
 
 This file is auto-loaded by `gemini --prompt` on every invocation inside this repo.
 It gives Gemini CLI situational awareness of the system architecture.
@@ -63,16 +63,24 @@ Classification categories:
 | `inspiring-cat` | CLI worker container — runs `claude -p`, `gemini`, shell tasks |
 | `n8n` | Automation workflows |
 | `divine-contentment` | PostgreSQL + pgvector |
+| `honest-analysis` | **UNKNOWN** — needs audit |
 
 ---
 
-## N8N ACTIVE WORKFLOWS
+## N8N ACTIVE WORKFLOWS (key ones)
 
-| ID | Name |
-|----|------|
-| `jun8CaMnNhux1iEY` | Claude-Verification-Monitor (ACTIVE) |
-| `ke7YzsAmGerVWVVc` | Super-Agent-Health-Monitor (ACTIVE) |
-| `sCHZhoyRgEZUaxtT` | Universal Catch-All (ACTIVE) |
+| ID | Name | Status |
+|----|------|--------|
+| `jun8CaMnNhux1iEY` | Claude Verification Code Monitor | ACTIVE |
+| `jxnZZwTqJ7naPKc6` | Claude Verification Code Monitor (secondary) | ACTIVE |
+| `ke7YzsAmGerVWVVc` | Super-Agent-Health-Monitor | INACTIVE |
+| `sCHZhoyRgEZUaxtT` | Universal Catch-All | ACTIVE |
+| `nOawPhpTyNjPPiEb` | Secretary — Outlook Email & Calendar Operations | ACTIVE |
+| `N4IBlfTKan8Oq4tQ` | Secretary — Gmail Manager | ACTIVE |
+| `83ZQ9b5xReUaF6Ib` | Chief of Staff — Command Centre | ACTIVE |
+| `14cHr1Y6srSRFQpm` | Claude Inbox Trash Purge | ACTIVE |
+
+*(50 active workflows total on n8n instance)*
 
 ---
 
@@ -102,8 +110,8 @@ cd /workspace/super-agent && git add <files> && git commit -m "msg" && git push 
 
 ---
 
-## PENDING ISSUES (2026-04-24)
+## PENDING ISSUES (2026-04-25)
 
-- **Health:** nominal — nightly review found no regressions.
-- **Priorities for tomorrow:** none.
-- **Routing observations:** none observed in last 24h.
+- **Health:** Claude CLI Pro monthly usage limit hit — nightly review failed to produce JSON. Budget alert has a persistent `unsupported operand type(s) for /: 'dict' and 'float'` error. n8n healthy (50 active / 29 inactive). DeepSeek balance OK ($9.98).
+- **Priorities for tomorrow:** Reset Claude Pro monthly usage. Fix budget alert calculation. Renew CLAUDE_SESSION_TOKEN (expired 342h ago).
+- **Routing observations:** None new in last 24h — keyword routing functioning normally.
