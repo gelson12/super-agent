@@ -36,7 +36,7 @@ class OpenRouterAgent:
         self.enabled = os.environ.get("OPENROUTER_ENABLED", "false").lower() == "true"
         self.api_key = os.environ.get("OPENROUTER_API_KEY", "")
         self.model = os.environ.get(
-            "OPENROUTER_MODEL", "meta-llama/llama-3.2-3b-instruct:free"
+            "OPENROUTER_MODEL", "google/gemma-3-4b-it:free"
         )
         self.base_url = os.environ.get(
             "OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"
