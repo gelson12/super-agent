@@ -141,7 +141,6 @@ def code_build_task(bot_name: str, daily_spec: list[dict], weekly_spec: list[dic
     # Dense JS inline — n8n Code nodes run JavaScript.
     js = """
 const src = $input.all()[0];
-const nodeName = $execution.mode === 'manual' ? 'manual' : Object.keys($("Telegram: user DM").all ? {} : {})[0] || '';
 
 // Detect trigger source by inspecting the item shape.
 let task = 'scheduled_tick';
@@ -244,16 +243,22 @@ def if_enabled() -> dict:
 # ───────────────────────── Context gather ─────────────────────────
 
 def pg_fetch_inbox(bot_name: str) -> dict:
-    """Reads this bot's open-memo inbox (addressed to it or broadcast)."""
+    """Reads this bot's open-memo inbox (addressed to it or broadcast).
+    Always returns exactly one row with `open_inbox` as a JSON array — even
+    when the inbox is empty — so the n8n pipeline never short-circuits."""
     query = (
-        "SELECT memo_id, from_agent, memo_type, priority, subject, body_json, "
-        "       created_at, related_lead_id "
-        "FROM bridge.agent_memos "
-        f"WHERE to_agent IN ('{bot_name}', 'all') "
-        "  AND status = 'open' "
-        "ORDER BY CASE priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 "
-        "                       WHEN 'normal' THEN 2 ELSE 3 END, created_at "
-        "LIMIT 20;"
+        "SELECT COALESCE(jsonb_agg(row_to_json(m) ORDER BY m.priority_rank, m.created_at), '[]'::jsonb) "
+        "       AS open_inbox "
+        "FROM ( "
+        "  SELECT memo_id, from_agent, memo_type, priority, subject, body_json, "
+        "         created_at, related_lead_id, "
+        "         CASE priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 "
+        "                       WHEN 'normal' THEN 2 ELSE 3 END AS priority_rank "
+        "  FROM bridge.agent_memos "
+        f"  WHERE to_agent IN ('{bot_name}', 'all') "
+        "    AND status = 'open' "
+        "  LIMIT 20 "
+        ") m;"
     )
     return {
         "parameters": {
@@ -293,8 +298,10 @@ def code_assemble_prompt(system_prompt: str) -> dict:
     """Concatenates system prompt + context + task for /chat/direct."""
     js = """
 const task = $('Build task payload').first().json;
-const inbox = $('Fetch open inbox').all().map(i => i.json);
-const ctx = $('Fetch bot context').all().map(i => i.json);
+const inboxRow = $('Fetch open inbox').first().json || {};
+const inbox = Array.isArray(inboxRow.open_inbox) ? inboxRow.open_inbox : [];
+const ctxRow = $('Fetch bot context').first().json || {};
+const ctx = ctxRow.context ? [ctxRow.context] : [ctxRow];
 
 const system = SYSTEM_PROMPT_PLACEHOLDER;
 
