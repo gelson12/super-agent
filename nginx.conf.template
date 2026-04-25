@@ -71,12 +71,13 @@ http {
             log_not_found off;
         }
 
-        # ── Unified Memory API (cli_worker port 8002) ─────────────────────────
-        # /memory/ingest, /memory/export, /memory/stats are served by the
-        # cli_worker FastAPI process to avoid circular import issues with the
-        # main app. All three paths are forwarded here.
+        # ── Unified Memory API ────────────────────────────────────────────────
+        # Routes are now hosted directly by the main FastAPI app (port 8001)
+        # via app/main.py. The cli_worker (which formerly served :8002) is no
+        # longer started in this container. Forwarding to :8001 keeps Legion's
+        # memory_client + any other consumer working without a second uvicorn.
         location /memory/ {
-            proxy_pass              http://127.0.0.1:8002/memory/;
+            proxy_pass              http://127.0.0.1:8001/memory/;
             proxy_http_version      1.1;
             proxy_set_header Host       $host;
             proxy_set_header X-Real-IP  $remote_addr;
