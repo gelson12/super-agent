@@ -82,7 +82,11 @@ class OpenRouterAgent:
                 self_confidence=0.0, error_class="timeout",
             )
         except httpx.HTTPStatusError as exc:
-            log.warning("openrouter HTTP %s", exc.response.status_code)
+            body_snippet = exc.response.text[:300].replace("\n", " ")
+            log.warning(
+                "openrouter HTTP %s on model=%s body=%s",
+                exc.response.status_code, self.model, body_snippet,
+            )
             return AgentResponse(
                 agent_id=self.agent_id, content=None, success=False,
                 latency_ms=int((time.monotonic() - start) * 1000),
