@@ -13,16 +13,23 @@ base = os.environ.get("SUPER_AGENT_BASE_URL", "<unset, will use code default>")
 print(f"SUPER_AGENT_BASE_URL env = {base!r}")
 
 async def main():
-    results = await fetch_relevant("Bridge company workflow lead generation", limit=3)
-    print(f"fetch_relevant returned {len(results)} result(s)")
-    for r in results[:3]:
-        text = (r.get("text") or r.get("content") or r.get("summary") or "")[:120]
-        print(f"  - {text}")
+    queries = [
+        "hello",
+        "claude",
+        "bridge digital",
+        "Bridge company workflow lead generation",
+    ]
+    for q in queries:
+        results = await fetch_relevant(q, limit=3)
+        print(f"  q={q!r:50s} → {len(results)} result(s)")
     print()
-    aug = await augment_query("hello world")
-    print(f"augment_query length: {len(aug)} chars (original was 11)")
+    aug = await augment_query("what is bridge digital")
+    print(f"augment_query length: {len(aug)} chars (original was 22)")
     if "[shared-memory context" in aug:
         print("CONTEXT BLOCK PRESENT — bridge is live")
+        first_line = aug.split("\n", 5)
+        for ln in first_line[:5]:
+            print("  >", ln[:120])
     else:
         print("no context block — bridge inactive or no relevant memories")
 
