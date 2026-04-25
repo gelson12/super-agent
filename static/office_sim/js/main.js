@@ -16,12 +16,12 @@ const SIM_SPEED = 60;     // 60x real time so a meeting fires every minute or so
   loadingHint.textContent = 'Loading floors…';
   const floors = await loadFloors();
 
-  loadingHint.textContent = 'Loading sprites…';
-  const sprites = await new SpriteCache().load();
-
   loadingHint.textContent = 'Loading bots & schedule…';
   const bots = await loadBots();
   const schedule = await loadSchedule();
+
+  loadingHint.textContent = 'Loading sprites…';
+  const sprites = await new SpriteCache().load(bots);
 
   const scheduler = new Scheduler(floors, bots, schedule);
   scheduler.setSpeed(SIM_SPEED);
@@ -74,10 +74,24 @@ const SIM_SPEED = 60;     // 60x real time so a meeting fires every minute or so
     }
   });
 
+  // HUD collapse toggle (button + 'h' shortcut). Collapsing the right
+  // panel widens the canvas so the office floor reads bigger.
+  const stageEl = document.getElementById('stage');
+  function setHudCollapsed(collapsed) {
+    stageEl.classList.toggle('hud-collapsed', collapsed);
+    document.body.classList.toggle('hud-collapsed', collapsed);
+    // Trigger a canvas resize so the renderer rebuilds its DPR-scaled buffer.
+    setTimeout(() => window.dispatchEvent(new Event('resize')), 320);
+  }
+  document.getElementById('hud-toggle').addEventListener('click', () => {
+    setHudCollapsed(!stageEl.classList.contains('hud-collapsed'));
+  });
+
   // Keyboard shortcuts:
   //   g  toggle tile-grid debug overlay
   //   1/2/3  switch floor
   //   +/-  adjust sim speed (10× → 600×)
+  //   h  toggle HUD panel
   //   esc  clear focus / camera follow
   const SPEED_TABLE = [10, 30, 60, 120, 300, 600];
   let speedIdx = SPEED_TABLE.indexOf(SIM_SPEED);
@@ -95,7 +109,9 @@ const SIM_SPEED = 60;     // 60x real time so a meeting fires every minute or so
       renderer.followFocused = false;
     } else if (e.key === '+' || e.key === '=') changeSpeed(+1);
     else if (e.key === '-' || e.key === '_') changeSpeed(-1);
-    else if (e.key === 'Escape') {
+    else if (e.key === 'h' || e.key === 'H') {
+      setHudCollapsed(!stageEl.classList.contains('hud-collapsed'));
+    } else if (e.key === 'Escape') {
       renderer.setFocusedBot(null);
       renderer.followFocused = false;
       document.querySelectorAll('.bot-row').forEach(el => el.classList.remove('focused'));

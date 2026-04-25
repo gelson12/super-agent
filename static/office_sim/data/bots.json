@@ -1,8 +1,8 @@
 {
-  "_note": "Maps backend bot identities to sprite-sheet (sheet_1..5) + row (0..7) + a default desk + per-bot affinity list (which idle activities they prefer). Edit row indexes if a particular bot is showing the wrong character — each sheet is 8 rows tall (cell 192x128). Desk tiles MUST match a real anchor point in the corresponding floor JSON.",
+  "_note": "botSprite (optional): per-bot horizontal strip in assets/sprites/bots/<file>; runtime prefers it over the (sheet, row) grid lookup. Strip layout = 1 row x 8 cols (stand-L/R/U/D + walk-L/R/U/D). When absent, the bot falls back to the multi-bot grid sheet+row pair. Desk tiles MUST land on a real anchor in the matching floor JSON.",
   "bots": [
     { "id": "ceo",            "name": "CEO",                "role": "Bridge_CEO_BOT",
-      "sheet": "sheet_1", "row": 1,
+      "botSprite": "ceo.png", "sheet": "sheet_1", "row": 1,
       "desk": { "floor": 2, "tile": [16, 8] },
       "affinity": ["conference_room","lounge","balcony","coffee"] },
 
@@ -32,7 +32,7 @@
       "affinity": ["meeting_room","coffee","lounge","desk_cluster"] },
 
     { "id": "marketing",      "name": "Marketing",          "role": "Bridge_Marketing_bot",
-      "sheet": "sheet_3", "row": 4,
+      "botSprite": "marketing.png", "sheet": "sheet_3", "row": 4,
       "desk": { "floor": 1, "tile": [33, 23] },
       "affinity": ["coffee","lounge","desk_cluster"] },
 
@@ -47,9 +47,19 @@
       "affinity": ["desk_cluster","coffee","lounge"] },
 
     { "id": "crypto",         "name": "Crypto",             "role": "Bridge_Crypto_bot",
-      "sheet": "sheet_3", "row": 2,
+      "botSprite": "crypto.png", "sheet": "sheet_3", "row": 2,
       "desk": { "floor": 3, "tile": [22, 22] },
       "affinity": ["focus","balcony","desk_cluster"] },
+
+    { "id": "cto",            "name": "CTO",                "role": "Bridge_CTO_bot",
+      "botSprite": "cto.png", "sheet": "sheet_1", "row": 4,
+      "desk": { "floor": 2, "tile": [13, 8] },
+      "affinity": ["conference_room","focus","coffee"] },
+
+    { "id": "coo",            "name": "COO",                "role": "Bridge_COO_bot",
+      "botSprite": "coo.png", "sheet": "sheet_1", "row": 7,
+      "desk": { "floor": 2, "tile": [10, 8] },
+      "affinity": ["conference_room","meeting_room","focus"] },
 
     { "id": "scholar",        "name": "Steampunk Scholar",  "role": "Reference Agent",
       "sheet": "sheet_1", "row": 0,

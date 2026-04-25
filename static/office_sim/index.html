@@ -24,18 +24,19 @@
         <button class="mode-btn" data-mode="demo">DEMO</button>
       </div>
       <div class="clock" id="clock">--:--</div>
+      <button class="hud-toggle" id="hud-toggle" title="Collapse / expand HUD (press 'h')" aria-label="Toggle HUD panel">⇥</button>
       <a class="back-link" href="/static/agents.html">← agents</a>
     </div>
   </header>
 
-  <main class="stage">
+  <main class="stage" id="stage">
     <section class="canvas-wrap">
       <canvas id="world" width="1280" height="800" tabindex="0"></canvas>
       <div class="overlay-hint" id="loading-hint">Loading floors and sprites…</div>
       <div class="floor-label" id="floor-label">Level 2</div>
     </section>
 
-    <aside class="hud">
+    <aside class="hud" id="hud">
       <section class="hud-block">
         <h2 class="hud-title">Bots</h2>
         <ul class="bot-list" id="bot-list"></ul>
