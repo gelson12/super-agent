@@ -14,7 +14,7 @@ hive:
   deadlines_ms:
     claude_b: 8000
     kimi: 6000
-    gemini_b: 5000
+    gemini_b: 25000  # Node CLI cold-starts ~10-16s before first token
     ollama: 4000
     hf: 6000
   early_termination:
