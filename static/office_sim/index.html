@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Bridge Office — Living Bot Simulation</title>
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">▣</span>
+      <span class="title">BRIDGE OFFICE</span>
+      <span class="subtitle">Living Bot Simulation</span>
+    </div>
+    <div class="topbar-controls">
+      <div class="floor-pills" role="tablist" aria-label="Floor selector">
+        <button class="floor-pill" data-floor="1">L1</button>
+        <button class="floor-pill active" data-floor="2">L2</button>
+        <button class="floor-pill" data-floor="3">L3</button>
+      </div>
+      <div class="mode-toggle" role="group" aria-label="Data mode">
+        <button class="mode-btn active" data-mode="live">LIVE</button>
+        <button class="mode-btn" data-mode="demo">DEMO</button>
+      </div>
+      <div class="clock" id="clock">--:--</div>
+      <a class="back-link" href="/static/agents.html">← agents</a>
+    </div>
+  </header>
+
+  <main class="stage">
+    <section class="canvas-wrap">
+      <canvas id="world" width="1280" height="800" tabindex="0"></canvas>
+      <div class="overlay-hint" id="loading-hint">Loading floors and sprites…</div>
+      <div class="floor-label" id="floor-label">Level 2</div>
+    </section>
+
+    <aside class="hud">
+      <section class="hud-block">
+        <h2 class="hud-title">Bots</h2>
+        <ul class="bot-list" id="bot-list"></ul>
+      </section>
+      <section class="hud-block">
+        <h2 class="hud-title">Activity</h2>
+        <ul class="activity-log" id="activity-log"></ul>
+      </section>
+      <section class="hud-block">
+        <h2 class="hud-title">Up next</h2>
+        <ul class="schedule-list" id="schedule-list"></ul>
+      </section>
+    </aside>
+  </main>
+
+  <footer class="statusbar">
+    <span id="status-mode">mode: live</span>
+    <span id="status-conn">conn: …</span>
+    <span id="status-fps">fps: 60</span>
+    <span id="status-bots">bots: 0</span>
+  </footer>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

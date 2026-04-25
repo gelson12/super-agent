@@ -1,0 +1,97 @@
+{
+  "_note": "Daily cadences (UTC). Sim runs at 60x real time so a 'day' compresses to 24 minutes. Times reflect the real Bridge bot cron schedules so the visual rhythm matches the n8n cadences.",
+  "daily": [
+    {
+      "id": "researcher_morning",
+      "time": "07:30",
+      "label": "Morning intel cycle",
+      "participants": ["researcher"],
+      "preferredRoomType": "focus",
+      "durationMs": 480000
+    },
+    {
+      "id": "day_open_briefing",
+      "time": "08:00",
+      "label": "Day-open briefing",
+      "participants": ["chief_of_staff", "ceo", "researcher", "marketing"],
+      "preferredRoomType": "conference_room",
+      "durationMs": 600000
+    },
+    {
+      "id": "cso_risk_review",
+      "time": "08:30",
+      "label": "Daily risk review",
+      "participants": ["cso"],
+      "preferredRoomType": "focus",
+      "durationMs": 360000
+    },
+    {
+      "id": "midday_blocker",
+      "time": "12:30",
+      "label": "Midday blocker review",
+      "participants": ["chief_of_staff", "ceo"],
+      "preferredRoomType": "meeting_room",
+      "durationMs": 420000
+    },
+    {
+      "id": "afternoon_coffee",
+      "time": "14:00",
+      "label": "Coffee chat",
+      "participants": ["pm", "marketing"],
+      "preferredRoomType": "coffee",
+      "durationMs": 360000
+    },
+    {
+      "id": "exec_summary",
+      "time": "16:00",
+      "label": "Exec summary",
+      "participants": ["ceo", "chief_of_staff", "cso", "researcher"],
+      "preferredRoomType": "conference_room",
+      "durationMs": 600000
+    },
+    {
+      "id": "ping_pong_break",
+      "time": "17:30",
+      "label": "Ping-pong break",
+      "participants": ["scholar", "nova"],
+      "preferredRoomType": "ping_pong",
+      "durationMs": 360000
+    },
+    {
+      "id": "day_close",
+      "time": "20:00",
+      "label": "Day-close reconciliation",
+      "participants": ["chief_of_staff"],
+      "preferredRoomType": "lounge",
+      "durationMs": 300000
+    },
+    {
+      "id": "nightly_cleanup",
+      "time": "22:00",
+      "label": "Nightly cleanup",
+      "participants": ["cleaner"],
+      "preferredRoomType": "desk_cluster",
+      "durationMs": 480000
+    }
+  ],
+  "weekly": [
+    {
+      "id": "weekly_priority_alignment",
+      "weekday": 1,
+      "time": "09:00",
+      "label": "CEO priority alignment",
+      "participants": ["ceo", "chief_of_staff"],
+      "preferredRoomType": "meeting_room",
+      "durationMs": 600000
+    },
+    {
+      "id": "weekly_opportunity_deep_dive",
+      "weekday": 2,
+      "time": "10:00",
+      "label": "Researcher deep-dive",
+      "participants": ["researcher", "chief_of_staff"],
+      "preferredRoomType": "meeting_room",
+      "durationMs": 600000
+    }
+  ]
+}
