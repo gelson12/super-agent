@@ -34,7 +34,7 @@ class GeminiBAgent:
             env["GEMINI_API_KEY"] = self.api_key_b
         try:
             proc = await asyncio.create_subprocess_exec(
-                self.binary, "--prompt", query,
+                self.binary, "--skip-trust", "--prompt", query,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=env,
