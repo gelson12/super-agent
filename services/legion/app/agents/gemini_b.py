@@ -21,6 +21,11 @@ class GeminiBAgent:
         # gemini CLI itself reads GEMINI_API_KEY, so we forward it on
         # subprocess invocation.
         self.api_key_b = os.environ.get("GEMINI_API_KEY_B", "")
+        # gemini-2.5-pro free tier is only 100 req/day — exhausts fast under
+        # hive-round traffic. gemini-2.5-flash gets 250/day + 10 RPM and is
+        # noticeably faster. Override with GEMINI_MODEL_B if you need pro
+        # quality (e.g. on a paid key).
+        self.model = os.environ.get("GEMINI_MODEL_B", "gemini-2.5-flash")
 
     async def respond(self, query: str, deadline_ms: int) -> AgentResponse:
         if not self.enabled:
@@ -47,6 +52,7 @@ class GeminiBAgent:
             proc = await asyncio.create_subprocess_exec(
                 self.binary,
                 "--skip-trust", "--yolo", "-o", "text",
+                "-m", self.model,
                 "--prompt", query,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
