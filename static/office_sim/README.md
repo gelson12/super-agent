@@ -160,13 +160,42 @@ Mirroring synthesises an "opposite-leg" pose from a single walk frame, giving a 
 
 Bots without a `botSprite` field fall back to the multi-bot grid (`sheet_1..5`).
 
-**v3 — true 4-frame walk cycles (next step):** if you want the up/down strides to alternate properly (mirror doesn't work vertically), expand each per-bot strip to a 16-cell layout: `[stand-L, walk-L1, walk-L2, walk-L3, stand-R, …]` with 4 frames per direction. Update `sprites.js` `walkCycleFrame()` to read 4 cells × 8 directions instead of mirroring.
+**v3 — individual per-frame PNGs (BEST — already wired up):**
+The cleanest path. Drop one PNG per (direction, walk frame) into a per-bot folder, with real per-pixel alpha (no white-key heuristic needed). The runtime auto-detects them and skips the strip/grid fallbacks.
 
-**v4 — animated idle states:** each per-bot strip can grow extra rows for "typing", "thinking", "speaking", "drinking-coffee" with the renderer picking row by `bot.state`.
+**Folder layout:**
+```
+static/office_sim/assets/sprites/bots/<bot_id>/
+├── stand_left.png       ← required for stand pose
+├── stand_right.png
+├── stand_up.png
+├── stand_down.png
+├── walk_left.png        ← required for walking
+├── walk_right.png
+├── walk_up.png
+├── walk_down.png
+├── walk_left_2.png      ← optional — adds a 2nd walk frame to the L cycle
+├── walk_left_3.png      ← optional — 3rd frame
+├── walk_left_4.png      ← optional — 4th frame
+├── walk_right_2.png …    ← (same pattern for the other 3 directions)
+└── walk_down_4.png
+```
 
-## Known compromises in v1
+The walk cycle per direction becomes `stand → walk_1 → walk_2 → … → walk_N → stand → …`, period = N+1 phases × 180 ms. With N=4 frames per direction you get a true alternating-leg stride in **all 4 directions**, no mirror tricks. Up/down strides finally look real.
 
-- **Sprite-sheet row mapping is a guess** — I assigned `row` indexes per bot without ground truth. If a bot looks "wrong" (e.g., CEO showing the writer character), edit `row` in `bots.json` until the visual matches.
-- **Hand-mapped tile maps + PNG-derived overlay** combined still won't be pixel-perfect against every furniture corner. Press `g` to overlay the navigation graph and see exactly which tiles the engine considers walkable; tweak `build_floors.py` or the overlay thresholds in `preprocess_assets.py` as needed.
-- **Sprite scale fixed at 38 px** (down from 56 in the first pass) — small enough not to swamp furniture, large enough to read facial details. Tune `SPRITE_DRAW_W/H` in `renderer.js` if you want them larger.
+For each bot, `<bot_id>` matches the `id` field in [`data/bots.json`](data/bots.json) — `ceo`, `cto`, `coo`, `crypto`, `marketing`, `chief_of_staff`, `cso`, `researcher`, `cleaner`, `pm`, `finance`, `website`, `scholar`, `nova`, `writer`. Drop in only the bots/directions you have and the loader silently skips the rest, falling back to the strip or grid for missing pieces.
+
+**How to cut from your existing per-bot reference renders:**
+Each `animated_office_bots/Bridge_<bot>_bot/` folder contains 12-15 alternative pose renders (`001_*.png`, `002_*.png`, …). Pick:
+- one stable "facing X" pose for each of the 4 stand frames
+- 2-4 mid-stride poses per direction for the walk frames (foot-forward, mid-step, foot-back, mid-step)
+- crop to the character's bounding box, save with transparent alpha, name per the layout above
+
+**v4 — animated idle states:** add per-bot subfolders for `typing/`, `thinking/`, `coffee/` and have the renderer pick the dir by `bot.state`. (Loader work is small; ping me when you have the assets.)
+
+## Known compromises after v2.1
+
+- **Sprite-sheet row mapping is a guess** when a bot falls back to the multi-bot grid — edit `row` in `bots.json` until it visually matches.
+- **Hand-mapped tile maps + PNG-derived overlay** combined still won't be pixel-perfect against every furniture corner. Press `g` to overlay the navigation graph and see exactly which tiles the engine considers walkable; tweak `build_floors.py` or `FURNITURE_MEAN_MAX/FURNITURE_DARK_FRAC` in `preprocess_assets.py` as needed.
+- **Sprite scale 64 px** at 1280-canvas baseline — readable but proportional to the office. Tune `SPRITE_DRAW_W/H` in `renderer.js`.
 - **Demo cadence not weekend-aware** — Mon/Tue weekly events don't fire if the wall clock isn't on those days.
