@@ -72,7 +72,7 @@ class GeminiBAgent:
             )
         latency_ms = int((time.monotonic() - start) * 1000)
         if proc.returncode != 0:
-            err = (stderr or b"").decode(errors="replace")[:300]
+            err = (stderr or b"").decode(errors="replace")[:1200]
             out = (stdout or b"").decode(errors="replace")[:300]
             log.warning(
                 "gemini_b non-zero exit %s qlen=%d stdout=%r stderr=%r",
