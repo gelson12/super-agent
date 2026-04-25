@@ -36,7 +36,10 @@ async def fetch_relevant(
     Hit super-agent's /memory/search endpoint. Returns a list of result dicts
     or [] on any error. Never raises.
     """
-    base_url = os.environ.get("SUPER_AGENT_BASE_URL", "").rstrip("/")
+    base_url = os.environ.get(
+        "SUPER_AGENT_BASE_URL",
+        "https://super-agent-production.up.railway.app",
+    ).rstrip("/")
     if not base_url:
         return []
     if not query or len(query.strip()) < 2:
