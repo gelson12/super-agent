@@ -1,5 +1,13 @@
 import base64
+import hashlib
+import hmac
+import json
+import os
 import threading
+import time
+import urllib.error
+import urllib.request
+
 from anthropic import Anthropic, APIError, APIConnectionError, RateLimitError
 from ..config import settings
 from ..prompts import SYSTEM_PROMPT_CLAUDE
@@ -19,6 +27,61 @@ def api_fallback_used() -> bool:
 def clear_api_fallback_flag() -> None:
     """Clear the per-thread API usage flag."""
     _tls.api_used = False
+
+
+def legion_used() -> bool:
+    """Return True if any ask_claude* call in this thread was answered by Legion hive."""
+    return bool(getattr(_tls, "legion_used", False))
+
+
+def clear_legion_flag() -> None:
+    _tls.legion_used = False
+
+
+def _try_legion(prompt: str, timeout_s: float = 12.0) -> str | None:
+    """
+    Send the prompt to the Legion hive and return its winner content.
+
+    Returns None on any failure — caller should fall through to whatever's
+    next in the cascade. Never raises. HMAC-signed with
+    LEGION_API_SHARED_SECRET; skipped entirely when LEGION_BASE_URL or
+    LEGION_API_SHARED_SECRET are unset.
+    """
+    base_url = os.environ.get("LEGION_BASE_URL", "").rstrip("/")
+    secret = os.environ.get("LEGION_API_SHARED_SECRET", "")
+    if not base_url or not secret:
+        return None
+    try:
+        body = json.dumps({"query": prompt, "complexity": 3}).encode()
+        ts = str(int(time.time()))
+        mac = hmac.new(secret.encode(), digestmod=hashlib.sha256)
+        mac.update(ts.encode())
+        mac.update(b"\n")
+        mac.update(body)
+        sig = mac.hexdigest()
+        req = urllib.request.Request(
+            f"{base_url}/v1/respond",
+            data=body,
+            method="POST",
+            headers={
+                "Content-Type": "application/json",
+                "X-Legion-Ts": ts,
+                "X-Legion-Sig": sig,
+            },
+        )
+        with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+            data = json.loads(resp.read().decode())
+        content = (data.get("content") or "").strip()
+        if not content:
+            return None
+        _tls.legion_used = True
+        return content
+    except (urllib.error.URLError, urllib.error.HTTPError):
+        return None
+    except (json.JSONDecodeError, KeyError, TypeError):
+        return None
+    except Exception:
+        return None
 
 
 def _get_client() -> Anthropic:
@@ -50,11 +113,18 @@ def ask_claude(prompt: str, system: str = SYSTEM_PROMPT_CLAUDE) -> str:
         if gemini and not gemini.startswith("["):
             return gemini
     except Exception:
-        pass  # Gemini unavailable — fall through to Anthropic API
+        pass  # Gemini unavailable — fall through to Legion next
 
-    # 3. Both CLI and Gemini unavailable — fall back to Anthropic API as last resort
+    # 3. Legion hive (multi-agent fallback — Groq, Cerebras, GH Models,
+    #    OpenRouter, HF, Ollama, Claude-B, ChatGPT — picks the best free
+    #    responder before we touch Anthropic credits).
+    legion = _try_legion(prompt)
+    if legion is not None:
+        return legion
+
+    # 4. Last-resort Anthropic API
     if not settings.anthropic_api_key:
-        return "[Claude unavailable: CLI and Gemini both unreachable, no API key configured]"
+        return "[Claude unavailable: CLI, Gemini, and Legion all unreachable, no API key configured]"
     for _attempt in range(3):
         try:
             _tls.api_used = True

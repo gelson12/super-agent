@@ -25,12 +25,15 @@ def _heuristic(query: str, agent_ids: list[str]) -> dict[str, float]:
     ))
     is_chat = len(query) < 200 and not is_code
     scores: dict[str, float] = {}
+    code_agents = ("claude_b", "chatgpt", "groq", "cerebras", "github_models", "openrouter")
+    chat_agents = ("gemini_b", "ollama", "chatgpt", "groq", "cerebras", "github_models", "openrouter")
+    api_general = ("chatgpt", "groq", "cerebras", "github_models", "openrouter")
     for aid in agent_ids:
-        if is_code and aid in ("claude_b", "chatgpt", "groq"):
+        if is_code and aid in code_agents:
             scores[aid] = 0.80 if aid == "claude_b" else 0.75
-        elif is_chat and aid in ("gemini_b", "ollama", "chatgpt", "groq"):
+        elif is_chat and aid in chat_agents:
             scores[aid] = 0.70
-        elif aid in ("chatgpt", "groq"):
+        elif aid in api_general:
             scores[aid] = 0.65  # general-purpose default
         elif aid == "hf":
             scores[aid] = 0.45
