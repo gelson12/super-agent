@@ -180,6 +180,50 @@ def write_obstacles_overlay():
         print(f"  floor {n}: accepted {len(accepted)} blocks, rejected {rejected} (would sever connectivity)")
 
 
+def alpha_key_inplace(path: Path) -> bool:
+    """Alpha-key a PNG in place. No-op if it already has meaningful alpha."""
+    img = Image.open(path).convert("RGBA")
+    px = img.load()
+    w, h = img.size
+    # Sample to detect existing transparency
+    sample = []
+    for sy in range(0, h, max(1, h // 20)):
+        for sx in range(0, w, max(1, w // 20)):
+            sample.append(px[sx, sy][3])
+    if sum(1 for a in sample if a < 32) / max(1, len(sample)) > 0.05:
+        return False     # already alpha — leave alone
+    for y in range(h):
+        for x in range(w):
+            r, g, b, a = px[x, y]
+            if r >= WHITE_THRESHOLD and g >= WHITE_THRESHOLD and b >= WHITE_THRESHOLD:
+                px[x, y] = (r, g, b, 0)
+            else:
+                m = min(r, g, b)
+                if m >= WHITE_THRESHOLD - EDGE_FEATHER:
+                    falloff = (WHITE_THRESHOLD - m) / EDGE_FEATHER
+                    px[x, y] = (r, g, b, int(a * falloff))
+    img.save(path, optimize=True)
+    return True
+
+
+def alpha_key_individual_frames():
+    """Walk assets/sprites/bots/<folder>/*.png and alpha-key any white-bg
+    frames in place. Skips frames that already have transparency."""
+    bots_dir = SPRITES_DIR / "bots"
+    if not bots_dir.is_dir():
+        print("  no bots dir")
+        return
+    for sub in sorted(bots_dir.iterdir()):
+        if not sub.is_dir():
+            continue
+        for f in sorted(sub.glob("*.png")):
+            try:
+                if alpha_key_inplace(f):
+                    print(f"  alpha-keyed {sub.name}/{f.name}")
+            except Exception as e:
+                print(f"  ERR {sub.name}/{f.name}: {e}")
+
+
 def main():
     print("[sprites] alpha-keying multi-bot grid sheets...")
     for n in (1, 2, 3, 4, 5):
@@ -199,6 +243,8 @@ def main():
             alpha_key_sheet(src, dst)
     else:
         print("  no per-bot strips dir — skipping")
+    print("\n[sprites] alpha-keying individual frame PNGs in bots/<folder>/...")
+    alpha_key_individual_frames()
     print("\n[floors] deriving obstacle overlays from PNGs...")
     write_obstacles_overlay()
 
