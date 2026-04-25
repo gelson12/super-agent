@@ -102,11 +102,30 @@ When opened off-domain (no super-agent), live polling fails-soft and the sim run
 ## Verification
 
 1. Open the page → "Loading floors and sprites…" disappears within 2 s.
-2. Floor PNG renders as the canvas background; bots are visible as tiny chibi sprites.
-3. Click "L1" / "L2" / "L3" — camera switches floors smoothly.
-4. Click a bot row in the HUD → camera switches to that bot's floor and a focus ring appears.
-5. Wait ~24 minutes (real time) for the full day cycle — or open the console and run `OFFICE.scheduler.setSpeed(600);` to compress a day to ~2.4 minutes for quick eyeballing.
-6. With LIVE mode and super-agent reachable, the activity log tails real `/activity/stream` events.
+2. Floor PNG renders as the canvas background; bots are visible as small chibi sprites with random initial facings, dispersed across the floor (not all sat at desks).
+3. Sim clock starts at **07:25 UTC** so the 07:30 Researcher cadence fires within ~5 seconds of load (in 60× sim time).
+4. Click "L1" / "L2" / "L3" — camera switches floors smoothly.
+5. Click a bot row in the HUD → camera switches to that bot's floor, focus ring appears, **camera auto-follows the bot across stair transitions**.
+6. With LIVE mode and super-agent reachable, the activity log tails real `/activity/stream` events; active n8n workflows give their owning bot a green halo.
+
+### Keyboard shortcuts
+
+| Key | Action |
+|-----|--------|
+| `1` / `2` / `3` | Switch active floor |
+| `g` | Toggle tile-grid debug overlay (red = blocked, gold = doors, cyan = stairs) |
+| `+` / `-` | Step sim speed up/down through `[10, 30, 60, 120, 300, 600]×` real time |
+| `Esc` | Clear focus + camera follow |
+
+### Console hooks (`window.OFFICE`)
+
+```js
+OFFICE.scheduler.setSimClock("13:30")     // jump to specific UTC time
+OFFICE.scheduler.setSpeed(600)             // change sim speed at runtime
+OFFICE.scheduler.disperseInitial()         // re-roll where everyone is
+OFFICE.bots.find(b => b.id === 'ceo')      // inspect a bot
+OFFICE.live.setMode('demo')                // force demo mode
+```
 
 ## Known compromises in v1
 

@@ -33,9 +33,12 @@ const SIM_SPEED = 60;     // 60x real time so a meeting fires every minute or so
   const hud = new HUD(bots, scheduler, renderer);
   const live = new LiveFeed(bots, hud);
 
-  // Wire UI: floor pills.
+  // Wire UI: floor pills (manual change disables camera follow).
   document.querySelectorAll('.floor-pill').forEach(btn => {
-    btn.addEventListener('click', () => renderer.setActiveFloor(+btn.dataset.floor));
+    btn.addEventListener('click', () => {
+      renderer.setActiveFloor(+btn.dataset.floor);
+      renderer.followFocused = false;
+    });
   });
 
   // Wire UI: mode toggle.
@@ -64,11 +67,54 @@ const SIM_SPEED = 60;     // 60x real time so a meeting fires every minute or so
     }
     if (best && bestDist < 4) {
       renderer.setFocusedBot(best.id);
+      renderer.followFocused = true;
       document.querySelectorAll('.bot-row').forEach(el => {
         el.classList.toggle('focused', el.dataset.botId === best.id);
       });
     }
   });
+
+  // Keyboard shortcuts:
+  //   g  toggle tile-grid debug overlay
+  //   1/2/3  switch floor
+  //   +/-  adjust sim speed (10× → 600×)
+  //   esc  clear focus / camera follow
+  const SPEED_TABLE = [10, 30, 60, 120, 300, 600];
+  let speedIdx = SPEED_TABLE.indexOf(SIM_SPEED);
+  if (speedIdx < 0) speedIdx = 2;
+  function changeSpeed(delta) {
+    speedIdx = Math.max(0, Math.min(SPEED_TABLE.length - 1, speedIdx + delta));
+    scheduler.setSpeed(SPEED_TABLE[speedIdx]);
+    hud.pushActivity(`sim speed: ${SPEED_TABLE[speedIdx]}× real time`);
+  }
+  window.addEventListener('keydown', (e) => {
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+    if (e.key === 'g' || e.key === 'G') renderer.toggleDebugGrid();
+    else if (e.key === '1' || e.key === '2' || e.key === '3') {
+      renderer.setActiveFloor(+e.key);
+      renderer.followFocused = false;
+    } else if (e.key === '+' || e.key === '=') changeSpeed(+1);
+    else if (e.key === '-' || e.key === '_') changeSpeed(-1);
+    else if (e.key === 'Escape') {
+      renderer.setFocusedBot(null);
+      renderer.followFocused = false;
+      document.querySelectorAll('.bot-row').forEach(el => el.classList.remove('focused'));
+    }
+  });
+
+  // Speech bubbles + activity log entries when meetings start/end.
+  scheduler.on('meetingStart', (m) => {
+    for (const bot of m.participants) {
+      renderer.flashBubble(bot.id, m.ev.label || m.ev.id, 4500);
+    }
+    hud.pushActivity(`📅 ${m.ev.label || m.ev.id} → ${m.participants.map(b => b.name).join(', ')}`);
+  });
+  scheduler.on('meetingEnd', (m) => {
+    hud.pushActivity(`✓ ${m.ev.label || m.ev.id} ended`);
+  });
+
+  // Initial dispersion so the office has motion the second the page loads.
+  scheduler.disperseInitial();
 
   loadingHint.classList.add('hidden');
 

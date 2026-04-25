@@ -15,14 +15,36 @@ export class Scheduler {
   constructor(floors, bots, schedule) {
     this.floors = floors;
     this.bots = bots;
-    this.schedule = schedule;       // { daily: [...], weekly: [...] }
-    this.activeMeetings = [];       // currently running
-    this.lastFiredKey = new Set();  // to avoid double-firing the same cadence
-    this.reservedRooms = new Map(); // zoneId -> meetingId
-    this.lastIdleRoll = new Map();  // botId -> timestamp
-    this.simSpeed = 1;              // 1 = real time; >1 = compressed
-    this.simAnchor = Date.now();    // wall time at sim start
+    this.schedule = schedule;
+    this.activeMeetings = [];
+    this.lastFiredKey = new Set();
+    this.reservedRooms = new Map();
+    this.lastIdleRoll = new Map();
+    this.simSpeed = 1;
+    // Default sim-time anchor: jump to 07:25 today UTC so the very first
+    // scheduled cadence (07:30 Researcher) is visible within seconds of
+    // page load. Override via setSimClock() if needed.
+    this.simAnchor = (() => {
+      const d = new Date();
+      d.setUTCHours(7, 25, 0, 0);
+      return d.getTime();
+    })();
     this.simStart = performance.now();
+    // Listeners (renderer/HUD subscribe for transient effects).
+    this._listeners = { meetingStart: [], meetingEnd: [] };
+  }
+
+  on(eventName, fn) { (this._listeners[eventName] ||= []).push(fn); }
+  _emit(eventName, payload) { for (const fn of (this._listeners[eventName] || [])) try { fn(payload); } catch {} }
+
+  // Override the sim-time anchor (e.g., from a console call OFFICE.scheduler.setSimClock("13:30")).
+  setSimClock(hhmm) {
+    const [hh, mm] = String(hhmm).split(':').map(Number);
+    const d = new Date();
+    d.setUTCHours(hh || 0, mm || 0, 0, 0);
+    this.simAnchor = d.getTime();
+    this.simStart = performance.now();
+    this.lastFiredKey.clear();
   }
 
   // Sim time (ms since epoch) — accelerated when simSpeed > 1.
@@ -44,6 +66,15 @@ export class Scheduler {
     this._fireDailyTriggers(simTime);
     this._tickActiveMeetings(realNow, simTime);
     this._maintainIdle(realNow);
+    // Periodic cleanup so lastFiredKey doesn't grow unbounded across days.
+    if (this.lastFiredKey.size > 200) this._purgeOldKeys(simTime);
+  }
+
+  _purgeOldKeys(simTime) {
+    const today = new Date(simTime).toISOString().slice(0, 10);
+    for (const k of this.lastFiredKey) {
+      if (!k.startsWith(today)) this.lastFiredKey.delete(k);
+    }
   }
 
   _fireDailyTriggers(simTime) {
@@ -90,6 +121,7 @@ export class Scheduler {
       bot.goTo(this.floors, room.floor, anchor.x, anchor.y, { label: ev.label || ev.id });
     });
     this.activeMeetings.push(m);
+    this._emit('meetingStart', m);
   }
 
   _tickActiveMeetings(realNow, simTime) {
@@ -109,12 +141,14 @@ export class Scheduler {
         }
       }
       // End meeting.
-      if (simTime >= m.endMs) {
+      if (simTime >= m.endMs && !m._endedEmitted) {
         for (const bot of m.participants) {
           bot.state = 'idle';
           this._sendBotHome(bot);
         }
         this.reservedRooms.delete(m.room.zoneId);
+        m._endedEmitted = true;
+        this._emit('meetingEnd', m);
       }
     }
     this.activeMeetings = this.activeMeetings.filter(m => simTime < m.endMs);
@@ -128,6 +162,21 @@ export class Scheduler {
       this.lastIdleRoll.set(bot.id, realNow);
       // 60% stay (work at desk), 40% wander to an affinity zone.
       if (Math.random() < 0.6) continue;
+      const zoneType = bot.affinity[Math.floor(Math.random() * bot.affinity.length)];
+      const dst = this._pickRandomAnchorOfType(zoneType);
+      if (dst) bot.goTo(this.floors, dst.floor, dst.x, dst.y, { label: zoneType });
+    }
+  }
+
+  // Run once after boot so the office has motion immediately.
+  // 70% of bots head to an affinity zone, staggered so paths don't collide.
+  disperseInitial() {
+    const now = performance.now();
+    let stagger = 0;
+    for (const bot of this.bots) {
+      this.lastIdleRoll.set(bot.id, now + stagger);   // forward-dated so the
+      stagger += 800;                                  // next real roll is ~30s later
+      if (Math.random() > 0.7) continue;
       const zoneType = bot.affinity[Math.floor(Math.random() * bot.affinity.length)];
       const dst = this._pickRandomAnchorOfType(zoneType);
       if (dst) bot.goTo(this.floors, dst.floor, dst.x, dst.y, { label: zoneType });

@@ -24,11 +24,21 @@ export class Renderer {
     this.bots = bots;
     this.activeFloor = 2;
     this.bgImages = {};
-    this.bgFallback = {};        // floor id -> color when image missing
+    this.bgFallback = {};
     this.focusedBotId = null;
+    this.followFocused = false;     // when true, switch floors automatically to follow the focused bot
+    this.debugGrid = false;         // 'g' key toggles
+    this.bubbles = new Map();       // botId -> { text, until }
     this.dpr = window.devicePixelRatio || 1;
     this._resize();
     window.addEventListener('resize', () => this._resize());
+  }
+
+  toggleDebugGrid() { this.debugGrid = !this.debugGrid; }
+
+  // Schedule a transient label above a bot (e.g., on meeting start).
+  flashBubble(botId, text, durationMs = 4000) {
+    this.bubbles.set(botId, { text, until: performance.now() + durationMs });
   }
 
   async init() {
@@ -84,6 +94,14 @@ export class Renderer {
     const w = this.canvas.width, h = this.canvas.height;
     ctx.clearRect(0, 0, w, h);
 
+    // Camera follow: if a bot is focused and `followFocused` is on, switch to their floor.
+    if (this.followFocused && this.focusedBotId) {
+      const focusBot = this.bots.find(b => b.id === this.focusedBotId);
+      if (focusBot && focusBot.floor !== this.activeFloor) {
+        this.setActiveFloor(focusBot.floor);
+      }
+    }
+
     // Draw floor background.
     const bg = this.bgImages[this.activeFloor];
     if (bg) {
@@ -91,8 +109,10 @@ export class Renderer {
     } else {
       ctx.fillStyle = this.bgFallback[this.activeFloor] || '#222';
       ctx.fillRect(0, 0, w, h);
-      this._drawTileGrid(ctx, w, h);
     }
+
+    // Optional debug grid overlay (toggled by 'g').
+    if (this.debugGrid) this._drawTileGrid(ctx, w, h);
 
     // Y-sort bots on this floor.
     const onFloor = this.bots.filter(b => b.floor === this.activeFloor);
@@ -175,13 +195,46 @@ export class Renderer {
 
     // Name label when focused or in meeting.
     if (this.focusedBotId === bot.id || bot.state === 'inMeeting') {
-      ctx.fillStyle = '#0a081299';
-      const tw = ctx.measureText(bot.name).width + 12;
-      ctx.fillRect(px - tw/2, dy - 22 * this.dpr, tw, 18 * this.dpr);
-      ctx.fillStyle = '#e8e7f0';
       ctx.font = `${12 * this.dpr}px ui-monospace,monospace`;
+      const labelW = ctx.measureText(bot.name).width + 12 * this.dpr;
+      ctx.fillStyle = '#0a081299';
+      ctx.fillRect(px - labelW/2, dy - 22 * this.dpr, labelW, 18 * this.dpr);
+      ctx.fillStyle = '#e8e7f0';
       ctx.textAlign = 'center';
-      ctx.fillText(bot.name, px, dy - 9 * this.dpr);
+      ctx.textBaseline = 'middle';
+      ctx.fillText(bot.name, px, dy - 13 * this.dpr);
+    }
+
+    // Speech bubble (e.g., flashed on meeting entry).
+    const bub = this.bubbles.get(bot.id);
+    if (bub) {
+      if (now > bub.until) {
+        this.bubbles.delete(bot.id);
+      } else {
+        ctx.font = `${11 * this.dpr}px ui-monospace,monospace`;
+        const bubW = ctx.measureText(bub.text).width + 14 * this.dpr;
+        const bubH = 18 * this.dpr;
+        const bubY = dy - 42 * this.dpr;
+        ctx.fillStyle = 'rgba(15,12,28,0.95)';
+        ctx.strokeStyle = 'rgba(201,169,110,0.6)';
+        ctx.lineWidth = 1 * this.dpr;
+        ctx.beginPath();
+        ctx.roundRect(px - bubW/2, bubY, bubW, bubH, 5 * this.dpr);
+        ctx.fill();
+        ctx.stroke();
+        // Tail.
+        ctx.beginPath();
+        ctx.moveTo(px - 4 * this.dpr, bubY + bubH);
+        ctx.lineTo(px,                bubY + bubH + 5 * this.dpr);
+        ctx.lineTo(px + 4 * this.dpr, bubY + bubH);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+        ctx.fillStyle = '#c9a96e';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(bub.text, px, bubY + bubH/2);
+      }
     }
   }
 
@@ -231,6 +284,7 @@ export class HUD {
       li.addEventListener('click', () => {
         renderer.setFocusedBot(bot.id);
         renderer.setActiveFloor(bot.floor);
+        renderer.followFocused = true;
         document.querySelectorAll('.bot-row').forEach(el => el.classList.remove('focused'));
         li.classList.add('focused');
       });

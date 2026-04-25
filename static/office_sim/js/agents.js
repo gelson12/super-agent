@@ -29,10 +29,11 @@ export class Bot {
     this.deskTile = spec.desk?.tile || [10, 25];
 
     this.floor = this.deskFloor;
-    this.x = this.deskTile[0];     // tile x (float for interpolation)
+    this.x = this.deskTile[0];
     this.y = this.deskTile[1];
-    this.tx = this.x; this.ty = this.y;     // current step target (tile coords)
-    this.facing = 'down';
+    this.tx = this.x; this.ty = this.y;
+    // Random initial facing so the office isn't a row of bots all looking down.
+    this.facing = ['left','right','up','down'][Math.floor(Math.random() * 4)];
     this.state = 'idle';
     this.stepStart = 0;
     this.stepFromX = this.x; this.stepFromY = this.y;
