@@ -72,8 +72,12 @@ class GeminiBAgent:
             )
         latency_ms = int((time.monotonic() - start) * 1000)
         if proc.returncode != 0:
-            err = (stderr or b"").decode(errors="replace")[:200]
-            log.warning("gemini_b non-zero exit %s: %s", proc.returncode, err)
+            err = (stderr or b"").decode(errors="replace")[:300]
+            out = (stdout or b"").decode(errors="replace")[:300]
+            log.warning(
+                "gemini_b non-zero exit %s qlen=%d stdout=%r stderr=%r",
+                proc.returncode, len(query), out, err,
+            )
             return AgentResponse(
                 agent_id=self.agent_id, content=None, success=False,
                 latency_ms=latency_ms, self_confidence=0.0,
