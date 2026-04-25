@@ -32,6 +32,12 @@ class GeminiBAgent:
         env = os.environ.copy()
         if self.api_key_b:
             env["GEMINI_API_KEY"] = self.api_key_b
+        # Gemini CLI refuses to run when TERM lacks 256-color support and
+        # NO_COLOR isn't set explicitly — the supervisord-spawned subprocess
+        # inherits TERM=dumb which trips that check. Force a sane terminal
+        # plus NO_COLOR so the CLI emits plain text.
+        env.setdefault("TERM", "xterm-256color")
+        env["NO_COLOR"] = "1"
         try:
             proc = await asyncio.create_subprocess_exec(
                 self.binary, "--skip-trust", "--prompt", query,
