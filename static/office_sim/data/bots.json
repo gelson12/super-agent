@@ -1,0 +1,69 @@
+{
+  "_note": "Maps backend bot identities to sprite-sheet (sheet_1..5) + row (0..7) + a default desk + per-bot affinity list (which idle activities they prefer). Edit row indexes if a particular bot is showing the wrong character — each sheet is 8 rows tall (cell 192x128). Desk tiles MUST match a real anchor point in the corresponding floor JSON.",
+  "bots": [
+    { "id": "ceo",            "name": "CEO",                "role": "Bridge_CEO_BOT",
+      "sheet": "sheet_1", "row": 1,
+      "desk": { "floor": 2, "tile": [16, 8] },
+      "affinity": ["conference_room","lounge","balcony","coffee"] },
+
+    { "id": "chief_of_staff", "name": "Chief of Staff",     "role": "Bridge_Chief_Of_Staff_bot",
+      "sheet": "sheet_1", "row": 2,
+      "desk": { "floor": 2, "tile": [37, 23] },
+      "affinity": ["meeting_room","focus","coffee","lounge"] },
+
+    { "id": "researcher",     "name": "Researcher",         "role": "Bridge_Researcher_bot",
+      "sheet": "sheet_2", "row": 0,
+      "desk": { "floor": 2, "tile": [22, 23] },
+      "affinity": ["focus","ideas","coffee","desk_cluster"] },
+
+    { "id": "cso",            "name": "Chief Sec Officer",  "role": "Bridge_Chief_Sec_Off_bot",
+      "sheet": "sheet_1", "row": 5,
+      "desk": { "floor": 2, "tile": [44, 23] },
+      "affinity": ["focus","phone_booths","conference_room"] },
+
+    { "id": "cleaner",        "name": "Cleaner",            "role": "Bridge_Cleaner_bot",
+      "sheet": "sheet_2", "row": 6,
+      "desk": { "floor": 3, "tile": [52, 22] },
+      "affinity": ["desk_cluster","coffee","balcony"] },
+
+    { "id": "pm",             "name": "Project Manager",    "role": "Bridge_PM_bot",
+      "sheet": "sheet_2", "row": 3,
+      "desk": { "floor": 1, "tile": [22, 23] },
+      "affinity": ["meeting_room","coffee","lounge","desk_cluster"] },
+
+    { "id": "marketing",      "name": "Marketing",          "role": "Bridge_Marketing_bot",
+      "sheet": "sheet_3", "row": 4,
+      "desk": { "floor": 1, "tile": [33, 23] },
+      "affinity": ["coffee","lounge","desk_cluster"] },
+
+    { "id": "finance",        "name": "Finance",            "role": "Bridge_Finance_bot",
+      "sheet": "sheet_2", "row": 5,
+      "desk": { "floor": 1, "tile": [44, 23] },
+      "affinity": ["focus","meeting_room","coffee"] },
+
+    { "id": "website",        "name": "Website Team",       "role": "Bridge_Website_bot",
+      "sheet": "sheet_3", "row": 0,
+      "desk": { "floor": 1, "tile": [52, 31] },
+      "affinity": ["desk_cluster","coffee","lounge"] },
+
+    { "id": "crypto",         "name": "Crypto",             "role": "Bridge_Crypto_bot",
+      "sheet": "sheet_3", "row": 2,
+      "desk": { "floor": 3, "tile": [22, 22] },
+      "affinity": ["focus","balcony","desk_cluster"] },
+
+    { "id": "scholar",        "name": "Steampunk Scholar",  "role": "Reference Agent",
+      "sheet": "sheet_1", "row": 0,
+      "desk": { "floor": 3, "tile": [33, 22] },
+      "affinity": ["focus","ping_pong","coffee","balcony"] },
+
+    { "id": "nova",           "name": "Nova Analyst",       "role": "Analytics Agent",
+      "sheet": "sheet_1", "row": 3,
+      "desk": { "floor": 3, "tile": [48, 22] },
+      "affinity": ["snooker","lounge","coffee","desk_cluster"] },
+
+    { "id": "writer",         "name": "AI Writer Zane",     "role": "Content Agent",
+      "sheet": "sheet_1", "row": 6,
+      "desk": { "floor": 3, "tile": [37, 26] },
+      "affinity": ["coffee","balcony","desk_cluster","lounge"] }
+  ]
+}
