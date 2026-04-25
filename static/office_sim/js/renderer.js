@@ -8,7 +8,7 @@
 //     the visual scale of the floor map's furniture.
 
 import { TILE_W, TILE_H } from './world.js';
-import { standFrameName, walkFrameName, CELL_W, CELL_H } from './sprites.js';
+import { standFrameName, walkCycleFrame } from './sprites.js';
 
 const SPRITE_DRAW_W = 38;       // px on canvas (chibi scale — small enough not to swamp furniture)
 const SPRITE_DRAW_H = 38;
@@ -150,16 +150,20 @@ export class Renderer {
 
   _drawBot(ctx, bot, now) {
     const { px, py } = this.tileToPx(bot.x, bot.y);
-    let dirName;
+    // Pick directional frame + decide if the renderer should flip horizontally.
+    let dirName, mirror = false;
     if (bot.state === 'walking') {
-      const phase = Math.floor(now / WALK_FRAME_MS) & 1;
-      dirName = phase ? walkFrameName(bot.facing) : standFrameName(bot.facing);
+      const cycle = walkCycleFrame(bot.facing, now, WALK_FRAME_MS);
+      dirName = cycle.dirName;
+      mirror = cycle.mirror;
     } else {
       dirName = standFrameName(bot.facing);
     }
-    const f = this.sprites.frame(bot.sheet, bot.row, dirName);
-    const dw = SPRITE_DRAW_W * this.dpr;
-    const dh = SPRITE_DRAW_H * this.dpr;
+    const f = this.sprites.frame(bot, dirName);
+    // Preserve source aspect ratio: scale the longest side to SPRITE_DRAW_W.
+    const aspect = (f.sw && f.sh) ? f.sw / f.sh : 1;
+    const dw = (aspect >= 1 ? SPRITE_DRAW_W : SPRITE_DRAW_W * aspect) * this.dpr;
+    const dh = (aspect >= 1 ? SPRITE_DRAW_H / aspect : SPRITE_DRAW_H) * this.dpr;
     // Walk bob: subtle vertical sin-wave while walking so even with a single
     // stand/walk frame pair the motion reads as actual locomotion.
     const bob = bot.state === 'walking'
@@ -188,7 +192,19 @@ export class Renderer {
     if (bot.state === 'transit') {
       ctx.globalAlpha = 0.4 + 0.6 * Math.abs(Math.sin(now / 150));
     }
-    if (f.img) ctx.drawImage(f.img, f.sx, f.sy, f.sw, f.sh, dx, dy, dw, dh);
+    if (f.img) {
+      if (mirror) {
+        // Horizontal flip so we can synthesise an "opposite leg forward"
+        // walk frame from the same source pose. Save/restore minimises GC.
+        ctx.save();
+        ctx.translate(dx + dw/2, 0);
+        ctx.scale(-1, 1);
+        ctx.drawImage(f.img, f.sx, f.sy, f.sw, f.sh, -dw/2, dy, dw, dh);
+        ctx.restore();
+      } else {
+        ctx.drawImage(f.img, f.sx, f.sy, f.sw, f.sh, dx, dy, dw, dh);
+      }
+    }
     ctx.globalAlpha = 1;
 
     // Focused-bot ring.

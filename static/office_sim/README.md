@@ -115,6 +115,7 @@ When opened off-domain (no super-agent), live polling fails-soft and the sim run
 | `1` / `2` / `3` | Switch active floor |
 | `g` | Toggle tile-grid debug overlay (red = blocked, gold = doors, cyan = stairs) |
 | `+` / `-` | Step sim speed up/down through `[10, 30, 60, 120, 300, 600]×` real time |
+| `h` | Collapse / expand the right HUD panel (widens the canvas) |
 | `Esc` | Clear focus + camera follow |
 
 ### Console hooks (`window.OFFICE`)
@@ -146,18 +147,22 @@ Re-run `preprocess_assets.py` whenever you swap a floor PNG or sprite sheet.
 
 **v1 (shipping now):** each bot has 8 directional cells (stand-L/R/U/D + walk-L/R/U/D). The renderer alternates between the stand and walk frame for the bot's current facing every 220 ms, plus a procedural vertical sin-bob at 4 Hz with a 3-px amplitude. With single-frame walk poses, that bob is what reads as "stepping". Drop shadow stays planted on the ground while the body lifts.
 
-**v2 — multi-frame walk cycle** (recommended next step):
-The `animated_office_bots/Bridge_<bot>_bot/` folders contain many alternative renders per character (`001_*.png`, `002_*.png`, …) with subtle pose variations. To turn those into a real walk cycle:
+**v2 — per-bot horizontal strips with mirrored leg cycle (current):**
+Each bot in `bots.json` can declare a `botSprite: "<file>.png"` field. The runtime loads `assets/sprites/bots/<file>.png` (preferring the `_alpha.png` produced by `preprocess_assets.py`) and treats it as a **single-row 8-cell strip** in the standard column order (stand-L/R/U/D + walk-L/R/U/D). Aspect ratio is preserved — strips can be 177×177, 177×125, etc.
 
-1. Pick **2–4 walk poses per direction per bot** that cycle naturally (foot-forward → mid-step → foot-back → mid-step). Save each pose at the same canvas size and aligned origin (head and feet at consistent positions).
-2. Lay them out as a wider sprite sheet — e.g., 32 cols (4 frames × 8 directions) × N character rows.
-3. Update `js/sprites.js`:
-   - Add a `frames_per_dir` constant (4)
-   - `frame()` takes an extra `phase` arg → `col = FRAME_COL[dir] + phase`
-   - The renderer cycles `phase = floor(now / FRAME_MS) % FRAMES_PER_DIR` while walking
-4. Drop the procedural bob (real frames carry the motion now) — keep it as a fallback when frame count = 1.
+The renderer cycles a **4-phase walk** at ~180 ms per phase:
+- phase 0 → stand
+- phase 1 → walk (foot forward)
+- phase 2 → stand
+- phase 3 → walk **horizontally mirrored** (opposite foot forward) — for left/right only
 
-**v3 — per-bot character sheets:** the multi-bot grid is a compromise. Per-bot sheets let each character have its own pose-frame count, transition timing, and idle animations (head-look, blink, typing-at-desk). Update `bots.json` to point each bot at `assets/sprites/<bot_id>_walk.png` instead of a shared sheet, and adjust `sprites.js` to look up by bot id rather than sheet+row.
+Mirroring synthesises an "opposite-leg" pose from a single walk frame, giving a natural alternating-stride look without extra art. Up/down keep the 2-phase stand/walk + procedural bob.
+
+Bots without a `botSprite` field fall back to the multi-bot grid (`sheet_1..5`).
+
+**v3 — true 4-frame walk cycles (next step):** if you want the up/down strides to alternate properly (mirror doesn't work vertically), expand each per-bot strip to a 16-cell layout: `[stand-L, walk-L1, walk-L2, walk-L3, stand-R, …]` with 4 frames per direction. Update `sprites.js` `walkCycleFrame()` to read 4 cells × 8 directions instead of mirroring.
+
+**v4 — animated idle states:** each per-bot strip can grow extra rows for "typing", "thinking", "speaking", "drinking-coffee" with the renderer picking row by `bot.state`.
 
 ## Known compromises in v1
 

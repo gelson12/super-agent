@@ -180,7 +180,7 @@ def write_obstacles_overlay():
 
 
 def main():
-    print("[sprites] alpha-keying white backgrounds...")
+    print("[sprites] alpha-keying multi-bot grid sheets...")
     for n in (1, 2, 3, 4, 5):
         src = SPRITES_DIR / f"sheet_{n}.png"
         dst = SPRITES_DIR / f"sheet_{n}_alpha.png"
@@ -188,6 +188,16 @@ def main():
             alpha_key_sheet(src, dst)
         else:
             print(f"  missing {src}")
+    print("\n[sprites] alpha-keying per-bot strips (assets/sprites/bots/<id>.png)...")
+    bots_dir = SPRITES_DIR / "bots"
+    if bots_dir.is_dir():
+        for src in sorted(bots_dir.glob("*.png")):
+            if src.stem.endswith("_alpha"):
+                continue
+            dst = src.parent / f"{src.stem}_alpha.png"
+            alpha_key_sheet(src, dst)
+    else:
+        print("  no per-bot strips dir — skipping")
     print("\n[floors] deriving obstacle overlays from PNGs...")
     write_obstacles_overlay()
 
