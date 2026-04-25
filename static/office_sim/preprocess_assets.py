@@ -54,11 +54,12 @@ TILE_W, TILE_H = 64, 40
 
 # A tile is flagged FURNITURE only if BOTH conditions:
 #   (a) its mean brightness < FURNITURE_MEAN_MAX (256-scale, RGB sum / 3)
-#   (b) ≥ FURNITURE_DARK_FRAC of its pixels are below 80 brightness
-# These tuned values keep walkable corridor tiles (which can be slightly
-# darkened by lighting/shadow in the PNG) marked as walkable.
-FURNITURE_MEAN_MAX = 95
-FURNITURE_DARK_FRAC = 0.62
+#   (b) ≥ FURNITURE_DARK_FRAC of its pixels are below 95 brightness
+# Tightened from (95, 0.62) to (130, 0.45) so we catch lighter wood
+# desktops too. Connectivity check still drops any block that would
+# sever a required anchor from the spawn — corridors stay open.
+FURNITURE_MEAN_MAX = 130
+FURNITURE_DARK_FRAC = 0.45
 
 # Tile chars that must REMAIN walkable even if the PNG looks dark there:
 ANCHOR_AND_PORTAL_CHARS = set("DUNScptpkgELIFB")
@@ -104,7 +105,7 @@ def derive_obstacles(floor_png: Path, json_grid):
             for r, g, b in data:
                 br = r + g + b
                 sum_b += br
-                if br < 240:    # 80*3 = 240 (per-pixel sum threshold)
+                if br < 285:    # 95*3 = 285 (per-pixel sum threshold)
                     dark += 1
             mean = sum_b / (n * 3)
             if mean < FURNITURE_MEAN_MAX and dark / n > FURNITURE_DARK_FRAC:

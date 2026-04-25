@@ -10,10 +10,10 @@
 import { TILE_W, TILE_H } from './world.js';
 import { standFrameName, walkCycleFrame } from './sprites.js';
 
-const SPRITE_DRAW_W = 38;       // px on canvas (chibi scale — small enough not to swamp furniture)
-const SPRITE_DRAW_H = 38;
-const WALK_FRAME_MS = 220;      // alternate stand/walk every ~220ms while walking
-const WALK_BOB_AMP = 3;         // px vertical bob amplitude when walking
+const SPRITE_DRAW_W = 64;       // px on canvas — bigger so bots are easy to see
+const SPRITE_DRAW_H = 64;
+const WALK_FRAME_MS = 180;      // 4-phase walk cycle: 4 × 180ms = 720ms per stride
+const WALK_BOB_AMP = 4;         // px vertical bob amplitude when walking
 const WALK_BOB_HZ = 4.0;        // bobs per second
 
 export class Renderer {
@@ -44,16 +44,31 @@ export class Renderer {
   }
 
   async init() {
-    for (const id of [1,2,3]) {
-      const path = `assets/floors/level${id}.png`;
+    // Load all 3 floor backgrounds in parallel using img.decode() — sequential
+    // await on the 2.7-2.8 MB PNGs sometimes fired onload before naturalWidth
+    // was set, leaving floors 2/3 stuck on the fallback solid colour.
+    await Promise.all([1, 2, 3].map(id => this._loadFloorBg(id)));
+  }
+
+  async _loadFloorBg(id) {
+    const path = `assets/floors/level${id}.png`;
+    try {
       const img = new Image();
-      const loaded = new Promise(res => { img.onload = res; img.onerror = res; });
       img.src = path;
-      await loaded;
-      if (img.complete && img.naturalWidth) {
+      await img.decode();
+      this.bgImages[id] = img;
+    } catch (e) {
+      console.warn(`[renderer] floor ${id} ${path} primary load failed; retrying via blob`);
+      try {
+        const resp = await fetch(path, { cache: 'reload' });
+        const blob = await resp.blob();
+        const img = new Image();
+        img.src = URL.createObjectURL(blob);
+        await img.decode();
         this.bgImages[id] = img;
-      } else {
-        this.bgFallback[id] = ['#1a3a4a','#3a2a4a','#4a3a2a'][id-1] || '#222';
+      } catch (e2) {
+        console.error(`[renderer] floor ${id} unrecoverable:`, e2);
+        this.bgFallback[id] = ['#1a3a4a', '#3a2a4a', '#4a3a2a'][id-1] || '#222';
       }
     }
   }
@@ -151,15 +166,16 @@ export class Renderer {
   _drawBot(ctx, bot, now) {
     const { px, py } = this.tileToPx(bot.x, bot.y);
     // Pick directional frame + decide if the renderer should flip horizontally.
-    let dirName, mirror = false;
+    let dirName, mirror = false, frameIndex = 0;
     if (bot.state === 'walking') {
-      const cycle = walkCycleFrame(bot.facing, now, WALK_FRAME_MS);
+      const cycle = walkCycleFrame(bot.facing, now, this.sprites, bot, WALK_FRAME_MS);
       dirName = cycle.dirName;
       mirror = cycle.mirror;
+      frameIndex = cycle.frameIndex || 0;
     } else {
       dirName = standFrameName(bot.facing);
     }
-    const f = this.sprites.frame(bot, dirName);
+    const f = this.sprites.frame(bot, dirName, frameIndex);
     // Preserve source aspect ratio: scale the longest side to SPRITE_DRAW_W.
     const aspect = (f.sw && f.sh) ? f.sw / f.sh : 1;
     const dw = (aspect >= 1 ? SPRITE_DRAW_W : SPRITE_DRAW_W * aspect) * this.dpr;

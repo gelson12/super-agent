@@ -1,16 +1,23 @@
 // sprites.js — Sprite-sheet loader and 8-direction frame slicer.
 //
-// Two sheet formats are supported, picked per-bot:
+// THREE sprite formats are supported, in priority order per bot:
 //
-//  1. Multi-bot grid (sheet_1..5): 8x8 grid, 192x128 cells. Each row = one
-//     character; columns 0-7 = stand-L/R/U/D + walk-L/R/U/D. Used as a
-//     fallback when a bot has no per-bot strip.
+//  1. Per-bot individual frames (assets/sprites/bots/<id>/<frame>.png)
+//     RECOMMENDED. The user drops one PNG per (direction, walk frame), with
+//     real per-pixel alpha. Up to 4 walk frames per direction for true
+//     leg-alternating motion. Filenames the loader looks for:
+//       stand_left.png   stand_right.png   stand_up.png   stand_down.png
+//       walk_left.png    walk_right.png    walk_up.png    walk_down.png
+//     Optional extra walk frames for a smoother cycle:
+//       walk_left_2.png  walk_left_3.png   walk_left_4.png   (etc per dir)
 //
-//  2. Per-bot strip (assets/sprites/bots/<id>.png): single row, 8 cells
-//     across, ~177x177 each. Same column order as the grid. Smaller asset,
-//     better visual fidelity for the 5 bots that have a hand-picked sheet.
+//  2. Per-bot horizontal strip (assets/sprites/bots/<id>.png)
+//     Single row, 8 cells (1414×177 etc.). Same column order as the grid.
+//     Alpha-keyed version (`<id>_alpha.png`) is preferred when available.
 //
-// Frame columns:
+//  3. Multi-bot grid (sheet_1..5): 8×8 grid, 192×128 cells. Final fallback.
+//
+// Column / direction order is consistent across all three:
 //   0 stand-left   1 stand-right   2 stand-up   3 stand-down
 //   4 walk-left    5 walk-right    6 walk-up    7 walk-down
 
@@ -39,22 +46,63 @@ const FRAME_COL = {
   walk_left:  4, walk_right:  5, walk_up:  6, walk_down:  7,
 };
 
+// Filenames the per-bot directory loader probes. dir → list of frame files
+// in cycle order (stand → walk_1 → walk_2 → ...). Missing files are skipped.
+const BOT_DIR_FRAMES = {
+  stand_left:  ['stand_left.png'],
+  stand_right: ['stand_right.png'],
+  stand_up:    ['stand_up.png'],
+  stand_down:  ['stand_down.png'],
+  walk_left:   ['walk_left.png',  'walk_left_2.png',  'walk_left_3.png',  'walk_left_4.png'],
+  walk_right:  ['walk_right.png', 'walk_right_2.png', 'walk_right_3.png', 'walk_right_4.png'],
+  walk_up:     ['walk_up.png',    'walk_up_2.png',    'walk_up_3.png',    'walk_up_4.png'],
+  walk_down:   ['walk_down.png',  'walk_down_2.png',  'walk_down_3.png',  'walk_down_4.png'],
+};
+
+
 export class SpriteCache {
   constructor() {
     this.gridImages = {};       // sheet name -> HTMLImageElement
-    this.botImages = {};        // bot id   -> { img, cellW, cellH }
+    this.botImages = {};        // bot id   -> { img, cellW, cellH }       (strip)
+    this.botFrames = {};        // bot id   -> { stand_left:[img,...], walk_left:[...], ... }
     this.placeholder = null;
   }
 
   async load(botList = []) {
-    // Load multi-bot grid sheets in parallel.
+    // 1. Multi-bot grid sheets (final fallback) — parallel.
     await Promise.all(Object.entries(GRID_PATHS).map(([n, p]) => this._loadGrid(n, p)));
-    // Load per-bot strips for bots that declare `botSprite`.
+    // 2. Per-bot strips when bots declare `botSprite`.
     await Promise.all(botList
       .filter(b => b.botSprite)
       .map(b => this._loadBotStrip(b.id, `assets/sprites/bots/${b.botSprite}`)));
+    // 3. Per-bot individual-frame directory — probe assets/sprites/bots/<id>/<frame>.png
+    //    Each bot is probed independently; missing frames just don't get cached.
+    await Promise.all(botList.map(b => this._loadBotFrames(b.id)));
     this.placeholder = this._makePlaceholder();
     return this;
+  }
+
+  async _loadBotFrames(botId) {
+    const base = `assets/sprites/bots/${botId}`;
+    const frames = {};
+    let any = false;
+    for (const [dir, files] of Object.entries(BOT_DIR_FRAMES)) {
+      const loaded = [];
+      for (const file of files) {
+        const path = `${base}/${file}`;
+        try {
+          const img = new Image();
+          img.src = path;
+          await img.decode();
+          loaded.push(img);
+        } catch { /* file missing — fine */ }
+      }
+      if (loaded.length) { frames[dir] = loaded; any = true; }
+    }
+    if (any) {
+      this.botFrames[botId] = frames;
+      console.log(`[sprites] bot ${botId}: ${Object.keys(frames).length} directions with individual frames`);
+    }
   }
 
   _loadGrid(name, path) {
@@ -111,9 +159,18 @@ export class SpriteCache {
     return c;
   }
 
-  // Returns the source-image rect for a (bot, dirName) frame.
-  // Per-bot strip is preferred; falls back to the (sheet, row) grid lookup.
-  frame(bot, dirName) {
+  // Returns the source-image rect for a (bot, dirName, frameIndex) frame.
+  // Priority: individual-frame dir > horizontal strip > multi-bot grid.
+  // frameIndex (default 0) selects within a multi-frame walk cycle when the
+  // bot has individual-frame assets; otherwise it's ignored.
+  frame(bot, dirName, frameIndex = 0) {
+    // 1. Per-bot individual frames (cleanest path).
+    const dirFrames = this.botFrames[bot.id]?.[dirName];
+    if (dirFrames && dirFrames.length) {
+      const img = dirFrames[frameIndex % dirFrames.length];
+      return { img, sx: 0, sy: 0, sw: img.naturalWidth, sh: img.naturalHeight };
+    }
+    // 2. Per-bot horizontal strip.
     const col = FRAME_COL[dirName] ?? 3;
     const strip = this.botImages[bot.id];
     if (strip && strip.img) {
@@ -123,6 +180,7 @@ export class SpriteCache {
         sw: strip.cellW,        sh: strip.cellH,
       };
     }
+    // 3. Multi-bot grid fallback.
     const grid = this.gridImages[bot.sheet];
     if (grid) {
       return {
@@ -132,6 +190,12 @@ export class SpriteCache {
       };
     }
     return { img: this.placeholder, sx: 0, sy: 0, sw: CELL_W, sh: CELL_H };
+  }
+
+  // Number of walk frames available for a (bot, dir) — used by walkCycleFrame
+  // to pick a real next frame when individual-frame assets are present.
+  walkFrameCount(bot, facing) {
+    return (this.botFrames[bot.id]?.[`walk_${facing}`])?.length ?? 1;
   }
 }
 
@@ -144,21 +208,37 @@ export function walkFrameName(facing) {
   return ({ left:'walk_left', right:'walk_right', up:'walk_up', down:'walk_down' }[facing]) || 'walk_down';
 }
 
-// 4-phase walk cycle: STAND → WALK → STAND → WALK_MIRROR.
-// Returns { dirName, mirror } so the renderer can flip the walk frame
-// horizontally for left/right (creating the "opposite leg forward" pose
-// without extra art). Up/down don't mirror; they get a slightly faster
-// stand/walk alternation plus the procedural bob in the renderer.
-export function walkCycleFrame(facing, now, frameMs = 180) {
-  const phase = Math.floor(now / frameMs) & 3;       // 0,1,2,3
-  if (facing === 'left' || facing === 'right') {
-    if (phase === 0)      return { dirName: standFrameName(facing), mirror: false };
-    else if (phase === 1) return { dirName: walkFrameName(facing),  mirror: false };
-    else if (phase === 2) return { dirName: standFrameName(facing), mirror: false };
-    else                  return { dirName: walkFrameName(facing),  mirror: true  };
+// Walk cycle. Returns { dirName, frameIndex, mirror }.
+//
+// When the bot has multi-frame walk assets (walkFrames > 1), the cycle is:
+//   stand → walk_1 → walk_2 → ... → walk_N  (period = N+1 phases)
+// No mirror trick needed — real frames carry the leg motion.
+//
+// When the bot has only stand+walk per direction (single-frame walk), the
+// cycle falls back to STAND → WALK → STAND → WALK_MIRROR for L/R, and
+// STAND → WALK alternation for U/D. Mirror flips the sprite horizontally
+// to synthesise an "opposite leg forward" pose from a single source frame.
+export function walkCycleFrame(facing, now, sprites, bot, frameMs = 180) {
+  const walkN = sprites?.walkFrameCount?.(bot, facing) ?? 1;
+  const stand = standFrameName(facing);
+  const walk = walkFrameName(facing);
+
+  if (walkN > 1) {
+    const totalPhases = 1 + walkN;                  // 1 stand + N walk frames
+    const phase = Math.floor(now / frameMs) % totalPhases;
+    if (phase === 0) return { dirName: stand, frameIndex: 0, mirror: false };
+    return { dirName: walk, frameIndex: phase - 1, mirror: false };
   }
-  // up/down — alternate stand/walk every two phases (no mirror).
+
+  // Single-frame walk — fall back to mirror-trick for L/R.
+  const phase = Math.floor(now / frameMs) & 3;
+  if (facing === 'left' || facing === 'right') {
+    if (phase === 0) return { dirName: stand, frameIndex: 0, mirror: false };
+    if (phase === 1) return { dirName: walk,  frameIndex: 0, mirror: false };
+    if (phase === 2) return { dirName: stand, frameIndex: 0, mirror: false };
+    return                    { dirName: walk,  frameIndex: 0, mirror: true  };
+  }
   return phase < 2
-    ? { dirName: standFrameName(facing), mirror: false }
-    : { dirName: walkFrameName(facing),  mirror: false };
+    ? { dirName: stand, frameIndex: 0, mirror: false }
+    : { dirName: walk,  frameIndex: 0, mirror: false };
 }
