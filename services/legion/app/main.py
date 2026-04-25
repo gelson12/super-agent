@@ -20,6 +20,7 @@ from app.auth import require_hmac
 from app.beacon import router as beacon_router
 from app.config import settings
 from app.healing.cli_creds import restore_all as restore_cli_creds
+from app.healing.volume_cache import restore_all as restore_volume_cache
 from app.hive_engine import LegionExhausted, run_round
 from app.models import RespondRequest, RespondResponse
 from app.redact import install_root_filter
@@ -46,6 +47,16 @@ async def lifespan(app: FastAPI):
         log.info("cli_creds restore: %s", creds_results)
     except Exception as exc:
         log.warning("cli_creds restore failed: %s", type(exc).__name__)
+
+    # Volume-cache restore runs AFTER env-var restore so a freshly-pasted
+    # env blob always wins over a stale on-volume snapshot. Only restores
+    # when the live creds dir is empty/missing (so it's a no-op when
+    # cli_creds already populated everything).
+    try:
+        vol_results = restore_volume_cache()
+        log.info("volume_cache restore: %s", vol_results)
+    except Exception as exc:
+        log.warning("volume_cache restore failed: %s", type(exc).__name__)
 
     await db.startup()
     _AGENTS["gemini_b"] = GeminiBAgent()
