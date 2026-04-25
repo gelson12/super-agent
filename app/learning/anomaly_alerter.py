@@ -120,6 +120,64 @@ def _send_email(alert_name: str, metric_value: str, threshold_desc: str) -> bool
         return False
 
 
+# ── Automation registry (G6) ──────────────────────────────────────────────────
+# Map alert name → callable that attempts a fix automatically. Each handler
+# returns a short string describing the action taken (or why it skipped),
+# which gets appended to the alert log entry. Handlers MUST never raise.
+# Keeping handlers tiny and explicit so it's obvious what the system can do
+# autonomously vs. what still needs human attention.
+
+def _auto_n8n_repair() -> str:
+    try:
+        from ..tools.n8n_repair import attempt_n8n_repair, n8n_health_check
+        health = n8n_health_check()
+        if health.get("reachable"):
+            return "n8n already reachable — no repair needed"
+        issues = health.get("issues") or ["unknown"]
+        fixed, fixes = attempt_n8n_repair(issues[0] if issues else "")
+        return ("repaired: " if fixed else "attempted: ") + "; ".join(fixes or ["nothing to do"])
+    except Exception as e:
+        return f"auto-repair error: {str(e)[:120]}"
+
+
+def _auto_cache_flush() -> str:
+    try:
+        from ..cache.response_cache import cache
+        before = getattr(cache, "stats", lambda: {})().get("size", "?")
+        cache._cache.clear() if hasattr(cache, "_cache") else None
+        return f"cache flushed (was size={before})"
+    except Exception as e:
+        return f"cache flush error: {str(e)[:120]}"
+
+
+def _auto_storage_cleanup() -> str:
+    try:
+        from ..storage.cloudinary_manager import get_storage_status
+        status = get_storage_status()
+        return f"storage status checked: {str(status)[:200]}"
+    except Exception as e:
+        return f"storage check error: {str(e)[:120]}"
+
+
+_AUTOMATION_REGISTRY: dict = {
+    "n8n_failures":      _auto_n8n_repair,
+    "error_rate_spike":  _auto_cache_flush,
+    "disk_high":         _auto_storage_cleanup,
+    # cost_near_budget intentionally NOT auto-handled — should bias future
+    # routing (handled by routing_advisor.budget_tier), not autonomously cap.
+}
+
+
+def _run_automation(alert_name: str) -> str:
+    handler = _AUTOMATION_REGISTRY.get(alert_name)
+    if not handler:
+        return ""
+    try:
+        return handler() or ""
+    except Exception as e:
+        return f"automation handler crashed: {str(e)[:120]}"
+
+
 def check_and_alert(metrics: dict) -> list[str]:
     """
     Evaluate ALERT_RULES against the current metrics snapshot.
@@ -182,6 +240,14 @@ def check_and_alert(metrics: dict) -> list[str]:
             # Send email (best-effort)
             email_sent = _send_email(name, metric_value, threshold_desc)
 
+            # G6: attempt automated remediation for known alert names.
+            automation_result = _run_automation(name)
+            if automation_result:
+                _log(
+                    f"AUTOMATION for {name}: {automation_result}",
+                    source="anomaly_alerter",
+                )
+
             # Persist alert record
             entry = {
                 "name": name,
@@ -191,6 +257,7 @@ def check_and_alert(metrics: dict) -> list[str]:
                 "fired_at": datetime.datetime.utcnow().isoformat(),
                 "fired_at_ts": now,
                 "email_sent": email_sent,
+                "automation_result": automation_result,
                 "metrics_snapshot": {k: v for k, v in metrics.items()
                                      if isinstance(v, (int, float, str))},
             }

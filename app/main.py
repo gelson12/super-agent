@@ -1958,6 +1958,208 @@ def chat_direct(req: DirectChatRequest, request: Request):
     return _chat_response_from_result(result, req.session_id)
 
 
+# ── Token / variable inventory (I4) ──────────────────────────────────────────
+# Lists every env var the codebase reads, grouped by purpose, with `set: bool`
+# only — never the value. Drives a future config-audit dashboard so dead vars
+# get surfaced (Tavily, SMTP_*, etc.) and operators can see at a glance which
+# capabilities are wired and which are dark.
+
+_TOKEN_INVENTORY: dict[str, list[tuple[str, str]]] = {
+    "models": [
+        ("ANTHROPIC_API_KEY", "Claude API"),
+        ("GEMINI_API_KEY", "Google Gemini API"),
+        ("DEEPSEEK_API_KEY", "DeepSeek (OpenAI-compatible) API"),
+        ("OPENAI_API_KEY", "OpenAI / used by autogen-ext + langchain-openai"),
+        ("CLAUDE_SESSION_TOKEN", "Claude Pro CLI session (base64) — restored at boot"),
+        ("GEMINI_SESSION_TOKEN", "Gemini CLI session (base64)"),
+    ],
+    "infrastructure": [
+        ("DATABASE_URL", "PostgreSQL (Railway-injected); SQLite fallback"),
+        ("RAILWAY_TOKEN", "Railway control plane (CLI + GraphQL)"),
+        ("RAILWAY_PUBLIC_DOMAIN", "Auto-injected; used to build self-referencing URLs"),
+        ("CLI_WORKER_URL", "Dedicated cli-worker service URL (overrides inspiring-cat)"),
+        ("LEGION_BASE_URL", "Legion hive (distributed Haiku)"),
+        ("LEGION_API_SHARED_SECRET", "HMAC secret for Legion calls"),
+    ],
+    "n8n": [
+        ("N8N_BASE_URL", "n8n REST + MCP base URL"),
+        ("N8N_API_KEY", "n8n REST API key"),
+        ("N8N_CONTACT_WEBHOOK_URL", "n8n webhook for Bridge contact form"),
+    ],
+    "github": [
+        ("GITHUB_PAT", "GitHub Personal Access Token"),
+        ("GITHUB_TOKEN", "Alt GitHub token name"),
+        ("GITHUB_SSH_KEY", "Base64-encoded private SSH key"),
+        ("GIT_EMAIL", "Default commit author email"),
+        ("GIT_NAME", "Default commit author name"),
+    ],
+    "storage": [
+        ("CLOUDINARY_API_KEY", "Cloudinary"),
+        ("CLOUDINARY_API_SECRET", "Cloudinary"),
+        ("CLOUDINARY_CLOUD_NAME", "Cloudinary"),
+        ("OBSIDIAN_MCP_URL", "Obsidian vault MCP-style WebSocket"),
+    ],
+    "search": [
+        ("TAVILY_API_KEY", "Tavily search (defined; STALE — not yet used in code)"),
+    ],
+    "email": [
+        ("SMTP_USER", "Bridge website notification sender (STALE in super-agent)"),
+        ("SMTP_PASSWORD", "Gmail App Password (STALE in super-agent)"),
+        ("NOTIFY_EMAIL", "Recipient address (STALE in super-agent)"),
+    ],
+    "observability": [
+        ("LANGCHAIN_TRACING_V2", "Enable LangSmith"),
+        ("LANGCHAIN_API_KEY", "LangSmith API key"),
+        ("LANGCHAIN_PROJECT", "LangSmith project name"),
+    ],
+    "access_control": [
+        ("UI_PASSWORD", "X-Token header auth (empty = disabled)"),
+        ("OWNER_SAFE_WORD", "Critical-write authorization phrase"),
+        ("CONFIDENCE_MODE", "Red-team check on complexity ≥3"),
+        ("CODE_SERVER_PASSWORD", "code-server browser auth"),
+    ],
+    "framework_flags": [
+        ("FRAMEWORKS_ENABLED", "Kill switch for /chat/graph + /chat/crew + /chat/groupchat"),
+        ("AUTOGEN_MAX_TURNS", "AutoGen group-chat termination cap"),
+        ("CREWAI_PROCESS", "sequential | hierarchical"),
+        ("LANGGRAPH_CHECKPOINTER_DSN", "Falls back to DATABASE_URL"),
+    ],
+}
+
+
+@app.get("/admin/tokens", tags=["meta"])
+def token_inventory():
+    """
+    Inventory of all env vars the codebase reads. Reports presence only,
+    NEVER values. Useful for spotting STALE / missing config.
+    """
+    out: dict = {}
+    for group, vars_ in _TOKEN_INVENTORY.items():
+        items = []
+        for name, purpose in vars_:
+            val = os.environ.get(name, "") or ""
+            items.append({
+                "name": name,
+                "set": bool(val),
+                "purpose": purpose,
+            })
+        out[group] = items
+    # Resolved service URLs (no secrets, just hostnames)
+    try:
+        from .config import list_services
+        out["resolved_services"] = list_services()
+    except Exception:
+        out["resolved_services"] = {}
+    return out
+
+
+# ── Multi-framework orchestration (LangGraph / AutoGen / CrewAI) ──────────────
+
+class GraphChatRequest(BaseModel):
+    message: str = Field(..., min_length=1, max_length=8000)
+    session_id: str = Field(default="default", max_length=128)
+    thread_id: str | None = Field(default=None, max_length=128)
+
+
+class TeamChatRequest(BaseModel):
+    message: str = Field(..., min_length=1, max_length=8000)
+    session_id: str = Field(default="default", max_length=128)
+
+
+class FrameworkChatResponse(BaseModel):
+    response: str
+    framework_used: str
+    session_id: str
+    extra: dict = Field(default_factory=dict)
+
+
+def _frameworks_disabled_response(framework: str, session_id: str) -> FrameworkChatResponse:
+    return FrameworkChatResponse(
+        response="Multi-framework endpoints are disabled. Set FRAMEWORKS_ENABLED=true to enable.",
+        framework_used=framework,
+        session_id=session_id,
+    )
+
+
+@app.post("/chat/graph", response_model=FrameworkChatResponse, tags=["agent"])
+@limiter.limit("20/minute")
+async def chat_graph(req: GraphChatRequest, request: Request):
+    """
+    Run a custom LangGraph StateGraph (plan → execute → critique → retry)
+    with PostgreSQL checkpointing. Pass a stable thread_id to resume
+    mid-graph after a crash or follow-up call.
+    """
+    if not settings.frameworks_enabled:
+        return _frameworks_disabled_response("langgraph", req.session_id)
+    try:
+        from .agents.graphs import run_graph
+        result = await run_graph(req.message, req.session_id, req.thread_id)
+    except Exception as e:
+        bg_log(f"chat_graph crash: {e}", source="chat_graph")
+        raise HTTPException(status_code=500, detail=_sanitize_error(str(e)))
+    if not result["response"].startswith("["):
+        append_exchange(req.session_id, req.message, result["response"])
+    return FrameworkChatResponse(
+        response=result["response"],
+        framework_used=result["framework_used"],
+        session_id=req.session_id,
+        extra={
+            "thread_id": result.get("thread_id"),
+            "classification": result.get("classification"),
+            "retries": result.get("retries", 0),
+        },
+    )
+
+
+@app.post("/chat/crew", response_model=FrameworkChatResponse, tags=["agent"])
+@limiter.limit("10/minute")
+async def chat_crew(req: TeamChatRequest, request: Request):
+    """
+    Run the CrewAI hierarchical crew (Researcher → Engineer → QA).
+    Heavier than /chat — expect 30s-3min depending on the task.
+    """
+    if not settings.frameworks_enabled:
+        return _frameworks_disabled_response("crewai", req.session_id)
+    try:
+        from .agents.crewai_crew import run_crew
+        result = await run_crew(req.message, req.session_id)
+    except Exception as e:
+        bg_log(f"chat_crew crash: {e}", source="chat_crew")
+        raise HTTPException(status_code=500, detail=_sanitize_error(str(e)))
+    if not result["response"].startswith("["):
+        append_exchange(req.session_id, req.message, result["response"])
+    return FrameworkChatResponse(
+        response=result["response"],
+        framework_used=result["framework_used"],
+        session_id=req.session_id,
+    )
+
+
+@app.post("/chat/groupchat", response_model=FrameworkChatResponse, tags=["agent"])
+@limiter.limit("10/minute")
+async def chat_groupchat(req: TeamChatRequest, request: Request):
+    """
+    Run the AutoGen v0.4 group chat (Architect ↔ Implementer ↔ Reviewer).
+    Terminates on 'APPROVED' or autogen_max_turns messages.
+    """
+    if not settings.frameworks_enabled:
+        return _frameworks_disabled_response("autogen", req.session_id)
+    try:
+        from .agents.autogen_team import run_team
+        result = await run_team(req.message, req.session_id)
+    except Exception as e:
+        bg_log(f"chat_groupchat crash: {e}", source="chat_groupchat")
+        raise HTTPException(status_code=500, detail=_sanitize_error(str(e)))
+    if not result["response"].startswith("["):
+        append_exchange(req.session_id, req.message, result["response"])
+    return FrameworkChatResponse(
+        response=result["response"],
+        framework_used=result["framework_used"],
+        session_id=req.session_id,
+        extra={"turns": result.get("turns", 0)},
+    )
+
+
 # ─────────────────────────── Bridge Company — tool endpoints ───────────────────
 # Thin HTTP wrappers around github_tools helpers so n8n workflows can commit
 # demo websites to bridge_websites_demos without needing the GITHUB_PAT in the
@@ -2326,6 +2528,7 @@ def submit_feedback(req: FeedbackRequest):
                 session_id=req.session_id,
                 message=req.message,
                 is_error=is_error,
+                rating=req.rating,
             )
         except Exception:
             pass
