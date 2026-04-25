@@ -26,6 +26,8 @@ import os
 import time
 from contextlib import suppress
 
+import httpx
+
 from app import db
 from app.agents.cerebras import CerebrasAgent
 from app.agents.chatgpt import ChatGPTAgent
@@ -43,6 +45,42 @@ log = logging.getLogger("legion.prober")
 PROBE_INTERVAL_S = int(os.environ.get("LEGION_PROBE_INTERVAL_S", "1800"))  # 30 min
 PROBE_QUERY = os.environ.get("LEGION_PROBE_QUERY", "Reply with the single word ok.")
 PROBE_DEADLINE_MS = int(os.environ.get("LEGION_PROBE_DEADLINE_MS", "20000"))
+OLLAMA_READY_TIMEOUT_S = int(os.environ.get("LEGION_OLLAMA_READY_TIMEOUT_S", "180"))
+
+
+async def _wait_ollama_ready(timeout_s: int = OLLAMA_READY_TIMEOUT_S) -> bool:
+    """
+    Poll Ollama's /api/ps until at least one model is loaded into RAM, OR
+    until timeout_s elapses. Called once at prober startup so the first
+    ollama probe doesn't race against ollama-bootstrap's CPU warmup
+    (which takes ~35s on the Railway VM for llama3.2:3b).
+
+    Returns True if a model is loaded, False on timeout. Failure is
+    non-fatal — the prober still walks ollama in subsequent cycles.
+    """
+    host = os.environ.get("OLLAMA_HOST", "127.0.0.1:11434")
+    base = host if host.startswith("http") else f"http://{host}"
+    url = f"{base.rstrip('/')}/api/ps"
+    deadline = time.monotonic() + timeout_s
+    poll_interval = 5.0
+    while time.monotonic() < deadline:
+        try:
+            async with httpx.AsyncClient(timeout=3.0) as client:
+                resp = await client.get(url)
+                if resp.status_code == 200:
+                    models = (resp.json() or {}).get("models") or []
+                    if models:
+                        loaded = ",".join(m.get("name", "?") for m in models)
+                        log.info("prober: ollama ready (loaded=%s)", loaded)
+                        return True
+        except Exception:
+            pass  # ollama not up yet — keep polling
+        await asyncio.sleep(poll_interval)
+    log.warning(
+        "prober: ollama not ready after %ds — first probe may time out, will recover next cycle",
+        timeout_s,
+    )
+    return False
 
 
 def _build_registry() -> dict[str, object]:
@@ -112,6 +150,14 @@ async def _loop() -> None:
             PROBE_INTERVAL_S, PROBE_QUERY[:60],
             sorted(registry.keys()),
         )
+        # If Ollama is enabled, wait for ollama-bootstrap to finish warmup
+        # before the first cycle. Otherwise the very first ollama probe
+        # races the cold-load and fails with timeout=20s. This block costs
+        # at most OLLAMA_READY_TIMEOUT_S on first boot, then no-ops on
+        # subsequent restarts (model stays resident on the volume).
+        ollama_agent = registry.get("ollama")
+        if ollama_agent is not None and getattr(ollama_agent, "enabled", False):
+            await _wait_ollama_ready()
         while True:
             cycle_start = time.monotonic()
             for agent_id, agent in registry.items():
