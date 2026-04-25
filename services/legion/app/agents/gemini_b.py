@@ -16,6 +16,11 @@ class GeminiBAgent:
     def __init__(self) -> None:
         self.enabled = os.environ.get("GEMINI_B_ENABLED", "false").lower() == "true"
         self.binary = os.environ.get("GEMINI_BINARY", "gemini")
+        # Account B's API key is stored under a B-suffixed env name so it
+        # can't collide with Account A's key (held by inspiring-cat). The
+        # gemini CLI itself reads GEMINI_API_KEY, so we forward it on
+        # subprocess invocation.
+        self.api_key_b = os.environ.get("GEMINI_API_KEY_B", "")
 
     async def respond(self, query: str, deadline_ms: int) -> AgentResponse:
         if not self.enabled:
@@ -24,11 +29,15 @@ class GeminiBAgent:
                 latency_ms=0, self_confidence=0.0, error_class="disabled",
             )
         start = time.monotonic()
+        env = os.environ.copy()
+        if self.api_key_b:
+            env["GEMINI_API_KEY"] = self.api_key_b
         try:
             proc = await asyncio.create_subprocess_exec(
                 self.binary, "--prompt", query,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                env=env,
             )
         except FileNotFoundError:
             return AgentResponse(
