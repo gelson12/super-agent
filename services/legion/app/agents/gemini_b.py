@@ -39,8 +39,15 @@ class GeminiBAgent:
         env.setdefault("TERM", "xterm-256color")
         env["NO_COLOR"] = "1"
         try:
+            # --skip-trust : bypass non-tty workspace-trust check
+            # --yolo       : auto-approve any tool actions (no interactive
+            #                prompts that would hang the headless subprocess)
+            # -o text      : plain text output, no ANSI/structured wrappers
+            # --prompt q   : non-interactive single-shot mode
             proc = await asyncio.create_subprocess_exec(
-                self.binary, "--skip-trust", "--prompt", query,
+                self.binary,
+                "--skip-trust", "--yolo", "-o", "text",
+                "--prompt", query,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=env,

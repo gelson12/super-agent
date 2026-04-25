@@ -12,12 +12,14 @@ async def main():
     env.setdefault("TERM", "xterm-256color")
     env["NO_COLOR"] = "1"
     proc = await asyncio.create_subprocess_exec(
-        "gemini", "--skip-trust", "--prompt", "Reply with the single word pong.",
+        "gemini",
+        "--skip-trust", "--yolo", "-o", "text",
+        "--prompt", "Reply with the single word pong.",
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         env=env,
     )
-    stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=20)
+    stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=45)
     print("=== exit code ===", proc.returncode)
     print("=== stdout ===")
     print((stdout or b"").decode(errors="replace"))
