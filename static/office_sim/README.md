@@ -163,10 +163,13 @@ Bots without a `botSprite` field fall back to the multi-bot grid (`sheet_1..5`).
 **v3 — individual per-frame PNGs (BEST — already wired up):**
 The cleanest path. Drop one PNG per (direction, walk frame) into a per-bot folder, with real per-pixel alpha (no white-key heuristic needed). The runtime auto-detects them and skips the strip/grid fallbacks.
 
-**Folder layout:**
+**Folder layout:** drop only the files you have — loader probes up to `_8.png` per direction. Any 1–8 walk frames per direction work, mixed counts across directions are fine (e.g., 3 walk_left, 2 walk_right, 1 walk_down). Cycle becomes `stand → walk_1 → walk_2 → … → walk_N` per direction, period = (N+1) × WALK_FRAME_MS (currently 240 ms).
+
+**Folder name** can be the bot id OR an alias the loader recognises (`crypto_alpha/`, `chief_security_officer/`, `project_manager/`, `website_designer/`, `accountant/` for finance, etc. — see `FOLDER_ALIASES` in `js/sprites.js`).
+
 ```
-static/office_sim/assets/sprites/bots/<bot_id>/
-├── stand_left.png       ← required for stand pose
+static/office_sim/assets/sprites/bots/<folder>/
+├── stand_left.png       ← required for stand pose (one per direction)
 ├── stand_right.png
 ├── stand_up.png
 ├── stand_down.png
@@ -174,9 +177,9 @@ static/office_sim/assets/sprites/bots/<bot_id>/
 ├── walk_right.png
 ├── walk_up.png
 ├── walk_down.png
-├── walk_left_2.png      ← optional — adds a 2nd walk frame to the L cycle
-├── walk_left_3.png      ← optional — 3rd frame
-├── walk_left_4.png      ← optional — 4th frame
+├── walk_left_2.png      ← optional — extra walk frame
+├── walk_left_3.png      ← optional
+├── walk_left_4.png      ← optional
 ├── walk_right_2.png …    ← (same pattern for the other 3 directions)
 └── walk_down_4.png
 ```

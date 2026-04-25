@@ -10,10 +10,10 @@
 import { TILE_W, TILE_H } from './world.js';
 import { standFrameName, walkCycleFrame } from './sprites.js';
 
-const SPRITE_DRAW_W = 64;       // px on canvas — bigger so bots are easy to see
-const SPRITE_DRAW_H = 64;
-const WALK_FRAME_MS = 180;      // 4-phase walk cycle: 4 × 180ms = 720ms per stride
-const WALK_BOB_AMP = 4;         // px vertical bob amplitude when walking
+const SPRITE_DRAW_W = 56;       // px on canvas — readable but not swamping furniture
+const SPRITE_DRAW_H = 56;
+const WALK_FRAME_MS = 240;      // slower than before to kill stutter perception
+const WALK_BOB_AMP = 3;         // px vertical bob amplitude when walking
 const WALK_BOB_HZ = 4.0;        // bobs per second
 
 export class Renderer {
@@ -176,10 +176,29 @@ export class Renderer {
       dirName = standFrameName(bot.facing);
     }
     const f = this.sprites.frame(bot, dirName, frameIndex);
-    // Preserve source aspect ratio: scale the longest side to SPRITE_DRAW_W.
-    const aspect = (f.sw && f.sh) ? f.sw / f.sh : 1;
-    const dw = (aspect >= 1 ? SPRITE_DRAW_W : SPRITE_DRAW_W * aspect) * this.dpr;
-    const dh = (aspect >= 1 ? SPRITE_DRAW_H / aspect : SPRITE_DRAW_H) * this.dpr;
+    // Render box: when the bot has individual frames, lock the on-screen
+    // size to the LARGEST frame (sprites.renderBox) so different frame
+    // heights (e.g., walk_left=274 vs stand_left=170) don't make the
+    // sprite resize each tick — that resize was reading as flicker.
+    // Each frame is then scaled to fit inside the locked box, anchored
+    // at the FEET so vertical-stretch poses just grow upward.
+    const box = this.sprites.renderBox?.(bot.id);
+    let dw, dh, drawScaleX, drawScaleY;
+    if (box) {
+      // Locked footprint based on max frame dims. Letterbox each frame
+      // inside it so the bot never visually jumps in size.
+      const targetH = SPRITE_DRAW_H * this.dpr;
+      const scale = targetH / box.h;
+      dw = box.w * scale;
+      dh = box.h * scale;
+      drawScaleX = (f.sw || 1) * scale;
+      drawScaleY = (f.sh || 1) * scale;
+    } else {
+      const aspect = (f.sw && f.sh) ? f.sw / f.sh : 1;
+      dw = (aspect >= 1 ? SPRITE_DRAW_W : SPRITE_DRAW_W * aspect) * this.dpr;
+      dh = (aspect >= 1 ? SPRITE_DRAW_H / aspect : SPRITE_DRAW_H) * this.dpr;
+      drawScaleX = dw; drawScaleY = dh;
+    }
     // Walk bob: subtle vertical sin-wave while walking so even with a single
     // stand/walk frame pair the motion reads as actual locomotion.
     const bob = bot.state === 'walking'
@@ -209,16 +228,29 @@ export class Renderer {
       ctx.globalAlpha = 0.4 + 0.6 * Math.abs(Math.sin(now / 150));
     }
     if (f.img) {
+      // When using individual-frame assets with a locked render box,
+      // the frame is drawn at its real scaled size and centered horizontally
+      // within the box, anchored at the BOTTOM (feet on the ground line).
+      // This eliminates the size-jitter that read as flicker when a tall
+      // walk frame replaced a shorter stand frame.
+      let drawX, drawY, drawW, drawH;
+      if (box) {
+        drawW = drawScaleX;
+        drawH = drawScaleY;
+        drawX = px - drawW / 2;
+        drawY = py - drawH + 4 * this.dpr + bob;     // bottom-anchored
+      } else {
+        drawW = dw; drawH = dh;
+        drawX = dx; drawY = dy;
+      }
       if (mirror) {
-        // Horizontal flip so we can synthesise an "opposite leg forward"
-        // walk frame from the same source pose. Save/restore minimises GC.
         ctx.save();
-        ctx.translate(dx + dw/2, 0);
+        ctx.translate(drawX + drawW / 2, 0);
         ctx.scale(-1, 1);
-        ctx.drawImage(f.img, f.sx, f.sy, f.sw, f.sh, -dw/2, dy, dw, dh);
+        ctx.drawImage(f.img, f.sx, f.sy, f.sw, f.sh, -drawW / 2, drawY, drawW, drawH);
         ctx.restore();
       } else {
-        ctx.drawImage(f.img, f.sx, f.sy, f.sw, f.sh, dx, dy, dw, dh);
+        ctx.drawImage(f.img, f.sx, f.sy, f.sw, f.sh, drawX, drawY, drawW, drawH);
       }
     }
     ctx.globalAlpha = 1;

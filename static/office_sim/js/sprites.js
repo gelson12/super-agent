@@ -2,18 +2,20 @@
 //
 // THREE sprite formats are supported, in priority order per bot:
 //
-//  1. Per-bot individual frames (assets/sprites/bots/<id>/<frame>.png)
-//     RECOMMENDED. The user drops one PNG per (direction, walk frame), with
-//     real per-pixel alpha. Up to 4 walk frames per direction for true
-//     leg-alternating motion. Filenames the loader looks for:
-//       stand_left.png   stand_right.png   stand_up.png   stand_down.png
-//       walk_left.png    walk_right.png    walk_up.png    walk_down.png
-//     Optional extra walk frames for a smoother cycle:
-//       walk_left_2.png  walk_left_3.png   walk_left_4.png   (etc per dir)
+//  1. Per-bot individual frames (assets/sprites/bots/<folder>/<frame>.png)
+//     RECOMMENDED. Drop one PNG per (direction, walk frame). Folder name
+//     can be the bot id (`ceo/`, `crypto/`) OR an alias the loader knows
+//     about (`crypto_alpha/`, `chief_security_officer/`, `project_manager/`,
+//     `website_designer/`, `accountant/` for finance, etc. — see
+//     FOLDER_ALIASES below).
+//
+//     Per direction the loader probes `walk_<dir>.png` plus `walk_<dir>_2..N.png`
+//     for as many extra frames as you provide. Any 1–N frames per direction
+//     work; missing files are skipped silently. Required-ish per direction:
+//       stand_<dir>.png   walk_<dir>.png   (extras are optional)
 //
 //  2. Per-bot horizontal strip (assets/sprites/bots/<id>.png)
-//     Single row, 8 cells (1414×177 etc.). Same column order as the grid.
-//     Alpha-keyed version (`<id>_alpha.png`) is preferred when available.
+//     Single row, 8 cells. Same column order as the grid.
 //
 //  3. Multi-bot grid (sheet_1..5): 8×8 grid, 192×128 cells. Final fallback.
 //
@@ -47,16 +49,43 @@ const FRAME_COL = {
 };
 
 // Filenames the per-bot directory loader probes. dir → list of frame files
-// in cycle order (stand → walk_1 → walk_2 → ...). Missing files are skipped.
+// in cycle order (stand → walk_1 → walk_2 → ...). Probes up to _8 so any
+// number of frames you have works. Missing files are skipped silently.
 const BOT_DIR_FRAMES = {
   stand_left:  ['stand_left.png'],
   stand_right: ['stand_right.png'],
   stand_up:    ['stand_up.png'],
   stand_down:  ['stand_down.png'],
-  walk_left:   ['walk_left.png',  'walk_left_2.png',  'walk_left_3.png',  'walk_left_4.png'],
-  walk_right:  ['walk_right.png', 'walk_right_2.png', 'walk_right_3.png', 'walk_right_4.png'],
-  walk_up:     ['walk_up.png',    'walk_up_2.png',    'walk_up_3.png',    'walk_up_4.png'],
-  walk_down:   ['walk_down.png',  'walk_down_2.png',  'walk_down_3.png',  'walk_down_4.png'],
+  walk_left:   ['walk_left.png',  'walk_left_2.png',  'walk_left_3.png',  'walk_left_4.png',  'walk_left_5.png',  'walk_left_6.png',  'walk_left_7.png',  'walk_left_8.png'],
+  walk_right:  ['walk_right.png', 'walk_right_2.png', 'walk_right_3.png', 'walk_right_4.png', 'walk_right_5.png', 'walk_right_6.png', 'walk_right_7.png', 'walk_right_8.png'],
+  walk_up:     ['walk_up.png',    'walk_up_2.png',    'walk_up_3.png',    'walk_up_4.png',    'walk_up_5.png',    'walk_up_6.png',    'walk_up_7.png',    'walk_up_8.png'],
+  walk_down:   ['walk_down.png',  'walk_down_2.png',  'walk_down_3.png',  'walk_down_4.png',  'walk_down_5.png',  'walk_down_6.png',  'walk_down_7.png',  'walk_down_8.png'],
+};
+
+// Folder-name aliases. The user named some folders with the verbose backend
+// identity (chief_security_officer/) and others with the bot id (cso/) and
+// others with an _alpha suffix (crypto_alpha/). The loader probes ALL these
+// candidates per bot — first one that yields any frames wins.
+const FOLDER_ALIASES = {
+  ceo:            ['ceo', 'ceo_alpha'],
+  cto:            ['cto', 'cto_alpha'],
+  coo:            ['coo', 'coo_alpha'],
+  chief_of_staff: ['chief_of_staff', 'chief_of_staff_alpha'],
+  cso:            ['cso', 'cso_alpha', 'chief_security_officer', 'chief_security_officer_alpha'],
+  researcher:     ['researcher', 'researcher_alpha'],
+  pm:             ['pm', 'pm_alpha', 'project_manager', 'project_manager_alpha'],
+  marketing:      ['marketing', 'marketing_alpha'],
+  finance:        ['finance', 'finance_alpha', 'accountant', 'accountant_alpha'],
+  website:        ['website', 'website_alpha', 'website_designer', 'website_designer_alpha'],
+  cleaner:        ['cleaner', 'cleaner_alpha'],
+  crypto:         ['crypto', 'crypto_alpha'],
+  scholar:        ['scholar', 'scholar_alpha'],
+  nova:           ['nova', 'nova_alpha'],
+  writer:         ['writer', 'writer_alpha', 'ai_writer'],
+  // Reference identities (extra characters from animated_office_bots/)
+  programmer:     ['programmer', 'programmer_alpha'],
+  hacker:         ['hacker', 'hacker_alpha'],
+  chairman:       ['chairman', 'chairman_alpha', 'cob', 'cob_alpha'],
 };
 
 
@@ -83,26 +112,50 @@ export class SpriteCache {
   }
 
   async _loadBotFrames(botId) {
-    const base = `assets/sprites/bots/${botId}`;
-    const frames = {};
-    let any = false;
-    for (const [dir, files] of Object.entries(BOT_DIR_FRAMES)) {
-      const loaded = [];
-      for (const file of files) {
-        const path = `${base}/${file}`;
-        try {
-          const img = new Image();
-          img.src = path;
-          await img.decode();
-          loaded.push(img);
-        } catch { /* file missing — fine */ }
+    // Walk the alias list — first folder that yields any frames wins.
+    const candidates = FOLDER_ALIASES[botId] || [botId];
+    for (const folder of candidates) {
+      const base = `assets/sprites/bots/${folder}`;
+      const frames = {};
+      let any = false;
+      for (const [dir, files] of Object.entries(BOT_DIR_FRAMES)) {
+        const loaded = [];
+        for (const file of files) {
+          const path = `${base}/${file}`;
+          try {
+            const img = new Image();
+            img.src = path;
+            await img.decode();
+            loaded.push(img);
+          } catch { /* missing — fine */ }
+        }
+        if (loaded.length) { frames[dir] = loaded; any = true; }
       }
-      if (loaded.length) { frames[dir] = loaded; any = true; }
+      if (any) {
+        this.botFrames[botId] = frames;
+        // Lock a single render box per bot — pick the LARGEST frame's
+        // dimensions so size never jumps mid-cycle. The renderer will
+        // letterbox shorter frames by anchoring at feet.
+        let maxW = 0, maxH = 0;
+        for (const dir of Object.values(frames)) {
+          for (const img of dir) {
+            maxW = Math.max(maxW, img.naturalWidth);
+            maxH = Math.max(maxH, img.naturalHeight);
+          }
+        }
+        this.botFrames[botId]._renderBox = { w: maxW, h: maxH };
+        const dirCount = Object.keys(frames).filter(k => !k.startsWith('_')).length;
+        console.log(`[sprites] bot ${botId} from "${folder}": ${dirCount} directions, max box ${maxW}x${maxH}`);
+        return;
+      }
     }
-    if (any) {
-      this.botFrames[botId] = frames;
-      console.log(`[sprites] bot ${botId}: ${Object.keys(frames).length} directions with individual frames`);
-    }
+  }
+
+  // Locked render box for a bot (so the renderer can scale ALL frames into a
+  // consistent on-screen footprint). Returns null if the bot has no
+  // individual frames.
+  renderBox(botId) {
+    return this.botFrames[botId]?._renderBox || null;
   }
 
   _loadGrid(name, path) {
@@ -195,7 +248,14 @@ export class SpriteCache {
   // Number of walk frames available for a (bot, dir) — used by walkCycleFrame
   // to pick a real next frame when individual-frame assets are present.
   walkFrameCount(bot, facing) {
-    return (this.botFrames[bot.id]?.[`walk_${facing}`])?.length ?? 1;
+    const dir = this.botFrames[bot.id]?.[`walk_${facing}`];
+    return Array.isArray(dir) ? dir.length : 1;
+  }
+
+  // Does this bot use individual-frame assets? When true the renderer
+  // skips the mirror trick (real frames carry the leg motion).
+  hasIndividualFrames(botId) {
+    return !!this.botFrames[botId];
   }
 }
 
@@ -210,27 +270,27 @@ export function walkFrameName(facing) {
 
 // Walk cycle. Returns { dirName, frameIndex, mirror }.
 //
-// When the bot has multi-frame walk assets (walkFrames > 1), the cycle is:
-//   stand → walk_1 → walk_2 → ... → walk_N  (period = N+1 phases)
-// No mirror trick needed — real frames carry the leg motion.
-//
-// When the bot has only stand+walk per direction (single-frame walk), the
-// cycle falls back to STAND → WALK → STAND → WALK_MIRROR for L/R, and
-// STAND → WALK alternation for U/D. Mirror flips the sprite horizontally
-// to synthesise an "opposite leg forward" pose from a single source frame.
-export function walkCycleFrame(facing, now, sprites, bot, frameMs = 180) {
-  const walkN = sprites?.walkFrameCount?.(bot, facing) ?? 1;
+// Behaviour by what the bot has loaded:
+//   walkN ≥ 2 real frames → cycle stand → walk_1 → walk_2 → ... → walk_N.
+//                            No mirror (real frames carry leg motion).
+//   walkN === 1 (single)  → only when the bot has a folder with just
+//                            walk_<dir>.png. Cycle stand → walk → stand → walk.
+//                            Still no mirror — feels less like a flicker.
+//   No individual frames  → strip/grid path. Mirror trick used for L/R.
+export function walkCycleFrame(facing, now, sprites, bot, frameMs = 220) {
   const stand = standFrameName(facing);
   const walk = walkFrameName(facing);
+  const usingIndividual = sprites?.hasIndividualFrames?.(bot.id);
 
-  if (walkN > 1) {
-    const totalPhases = 1 + walkN;                  // 1 stand + N walk frames
+  if (usingIndividual) {
+    const walkN = sprites.walkFrameCount(bot, facing);
+    const totalPhases = 1 + walkN;
     const phase = Math.floor(now / frameMs) % totalPhases;
     if (phase === 0) return { dirName: stand, frameIndex: 0, mirror: false };
     return { dirName: walk, frameIndex: phase - 1, mirror: false };
   }
 
-  // Single-frame walk — fall back to mirror-trick for L/R.
+  // Strip/grid path — keep the mirror synthesis for L/R single-frame walks.
   const phase = Math.floor(now / frameMs) & 3;
   if (facing === 'left' || facing === 'right') {
     if (phase === 0) return { dirName: stand, frameIndex: 0, mirror: false };
