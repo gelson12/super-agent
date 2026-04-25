@@ -13,8 +13,13 @@
 import { findPath, findRoute, dirFromDelta, nearestWalkable } from './nav.js';
 
 let _seq = 0;
-const STEP_MS = 220;          // tile-to-tile travel time
+const STEP_MS = 360;          // tile-to-tile travel time — slower = readable
 const TRANSITION_MS = 600;    // stair fade duration
+
+// Smooth ease-in-out so steps don't snap from one tile to the next.
+function easeInOut(t) {
+  return t < 0.5 ? 2*t*t : 1 - Math.pow(-2*t + 2, 2) / 2;
+}
 
 export class Bot {
   constructor(spec) {
@@ -116,10 +121,12 @@ export class Bot {
       const dx = this.tx - this.stepFromX, dy = this.ty - this.stepFromY;
       this.facing = dirFromDelta(dx, dy);
     } else {
-      // Interpolate between fromX/Y and tx/ty using ease.
+      // Eased interpolation between adjacent tiles — steps glide rather
+      // than snap, smoothing out 90° corners visually.
       const t = Math.min(1, (now - this.stepStart) / STEP_MS);
-      this.x = this.stepFromX + (this.tx - this.stepFromX) * t;
-      this.y = this.stepFromY + (this.ty - this.stepFromY) * t;
+      const e = easeInOut(t);
+      this.x = this.stepFromX + (this.tx - this.stepFromX) * e;
+      this.y = this.stepFromY + (this.ty - this.stepFromY) * e;
       if (t >= 1) { this.x = this.tx; this.y = this.ty; }
     }
   }

@@ -133,29 +133,40 @@ export class SpriteCache {
       }
       if (any) {
         this.botFrames[botId] = frames;
-        // Lock a single render box per bot — pick the LARGEST frame's
-        // dimensions so size never jumps mid-cycle. The renderer will
-        // letterbox shorter frames by anchoring at feet.
-        let maxW = 0, maxH = 0;
-        for (const dir of Object.values(frames)) {
-          for (const img of dir) {
-            maxW = Math.max(maxW, img.naturalWidth);
-            maxH = Math.max(maxH, img.naturalHeight);
-          }
-        }
-        this.botFrames[botId]._renderBox = { w: maxW, h: maxH };
+        // CHARACTER-SIZE LOCK. The user's frames have varying canvases (a
+        // walk pose with extended leg may be 274 px tall while the
+        // matching stand pose is only 170 px). If we scaled each frame
+        // independently the bot strobed in size every step.
+        //
+        // Reference scale: derive from the STAND-DOWN frame (or any stand
+        // frame) — that's the canonical "neutral" pose. We treat its
+        // canvas height as the character's true on-screen height. All
+        // other frames get drawn at the SAME pixels-per-canvas-px scale.
+        // Walk frames are drawn at their native canvas size relative to
+        // the stand frame — so a taller walk canvas naturally extends
+        // upward (foot raised) without changing the body's apparent size.
+        const ref = frames.stand_down?.[0]
+                 || frames.stand_left?.[0]
+                 || frames.stand_right?.[0]
+                 || frames.stand_up?.[0]
+                 || Object.values(frames)[0]?.[0];
+        const refH = ref ? ref.naturalHeight : 170;
+        const refW = ref ? ref.naturalWidth  : 120;
+        this.botFrames[botId]._refScale = { refW, refH };
         const dirCount = Object.keys(frames).filter(k => !k.startsWith('_')).length;
-        console.log(`[sprites] bot ${botId} from "${folder}": ${dirCount} directions, max box ${maxW}x${maxH}`);
+        console.log(`[sprites] bot ${botId} from "${folder}": ${dirCount} directions, ref ${refW}x${refH}`);
         return;
       }
     }
   }
 
-  // Locked render box for a bot (so the renderer can scale ALL frames into a
-  // consistent on-screen footprint). Returns null if the bot has no
+  // Reference scale for a bot — { refW, refH } pulled from the stand frame
+  // when individual frames are loaded. Renderer multiplies frame.canvas size
+  // by (target_height / refH) so all frames render at a consistent
+  // pixels-per-canvas-px scale. Returns null when the bot doesn't use
   // individual frames.
-  renderBox(botId) {
-    return this.botFrames[botId]?._renderBox || null;
+  refScale(botId) {
+    return this.botFrames[botId]?._refScale || null;
   }
 
   _loadGrid(name, path) {

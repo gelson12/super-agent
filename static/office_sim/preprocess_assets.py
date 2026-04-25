@@ -52,17 +52,22 @@ def alpha_key_sheet(src: Path, dst: Path) -> None:
 # ─── Floor PNG → blocked-tile overlay ────────────────────────────────────
 TILE_W, TILE_H = 64, 40
 
-# A tile is flagged FURNITURE only if BOTH conditions:
-#   (a) its mean brightness < FURNITURE_MEAN_MAX (256-scale, RGB sum / 3)
-#   (b) ≥ FURNITURE_DARK_FRAC of its pixels are below 95 brightness
-# Tightened from (95, 0.62) to (130, 0.45) so we catch lighter wood
-# desktops too. Connectivity check still drops any block that would
-# sever a required anchor from the spawn — corridors stay open.
-FURNITURE_MEAN_MAX = 130
-FURNITURE_DARK_FRAC = 0.45
+# Floor-positive detection. Per level we find the canonical "floor"
+# brightness via the 75th-percentile tile (definitely-walkable cells), then
+# block any tile below FLOOR_REL_CUTOFF * floor_brightness. This catches
+# every furniture/wall cell because furniture is consistently darker than
+# the bare-floor cells. Connectivity preservation rejects any candidate
+# that would sever a required anchor from the spawn.
+FLOOR_REL_CUTOFF = 0.92
 
-# Tile chars that must REMAIN walkable even if the PNG looks dark there:
-ANCHOR_AND_PORTAL_CHARS = set("DUNScptpkgELIFB")
+# Tile chars that must REMAIN walkable even if the PNG looks dark there.
+# Doors (D) and stairs (U/N) are absolute portals — never block them.
+# Seat anchors (S/c/p/k/g/L/F/B/I/E) WERE protected, but this caused
+# bots to spawn on top of visible tables (the chair anchor tile was
+# inside the table's PNG footprint). Now they get blocked by the PNG
+# check too; the snap-to-walkable step below repositions affected bot
+# desks to the nearest real chair-adjacent floor tile.
+ANCHOR_AND_PORTAL_CHARS = set("DUN")
 
 
 def _build_grid_from_floor_json(json_path: Path):
@@ -84,31 +89,59 @@ def _build_grid_from_floor_json(json_path: Path):
 
 
 def derive_obstacles(floor_png: Path, json_grid):
+    """Floor-positive detection.
+
+    A tile is BLOCKED if either:
+       (a) its mean brightness < FLOOR_REL_CUTOFF × per-level floor_br
+           (floor_br = 75th-percentile brightness across all tiles),
+       (b) its mean colour is "green-ish" (G > R + 20 → planter/foliage),
+           regardless of brightness.
+
+    Both rules match real furniture/walls/planters in the office PNGs.
+    Connectivity preservation in write_obstacles_overlay() then drops
+    candidates that would sever a required anchor from the spawn.
+    """
     img = Image.open(floor_png).convert("RGB")
     pw, ph = img.size
     cell_w = pw / TILE_W
     cell_h = ph / TILE_H
-    blocked = []
+
+    # Pass 1 — per-tile mean RGB across the whole grid.
+    means = [(0.0, 0.0, 0.0)] * (TILE_W * TILE_H)
+    brightness = [0.0] * (TILE_W * TILE_H)
     for ty in range(TILE_H):
         for tx in range(TILE_W):
-            existing = json_grid[ty * TILE_W + tx]
-            if existing == '#':
-                continue   # already blocked
-            if existing in ANCHOR_AND_PORTAL_CHARS:
-                continue   # protect anchors/doors/stairs
             x0 = int(tx * cell_w); y0 = int(ty * cell_h)
             x1 = int((tx + 1) * cell_w); y1 = int((ty + 1) * cell_h)
             crop = img.crop((x0, y0, x1, y1))
             data = list(crop.getdata())
             n = len(data)
-            sum_b = 0; dark = 0
-            for r, g, b in data:
-                br = r + g + b
-                sum_b += br
-                if br < 285:    # 95*3 = 285 (per-pixel sum threshold)
-                    dark += 1
-            mean = sum_b / (n * 3)
-            if mean < FURNITURE_MEAN_MAX and dark / n > FURNITURE_DARK_FRAC:
+            mr = sum(p[0] for p in data) / n
+            mg = sum(p[1] for p in data) / n
+            mb = sum(p[2] for p in data) / n
+            means[ty * TILE_W + tx] = (mr, mg, mb)
+            brightness[ty * TILE_W + tx] = (mr + mg + mb) / 3
+
+    # Per-level floor signature = 75th-percentile brightness across all tiles.
+    sorted_br = sorted(brightness)
+    floor_br = sorted_br[3 * len(sorted_br) // 4]
+    cutoff = floor_br * FLOOR_REL_CUTOFF
+    print(f"  floor_brightness={floor_br:.0f}  cutoff={cutoff:.0f}")
+
+    # Pass 2 — emit candidates.
+    blocked = []
+    for ty in range(TILE_H):
+        for tx in range(TILE_W):
+            existing = json_grid[ty * TILE_W + tx]
+            if existing == '#':
+                continue
+            if existing in ANCHOR_AND_PORTAL_CHARS:
+                continue
+            mr, mg, mb = means[ty * TILE_W + tx]
+            br = brightness[ty * TILE_W + tx]
+            is_green = mg > mr + 14 and mg > mb + 4    # planter / foliage
+            is_dark = br < cutoff
+            if is_dark or is_green:
                 blocked.append([tx, ty])
     return blocked
 
@@ -132,15 +165,29 @@ def _bfs(grid, sx, sy):
 
 
 def _required_anchors(floor_json):
-    """Tiles that MUST stay reachable: spawn + every zone anchor + stair tiles."""
-    out = []
-    out.append(tuple(floor_json["spawn"]))
-    for z in floor_json.get("zones", []):
-        for a in z.get("anchors", []):
-            out.append((a[0], a[1]))
+    """Tiles that MUST stay reachable. Doors and stairs are surgical
+    portals — never severed. Spawn must be reachable. For each zone,
+    at least ONE anchor must be reachable (not all) — relaxed from the
+    previous "all anchors" rule so an anchor that lands on a visible
+    table can be blocked without breaking room connectivity. The
+    snap-to-walkable step then moves the affected bot desks to the
+    nearest real chair."""
+    out = [tuple(floor_json["spawn"])]
     for s in floor_json.get("stairs", []):
         out.append(tuple(s["tile"]))
+    for d in floor_json.get("doors", []):
+        out.append(tuple(d["tile"]))
+    # NOTE: zone-anchor reachability is enforced in a softer way below.
     return list(set(out))
+
+
+def _zone_anchor_groups(floor_json):
+    """Per zone, the list of anchor tiles (any one must remain reachable)."""
+    return [
+        [tuple(a) for a in z.get("anchors", [])]
+        for z in floor_json.get("zones", [])
+        if z.get("anchors")
+    ]
 
 
 def write_obstacles_overlay():
@@ -158,11 +205,9 @@ def write_obstacles_overlay():
         grid = _build_grid_from_floor_json(floor_json_path)
         candidates = derive_obstacles(floor_png, grid)
         spawn = tuple(floor_json["spawn"])
-        anchors = _required_anchors(floor_json)
+        hard_required = _required_anchors(floor_json)        # spawn + doors + stairs
+        zone_groups = _zone_anchor_groups(floor_json)        # per-zone anchor lists
 
-        # Sort candidates by distance from corridors first (try blocking
-        # cells far from spawn first; saves a lot of breakage).
-        # Simple heuristic: keep input order — they're scanned row-by-row.
         accepted = []
         rejected = 0
         for tx, ty in candidates:
@@ -170,7 +215,15 @@ def write_obstacles_overlay():
             saved = grid[idx]
             grid[idx] = '#'
             reach = _bfs(grid, spawn[0], spawn[1])
-            if all(a in reach for a in anchors):
+            # Hard rule: spawn + doors + stairs must always be reachable.
+            ok = all(a in reach for a in hard_required)
+            # Soft rule: at least ONE anchor per zone must be reachable.
+            if ok:
+                for group in zone_groups:
+                    if not any(a in reach for a in group):
+                        ok = False
+                        break
+            if ok:
                 accepted.append([tx, ty])
             else:
                 grid[idx] = saved
@@ -224,6 +277,96 @@ def alpha_key_individual_frames():
                 print(f"  ERR {sub.name}/{f.name}: {e}")
 
 
+WALKABLE_ANCHOR_CHARS = set('.ScptpkgELIFB')
+
+
+def _grid_with_overlay(floor_n: int):
+    """Reproduce world.js's tile construction WITH the overlay applied —
+    same view the runtime uses for collision."""
+    floor = json.loads((DATA_DIR / f"floor{floor_n}.json").read_text(encoding="utf-8"))
+    arr = ['.'] * (TILE_W * TILE_H)
+    for ob in floor.get("obstacles", []):
+        x, y, w, h, ch = ob
+        for yy in range(y, y + h):
+            for xx in range(x, x + w):
+                if 0 <= xx < TILE_W and 0 <= yy < TILE_H:
+                    arr[yy * TILE_W + xx] = ch
+    for x in range(TILE_W):
+        arr[x] = '#'; arr[(TILE_H - 1) * TILE_W + x] = '#'
+    for y in range(TILE_H):
+        arr[y * TILE_W] = '#'; arr[y * TILE_W + TILE_W - 1] = '#'
+    overlay_path = DATA_DIR / f"floor{floor_n}_overlay.json"
+    if overlay_path.exists():
+        overlay = json.loads(overlay_path.read_text(encoding="utf-8"))
+        for tx, ty in overlay.get("blocked", []):
+            if 0 <= tx < TILE_W and 0 <= ty < TILE_H and arr[ty * TILE_W + tx] in WALKABLE_ANCHOR_CHARS:
+                arr[ty * TILE_W + tx] = '#'
+    return floor, arr
+
+
+def _nearest_reachable(grid, cx: int, cy: int, reach_set: set, max_radius: int = 10):
+    """Find the nearest tile to (cx, cy) that's both walkable AND reachable
+    from the spawn (per the precomputed reach_set). Avoids snapping into
+    walkable islands cut off by furniture."""
+    if 0 <= cx < TILE_W and 0 <= cy < TILE_H:
+        if (cx, cy) in reach_set:
+            return (cx, cy)
+    for r in range(1, max_radius + 1):
+        for dy in range(-r, r + 1):
+            for dx in range(-r, r + 1):
+                if max(abs(dx), abs(dy)) != r:
+                    continue
+                nx, ny = cx + dx, cy + dy
+                if (nx, ny) in reach_set:
+                    return (nx, ny)
+    return None
+
+
+def snap_bot_desks_and_anchors():
+    """For every bot desk and zone anchor, if the tile is blocked OR is
+    only walkable inside an island disconnected from the spawn, move it
+    to the nearest tile that's REACHABLE from spawn. Doors stay where
+    they are (surgical entry points)."""
+    bots_path = DATA_DIR / "bots.json"
+    bots_doc = json.loads(bots_path.read_text(encoding="utf-8"))
+
+    # Build per-floor grids + per-floor reach-from-spawn sets once.
+    floors = {n: _grid_with_overlay(n) for n in (1, 2, 3)}
+    reach_sets = {}
+    for n, (floor, grid) in floors.items():
+        sx, sy = floor["spawn"]
+        reach_sets[n] = _bfs(grid, sx, sy)
+
+    n_bot_moves = 0
+    for bot in bots_doc.get("bots", []):
+        f = bot["desk"]["floor"]
+        x, y = bot["desk"]["tile"]
+        snapped = _nearest_reachable(floors[f][1], x, y, reach_sets[f], max_radius=12)
+        if snapped and (snapped[0], snapped[1]) != (x, y):
+            print(f"  bot {bot['id']:18s} L{f}: desk ({x},{y}) -> ({snapped[0]},{snapped[1]})")
+            bot["desk"]["tile"] = list(snapped)
+            n_bot_moves += 1
+    bots_path.write_text(json.dumps(bots_doc, indent=2), encoding="utf-8")
+    print(f"  moved {n_bot_moves} bot desks to nearest reachable tile")
+
+    n_anchor_moves = 0
+    for f in (1, 2, 3):
+        floor_path = DATA_DIR / f"floor{f}.json"
+        floor, grid = floors[f]
+        for zone in floor.get("zones", []):
+            new_anchors = []
+            for a in zone.get("anchors", []):
+                snap = _nearest_reachable(grid, a[0], a[1], reach_sets[f], max_radius=8)
+                if snap and (snap[0], snap[1]) != (a[0], a[1]):
+                    new_anchors.append([snap[0], snap[1]])
+                    n_anchor_moves += 1
+                else:
+                    new_anchors.append(a)
+            zone["anchors"] = new_anchors
+        floor_path.write_text(json.dumps(floor, indent=2), encoding="utf-8")
+    print(f"  moved {n_anchor_moves} zone anchors to nearest reachable tile")
+
+
 def main():
     print("[sprites] alpha-keying multi-bot grid sheets...")
     for n in (1, 2, 3, 4, 5):
@@ -247,6 +390,8 @@ def main():
     alpha_key_individual_frames()
     print("\n[floors] deriving obstacle overlays from PNGs...")
     write_obstacles_overlay()
+    print("\n[snap] repositioning bot desks + zone anchors to nearest walkable tile...")
+    snap_bot_desks_and_anchors()
 
 
 if __name__ == "__main__":
