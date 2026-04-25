@@ -127,9 +127,41 @@ OFFICE.bots.find(b => b.id === 'ceo')      // inspect a bot
 OFFICE.live.setMode('demo')                // force demo mode
 ```
 
+## Asset pre-processing
+
+Before deploying, run:
+
+```
+python preprocess_assets.py
+```
+
+This produces, for each of the 5 sheets and 3 floors:
+
+1. `assets/sprites/sheet_N_alpha.png` — the source sheet with **near-white pixels alpha-keyed to transparent** (R, G, B all ≥ 235 → α=0; with a 6-pixel feather for clean silhouette edges). The runtime prefers `*_alpha.png` and falls back to the original `*.png` if the preprocessed file isn't there.
+2. `data/floorN_overlay.json` — a list of **PNG-derived blocked tiles** (cells that visibly contain dark furniture/walls). The script samples each 64×40 grid cell against the floor PNG: a tile is added to the overlay only if mean brightness < 95 AND ≥ 62% of its pixels are dark. A connectivity check rejects any candidate that would sever a required anchor from the spawn — so the overlay can't break navigation. Typical run: ~700–1000 extra blocks accepted per floor, 20–60 rejected. The runtime applies the overlay on top of the hand-mapped obstacles.
+
+Re-run `preprocess_assets.py` whenever you swap a floor PNG or sprite sheet.
+
+## Walk-cycle animation — current state and upgrade path
+
+**v1 (shipping now):** each bot has 8 directional cells (stand-L/R/U/D + walk-L/R/U/D). The renderer alternates between the stand and walk frame for the bot's current facing every 220 ms, plus a procedural vertical sin-bob at 4 Hz with a 3-px amplitude. With single-frame walk poses, that bob is what reads as "stepping". Drop shadow stays planted on the ground while the body lifts.
+
+**v2 — multi-frame walk cycle** (recommended next step):
+The `animated_office_bots/Bridge_<bot>_bot/` folders contain many alternative renders per character (`001_*.png`, `002_*.png`, …) with subtle pose variations. To turn those into a real walk cycle:
+
+1. Pick **2–4 walk poses per direction per bot** that cycle naturally (foot-forward → mid-step → foot-back → mid-step). Save each pose at the same canvas size and aligned origin (head and feet at consistent positions).
+2. Lay them out as a wider sprite sheet — e.g., 32 cols (4 frames × 8 directions) × N character rows.
+3. Update `js/sprites.js`:
+   - Add a `frames_per_dir` constant (4)
+   - `frame()` takes an extra `phase` arg → `col = FRAME_COL[dir] + phase`
+   - The renderer cycles `phase = floor(now / FRAME_MS) % FRAMES_PER_DIR` while walking
+4. Drop the procedural bob (real frames carry the motion now) — keep it as a fallback when frame count = 1.
+
+**v3 — per-bot character sheets:** the multi-bot grid is a compromise. Per-bot sheets let each character have its own pose-frame count, transition timing, and idle animations (head-look, blink, typing-at-desk). Update `bots.json` to point each bot at `assets/sprites/<bot_id>_walk.png` instead of a shared sheet, and adjust `sprites.js` to look up by bot id rather than sheet+row.
+
 ## Known compromises in v1
 
 - **Sprite-sheet row mapping is a guess** — I assigned `row` indexes per bot without ground truth. If a bot looks "wrong" (e.g., CEO showing the writer character), edit `row` in `bots.json` until the visual matches.
-- **Tile maps are approximations** — the 64×40 tile grid is hand-aligned to the floor PNG by eye; furniture-pixel collisions on the actual artwork won't be exact. Nothing's "inside a wall" in the navigation graph but a sprite may visually overlap a desk corner by a few pixels.
-- **Sprite scale fixed at 56 px** — looks right at a 1280×800 canvas; will appear smaller on a 4K monitor (canvas auto-scales but sprites stay 56 px logical).
+- **Hand-mapped tile maps + PNG-derived overlay** combined still won't be pixel-perfect against every furniture corner. Press `g` to overlay the navigation graph and see exactly which tiles the engine considers walkable; tweak `build_floors.py` or the overlay thresholds in `preprocess_assets.py` as needed.
+- **Sprite scale fixed at 38 px** (down from 56 in the first pass) — small enough not to swamp furniture, large enough to read facial details. Tune `SPRITE_DRAW_W/H` in `renderer.js` if you want them larger.
 - **Demo cadence not weekend-aware** — Mon/Tue weekly events don't fire if the wall clock isn't on those days.

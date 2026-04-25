@@ -22,7 +22,7 @@ const ANCHOR_CHARS = new Set(['S','c','t','p','k','g','E','L','I','F','B']);
 const WALKABLE_CHARS = new Set(['.','D','U','N','S','c','t','p','k','g','E','L','I','F','B']);
 
 export class Floor {
-  constructor(json) {
+  constructor(json, overlay = null) {
     this.id = json.id;
     this.name = json.name;
     this.zones = json.zones || [];
@@ -44,6 +44,18 @@ export class Floor {
     // Outer walls always.
     for (let x = 0; x < TILE_W; x++) { arr[x] = '#'; arr[(TILE_H-1)*TILE_W + x] = '#'; }
     for (let y = 0; y < TILE_H; y++) { arr[y*TILE_W] = '#'; arr[y*TILE_W + TILE_W-1] = '#'; }
+    // PNG-derived collision overlay: connectivity-preserving extra blocks
+    // sampled from the floor PNG by preprocess_assets.py. Only stamps over
+    // already-walkable cells; anchors/doors/stairs are excluded at preprocess
+    // time. Significantly reduces visible "bot inside table" cases.
+    if (overlay && Array.isArray(overlay.blocked)) {
+      for (const [tx, ty] of overlay.blocked) {
+        if (tx >= 0 && ty >= 0 && tx < TILE_W && ty < TILE_H) {
+          const i = ty * TILE_W + tx;
+          if (arr[i] === '.') arr[i] = '#';
+        }
+      }
+    }
     this.tiles = arr.join('');
   }
 
@@ -94,10 +106,16 @@ export async function loadFloors() {
       const r = await fetch(`data/floor${id}.json`);
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const json = await r.json();
-      floors[id] = new Floor(json);
+      // Optional overlay; absence is fine — collision falls back to hand-mapped only.
+      let overlay = null;
+      try {
+        const ovR = await fetch(`data/floor${id}_overlay.json`);
+        if (ovR.ok) overlay = await ovR.json();
+      } catch {}
+      floors[id] = new Floor(json, overlay);
     } catch (e) {
       console.error(`[world] failed to load floor ${id}:`, e);
-      floors[id] = new Floor({ id, name: `Level ${id}`, tiles: '.'.repeat(TILE_W*TILE_H) });
+      floors[id] = new Floor({ id, name: `Level ${id}` });
     }
   }
   return floors;

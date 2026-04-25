@@ -10,9 +10,11 @@
 import { TILE_W, TILE_H } from './world.js';
 import { standFrameName, walkFrameName, CELL_W, CELL_H } from './sprites.js';
 
-const SPRITE_DRAW_W = 56;       // px on canvas (chibi scale)
-const SPRITE_DRAW_H = 56;
+const SPRITE_DRAW_W = 38;       // px on canvas (chibi scale — small enough not to swamp furniture)
+const SPRITE_DRAW_H = 38;
 const WALK_FRAME_MS = 220;      // alternate stand/walk every ~220ms while walking
+const WALK_BOB_AMP = 3;         // px vertical bob amplitude when walking
+const WALK_BOB_HZ = 4.0;        // bobs per second
 
 export class Renderer {
   constructor(canvas, floors, sprites, scheduler, bots) {
@@ -158,13 +160,18 @@ export class Renderer {
     const f = this.sprites.frame(bot.sheet, bot.row, dirName);
     const dw = SPRITE_DRAW_W * this.dpr;
     const dh = SPRITE_DRAW_H * this.dpr;
+    // Walk bob: subtle vertical sin-wave while walking so even with a single
+    // stand/walk frame pair the motion reads as actual locomotion.
+    const bob = bot.state === 'walking'
+      ? -Math.abs(Math.sin(now * 0.001 * Math.PI * WALK_BOB_HZ)) * WALK_BOB_AMP * this.dpr
+      : 0;
     const dx = px - dw/2;
-    const dy = py - dh + 6 * this.dpr;     // anchor feet near tile center
+    const dy = py - dh + 4 * this.dpr + bob;     // anchor feet near tile center
 
-    // Drop shadow.
-    ctx.fillStyle = 'rgba(0,0,0,0.25)';
+    // Drop shadow stays put on the ground while the body bobs above it.
+    ctx.fillStyle = 'rgba(0,0,0,0.30)';
     ctx.beginPath();
-    ctx.ellipse(px, py + 4 * this.dpr, dw*0.28, dh*0.08, 0, 0, Math.PI*2);
+    ctx.ellipse(px, py + 3 * this.dpr, dw*0.30, dh*0.08, 0, 0, Math.PI*2);
     ctx.fill();
 
     // Active-workflow halo.

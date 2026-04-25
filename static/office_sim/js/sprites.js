@@ -9,7 +9,17 @@ export const SHEET_COLS = 8;
 export const SHEET_ROWS = 8;
 export const CELL_W = 192;
 export const CELL_H = 128;
+// Use the alpha-keyed (white-background-removed) versions produced by
+// preprocess_assets.py. Falls back to the originals if the alpha versions
+// aren't present yet.
 const SHEET_PATHS = {
+  sheet_1: 'assets/sprites/sheet_1_alpha.png',
+  sheet_2: 'assets/sprites/sheet_2_alpha.png',
+  sheet_3: 'assets/sprites/sheet_3_alpha.png',
+  sheet_4: 'assets/sprites/sheet_4_alpha.png',
+  sheet_5: 'assets/sprites/sheet_5_alpha.png',
+};
+const SHEET_FALLBACK = {
   sheet_1: 'assets/sprites/sheet_1.png',
   sheet_2: 'assets/sprites/sheet_2.png',
   sheet_3: 'assets/sprites/sheet_3.png',
@@ -40,8 +50,21 @@ export class SpriteCache {
       const img = new Image();
       img.onload = () => { this.images[name] = img; resolve(); };
       img.onerror = () => {
-        console.warn(`[sprites] failed to load ${path} — using placeholder`);
-        resolve();
+        // Fall back to the original (non-alpha) sheet if the preprocessed
+        // version isn't in the deploy yet.
+        const fb = SHEET_FALLBACK[name];
+        if (fb && fb !== path) {
+          const fbImg = new Image();
+          fbImg.onload = () => { this.images[name] = fbImg; resolve(); };
+          fbImg.onerror = () => {
+            console.warn(`[sprites] failed to load ${name} — using placeholder`);
+            resolve();
+          };
+          fbImg.src = fb;
+        } else {
+          console.warn(`[sprites] failed to load ${path} — using placeholder`);
+          resolve();
+        }
       };
       img.src = path;
     });
