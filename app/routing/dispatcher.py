@@ -1273,7 +1273,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
             pass  # Fall through to normal routing on any failure
 
     # ── 1. Safe word guard ────────────────────────────────────────────────────
-    authorized, block_reason = check_authorization(message)
+    authorized, block_reason = check_authorization(message, session_id=session_id)
     if not authorized:
         return _build_extended_result({
             "model_used": "SECURITY",

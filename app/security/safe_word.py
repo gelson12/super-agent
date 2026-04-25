@@ -7,7 +7,15 @@ in the request message.
 
 The safe word is stored in the OWNER_SAFE_WORD environment variable.
 Default: alpha0  (change via Railway env var — do NOT commit the real word).
+
+Session whitelist: pre-trusted session IDs (e.g., the Bridge executive
+super-agent bots, whose system prompts legitimately describe destructive
+operations they never request) can bypass the guard. The default pattern
+matches `bridge-<bot>-<timestamp>` session IDs emitted by
+super-agent/scripts/_bridge_bot_skeleton.py. Additional patterns may be
+added via the SAFE_WORD_SESSION_WHITELIST env var (comma-separated regex).
 """
+import os
 import re
 import logging
 import unicodedata
@@ -118,18 +126,66 @@ def _detect_operation_type(message: str) -> str:
     return "critical system operation"
 
 
-def check_authorization(message: str) -> tuple[bool, str]:
+# ── Session-ID whitelist (pre-trusted sessions skip the guard) ───────────────
+# Bridge executive super-agent bots use session IDs of the form
+# `bridge-<bot>-<YYYYMMDD-HHmm>` (see super-agent/scripts/_bridge_bot_skeleton.py
+# code_assemble_prompt). Their system prompts legitimately describe destructive
+# operations (Cleaner -> "delete demo websites", CSO -> "credentials may be
+# exposed") which would otherwise trigger the safe-word block. They never
+# actually request execution of those operations — the workflow's risk-tagged
+# action dispatcher gates that separately.
+_DEFAULT_WHITELIST_PATTERNS = [
+    r"^bridge-(researcher|chief_of_staff|cso|ceo|cleaner)-",
+]
+
+
+def _build_whitelist() -> list[re.Pattern]:
+    """Compile the default whitelist plus any patterns from SAFE_WORD_SESSION_WHITELIST."""
+    extra = os.environ.get("SAFE_WORD_SESSION_WHITELIST", "").strip()
+    patterns = list(_DEFAULT_WHITELIST_PATTERNS)
+    if extra:
+        patterns.extend(p.strip() for p in extra.split(",") if p.strip())
+    compiled = []
+    for p in patterns:
+        try:
+            compiled.append(re.compile(p))
+        except re.error as e:
+            _log.warning("Skipping invalid SAFE_WORD_SESSION_WHITELIST pattern %r: %s", p, e)
+    return compiled
+
+
+_WHITELIST_COMPILED = _build_whitelist()
+
+
+def is_whitelisted_session(session_id: str | None) -> bool:
+    """Return True if the session_id matches any whitelist pattern."""
+    if not session_id:
+        return False
+    return any(pat.search(session_id) for pat in _WHITELIST_COMPILED)
+
+
+def check_authorization(message: str, session_id: str | None = None) -> tuple[bool, str]:
     """
     Check whether the message is authorized for critical operations.
 
+    Args:
+        message:    the user's input.
+        session_id: optional session identifier; sessions matching the
+                    whitelist (Bridge executive bots, plus any patterns
+                    in SAFE_WORD_SESSION_WHITELIST) bypass the guard.
+
     Returns:
-        (True, "")       — request is safe OR owner safe word is present
+        (True, "")       — request is safe, owner safe word is present,
+                           OR session is pre-trusted
         (False, reason)  — request is critical and safe word is missing
     """
     if not is_critical_request(message):
         return True, ""
 
     if has_safe_word(message):
+        return True, ""
+
+    if is_whitelisted_session(session_id):
         return True, ""
 
     op_type = _detect_operation_type(message)

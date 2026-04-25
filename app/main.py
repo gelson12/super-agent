@@ -1557,7 +1557,7 @@ def chat(req: ChatRequest, request: Request):
     # and are never persisted to session history.
     try:
         from .security.safe_word import check_authorization as _check_auth
-        _authorized, _block_reason = _check_auth(req.message)
+        _authorized, _block_reason = _check_auth(req.message, session_id=req.session_id)
         if not _authorized:
             result = {
                 "model_used": "SECURITY",
@@ -1640,7 +1640,7 @@ def chat_stream(req: ChatRequest, request: Request):
     # ── Safe word guard (stream endpoint) ────────────────────────────────────
     try:
         from .security.safe_word import check_authorization as _sw_check
-        _sw_ok, _sw_reason = _sw_check(req.message)
+        _sw_ok, _sw_reason = _sw_check(req.message, session_id=req.session_id)
         if not _sw_ok:
             def _blocked_stream():
                 import json as _json
