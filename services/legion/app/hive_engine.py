@@ -11,6 +11,7 @@ from app import circuit, db
 from app.agents.base import run_with_deadline
 from app.beacon import primary_healthy
 from app.config_loader import load_config
+from app.memory_client import augment_query
 from app.models import AgentResponse, RespondRequest, RespondResponse
 from app.rank import AgentProfile, pick_winner
 from app.suitability import classify, shortlist
@@ -73,12 +74,17 @@ async def run_round(req: RespondRequest, agents: dict[str, object]) -> RespondRe
     if not entered:
         raise LegionExhausted(f"all_shortlisted_agents_circuit_open:{skipped_open}")
 
+    # Pull shared-memory context from super-agent and prepend to the query
+    # so every hive agent (CLI or API) sees the same KB inspiring-cat would.
+    # Failure-safe: empty/unreachable memory → original query unchanged.
+    augmented_query = await augment_query(req.query)
+
     deadlines = cfg.hive.deadlines_ms
     tasks: dict[str, asyncio.Task[AgentResponse]] = {}
     for aid in entered:
         agent_deadline = min(deadlines.get(aid, req.deadline_ms), req.deadline_ms)
         tasks[aid] = asyncio.create_task(
-            run_with_deadline(agents[aid], req.query, agent_deadline)
+            run_with_deadline(agents[aid], augmented_query, agent_deadline)
         )
 
     responses: list[AgentResponse] = []

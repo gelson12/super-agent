@@ -10,6 +10,7 @@ from app import __version__, db
 from app.agents.chatgpt import ChatGPTAgent
 from app.agents.claude_b import ClaudeBAgent
 from app.agents.gemini_b import GeminiBAgent
+from app.agents.groq import GroqAgent
 from app.agents.hf import HFAgent
 from app.agents.ollama import OllamaAgent
 from app.auth import require_hmac
@@ -49,6 +50,7 @@ async def lifespan(app: FastAPI):
     _AGENTS["hf"] = HFAgent()
     _AGENTS["claude_b"] = ClaudeBAgent()
     _AGENTS["chatgpt"] = ChatGPTAgent()
+    _AGENTS["groq"] = GroqAgent()
     enabled = [aid for aid, a in _AGENTS.items() if getattr(a, "enabled", False)]
     log.info(
         "legion started: LEGION_ENABLED=%s, registered=%s, enabled=%s",
