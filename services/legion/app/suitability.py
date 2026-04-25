@@ -25,12 +25,35 @@ def _heuristic(query: str, agent_ids: list[str]) -> dict[str, float]:
     ))
     is_chat = len(query) < 200 and not is_code
     scores: dict[str, float] = {}
-    code_agents = ("claude_b", "chatgpt", "groq", "cerebras", "github_models", "openrouter")
-    chat_agents = ("gemini_b", "ollama", "chatgpt", "groq", "cerebras", "github_models", "openrouter")
-    api_general = ("chatgpt", "groq", "cerebras", "github_models", "openrouter")
+    code_agents = (
+        "claude_b", "chatgpt", "groq", "cerebras", "github_models",
+        "openrouter", "mistral", "sambanova", "deepseek",
+    )
+    chat_agents = (
+        "gemini_b", "ollama", "chatgpt", "groq", "cerebras",
+        "github_models", "openrouter", "sambanova", "deepseek",
+    )
+    api_general = (
+        "chatgpt", "groq", "cerebras", "github_models", "openrouter",
+        "mistral", "sambanova", "deepseek",
+    )
     for aid in agent_ids:
         if is_code and aid in code_agents:
-            scores[aid] = 0.80 if aid == "claude_b" else 0.75
+            # Specialists score above the generalist code baseline (0.75):
+            #   claude_b → strongest code agent overall
+            #   mistral  → Codestral is purpose-built for code
+            #   deepseek → R1 reasoning helps for complex multi-step code
+            #   sambanova→ very fast Llama-70B, great for early-termination
+            if aid == "claude_b":
+                scores[aid] = 0.80
+            elif aid == "mistral":
+                scores[aid] = 0.80
+            elif aid == "deepseek":
+                scores[aid] = 0.78
+            elif aid == "sambanova":
+                scores[aid] = 0.77
+            else:
+                scores[aid] = 0.75
         elif is_chat and aid in chat_agents:
             scores[aid] = 0.70
         elif aid in api_general:

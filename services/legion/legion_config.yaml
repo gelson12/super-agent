@@ -17,6 +17,9 @@ hive:
     gemini_b: 25000  # Node CLI cold-starts ~10-16s before first token
     ollama: 4000
     hf: 6000
+    mistral: 8000     # API; Codestral can be slower than chat models
+    sambanova: 4000   # ~500-1000 tok/s — fast like Cerebras
+    deepseek: 30000   # R1 reasoning emits long chain-of-thought; needs headroom
   early_termination:
     confidence_min: 0.85
     latency_fraction_max: 0.4
@@ -40,10 +43,15 @@ circuit:
     gemini_b: 60
     ollama: 15
     hf: 60
+    mistral: 60
+    sambanova: 60
+    deepseek: 120  # R1 quota refills slower — back off longer on burst errors
 
 modality_priors:
   code:
     claude_b: 0.10
     kimi: 0.10
+    mistral: 0.10   # Codestral is the dedicated code specialist
+    deepseek: 0.05  # R1 reasoning helps for complex/multi-step code
   chat:
     gemini_b: 0.10

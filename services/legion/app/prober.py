@@ -32,12 +32,15 @@ from app import db
 from app.agents.cerebras import CerebrasAgent
 from app.agents.chatgpt import ChatGPTAgent
 from app.agents.claude_b import ClaudeBAgent
+from app.agents.deepseek import DeepSeekAgent
 from app.agents.gemini_b import GeminiBAgent
 from app.agents.github_models import GitHubModelsAgent
 from app.agents.groq import GroqAgent
 from app.agents.hf import HFAgent
+from app.agents.mistral import MistralAgent
 from app.agents.ollama import OllamaAgent
 from app.agents.openrouter import OpenRouterAgent
+from app.agents.sambanova import SambaNovaAgent
 from app.redact import install_root_filter
 
 log = logging.getLogger("legion.prober")
@@ -95,6 +98,9 @@ def _build_registry() -> dict[str, object]:
         "openrouter": OpenRouterAgent(),
         "cerebras": CerebrasAgent(),
         "github_models": GitHubModelsAgent(),
+        "mistral": MistralAgent(),
+        "sambanova": SambaNovaAgent(),
+        "deepseek": DeepSeekAgent(),
     }
 
 

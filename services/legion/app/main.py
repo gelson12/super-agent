@@ -10,12 +10,15 @@ from app import __version__, db, quota_state
 from app.agents.cerebras import CerebrasAgent
 from app.agents.chatgpt import ChatGPTAgent
 from app.agents.claude_b import ClaudeBAgent
+from app.agents.deepseek import DeepSeekAgent
 from app.agents.gemini_b import GeminiBAgent
 from app.agents.github_models import GitHubModelsAgent
 from app.agents.groq import GroqAgent
 from app.agents.hf import HFAgent
+from app.agents.mistral import MistralAgent
 from app.agents.ollama import OllamaAgent
 from app.agents.openrouter import OpenRouterAgent
+from app.agents.sambanova import SambaNovaAgent
 from app.auth import require_hmac
 from app.beacon import router as beacon_router
 from app.config import settings
@@ -68,6 +71,9 @@ async def lifespan(app: FastAPI):
     _AGENTS["openrouter"] = OpenRouterAgent()
     _AGENTS["cerebras"] = CerebrasAgent()
     _AGENTS["github_models"] = GitHubModelsAgent()
+    _AGENTS["mistral"] = MistralAgent()
+    _AGENTS["sambanova"] = SambaNovaAgent()
+    _AGENTS["deepseek"] = DeepSeekAgent()
     enabled = [aid for aid, a in _AGENTS.items() if getattr(a, "enabled", False)]
     log.info(
         "legion started: LEGION_ENABLED=%s, registered=%s, enabled=%s",
