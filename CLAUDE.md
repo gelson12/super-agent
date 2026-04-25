@@ -1,5 +1,5 @@
 # Super-Agent — Claude CLI Context
-**Last updated:** 2026-04-24
+**Last updated:** 2026-04-25
 
 This file is auto-loaded by `claude -p` on every invocation inside this repo.
 It gives Claude CLI situational awareness of the system architecture.
@@ -103,7 +103,7 @@ git commit -m "message"
 git push origin master
 ```
 
-**This means:** When asked to modify files, commit, or push — you can do it directly with shell commands in `/workspace/super-agent`. You do NOT need to route through `run_shell_via_cli_worker` — that tool is for when super-agent (a different container) needs to trigger git ops remotely.
+**This means:** When asked to modify files, commit, and push — you can do it directly with shell commands in `/workspace/super-agent`. You do NOT need to route through `run_shell_via_cli_worker` — that tool is for when super-agent (a different container) needs to trigger git ops remotely.
 
 ---
 
@@ -114,7 +114,7 @@ When `CLAUDE_SESSION_TOKEN` expires, recovery runs automatically in this order:
 2. **Railway env var** `CLAUDE_SESSION_TOKEN` — restored by `_try_restore_claude_auth()`
 3. **OAuth refresh_token** — `_try_direct_refresh()` in `cli_auto_login.py` — blocked by Cloudflare from Railway IPs (HTTP 403/405), so this always fails in production
 4. **Browser cookie reuse** — `/workspace/.claude_browser_cookies.json` — saved after every successful Playwright login; if the claude.ai session is still alive (typically days/weeks), the browser skips email/magic-link entirely and goes straight to the consent screen
-5. **Playwright full auto-login** — headless camoufox browser + n8n `Claude-Verification-Monitor` (workflow ID: `jun8CaMnNhux1iEY`, n8n instance: `outstanding-blessing-production-1d4b.up.railway.app`) polls `gelson_m@hotmail.com` Hotmail inbox for magic links and POSTs them to `/webhook/verification-code`
+5. **Playwright full auto-login** — headless camoufox browser + n8n `Claude Verification Code Monitor` (workflow IDs: `jun8CaMnNhux1iEY`, `jxnZZwTqJ7naPKc6`; n8n instance: `outstanding-blessing-production-1d4b.up.railway.app`) polls `gelson_m@hotmail.com` Hotmail inbox for magic links and POSTs them to `/webhook/verification-code`
 
 Watchdog: `pro_cli_watchdog.maybe_recover()` runs every 5 min.
 Recovery time: ~3 min (cookie hit) or ~5–8 min (full Playwright flow).
@@ -143,15 +143,22 @@ The Claude CLI login flow in container/headless mode:
 
 ---
 
-## n8n ACTIVE WORKFLOWS
+## n8n ACTIVE WORKFLOWS (key ones)
 
 | ID | Name | Status |
 |----|------|--------|
-| `jun8CaMnNhux1iEY` | Claude-Verification-Monitor | ACTIVE (Outlook OAuth) |
-| `ke7YzsAmGerVWVVc` | Super-Agent-Health-Monitor | ACTIVE |
+| `jun8CaMnNhux1iEY` | Claude Verification Code Monitor | ACTIVE |
+| `jxnZZwTqJ7naPKc6` | Claude Verification Code Monitor (secondary) | ACTIVE |
+| `ke7YzsAmGerVWVVc` | Super-Agent-Health-Monitor | INACTIVE |
 | `sCHZhoyRgEZUaxtT` | Universal Catch-All | ACTIVE |
-| `yZckxfWsvugSBFZh` | Robust Health Check | ACTIVE |
-| `u0cyS73kZJWNNy8u` | Health Monitor - Fixed | ACTIVE |
+| `yZckxfWsvugSBFZh` | Robust Health Check | INACTIVE |
+| `u0cyS73kZJWNNy8u` | Health Monitor - Fixed | INACTIVE |
+| `nOawPhpTyNjPPiEb` | Secretary — Outlook Email & Calendar Operations | ACTIVE |
+| `N4IBlfTKan8Oq4tQ` | Secretary — Gmail Manager | ACTIVE |
+| `83ZQ9b5xReUaF6Ib` | Chief of Staff — Command Centre | ACTIVE |
+| `14cHr1Y6srSRFQpm` | Claude Inbox Trash Purge | ACTIVE |
+
+*(50 active workflows total on n8n instance)*
 
 ---
 
@@ -169,8 +176,8 @@ The Claude CLI login flow in container/headless mode:
 
 ---
 
-## PENDING ISSUES (as of 2026-04-24)
+## PENDING ISSUES (as of 2026-04-25)
 
-- **Health:** nominal — nightly review found no regressions.
-- **Priorities for tomorrow:** none.
-- **Routing observations:** none observed in last 24h.
+- **Health:** Claude CLI Pro monthly usage limit hit — nightly review failed to generate JSON output. CLI Pro falling back to ANTHROPIC_API_KEY route. Budget alert has a persistent `unsupported operand type(s) for /: 'dict' and 'float'` error in the budget calculator. n8n is healthy (50 active / 29 inactive). DeepSeek balance OK ($9.98).
+- **Priorities for tomorrow:** Reset Claude Pro monthly usage cycle. Fix budget alert calculation bug. Renew CLAUDE_SESSION_TOKEN (expired 342h ago).
+- **Routing observations:** None new observed in last 24h — keyword routing functioning, Gemini fallback working when CLI Pro is down.
