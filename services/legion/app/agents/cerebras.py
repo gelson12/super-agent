@@ -3,8 +3,9 @@ Cerebras agent — fastest free Llama inference on the planet (~2000 tok/s).
 
 OpenAI-compatible endpoint at https://api.cerebras.ai/v1. Free tier with
 generous rate limits, no credit card required. Default model is
-llama-3.3-70b; override with CEREBRAS_MODEL env var. Other free options:
-llama3.1-8b, llama-4-scout-17b-16e-instruct, qwen-3-32b, gpt-oss-120b.
+llama3.1-8b; override with CEREBRAS_MODEL env var. Other free-tier IDs
+(verified 2026-04-25 via /v1/models): gpt-oss-120b, qwen-3-235b-a22b-instruct-2507,
+zai-glm-4.7. Run scripts/probe_cerebras_models.sh to refresh the list.
 """
 from __future__ import annotations
 
@@ -25,7 +26,7 @@ class CerebrasAgent:
     def __init__(self) -> None:
         self.enabled = os.environ.get("CEREBRAS_ENABLED", "false").lower() == "true"
         self.api_key = os.environ.get("CEREBRAS_API_KEY", "")
-        self.model = os.environ.get("CEREBRAS_MODEL", "llama-3.3-70b")
+        self.model = os.environ.get("CEREBRAS_MODEL", "llama3.1-8b")
         self.base_url = os.environ.get("CEREBRAS_BASE_URL", "https://api.cerebras.ai/v1")
 
     async def respond(self, query: str, deadline_ms: int) -> AgentResponse:
