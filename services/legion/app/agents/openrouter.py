@@ -1,16 +1,20 @@
 """
 OpenRouter agent — OpenAI-compatible aggregator with many free models.
 
-Free models on OpenRouter (suffix `:free` does not consume credits):
-  meta-llama/llama-3.1-8b-instruct:free
-  google/gemma-2-9b-it:free
-  mistralai/mistral-7b-instruct:free
-  microsoft/phi-3-mini-128k-instruct:free
-  qwen/qwen-2-7b-instruct:free
-  nous-research/hermes-3-llama-3.1-405b:free   (huge model, free)
+Free models on OpenRouter (suffix `:free` does not consume credits).
+Verified 2026-04-25 via /v1/models — current free roster includes:
+  meta-llama/llama-3.3-70b-instruct:free
+  meta-llama/llama-3.2-3b-instruct:free
+  google/gemma-3-27b-it:free
+  google/gemma-3-12b-it:free
+  openai/gpt-oss-120b:free
+  openai/gpt-oss-20b:free
+  qwen/qwen3-coder:free
+  nousresearch/hermes-3-llama-3.1-405b:free
   ...and several more rotating in/out.
 
-Override the default with OPENROUTER_MODEL env var.
+Override the default with OPENROUTER_MODEL env var. Run
+scripts/probe_openrouter_models.sh inside the container to refresh.
 """
 from __future__ import annotations
 
@@ -32,7 +36,7 @@ class OpenRouterAgent:
         self.enabled = os.environ.get("OPENROUTER_ENABLED", "false").lower() == "true"
         self.api_key = os.environ.get("OPENROUTER_API_KEY", "")
         self.model = os.environ.get(
-            "OPENROUTER_MODEL", "meta-llama/llama-3.1-8b-instruct:free"
+            "OPENROUTER_MODEL", "meta-llama/llama-3.3-70b-instruct:free"
         )
         self.base_url = os.environ.get(
             "OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"
