@@ -144,8 +144,10 @@ def _auto_cache_flush() -> str:
     try:
         from ..cache.response_cache import cache
         before = getattr(cache, "stats", lambda: {})().get("size", "?")
-        cache._cache.clear() if hasattr(cache, "_cache") else None
-        return f"cache flushed (was size={before})"
+        if hasattr(cache, "clear"):
+            cache.clear()
+            return f"cache flushed via .clear() (was size={before})"
+        return f"cache has no .clear() method (was size={before}) — skipped"
     except Exception as e:
         return f"cache flush error: {str(e)[:120]}"
 
