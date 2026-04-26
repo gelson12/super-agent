@@ -220,12 +220,20 @@ def floor2():
                         doors=[(59, 17)], anchors=[(60, 14)], anchor_char="p")
     obs += o; zones.append(z); doors += d
 
-    # Phone booths — centre-left
-    for i, bx in enumerate([26, 30]):
-        o, z, d = make_room(f"phone_l2_{i}", "phone_booths", x=bx, y=11, w=3, h=5,
+    # Phone booths — centre-left.
+    # User feedback: bots were walking through the booth area. Tighten:
+    # widen the booths to 4 tiles each and add solid wall segments
+    # between/around them so bots can't slip past.
+    for i, bx in enumerate([24, 29]):
+        o, z, d = make_room(f"phone_l2_{i}", "phone_booths", x=bx, y=10, w=4, h=6,
                             doors=[(bx + 1, 15)], anchors=[(bx + 1, 13)],
                             anchor_char="p")
         obs += o; zones.append(z); doors += d
+    # Solid wall connecting the two booths so the gap between is blocked
+    obs.append([28, 10, 1, 6, "#"])
+    # Buffer wall on the south face of the booth pair — bots walk around
+    obs.append([24, 16, 9, 1, "#"])
+    obs.append([30, 15, 1, 1, "."])      # carve a passage tile
 
     # Focus + coffee — centre-right (the dark counter with kitchenware)
     obs.append([40, 14, 16, 2, "#"])    # counter
@@ -259,10 +267,19 @@ def floor2():
         obs += o; zones.append(z)
 
     # Stairs: up to L3 (east, top half) + down to L1 (east, bottom half)
+    # User feedback: bots were walking through the stair-landing area near
+    # the restrooms (east edge). Add a solid wall column at x=61 between
+    # the restroom block and the stairs so bots only enter via the proper
+    # stair tiles. The opening is at the stair entry point only.
     for sy in range(2, 22):
         obs.append([62, sy, 1, 1, "U"])
+        # Buffer wall west of the up-stairs except at the entry tile
+        if sy != 10:
+            obs.append([61, sy, 1, 1, "#"])
     for sy in range(22, 38):
         obs.append([62, sy, 1, 1, "N"])
+        if sy != 30:
+            obs.append([61, sy, 1, 1, "#"])
     zones.append({"id": "stairs_l2_up", "type": "stairs",
                   "bounds": [62, 2, 1, 20], "anchors": [[62, 10]]})
     zones.append({"id": "stairs_l2_down", "type": "stairs",
@@ -396,15 +413,31 @@ def floor3():
                             anchor_char="p")
         obs += o; zones.append(z); doors += d
 
-    # Balcony — south strip
+    # Balcony — south strip.
+    # User feedback: cyan arrows showed bots cutting across the bottom
+    # row through plants/balcony rail. Add a solid wall along y=37 to
+    # separate the desk-cluster band from the balcony, with anchor-only
+    # entry tiles at the four anchor positions.
+    for x in range(2, 62):
+        if x not in (10, 24, 38, 52):           # anchor tiles stay walkable
+            obs.append([x, 37, 1, 1, "#"])
     obs += stamp_anchors("B", [(10, 38), (24, 38), (38, 38), (52, 38)])
     zones.append({"id": "balcony_l3", "type": "balcony",
                   "bounds": [2, 38, 60, 2],
                   "anchors": [[10, 38], [24, 38], [38, 38], [52, 38]]})
 
-    # Stairs down to L2 — east edge
-    for sy in range(10, 26):
-        obs.append([62, sy, 1, 1, "N"])
+    # Stairs down to L2 — east edge.
+    # User feedback: cyan arrows showed bots clipping through the stair
+    # railing both above and below the stair landing. Wall off x=61 for
+    # the full vertical span except at the entry tile.
+    for sy in range(2, 38):
+        if 10 <= sy < 26:
+            obs.append([62, sy, 1, 1, "N"])
+            if sy != 18:
+                obs.append([61, sy, 1, 1, "#"])
+        else:
+            obs.append([62, sy, 1, 1, "#"])
+            obs.append([61, sy, 1, 1, "#"])
     zones.append({"id": "stairs_l3", "type": "stairs",
                   "bounds": [62, 10, 1, 16], "anchors": [[62, 18]]})
 

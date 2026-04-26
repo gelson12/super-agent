@@ -388,11 +388,14 @@ def main():
         print("  no per-bot strips dir — skipping")
     print("\n[sprites] alpha-keying individual frame PNGs in bots/<folder>/...")
     alpha_key_individual_frames()
-    # PNG-overlay generation is DISABLED. Floor data is now ground-truth
-    # in floor[1-3].json (see build_floors_v2.py). To re-enable, swap in
-    # `write_obstacles_overlay()` and uncomment the world.js loader.
-    #
-    # write_obstacles_overlay()
+    # PNG-overlay re-enabled as a SAFETY NET on top of the hand-mapped
+    # floor[1-3].json. Hand-mapped data is authoritative for doors,
+    # stairs, zone bounds and anchors; the overlay only ADDS blocks where
+    # the PNG shows dark furniture that my tile estimates missed.
+    # Connectivity check ensures doors/stairs/at-least-one-anchor stay
+    # reachable from spawn so corridors aren't accidentally severed.
+    print("\n[floors] deriving PNG-overlay safety net...")
+    write_obstacles_overlay()
 
     print("\n[snap] repositioning bot desks + zone anchors to nearest walkable tile...")
     snap_bot_desks_and_anchors()
