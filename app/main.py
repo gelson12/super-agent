@@ -693,7 +693,13 @@ async def _lifespan(app: FastAPI):
                 _budget_alerted_pcts = set()
                 _budget_alert_job._last_day = today  # type: ignore[attr-defined]
             spend = _spend_summary()
-            daily   = spend.get("today", 0) or 0
+            # spend["today"] is a dict from cost_ledger.get_spend(24) — extract the scalar.
+            today_block = spend.get("today") or {}
+            daily = (
+                today_block.get("total_usd", 0)
+                if isinstance(today_block, dict)
+                else float(today_block or 0)
+            )
             budget  = spend.get("budget_usd_daily", 5.0) or 5.0
             pct_used = (daily / budget * 100) if budget > 0 else 0
             for threshold in (50, 80, 100):
@@ -736,7 +742,13 @@ async def _lifespan(app: FastAPI):
             mdist   = summary.get("model_distribution", {})
             errs    = summary.get("error_count", 0)
             err_pct = summary.get("error_rate_pct", 0)
-            today_usd = spend.get("today", 0) or 0
+            # spend["today"] / spend["last_7_days"] are dicts from cost_ledger.get_spend.
+            def _scalar(block):
+                if isinstance(block, dict):
+                    return block.get("total_usd", 0) or 0
+                return float(block or 0)
+            today_usd = _scalar(spend.get("today"))
+            week_usd  = _scalar(spend.get("last_7_days"))
             budget    = spend.get("budget_usd_daily", 5.0) or 5.0
             try:
                 from .learning.intelligence_score import get_stats as _get_xp
@@ -761,7 +773,7 @@ async def _lifespan(app: FastAPI):
                 f"{xp_line}\n\n"
                 f"── Cost ─────────────────────────────────────\n"
                 f"  Today: ${today_usd:.4f} / ${budget:.2f} budget\n"
-                f"  7-day total: ${spend.get('last_7_days', 0):.4f}\n\n"
+                f"  7-day total: ${week_usd:.4f}\n\n"
                 f"── Links ────────────────────────────────────\n"
                 f"  Agents:  https://super-agent-production.up.railway.app/agents\n"
                 f"  Observe: https://super-agent-production.up.railway.app/observability\n"
