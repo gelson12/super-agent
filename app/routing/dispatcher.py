@@ -180,6 +180,60 @@ _HANDLERS = {
     "GITHUB":   run_github_agent,
 }
 
+
+def _is_error_response(resp) -> bool:
+    """A handler's response is treated as a failure when it is an empty
+    string, None, or a bracketed error sentinel like '[Claude error: ...]'."""
+    if not resp:
+        return True
+    if not isinstance(resp, str):
+        return False
+    return resp.lstrip().startswith("[")
+
+
+def _cross_provider_fallback(message: str, primary_model: str, primary_response):
+    """When the primary handler fails (CLI in cooloff, Gemini quota, etc.),
+    walk a deterministic cascade so workflows / users always get an answer:
+
+        Gemini-CLI (free)  →  Legion hive (free, multi-agent)
+                           →  Gemini API
+                           →  DeepSeek (cheap)
+                           →  Anthropic Haiku API (last resort)
+
+    Returns (model_used, response). When everything fails, returns the
+    primary's original error so the caller can surface it.
+    """
+    # Gemini-CLI is the cheapest fallback — free tier, ~1500 req/day.
+    try:
+        from ..learning.gemini_cli_worker import ask_gemini_cli
+        gemini_cli_resp = ask_gemini_cli(message)
+        if not _is_error_response(gemini_cli_resp):
+            return ("GEMINI_CLI", gemini_cli_resp)
+    except Exception:
+        pass
+
+    # Legion hive — multi-agent vote across Groq/Cerebras/HF/etc.
+    try:
+        from ..models.claude import _try_legion
+        legion_resp = _try_legion(message)
+        if legion_resp:
+            return ("LEGION", legion_resp)
+    except Exception:
+        pass
+
+    # Paid fallbacks ordered by cost.
+    for alt in ("GEMINI", "DEEPSEEK", "HAIKU"):
+        if alt == primary_model:
+            continue
+        try:
+            alt_resp = _HANDLERS[alt](message)
+            if not _is_error_response(alt_resp):
+                return (alt, alt_resp)
+        except Exception:
+            continue
+
+    return (primary_model, primary_response)
+
 # ── Circuit breaker (in-memory, per-service) ──────────────────────────────────
 # Prevents repeated calls to a service that is clearly down.
 # Opens after _CB_THRESHOLD failures within _CB_WINDOW seconds.
@@ -1325,28 +1379,8 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
         response = _HANDLERS[model](message)
         actual_model = model
 
-        # Cross-provider failsafe: if the forced handler returned an error
-        # string (e.g. Claude CLI in cooloff AND Gemini-CLI down AND no API
-        # key), try Gemini API then Legion so n8n workflows always get a
-        # real answer during the cooloff window. This mirrors the cascade
-        # already inside ask_claude/ask_claude_haiku for the case where
-        # those providers themselves return an error string.
-        if isinstance(response, str) and response.startswith("[") and model != "GITHUB":
-            for _alt in ("GEMINI", "LEGION"):
-                if _alt == actual_model:
-                    continue
-                try:
-                    if _alt == "GEMINI":
-                        _alt_resp = _HANDLERS["GEMINI"](message)
-                    else:
-                        from ..models.claude import _try_legion
-                        _alt_resp = _try_legion(message)
-                    if _alt_resp and not (isinstance(_alt_resp, str) and _alt_resp.startswith("[")):
-                        response = _alt_resp
-                        actual_model = _alt
-                        break
-                except Exception:
-                    continue
+        if model != "GITHUB" and _is_error_response(response):
+            actual_model, response = _cross_provider_fallback(message, model, response)
 
         if actual_model in _CACHEABLE_MODELS:
             cache.set(message, actual_model, response)
@@ -2199,6 +2233,16 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
         response = ask_claude_haiku(augmented_message, system=_system_haiku)
     else:
         response = _HANDLERS[model](augmented_message)
+    # Cross-provider failsafe — if the picked model failed (CLI cooloff,
+    # quota exhaustion, transient outage), walk the cascade so the caller
+    # never gets a [..] error when another provider could have answered.
+    _fellback = False
+    if model != "GITHUB" and _is_error_response(response):
+        _alt_model, _alt_resp = _cross_provider_fallback(augmented_message, model, response)
+        if _alt_model != model:
+            model = _alt_model
+            response = _alt_resp
+            _fellback = True
     _mark_done(_worker_id)
     # If the model returned a structural error, surface it on the avatar immediately
     if _agent_response_is_error(response):
@@ -2218,7 +2262,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
         "cot_used": False, "response": "", "reasoning_model": None,
         "answer_model": None, "trace_length": 0,
     }
-    if complexity >= 4 and routed_by == "classifier":
+    if complexity >= 4 and routed_by == "classifier" and not _fellback:
         # Map model → worker ID for talking line
         _cot_worker_map = {
             "CLAUDE": "Claude CLI Pro", "DEEPSEEK": "DeepSeek",
@@ -2238,7 +2282,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
         "was_reviewed": False, "critic_model": None,
         "critique_was_substantive": False, "critique": None,
     }
-    if complexity >= 4:
+    if complexity >= 4 and not _fellback:
         _peer_worker_map = {
             "CLAUDE": "Claude CLI Pro", "DEEPSEEK": "DeepSeek",
             "GEMINI": "Gemini CLI", "HAIKU": "Anthropic Haiku",
@@ -2259,7 +2303,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
     # Layer 3: Red team (complexity >= 3, confidence_mode enabled)
     # Visualise: internal model challenges the answer, then escalates if flaw found
     rt_result = {"red_team_ran": False, "escalated": False, "red_verdict": None}
-    if complexity >= 3:
+    if complexity >= 3 and not _fellback:
         _mark_talking("Anthropic Haiku", _worker_id)
         rt_result = red_team.challenge(message, response, complexity, session_id)
         _clear_talking("Anthropic Haiku", _worker_id)
