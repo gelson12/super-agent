@@ -268,6 +268,44 @@ export class SpriteCache {
   hasIndividualFrames(botId) {
     return !!this.botFrames[botId];
   }
+
+  // Re-fetch this bot's individual-frame assets after a sprite-editor
+  // upload. Cache-busts via ?v=<ts> so the browser picks up fresh files.
+  async reloadBot(botId) {
+    delete this.botFrames[botId];
+    const v = `?v=${Date.now()}`;
+    const candidates = FOLDER_ALIASES[botId] || [botId];
+    for (const folder of candidates) {
+      const base = `assets/sprites/bots/${folder}`;
+      const frames = {};
+      let any = false;
+      for (const [dir, files] of Object.entries(BOT_DIR_FRAMES)) {
+        const loaded = [];
+        for (const file of files) {
+          try {
+            const img = new Image();
+            img.src = `${base}/${file}${v}`;
+            await img.decode();
+            loaded.push(img);
+          } catch { /* missing — fine */ }
+        }
+        if (loaded.length) { frames[dir] = loaded; any = true; }
+      }
+      if (any) {
+        this.botFrames[botId] = frames;
+        const ref = frames.stand_down?.[0]
+                 || frames.stand_left?.[0]
+                 || frames.stand_right?.[0]
+                 || frames.stand_up?.[0]
+                 || Object.values(frames)[0]?.[0];
+        const refH = ref ? ref.naturalHeight : 170;
+        const refW = ref ? ref.naturalWidth  : 120;
+        this.botFrames[botId]._refScale = { refW, refH };
+        return true;
+      }
+    }
+    return false;
+  }
 }
 
 // Helpers for the renderer.

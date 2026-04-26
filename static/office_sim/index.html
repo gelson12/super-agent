@@ -59,6 +59,45 @@
     <span id="status-bots">bots: 0</span>
   </footer>
 
+  <!-- ─── Sprite editor modal (hidden by default) ───────────────────────── -->
+  <div class="modal-backdrop" id="sprite-modal" hidden>
+    <div class="modal-card" role="dialog" aria-labelledby="sprite-modal-title">
+      <header class="modal-head">
+        <h2 id="sprite-modal-title" class="modal-title">Sprite editor — <span id="sprite-modal-bot">…</span></h2>
+        <button class="modal-close" id="sprite-modal-close" aria-label="Close">×</button>
+      </header>
+      <form id="sprite-modal-form" class="modal-body">
+        <section class="slot-section">
+          <h3 class="slot-section-title">Stand poses</h3>
+          <div class="slot-grid" id="slot-grid-stand"></div>
+        </section>
+        <section class="slot-section">
+          <h3 class="slot-section-title">Walk — Down</h3>
+          <div class="slot-grid" id="slot-grid-walk-down"></div>
+        </section>
+        <section class="slot-section">
+          <h3 class="slot-section-title">Walk — Left</h3>
+          <div class="slot-grid" id="slot-grid-walk-left"></div>
+        </section>
+        <section class="slot-section">
+          <h3 class="slot-section-title">Walk — Right</h3>
+          <div class="slot-grid" id="slot-grid-walk-right"></div>
+        </section>
+        <section class="slot-section">
+          <h3 class="slot-section-title">Walk — Up</h3>
+          <div class="slot-grid" id="slot-grid-walk-up"></div>
+        </section>
+        <footer class="modal-foot">
+          <span class="modal-status" id="sprite-modal-status"></span>
+          <div class="modal-actions">
+            <button type="button" class="btn btn-secondary" id="sprite-modal-cancel">Cancel</button>
+            <button type="submit" class="btn btn-primary" id="sprite-modal-save">Save &amp; Reload</button>
+          </div>
+        </footer>
+      </form>
+    </div>
+  </div>
+
   <script type="module" src="js/main.js"></script>
 </body>
 </html>

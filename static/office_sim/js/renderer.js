@@ -326,6 +326,9 @@ export class HUD {
     this.activityRing = [];
     this.maxActivity = 30;
 
+    // Pluggable: main.js wires this to open the sprite-editor modal.
+    this.onSpriteEdit = null;
+
     // Build bot rows once; update in-place.
     this.botRows = new Map();
     for (const bot of bots) {
@@ -336,13 +339,21 @@ export class HUD {
         <span class="bot-pip idle"></span>
         <span class="bot-name">${bot.name}</span>
         <span class="bot-state">idle</span>
+        <button class="bot-gear" title="Edit ${bot.name}'s sprites" aria-label="Sprite editor">⚙</button>
       `;
-      li.addEventListener('click', () => {
+      // Row body click — focus + camera-follow (existing behaviour).
+      li.addEventListener('click', (e) => {
+        if (e.target.closest('.bot-gear')) return;     // gear handles itself
         renderer.setFocusedBot(bot.id);
         renderer.setActiveFloor(bot.floor);
         renderer.followFocused = true;
         document.querySelectorAll('.bot-row').forEach(el => el.classList.remove('focused'));
         li.classList.add('focused');
+      });
+      // Gear button — open sprite-editor modal for this bot.
+      li.querySelector('.bot-gear').addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (typeof this.onSpriteEdit === 'function') this.onSpriteEdit(bot);
       });
       this.botListEl.appendChild(li);
       this.botRows.set(bot.id, li);
