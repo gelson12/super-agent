@@ -1323,18 +1323,47 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
                 "cache_hit": True,
             }, routing_explanation="Cache hit on forced-model request — served from response cache.")
         response = _HANDLERS[model](message)
-        if model in _CACHEABLE_MODELS:
-            cache.set(message, model, response)
-        insight_log.record(message, model, response, "forced", complexity, session_id)
+        actual_model = model
+
+        # Cross-provider failsafe: if the forced handler returned an error
+        # string (e.g. Claude CLI in cooloff AND Gemini-CLI down AND no API
+        # key), try Gemini API then Legion so n8n workflows always get a
+        # real answer during the cooloff window. This mirrors the cascade
+        # already inside ask_claude/ask_claude_haiku for the case where
+        # those providers themselves return an error string.
+        if isinstance(response, str) and response.startswith("[") and model != "GITHUB":
+            for _alt in ("GEMINI", "LEGION"):
+                if _alt == actual_model:
+                    continue
+                try:
+                    if _alt == "GEMINI":
+                        _alt_resp = _HANDLERS["GEMINI"](message)
+                    else:
+                        from ..models.claude import _try_legion
+                        _alt_resp = _try_legion(message)
+                    if _alt_resp and not (isinstance(_alt_resp, str) and _alt_resp.startswith("[")):
+                        response = _alt_resp
+                        actual_model = _alt
+                        break
+                except Exception:
+                    continue
+
+        if actual_model in _CACHEABLE_MODELS:
+            cache.set(message, actual_model, response)
+        insight_log.record(message, actual_model, response, "forced", complexity, session_id)
         adapter.tick()
-        wisdom_store.record_outcome(model, wisdom_store._detect_category("forced", model), response.startswith("["))
+        wisdom_store.record_outcome(actual_model, wisdom_store._detect_category("forced", actual_model), response.startswith("["))
         return _build_extended_result({
-            "model_used": model,
+            "model_used": actual_model,
             "response": response,
-            "routed_by": "forced",
+            "routed_by": "forced" if actual_model == model else f"forced_fallback_{actual_model.lower()}",
             "complexity": complexity,
             "cache_hit": False,
-        }, routing_explanation=f"Model {model} forced by caller via force_model override (complexity={complexity}).")
+        }, routing_explanation=(
+            f"Model {model} forced by caller via force_model override (complexity={complexity})."
+            if actual_model == model else
+            f"Model {model} forced but unavailable (cooloff/error) — answered by {actual_model} fallback (complexity={complexity})."
+        ))
 
     # ── 3. Trivial bypass ─────────────────────────────────────────────────────
     if detect_trivial(message):
