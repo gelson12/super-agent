@@ -164,11 +164,17 @@ def ask_claude_haiku(prompt: str, system: str = SYSTEM_PROMPT_CLAUDE) -> str:
         if gemini and not gemini.startswith("["):
             return gemini
     except Exception:
-        pass  # Gemini unavailable — fall through to Anthropic API
+        pass  # Gemini unavailable — fall through to Legion next
 
-    # 3. Both CLI and Gemini unavailable — fall back to Anthropic API as last resort
+    # 3. Legion hive (multi-agent fallback — keeps n8n workflows alive during
+    #    Claude CLI cooloff when Gemini is also unavailable).
+    legion = _try_legion(prompt)
+    if legion is not None:
+        return legion
+
+    # 4. Last-resort Anthropic API
     if not settings.anthropic_api_key:
-        return "[Claude unavailable: CLI and Gemini both unreachable, no API key configured]"
+        return "[Claude unavailable: CLI, Gemini, and Legion all unreachable, no API key configured]"
     for _attempt in range(3):
         try:
             _tls.api_used = True
