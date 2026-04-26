@@ -106,9 +106,16 @@ export async function loadFloors() {
       const r = await fetch(`data/floor${id}.json`);
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const json = await r.json();
-      // Floor JSONs are now ground-truth (build_floors_v2.py output).
-      // PNG-overlay generation is disabled in preprocess_assets.py.
-      floors[id] = new Floor(json);
+      // Floor JSON is the ground truth for doors/stairs/zones/anchors.
+      // PNG-overlay (data/floor{id}_overlay.json) is a safety net that
+      // adds blocks where the floor PNG shows furniture I missed in
+      // tile estimates. Absence is fine.
+      let overlay = null;
+      try {
+        const ovR = await fetch(`data/floor${id}_overlay.json`);
+        if (ovR.ok) overlay = await ovR.json();
+      } catch {}
+      floors[id] = new Floor(json, overlay);
     } catch (e) {
       console.error(`[world] failed to load floor ${id}:`, e);
       floors[id] = new Floor({ id, name: `Level ${id}` });
