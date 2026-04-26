@@ -1,5 +1,5 @@
 # Super-Agent — Gemini CLI Context
-**Last updated:** 2026-04-25
+**Last updated:** 2026-04-26
 
 This file is auto-loaded by `gemini --prompt` on every invocation inside this repo.
 It gives Gemini CLI situational awareness of the system architecture.
@@ -110,8 +110,8 @@ cd /workspace/super-agent && git add <files> && git commit -m "msg" && git push 
 
 ---
 
-## PENDING ISSUES (2026-04-25)
+## PENDING ISSUES (2026-04-26)
 
-- **Health:** Claude CLI Pro monthly usage limit hit — nightly review failed to produce JSON. Budget alert has a persistent `unsupported operand type(s) for /: 'dict' and 'float'` error. n8n healthy (50 active / 29 inactive). DeepSeek balance OK ($9.98).
-- **Priorities for tomorrow:** Reset Claude Pro monthly usage. Fix budget alert calculation. Renew CLAUDE_SESSION_TOKEN (expired 342h ago).
-- **Routing observations:** None new in last 24h — keyword routing functioning normally.
+- **Health:** All systems nominal — no incidents flagged by tonight's review.
+- **Priorities for tomorrow:** none
+- **Routing observations:** None new in last 24h — keyword routing functioning, cross-provider fallback verified after today's dispatcher fixes (43dd8d9, 62a79ce).

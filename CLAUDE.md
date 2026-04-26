@@ -1,5 +1,5 @@
 # Super-Agent — Claude CLI Context
-**Last updated:** 2026-04-25
+**Last updated:** 2026-04-26
 
 This file is auto-loaded by `claude -p` on every invocation inside this repo.
 It gives Claude CLI situational awareness of the system architecture.
@@ -176,8 +176,8 @@ The Claude CLI login flow in container/headless mode:
 
 ---
 
-## PENDING ISSUES (as of 2026-04-25)
+## PENDING ISSUES (as of 2026-04-26)
 
-- **Health:** Claude CLI Pro monthly usage limit hit — nightly review failed to generate JSON output. CLI Pro falling back to ANTHROPIC_API_KEY route. Budget alert has a persistent `unsupported operand type(s) for /: 'dict' and 'float'` error in the budget calculator. n8n is healthy (50 active / 29 inactive). DeepSeek balance OK ($9.98).
-- **Priorities for tomorrow:** Reset Claude Pro monthly usage cycle. Fix budget alert calculation bug. Renew CLAUDE_SESSION_TOKEN (expired 342h ago).
-- **Routing observations:** None new observed in last 24h — keyword routing functioning, Gemini fallback working when CLI Pro is down.
+- **Health:** All systems nominal — no incidents flagged by tonight's review.
+- **Priorities for tomorrow:** none
+- **Routing observations:** None new observed in last 24h — keyword routing functioning, cross-provider fallback verified after today's dispatcher fixes (43dd8d9, 62a79ce).
