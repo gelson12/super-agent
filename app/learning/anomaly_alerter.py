@@ -144,8 +144,10 @@ def _auto_cache_flush() -> str:
     try:
         from ..cache.response_cache import cache
         before = getattr(cache, "stats", lambda: {})().get("size", "?")
-        cache._cache.clear() if hasattr(cache, "_cache") else None
-        return f"cache flushed (was size={before})"
+        if hasattr(cache, "clear"):
+            cache.clear()
+            return f"cache flushed via .clear() (was size={before})"
+        return f"cache has no .clear() method (was size={before}) — skipped"
     except Exception as e:
         return f"cache flush error: {str(e)[:120]}"
 
@@ -198,7 +200,10 @@ def check_and_alert(metrics: dict) -> list[str]:
             try:
                 from .cost_ledger import get_spend
                 spend = get_spend(hours=24.0)
-                daily_budget = spend.get("daily_budget_usd", 5.0)
+                # cost_ledger.get_spend returns "budget_usd", not "daily_budget_usd".
+                # Fall back to the misspelled key for any caller that has been
+                # passing the old shape.
+                daily_budget = spend.get("budget_usd") or spend.get("daily_budget_usd", 5.0)
                 total_usd = spend.get("total_usd", 0.0)
                 metrics = dict(metrics)
                 metrics["budget_used_pct"] = round(total_usd / max(daily_budget, 0.01) * 100, 1)
