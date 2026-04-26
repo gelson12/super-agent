@@ -106,13 +106,9 @@ export async function loadFloors() {
       const r = await fetch(`data/floor${id}.json`);
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const json = await r.json();
-      // Optional overlay; absence is fine — collision falls back to hand-mapped only.
-      let overlay = null;
-      try {
-        const ovR = await fetch(`data/floor${id}_overlay.json`);
-        if (ovR.ok) overlay = await ovR.json();
-      } catch {}
-      floors[id] = new Floor(json, overlay);
+      // Floor JSONs are now ground-truth (build_floors_v2.py output).
+      // PNG-overlay generation is disabled in preprocess_assets.py.
+      floors[id] = new Floor(json);
     } catch (e) {
       console.error(`[world] failed to load floor ${id}:`, e);
       floors[id] = new Floor({ id, name: `Level ${id}` });

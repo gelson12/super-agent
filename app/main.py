@@ -2240,6 +2240,46 @@ class BridgeDeleteDemoRequest(BaseModel):
     commit_message: str = Field(default="chore: archive expired demo")
 
 
+# ─── Office sim — per-bot sprite upload ───────────────────────────────────
+@app.post("/api/office_sim/sprites/{bot_id}", tags=["office-sim"])
+async def office_sim_sprite_upload(
+    bot_id: str,
+    stand_down: UploadFile | None = File(default=None),
+    stand_left: UploadFile | None = File(default=None),
+    stand_right: UploadFile | None = File(default=None),
+    stand_up: UploadFile | None = File(default=None),
+    walk_down_1: UploadFile | None = File(default=None),
+    walk_down_2: UploadFile | None = File(default=None),
+    walk_left_1: UploadFile | None = File(default=None),
+    walk_left_2: UploadFile | None = File(default=None),
+    walk_right_1: UploadFile | None = File(default=None),
+    walk_right_2: UploadFile | None = File(default=None),
+    walk_up_1: UploadFile | None = File(default=None),
+    walk_up_2: UploadFile | None = File(default=None),
+):
+    """Save uploaded sprite frames to disk + commit to GitHub.
+
+    Auth: existing X-Token middleware (UI_PASSWORD).
+    Each form field corresponds to one slot in the office_sim sprite editor
+    modal. Missing fields are fine — only the picked files are saved.
+    """
+    from .sprite_upload import process_sprite_upload
+    return await process_sprite_upload(bot_id, {
+        "stand_down":   stand_down,
+        "stand_left":   stand_left,
+        "stand_right":  stand_right,
+        "stand_up":     stand_up,
+        "walk_down_1":  walk_down_1,
+        "walk_down_2":  walk_down_2,
+        "walk_left_1":  walk_left_1,
+        "walk_left_2":  walk_left_2,
+        "walk_right_1": walk_right_1,
+        "walk_right_2": walk_right_2,
+        "walk_up_1":    walk_up_1,
+        "walk_up_2":    walk_up_2,
+    })
+
+
 @app.post("/tools/github_delete_demo", tags=["tools"])
 def github_delete_demo(req: BridgeDeleteDemoRequest):
     """Delete every file under {slug}/ in the demos repo. Used by the 12-hour
