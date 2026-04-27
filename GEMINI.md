@@ -1,5 +1,5 @@
 # Super-Agent — Gemini CLI Context
-**Last updated:** 2026-04-26
+**Last updated:** 2026-04-27
 
 This file is auto-loaded by `gemini --prompt` on every invocation inside this repo.
 It gives Gemini CLI situational awareness of the system architecture.
@@ -80,7 +80,7 @@ Classification categories:
 | `83ZQ9b5xReUaF6Ib` | Chief of Staff — Command Centre | ACTIVE |
 | `14cHr1Y6srSRFQpm` | Claude Inbox Trash Purge | ACTIVE |
 
-*(50 active workflows total on n8n instance)*
+*(56 active workflows total on n8n instance)*
 
 ---
 
@@ -110,8 +110,8 @@ cd /workspace/super-agent && git add <files> && git commit -m "msg" && git push 
 
 ---
 
-## PENDING ISSUES (2026-04-26)
+## PENDING ISSUES (2026-04-27)
 
-- **Health:** All systems nominal — no incidents flagged by tonight's review.
-- **Priorities for tomorrow:** none
-- **Routing observations:** None new in last 24h — keyword routing functioning, cross-provider fallback verified after today's dispatcher fixes (43dd8d9, 62a79ce).
+- **Health:** Claude CLI is DOWN (last check 22:53 UTC). n8n healthy — 56 active, 29 inactive, 0 recent failures. DeepSeek balance OK ($9.18). Gemini CLI also failing with "not running in a trusted directory" error — the trust workspace config needs attention.
+- **Priorities for tomorrow:** Investigate Claude CLI recovery — both Claude Pro and Gemini CLI failed during nightly review. Fix Gemini CLI trust directory issue — the `GEMINI_CLI_TRUST_WORKSPACE=true` env var may need to be set or the workspace directory needs explicit trust configuration in headless mode.
+- **Routing observations:** Both Tier 2 (Claude CLI Pro) and Tier 3 (Gemini CLI) were unavailable during nightly review. Cascade fell through to DeepSeek LangGraph for tool-calling. Cross-provider fallback works but performance degrades when both subscription CLIs are down simultaneously.
