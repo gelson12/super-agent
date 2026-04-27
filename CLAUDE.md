@@ -1,5 +1,5 @@
 # Super-Agent — Claude CLI Context
-**Last updated:** 2026-04-26
+**Last updated:** 2026-04-27
 
 This file is auto-loaded by `claude -p` on every invocation inside this repo.
 It gives Claude CLI situational awareness of the system architecture.
@@ -158,7 +158,7 @@ The Claude CLI login flow in container/headless mode:
 | `83ZQ9b5xReUaF6Ib` | Chief of Staff — Command Centre | ACTIVE |
 | `14cHr1Y6srSRFQpm` | Claude Inbox Trash Purge | ACTIVE |
 
-*(50 active workflows total on n8n instance)*
+*(56 active workflows total on n8n instance)*
 
 ---
 
@@ -176,8 +176,8 @@ The Claude CLI login flow in container/headless mode:
 
 ---
 
-## PENDING ISSUES (as of 2026-04-26)
+## PENDING ISSUES (as of 2026-04-27)
 
-- **Health:** All systems nominal — no incidents flagged by tonight's review.
-- **Priorities for tomorrow:** none
-- **Routing observations:** None new observed in last 24h — keyword routing functioning, cross-provider fallback verified after today's dispatcher fixes (43dd8d9, 62a79ce).
+- **Health:** Claude CLI is DOWN (last check 22:53 UTC, .pro_cli_down flag active). n8n healthy — 56 active, 29 inactive, 0 recent failures. DeepSeek balance OK ($9.18). No insight log yet — 0 interactions recorded.
+- **Priorities for tomorrow:** Investigate Claude CLI recovery — both Claude Pro and Gemini CLI failed during nightly review (22:53 UTC). Verify Gemini CLI trust directory issue: workspace trust may need reconfig for headless mode. Consider fixing `GEMINI_CLI_TRUST_WORKSPACE=true` env var.
+- **Routing observations:** Cross-provider fallback partially working — fell through to DeepSeek LangGraph for tool-calling when both Claude and Gemini CLIs were unavailable. The 4-tier cascade (keyword → Claude Pro → Gemini → Haiku) stalled at tiers 2 and 3.
