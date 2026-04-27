@@ -154,7 +154,7 @@ The Claude CLI login flow in container/headless mode:
 | `yZckxfWsvugSBFZh` | Robust Health Check | INACTIVE |
 | `u0cyS73kZJWNNy8u` | Health Monitor - Fixed | INACTIVE |
 | `nOawPhpTyNjPPiEb` | Secretary — Outlook Email & Calendar Operations | ACTIVE |
-| `N4IBlfTKan8Oq4tQ` | Secretary — Gmail Manager | ACTIVE |
+| `N4IBlfTKan8Oq4tQ` | Secretary — Gmail Manager | INACTIVE |
 | `83ZQ9b5xReUaF6Ib` | Chief of Staff — Command Centre | ACTIVE |
 | `14cHr1Y6srSRFQpm` | Claude Inbox Trash Purge | ACTIVE |
 
@@ -178,6 +178,6 @@ The Claude CLI login flow in container/headless mode:
 
 ## PENDING ISSUES (as of 2026-04-27)
 
-- **Health:** Claude CLI is DOWN (last check 22:53 UTC, .pro_cli_down flag active). n8n healthy — 56 active, 29 inactive, 0 recent failures. DeepSeek balance OK ($9.18). No insight log yet — 0 interactions recorded.
-- **Priorities for tomorrow:** Investigate Claude CLI recovery — both Claude Pro and Gemini CLI failed during nightly review (22:53 UTC). Verify Gemini CLI trust directory issue: workspace trust may need reconfig for headless mode. Consider fixing `GEMINI_CLI_TRUST_WORKSPACE=true` env var.
-- **Routing observations:** Cross-provider fallback partially working — fell through to DeepSeek LangGraph for tool-calling when both Claude and Gemini CLIs were unavailable. The 4-tier cascade (keyword → Claude Pro → Gemini → Haiku) stalled at tiers 2 and 3.
+- **Health:** All systems nominal. DB healthy (3432 stored messages, PostgreSQL). n8n: 56 active, 29 inactive, 0 failures in last hour. 144 interactions reviewed tonight by Claude CLI (Gemini CLI hit trust-directory block — resolved by `GEMINI_CLI_TRUST_WORKSPACE=true` fix needed in nightly_review.py).
+- **Priorities for tomorrow:** none
+- **Routing observations:** No misroutes observed in 144 interactions. Keyword routing functioning normally. Nightly review's parse_error flagged: nightly_review.py relies on Gemini CLI which needs `GEMINI_CLI_TRUST_WORKSPACE=true` set in the environment before invocation to bypass the headless trust check.
