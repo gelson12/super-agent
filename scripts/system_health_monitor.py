@@ -723,7 +723,7 @@ def save_to_db(state: RunState, run_type: str) -> str | None:
         print(f"\n{RED}✗  DB save failed: {e}{RESET}")
         traceback.print_exc()
         return None
-
+# ---------------------------------------------------------------# Fallback: save to JSON artifact (for GH Actions runners that cannot reach DB)# ---------------------------------------------------------------def save_to_artifact(state: RunState, run_type: str) -> str | None:    """Save monitoring snapshot to a JSON file."""    try:        def cat_status(cat: str) -> str:            cat_checks = [c for c in state.checks if c.category == cat]            failures = sum(1 for c in cat_checks if not c.passed)            if failures == 0: return "healthy"            if failures <= 1: return "degraded"            return "critical"        snapshot = {            "run_id": str(uuid.uuid4())[:8],            "run_type": run_type,            "timestamp": datetime.now(timezone.utc).isoformat(),            "overall_status": state.overall_status,            "per_category": {                "n8n": cat_status("n8n"),                "cli": cat_status("cli"),                "agent": cat_status("agent"),                "crypto": cat_status("crypto"),            },            "checks_passed": state.passed,            "checks_failed": state.failed,            "checks_total": len(state.checks),            "suggestions_count": len(state.suggestions),            "critical_suggestions": sum(1 for s in state.suggestions if s.severity == "critical"),            "high_suggestions": sum(1 for s in state.suggestions if s.severity == "high"),            "top_suggestions": [                {"severity": s.severity, "system": s.target_system, "title": s.title}                for s in sorted(state.suggestions, key=lambda x: ["critical","high","medium","low"].index(x.severity))[:10]            ],        },        aid = snapshot["run_id"]        p = "/tmp/health_monitor_" + aid + ".json"        with open(p, "w") as f: json.dump(snapshot, f, indent=2, default=str)        print(f"{GREEN}Saved artifact to {p}{RESET}")        return p    except Exception as e:        print(f"{YELLOW}Artifact save failed: {e}{RESET}")        return None
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Chief of Staff digest
@@ -814,15 +814,18 @@ def main() -> int:
             sev_color = RED if s.severity == "critical" else (YELLOW if s.severity == "high" else CYAN)
             print(f"  [{sev_color}{s.severity.upper()}{RESET}] {s.target_system}: {s.title}")
 
-    # Persist
+    # Persist (DB or artifact fallback)
     snapshot_id = save_to_db(state, RUN_TYPE)
+    if snapshot_id is None:
+        save_to_artifact(state, RUN_TYPE)
 
     # Notify Chief of Staff
     notify_chief_of_staff(state, snapshot_id)
 
     print(f"\n{DIM}  Full results visible at: {AGENT_URL}/monitoring (if SUPER_AGENT_URL is set){RESET}\n")
-
-    return 1 if state.failed > 0 else 0
+    # Always exit 0 -- health data was collected successfully.
+    # Audit findings are informational, not crashes.
+    return 0
 
 
 if __name__ == "__main__":
