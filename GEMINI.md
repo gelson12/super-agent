@@ -1,5 +1,5 @@
 # Super-Agent — Gemini CLI Context
-**Last updated:** 2026-04-27
+**Last updated:** 2026-04-28
 
 This file is auto-loaded by `gemini --prompt` on every invocation inside this repo.
 It gives Gemini CLI situational awareness of the system architecture.
@@ -113,8 +113,8 @@ cd /workspace/super-agent && git add <files> && git commit -m "msg" && git push 
 
 ---
 
-## PENDING ISSUES (2026-04-27)
+## PENDING ISSUES (2026-04-28)
 
-- **Health:** All systems nominal. DB healthy (3432 stored messages, PostgreSQL). n8n: 56 active, 29 inactive, 0 failures in last hour. 144 interactions reviewed tonight by Claude CLI (Gemini CLI hit trust-directory block — resolved by `GEMINI_CLI_TRUST_WORKSPACE=true` fix needed in nightly_review.py).
+- **Health:** All systems nominal. DB healthy (3779 stored messages, PostgreSQL). n8n: 56 active, 29 inactive, 0 failures in last hour. 116 interactions reviewed tonight via Claude CLI (Gemini CLI still hitting trust-directory block). Disk ~51% used, error rate 2.1%.
 - **Priorities for tomorrow:** none
-- **Routing observations:** No misroutes observed in 144 interactions. Keyword routing functioning normally. Nightly review's parse_error flagged: nightly_review.py relies on Gemini CLI which needs `GEMINI_CLI_TRUST_WORKSPACE=true` set in the environment before invocation to bypass the headless trust check.
+- **Routing observations:** No misroutes observed in 116 interactions. Keyword routing functioning normally. Gemini CLI trust-directory issue persists — `nightly_review.py` still uses Gemini CLI which needs `GEMINI_CLI_TRUST_WORKSPACE=true` before invocation.
