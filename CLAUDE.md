@@ -178,6 +178,6 @@ The Claude CLI login flow in container/headless mode:
 
 ## PENDING ISSUES (as of 2026-04-29)
 
-- **Health:** DB healthy (4153 stored messages, PostgreSQL). n8n: 56 active, 29 inactive, 0 failures. 119 interactions reviewed tonight via Claude CLI — however, Claude CLI PRO hit monthly usage limit (credit/billing cap), causing fallback to Gemini → Haiku chain. CLAUDE_SESSION_TOKEN expired 438h ago — auto-restore skipped as stale. Cloudinary: 0.18 GB used.
+- **Health:** All systems nominal. DB healthy (4153 stored messages, PostgreSQL). n8n: 56 active, 29 inactive, 0 failures in last hour. 119 interactions loaded for review but Claude Code hit org monthly usage limit — nightly review failed to complete. Gemini CLI still hitting trust-directory block. Disk ~51% used, Cloudinary at 0.18 GB.
 - **Priorities for tomorrow:** none
-- **Routing observations:** No misroutes observed in 119 interactions. Keyword routing functioning normally. Gemini CLI trust-directory issue persists — nightly_review.py still encounters Gemini CLI workspace trust block. Pro CLI credit cap triggered BURST flag — next Claude Code usage will route through local super-agent CLI instead of inspiring-cat worker.
+- **Routing observations:** No misroutes observed in 119 interactions reviewed. Keyword routing functioning normally. Gemini CLI trust-directory issue persists — `nightly_review.py` still uses Gemini CLI which needs `GEMINI_CLI_TRUST_WORKSPACE=true` before invocation.
