@@ -1,5 +1,5 @@
 # Super-Agent — Claude CLI Context
-**Last updated:** 2026-04-29
+**Last updated:** 2026-05-01
 
 This file is auto-loaded by `claude -p` on every invocation inside this repo.
 It gives Claude CLI situational awareness of the system architecture.
@@ -176,8 +176,8 @@ The Claude CLI login flow in container/headless mode:
 
 ---
 
-## PENDING ISSUES (as of 2026-04-29)
+## PENDING ISSUES (as of 2026-05-01)
 
-- **Health:** All systems nominal. DB healthy (4153 stored messages, PostgreSQL). n8n: 56 active, 29 inactive, 0 failures in last hour. 119 interactions loaded for review but Claude Code hit org monthly usage limit — nightly review failed to complete. Gemini CLI still hitting trust-directory block. Disk ~51% used, Cloudinary at 0.18 GB.
+- **Health:** No new findings surfaced by tonight's review.
 - **Priorities for tomorrow:** none
-- **Routing observations:** No misroutes observed in 119 interactions reviewed. Keyword routing functioning normally. Gemini CLI trust-directory issue persists — `nightly_review.py` still uses Gemini CLI which needs `GEMINI_CLI_TRUST_WORKSPACE=true` before invocation.
+- **Routing observations:** No new findings surfaced by tonight's review.
