@@ -925,7 +925,7 @@ def _build_extended_result(base: dict, **kwargs) -> dict:
 
 # ── Main dispatch function ────────────────────────────────────────────────────
 
-_MAX_MESSAGE_LEN = 12_000
+_MAX_MESSAGE_LEN = 100_000
 
 # Module-level counter incremented each time drift-avoidance swaps a model.
 # Exposed at /metrics/drift-swaps for observability.
