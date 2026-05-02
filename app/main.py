@@ -5716,7 +5716,7 @@ def webhook_bot_engine(req: BotEngineRequest, request: Request):
 
     if not raw_text.startswith("ERROR"):
         try:
-            from .memory.vector_memory import append_exchange
+            from .memory.session import append_exchange
             append_exchange(req.session_id, full_message, raw_text)
         except Exception:
             pass
