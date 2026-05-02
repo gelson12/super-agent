@@ -20,14 +20,17 @@
     },
     {
       "parameters": {
-        "resource": "folder",
+        "resource": "message",
         "operation": "getAll",
         "returnAll": false,
-        "limit": 50,
-        "filters": {}
+        "limit": 100,
+        "filters": {
+          "folderId": "inbox"
+        },
+        "options": {}
       },
-      "id": "list-folders",
-      "name": "List Mail Folders",
+      "id": "list-inbox",
+      "name": "List Inbox Messages",
       "type": "n8n-nodes-base.microsoftOutlook",
       "typeVersion": 2,
       "position": [460, 300],
@@ -42,30 +45,48 @@
       "parameters": {
         "mode": "runOnceForAllItems",
         "language": "javaScript",
-        "jsCode": "// Resolve the 'Deleted Items' folder id so we can enumerate messages inside it.\n// Outlook returns displayName and wellKnownName/childFolderCount per folder.\nconst folders = $input.all();\nconst wanted = ['deleted items', 'trash', 'junk email', 'junk'];\nconst results = [];\nfor (const f of folders) {\n  const name = (f.json.displayName || '').toLowerCase();\n  if (!wanted.includes(name)) continue;\n  if (!f.json.id) continue;\n  results.push({ json: { folderId: f.json.id, folderName: f.json.displayName } });\n}\nreturn results;"
+        "jsCode": "// Smart filter: identify Super-Agent automated emails.\n// ALWAYS preserve Anthropic authentication emails.\n// Only soft-delete emails that are clearly from the super-agent system.\n\nconst ANTHROPIC_AUTH_PATTERNS = [\n  /anthropic/i,\n  /claude\\.ai/i,\n  /verification.*code/i,\n  /sign.*in.*code/i,\n  /magic.*link/i,\n  /your.*login/i,\n  /confirm.*email/i\n];\n\nconst SUPER_AGENT_SUBJECT_PATTERNS = [\n  /chief of staff briefing/i,\n  /chief of staff.*alert/i,\n  /system alert.*workflow/i,\n  /workflow.*failure/i,\n  /morning briefing.*super.?agent/i,\n  /super.?agent.*briefing/i,\n  /\\[critical\\].*workflow/i,\n  /\\[high\\].*workflow/i,\n  /\\[medium\\].*workflow/i,\n  /\\[low\\].*workflow/i,\n  /n8n.*execution.*error/i,\n  /auto.?heal.*workflow/i,\n  /health.*monitor.*super/i,\n  /nightly.*review.*super/i,\n  /weekly.*review.*super/i,\n  /railway.*deployment/i,\n  /railway.*build.*failed/i,\n  /railway.*service.*down/i\n];\n\nconst SUPER_AGENT_SENDER_PATTERNS = [\n  /@railway\\.app/i,\n  /noreply@railway/i,\n  /notifications@railway/i,\n  /no-reply@railway/i,\n  /super-agent-production/i\n];\n\nconst items = $input.all();\nconst toSoftDelete = [];\n\nfor (const it of items) {\n  const msg = it.json;\n  const subject = msg.subject || '';\n  const senderAddr = (msg.from && msg.from.emailAddress && msg.from.emailAddress.address) || '';\n  const senderName = (msg.from && msg.from.emailAddress && msg.from.emailAddress.name) || '';\n  const messageId = msg.id;\n\n  if (!messageId) continue;\n\n  // Skip emails less than 30 minutes old — give delivery time.\n  const recv = new Date(msg.receivedDateTime || msg.createdDateTime || 0);\n  if (Date.now() - recv.getTime() < 30 * 60 * 1000) continue;\n\n  // HARD RULE: Never touch Anthropic authentication emails.\n  const isAuthEmail = ANTHROPIC_AUTH_PATTERNS.some(p => p.test(subject) || p.test(senderAddr) || p.test(senderName));\n  if (isAuthEmail) continue;\n\n  // Check if this looks like a super-agent automated email.\n  const matchesSubject = SUPER_AGENT_SUBJECT_PATTERNS.some(p => p.test(subject));\n  const matchesSender = SUPER_AGENT_SENDER_PATTERNS.some(p => p.test(senderAddr) || p.test(senderName));\n\n  if (matchesSubject || matchesSender) {\n    toSoftDelete.push({\n      json: {\n        messageId,\n        subject,\n        sender: senderAddr,\n        receivedAt: msg.receivedDateTime,\n        reason: matchesSubject ? 'super_agent_subject' : 'super_agent_sender'\n      }\n    });\n  }\n}\n\nreturn toSoftDelete;"
       },
-      "id": "pick-trash",
-      "name": "Pick Trash-class Folders",
+      "id": "smart-filter",
+      "name": "Smart Filter: Super-Agent Emails",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [680, 300]
     },
     {
       "parameters": {
-        "resource": "message",
-        "operation": "getAll",
-        "returnAll": false,
-        "limit": 200,
-        "filters": {
-          "folderId": "={{ $json.folderId }}"
+        "conditions": {
+          "options": { "caseSensitive": true, "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "has-messages",
+              "leftValue": "={{ $input.all().length }}",
+              "rightValue": 0,
+              "operator": { "type": "number", "operation": "gt" }
+            }
+          ],
+          "combinator": "and"
         },
         "options": {}
       },
-      "id": "list-in-trash",
-      "name": "List Messages in Trash",
+      "id": "has-targets",
+      "name": "Any Emails to Move?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "move",
+        "messageId": "={{ $json.messageId }}",
+        "folderId": "deleteditems"
+      },
+      "id": "soft-delete",
+      "name": "Move to Deleted Items",
       "type": "n8n-nodes-base.microsoftOutlook",
       "typeVersion": 2,
-      "position": [900, 300],
+      "position": [1120, 200],
       "credentials": {
         "microsoftOutlookOAuth2Api": {
           "id": "9paQ8IJLgiLbjEYI",
@@ -74,59 +95,28 @@
       }
     },
     {
-      "parameters": {
-        "mode": "runOnceForAllItems",
-        "language": "javaScript",
-        "jsCode": "// Pass through only messages older than 15 minutes so we don't race with in-flight\n// delete/retry of a magic link the verification workflow is still processing.\nconst items = $input.all();\nconst out = [];\nfor (const it of items) {\n  const recv = new Date(it.json.receivedDateTime || it.json.createdDateTime || 0);\n  if (Date.now() - recv.getTime() < 15 * 60 * 1000) continue;\n  if (!it.json.id) continue;\n  out.push({ json: { messageId: it.json.id, subject: it.json.subject } });\n}\nreturn out;"
-      },
-      "id": "filter-age",
-      "name": "Skip Recent Messages",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [1120, 300]
-    },
-    {
-      "parameters": {
-        "operation": "delete",
-        "messageId": "={{ $json.messageId }}"
-      },
-      "id": "hard-delete",
-      "name": "Hard-delete Message",
-      "type": "n8n-nodes-base.microsoftOutlook",
-      "typeVersion": 2,
-      "position": [1340, 300],
-      "credentials": {
-        "microsoftOutlookOAuth2Api": {
-          "id": "9paQ8IJLgiLbjEYI",
-          "name": "Microsoft Outlook account"
-        }
-      }
+      "parameters": {},
+      "id": "nothing-to-do",
+      "name": "Nothing to Clean",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [1120, 400]
     }
   ],
   "connections": {
     "Every 6 Hours": {
-      "main": [
-        [{ "node": "List Mail Folders", "type": "main", "index": 0 }]
-      ]
+      "main": [[{ "node": "List Inbox Messages", "type": "main", "index": 0 }]]
     },
-    "List Mail Folders": {
-      "main": [
-        [{ "node": "Pick Trash-class Folders", "type": "main", "index": 0 }]
-      ]
+    "List Inbox Messages": {
+      "main": [[{ "node": "Smart Filter: Super-Agent Emails", "type": "main", "index": 0 }]]
     },
-    "Pick Trash-class Folders": {
-      "main": [
-        [{ "node": "List Messages in Trash", "type": "main", "index": 0 }]
-      ]
+    "Smart Filter: Super-Agent Emails": {
+      "main": [[{ "node": "Any Emails to Move?", "type": "main", "index": 0 }]]
     },
-    "List Messages in Trash": {
+    "Any Emails to Move?": {
       "main": [
-        [{ "node": "Skip Recent Messages", "type": "main", "index": 0 }]
-      ]
-    },
-    "Skip Recent Messages": {
-      "main": [
-        [{ "node": "Hard-delete Message", "type": "main", "index": 0 }]
+        [{ "node": "Move to Deleted Items", "type": "main", "index": 0 }],
+        [{ "node": "Nothing to Clean", "type": "main", "index": 0 }]
       ]
     }
   },

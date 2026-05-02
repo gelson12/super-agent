@@ -42,20 +42,20 @@
     },
 
     {
-      "id": "cos-gmail-unread-004",
-      "name": "Get Gmail Unread Emails",
-      "type": "n8n-nodes-base.gmail",
-      "typeVersion": 2.1,
+      "id": "cos-outlook-unread-004",
+      "name": "Get Outlook Unread Emails",
+      "type": "n8n-nodes-base.microsoftOutlook",
+      "typeVersion": 2,
       "position": [720, 80],
       "parameters": {
         "resource": "message",
         "operation": "getAll",
         "returnAll": false,
-        "limit": 10,
-        "simple": true,
-        "filters": {"readStatus": "unread"}
+        "limit": 15,
+        "filters": { "folderId": "inbox" },
+        "options": { "filter": "isRead eq false" }
       },
-      "credentials": { "gmailOAuth2": {"id": "T55BDHntJ3i1NFYw", "name": "Gmail account 2"} }
+      "credentials": { "microsoftOutlookOAuth2Api": {"id": "9paQ8IJLgiLbjEYI", "name": "Microsoft Outlook account"} }
     },
 
     {
@@ -65,7 +65,7 @@
       "typeVersion": 2,
       "position": [960, 80],
       "parameters": {
-        "jsCode": "const workflows = ($('Get All n8n Workflows').first().json.data || []);\nconst executions = ($('Get Failed Executions 24h').first().json.data || []);\nconst emails = $input.all().map(e => e.json);\n\nconst now = new Date();\nconst twentyFourHoursAgo = now.getTime() - 24 * 60 * 60 * 1000;\nconst recentFailures = executions.filter(e => new Date(e.startedAt).getTime() > twentyFourHoursAgo);\n\nconst active = workflows.filter(w => w.active);\nconst inactive = workflows.filter(w => !w.active);\n\nconst failuresByWf = {};\nrecentFailures.forEach(e => {\n  const name = workflows.find(w => w.id === e.workflowId)?.name || e.workflowId;\n  if (!failuresByWf[name]) failuresByWf[name] = 0;\n  failuresByWf[name]++;\n});\n\nconst failureSummary = Object.entries(failuresByWf)\n  .sort((a,b) => b[1]-a[1])\n  .map(([name, count]) => `${name}: ${count} error(s)`)\n  .join(', ') || 'None — all systems nominal';\n\nconst emailSummary = emails.slice(0, 7).map((e, i) =>\n  `${i+1}. \"${(e.subject || e.Subject || '(no subject)').substring(0,60)}\" — ${(e.from || e.From || 'unknown').substring(0,40)}`\n).join('\\n') || 'Inbox is clear';\n\nreturn [{ json: {\n  date: now.toLocaleDateString('en-GB', {weekday:'long', year:'numeric', month:'long', day:'numeric'}),\n  time: now.toLocaleTimeString('en-GB', {hour:'2-digit', minute:'2-digit', timeZone:'Europe/London'}),\n  totalWorkflows: workflows.length,\n  activeCount: active.length,\n  inactiveCount: inactive.length,\n  activeWorkflows: active.map(w => w.name).join(', ') || 'None',\n  inactiveWorkflows: inactive.map(w => w.name).join(', ') || 'None',\n  failuresLast24h: recentFailures.length,\n  failureSummary,\n  unreadEmails: emails.length,\n  emailSummary\n}}];"
+        "jsCode": "const workflows = ($('Get All n8n Workflows').first().json.data || []);\nconst executions = ($('Get Failed Executions 24h').first().json.data || []);\nconst emails = $input.all().map(e => e.json);\n\nconst now = new Date();\nconst twentyFourHoursAgo = now.getTime() - 24 * 60 * 60 * 1000;\nconst recentFailures = executions.filter(e => new Date(e.startedAt).getTime() > twentyFourHoursAgo);\n\nconst active = workflows.filter(w => w.active);\nconst inactive = workflows.filter(w => !w.active);\n\nconst failuresByWf = {};\nrecentFailures.forEach(e => {\n  const name = workflows.find(w => w.id === e.workflowId)?.name || e.workflowId;\n  if (!failuresByWf[name]) failuresByWf[name] = 0;\n  failuresByWf[name]++;\n});\n\nconst failureSummary = Object.entries(failuresByWf)\n  .sort((a,b) => b[1]-a[1])\n  .map(([name, count]) => `${name}: ${count} error(s)`)\n  .join(', ') || 'None — all systems nominal';\n\n// Outlook emails: from is { emailAddress: { name, address } }\nconst emailSummary = emails.slice(0, 7).map((e, i) => {\n  const subj = (e.subject || '(no subject)').substring(0, 60);\n  const sender = (e.from && e.from.emailAddress)\n    ? (e.from.emailAddress.name || e.from.emailAddress.address || 'unknown').substring(0, 40)\n    : 'unknown';\n  return `${i+1}. \"${subj}\" — ${sender}`;\n}).join('\\n') || 'Inbox is clear';\n\nreturn [{ json: {\n  date: now.toLocaleDateString('en-GB', {weekday:'long', year:'numeric', month:'long', day:'numeric'}),\n  time: now.toLocaleTimeString('en-GB', {hour:'2-digit', minute:'2-digit', timeZone:'Europe/London'}),\n  totalWorkflows: workflows.length,\n  activeCount: active.length,\n  inactiveCount: inactive.length,\n  activeWorkflows: active.map(w => w.name).join(', ') || 'None',\n  inactiveWorkflows: inactive.map(w => w.name).join(', ') || 'None',\n  failuresLast24h: recentFailures.length,\n  failureSummary,\n  unreadEmails: emails.length,\n  emailSummary\n}}];"
       }
     },
 
@@ -76,7 +76,7 @@
       "typeVersion": 2,
       "position": [1200, 80],
       "parameters": {
-        "jsCode": "const d = $input.first().json;\nconst healthColor = d.failuresLast24h === 0 ? '#00c851' : d.failuresLast24h < 5 ? '#ffbb33' : '#ff4444';\nconst healthLabel = d.failuresLast24h === 0 ? 'ALL SYSTEMS NOMINAL' : `${d.failuresLast24h} FAILURES DETECTED`;\n\nconst prompt = `You are the AI Chief of Staff for a high-tech digital super-agent operation. Generate a STUNNING HTML executive morning briefing email.\n\nDATA INPUT:\n- Date: ${d.date} | Time: ${d.time} GMT\n- Total n8n Workflows: ${d.totalWorkflows} (${d.activeCount} active, ${d.inactiveCount} inactive)\n- Active Workflows: ${d.activeWorkflows}\n- Inactive Workflows (need attention): ${d.inactiveWorkflows}\n- Failures in last 24h: ${d.failuresLast24h} — ${d.failureSummary}\n- Unread Emails: ${d.unreadEmails}\n- Top Inbox Items:\\n${d.emailSummary}\n\nCreate a world-class HTML executive briefing with these sections:\n1. HEADER: Dark gradient (#0f3460 to #16213e), white text, avatar emoji 🧑🏾, title CHIEF OF STAFF, date/time\n2. EXECUTIVE SUMMARY: 2-3 punchy sentences about the day ahead\n3. SYSTEM HEALTH: Health status badge (${healthColor}, text: \"${healthLabel}\"), table of active/inactive workflows\n4. INBOX INTELLIGENCE: Card showing unread count, list of top emails\n5. ACTION ITEMS: 3-5 specific recommended actions based on inactive workflows and failures\n6. QUICK COMMANDS: Show webhook commands in a styled code block: POST /webhook/chief-of-staff with examples\n7. FOOTER: Chief of Staff AI | Super-Agent Operations\n\nDESIGN RULES: Use ONLY inline CSS. Dark executive color scheme: deep navy (#0f3460), electric blue (#1e90ff), clean white. Max-width 680px centered. Card-based layout. Return ONLY raw HTML starting with <!DOCTYPE html>.`;\n\nreturn [{json: {prompt}}];"
+        "jsCode": "const d = $input.first().json;\nconst healthEmoji = d.failuresLast24h === 0 ? '🟢' : d.failuresLast24h < 5 ? '🟡' : '🔴';\nconst healthLabel = d.failuresLast24h === 0 ? 'ALL SYSTEMS NOMINAL' : `${d.failuresLast24h} FAILURES DETECTED`;\n\nconst prompt = `You are the AI Chief of Staff for a high-tech digital super-agent operation. Generate a concise morning briefing for a Telegram message (plain text, no HTML). Use Telegram Markdown: *bold*, _italic_, \\`code\\`. Keep under 3500 characters.\n\nDATA INPUT:\n- Date: ${d.date} | Time: ${d.time} GMT\n- Total n8n Workflows: ${d.totalWorkflows} (${d.activeCount} active, ${d.inactiveCount} inactive)\n- Active Workflows: ${d.activeWorkflows}\n- Inactive Workflows (need attention): ${d.inactiveWorkflows}\n- Failures in last 24h: ${d.failuresLast24h} — ${d.failureSummary}\n- Unread Emails (Outlook): ${d.unreadEmails}\n- Top Inbox Items:\\n${d.emailSummary}\n\nStructure the Telegram message with these sections:\n1. Header line: 🧑🏾 *Chief of Staff — Morning Briefing* and date/time\n2. ${healthEmoji} *System Health:* ${healthLabel} — brief one-line summary\n3. 📊 *Workflows:* active count, inactive list (if any)\n4. 📬 *Outlook Inbox:* unread count + top email subjects\n5. ⚡ *Action Items:* 3-5 bullet points based on failures and inactive workflows\n\nReturn ONLY the Telegram message text, no extra commentary.`;\n\nreturn [{json: {prompt}}];"
       }
     },
 
@@ -99,30 +99,31 @@
 
     {
       "id": "cos-code-parsebrief-008",
-      "name": "Extract Briefing HTML",
+      "name": "Extract Briefing Text",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [1680, 80],
       "parameters": {
-        "jsCode": "const raw = $input.first().json.candidates[0].content.parts[0].text;\nconst html = raw.replace(/^```html\\n?/i, '').replace(/^```\\n?/i, '').replace(/\\n?```$/i, '').trim();\nconst compiled = $('Compile Briefing Data').first().json;\nconst day = new Date().toLocaleDateString('en-GB', {weekday:'long', day:'numeric', month:'long'});\nreturn [{ json: {\n  subject: `🧑🏾 Chief of Staff Briefing — ${day} | ${compiled.activeCount} active, ${compiled.unreadEmails} unread`,\n  body: html\n}}];"
+        "jsCode": "const raw = $input.first().json.candidates[0].content.parts[0].text;\nconst text = raw.replace(/^```[a-z]*\\n?/i, '').replace(/\\n?```$/i, '').trim();\nreturn [{ json: { telegram_text: text } }];"
       }
     },
 
     {
-      "id": "cos-gmail-sendbrief-009",
+      "id": "cos-tg-sendbrief-009",
       "name": "Send Morning Briefing",
-      "type": "n8n-nodes-base.gmail",
-      "typeVersion": 2.1,
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
       "position": [1920, 80],
       "parameters": {
-        "resource": "message",
-        "operation": "send",
-        "sendTo": "gelsonmascarenhas@gmail.com",
-        "subject": "={{ $json.subject }}",
-        "message": "={{ $json.body }}",
-        "additionalFields": {"emailType": "html"}
-      },
-      "credentials": { "gmailOAuth2": {"id": "T55BDHntJ3i1NFYw", "name": "Gmail account 2"} }
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{$env.Bridge_Chief_Of_Staff_bot}}/sendMessage",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{"name": "Content-Type", "value": "application/json; charset=utf-8"}] },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={ \"chat_id\": {{$env.BRIDGE_ADMIN_TELEGRAM_CHAT_ID}}, \"text\": {{ JSON.stringify($json.telegram_text) }}, \"parse_mode\": \"Markdown\" }",
+        "options": { "timeout": 15000, "response": { "response": { "neverError": true } } }
+      }
     },
 
     {
@@ -212,25 +213,26 @@
       "typeVersion": 2,
       "position": [1440, 540],
       "parameters": {
-        "jsCode": "const raw = $input.first().json.candidates[0].content.parts[0].text;\nlet parsed;\ntry {\n  const extracted = (raw.match(/\\{[\\s\\S]*\\}/) || [raw])[0];\n  parsed = JSON.parse(extracted);\n} catch(e) {\n  parsed = {diagnosis: raw, action: 'Check n8n execution logs', severity: 'MEDIUM', auto_restart: false, subject_line: 'System Alert: Workflow Failures Detected'};\n}\n\nconst health = $('Evaluate System Health').first().json;\nconst severityColor = parsed.severity === 'CRITICAL' ? '#ff1744' : parsed.severity === 'HIGH' ? '#ff4444' : '#ffbb33';\nconst autoHealMsg = parsed.auto_restart ? '<p style=\"color:#00c851;\"><strong>🔧 Auto-Heal:</strong> Chief of Staff is automatically restarting the failing workflow(s).</p>' : '';\n\nconst body = `<div style=\"font-family:Arial,sans-serif;max-width:600px;margin:0 auto;\">\n  <div style=\"background:#0f3460;color:white;padding:20px;border-radius:8px 8px 0 0;\">\n    <h2 style=\"margin:0;\">🧑🏾 Chief of Staff — System Alert</h2>\n    <p style=\"margin:5px 0 0;opacity:0.8;font-size:14px;\">${new Date().toLocaleString('en-GB')}</p>\n  </div>\n  <div style=\"background:#fff8f8;border:2px solid ${severityColor};padding:20px;\">\n    <div style=\"background:${severityColor};color:white;display:inline-block;padding:4px 12px;border-radius:4px;font-weight:bold;margin-bottom:15px;\">${parsed.severity}</div>\n    <p><strong>Failures detected:</strong> ${health.failureCount} workflow(s) in last ${health.windowMinutes} min</p>\n    <p><strong>Critical:</strong> ${health.criticalWorkflows}</p>${autoHealMsg}\n    <hr style=\"border:1px solid #eee;\">\n    <p><strong>Diagnosis:</strong> ${parsed.diagnosis}</p>\n    <p><strong>Recommended Action:</strong> ${parsed.action}</p>\n    <hr style=\"border:1px solid #eee;\">\n    <p style=\"font-size:12px;color:#666;\">To check status: POST /webhook/chief-of-staff {\"command\":\"status\"}<br>To view history: POST /webhook/chief-of-staff {\"command\":\"history\"}</p>\n  </div>\n  <div style=\"background:#0f3460;color:white;padding:10px;border-radius:0 0 8px 8px;font-size:12px;text-align:center;\">🧑🏾 Chief of Staff AI | Super-Agent Operations</div>\n</div>`;\n\nreturn [{json: { subject: `⚠️ [${parsed.severity}] ${parsed.subject_line}`, body, autoRestart: parsed.auto_restart }}];"
+        "jsCode": "const raw = $input.first().json.candidates[0].content.parts[0].text;\nlet parsed;\ntry {\n  const extracted = (raw.match(/\\{[\\s\\S]*\\}/) || [raw])[0];\n  parsed = JSON.parse(extracted);\n} catch(e) {\n  parsed = {diagnosis: raw, action: 'Check n8n execution logs', severity: 'MEDIUM', auto_restart: false, subject_line: 'System Alert: Workflow Failures Detected'};\n}\n\nconst health = $('Evaluate System Health').first().json;\nconst severityEmoji = parsed.severity === 'CRITICAL' ? '🚨' : parsed.severity === 'HIGH' ? '🔴' : parsed.severity === 'LOW' ? '🟡' : '🟠';\nconst autoHealMsg = parsed.auto_restart ? '\\n🔧 *Auto-Heal:* Restarting failing workflow(s) now.' : '';\n\nconst telegram_text = `${severityEmoji} *[${parsed.severity}] Chief of Staff — System Alert*\n_${new Date().toLocaleString('en-GB')}_\n\n*Failures:* ${health.failureCount} workflow(s) in last ${health.windowMinutes} min\n*Critical:* ${health.criticalWorkflows}${autoHealMsg}\n\n*Diagnosis:* ${parsed.diagnosis}\n*Action:* ${parsed.action}\n\n_Commands: POST /webhook/chief-of-staff_`;\n\nreturn [{json: { telegram_text, autoRestart: parsed.auto_restart }}];"
       }
     },
 
     {
-      "id": "cos-gmail-sendalert-017",
-      "name": "Send Alert Email",
-      "type": "n8n-nodes-base.gmail",
-      "typeVersion": 2.1,
+      "id": "cos-tg-sendalert-017",
+      "name": "Send Alert to Telegram",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
       "position": [1680, 540],
       "parameters": {
-        "resource": "message",
-        "operation": "send",
-        "sendTo": "gelsonmascarenhas@gmail.com",
-        "subject": "={{ $json.subject }}",
-        "message": "={{ $json.body }}",
-        "additionalFields": {"emailType": "html"}
-      },
-      "credentials": { "gmailOAuth2": {"id": "T55BDHntJ3i1NFYw", "name": "Gmail account 2"} }
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{$env.Bridge_Chief_Of_Staff_bot}}/sendMessage",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [{"name": "Content-Type", "value": "application/json; charset=utf-8"}] },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={ \"chat_id\": {{$env.BRIDGE_ADMIN_TELEGRAM_CHAT_ID}}, \"text\": {{ JSON.stringify($json.telegram_text) }}, \"parse_mode\": \"Markdown\" }",
+        "options": { "timeout": 15000, "response": { "response": { "neverError": true } } }
+      }
     },
 
     {
@@ -682,12 +684,12 @@
   "connections": {
     "7 AM Morning Briefing": { "main": [[{"node": "Get All n8n Workflows", "type": "main", "index": 0}]] },
     "Get All n8n Workflows": { "main": [[{"node": "Get Failed Executions 24h", "type": "main", "index": 0}]] },
-    "Get Failed Executions 24h": { "main": [[{"node": "Get Gmail Unread Emails", "type": "main", "index": 0}]] },
-    "Get Gmail Unread Emails": { "main": [[{"node": "Compile Briefing Data", "type": "main", "index": 0}]] },
+    "Get Failed Executions 24h": { "main": [[{"node": "Get Outlook Unread Emails", "type": "main", "index": 0}]] },
+    "Get Outlook Unread Emails": { "main": [[{"node": "Compile Briefing Data", "type": "main", "index": 0}]] },
     "Compile Briefing Data": { "main": [[{"node": "Build Briefing Prompt", "type": "main", "index": 0}]] },
     "Build Briefing Prompt": { "main": [[{"node": "AI Generate Briefing", "type": "main", "index": 0}]] },
-    "AI Generate Briefing": { "main": [[{"node": "Extract Briefing HTML", "type": "main", "index": 0}]] },
-    "Extract Briefing HTML": { "main": [[{"node": "Send Morning Briefing", "type": "main", "index": 0}]] },
+    "AI Generate Briefing": { "main": [[{"node": "Extract Briefing Text", "type": "main", "index": 0}]] },
+    "Extract Briefing Text": { "main": [[{"node": "Send Morning Briefing", "type": "main", "index": 0}]] },
 
     "System Health Monitor": { "main": [[{"node": "Fetch Recent Failures", "type": "main", "index": 0}]] },
     "Fetch Recent Failures": { "main": [[{"node": "Evaluate System Health", "type": "main", "index": 0}]] },
@@ -700,8 +702,8 @@
     },
     "Build Alert Prompt": { "main": [[{"node": "AI Diagnose Alert", "type": "main", "index": 0}]] },
     "AI Diagnose Alert": { "main": [[{"node": "Extract Alert Text", "type": "main", "index": 0}]] },
-    "Extract Alert Text": { "main": [[{"node": "Send Alert Email", "type": "main", "index": 0}]] },
-    "Send Alert Email": { "main": [[{"node": "Auto Heal Workflow", "type": "main", "index": 0}]] },
+    "Extract Alert Text": { "main": [[{"node": "Send Alert to Telegram", "type": "main", "index": 0}]] },
+    "Send Alert to Telegram": { "main": [[{"node": "Auto Heal Workflow", "type": "main", "index": 0}]] },
 
     "Chief of Staff Webhook": { "main": [[{"node": "Build Command Prompt", "type": "main", "index": 0}]] },
     "Build Command Prompt": { "main": [[{"node": "AI Parse Command", "type": "main", "index": 0}]] },
