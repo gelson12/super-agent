@@ -9,12 +9,13 @@
 
 import { TILE_W, TILE_H } from './world.js';
 import { standFrameName, walkCycleFrame } from './sprites.js';
+import { STEP_MS } from './agents.js';
 
-const SPRITE_DRAW_W = 56;       // px on canvas — readable but not swamping furniture
+const SPRITE_DRAW_W = 56;
 const SPRITE_DRAW_H = 56;
-const WALK_FRAME_MS = 280;      // calmer pace; matches the slower STEP_MS
-const WALK_BOB_AMP = 2;         // px vertical bob amplitude when walking
-const WALK_BOB_HZ = 3.0;        // bobs per second
+const WALK_FRAME_MS = 110;      // ~1.6 frames per step at 180 ms/tile — fluid cycle
+const WALK_BOB_AMP  = 4;        // px — more visible vertical lift
+// Bob is step-phase-synced (not time-based), so no Hz constant needed.
 
 export class Renderer {
   constructor(canvas, floors, sprites, scheduler, bots) {
@@ -87,6 +88,7 @@ export class Renderer {
     this.canvas.width = Math.floor(cw * this.dpr);
     this.canvas.height = Math.floor(ch * this.dpr);
     this.ctx.imageSmoothingEnabled = true;
+    this.ctx.imageSmoothingQuality = 'high';
   }
 
   // World tile -> canvas px.
@@ -109,6 +111,8 @@ export class Renderer {
   draw(now) {
     const ctx = this.ctx;
     const w = this.canvas.width, h = this.canvas.height;
+    ctx.imageSmoothingEnabled  = true;
+    ctx.imageSmoothingQuality  = 'high';
     ctx.clearRect(0, 0, w, h);
 
     // Camera follow: if a bot is focused and `followFocused` is on, switch to their floor.
@@ -165,120 +169,172 @@ export class Renderer {
 
   _drawBot(ctx, bot, now) {
     const { px, py } = this.tileToPx(bot.x, bot.y);
-    // Pick directional frame + decide if the renderer should flip horizontally.
+
+    // ── Frame selection ──────────────────────────────────────────
     let dirName, mirror = false, frameIndex = 0;
     if (bot.state === 'walking') {
       const cycle = walkCycleFrame(bot.facing, now, this.sprites, bot, WALK_FRAME_MS);
-      dirName = cycle.dirName;
-      mirror = cycle.mirror;
+      dirName    = cycle.dirName;
+      mirror     = cycle.mirror;
       frameIndex = cycle.frameIndex || 0;
     } else {
       dirName = standFrameName(bot.facing);
     }
     const f = this.sprites.frame(bot, dirName, frameIndex);
-    // Reference-scale rendering: the bot's stand frame is treated as the
-    // canonical "character size". Every other frame is scaled at the same
-    // pixels-per-source-px so walk frames with extended legs naturally
-    // grow upward (extra canvas height = visible leg motion) without
-    // making the bot's body strobe between frames.
+
+    // ── Sprite dimensions (reference-scale) ──────────────────────
     const ref = this.sprites.refScale?.(bot.id);
-    let drawW, drawH;
+    let dw, dh;
     if (ref) {
-      const refDrawH = SPRITE_DRAW_H * this.dpr;        // on-screen height of the stand frame
-      const k = refDrawH / ref.refH;                    // pixels per source-px
-      drawW = (f.sw || ref.refW) * k;
-      drawH = (f.sh || ref.refH) * k;
+      const k = (SPRITE_DRAW_H * this.dpr) / ref.refH;
+      dw = (f.sw || ref.refW) * k;
+      dh = (f.sh || ref.refH) * k;
     } else {
       const aspect = (f.sw && f.sh) ? f.sw / f.sh : 1;
-      drawW = (aspect >= 1 ? SPRITE_DRAW_W : SPRITE_DRAW_W * aspect) * this.dpr;
-      drawH = (aspect >= 1 ? SPRITE_DRAW_H / aspect : SPRITE_DRAW_H) * this.dpr;
+      dw = (aspect >= 1 ? SPRITE_DRAW_W : SPRITE_DRAW_W * aspect) * this.dpr;
+      dh = (aspect >= 1 ? SPRITE_DRAW_H / aspect : SPRITE_DRAW_H) * this.dpr;
     }
-    const dw = drawW;
-    const dh = drawH;
-    // Walk bob: subtle vertical sin-wave while walking so even with a single
-    // stand/walk frame pair the motion reads as actual locomotion.
-    const bob = bot.state === 'walking'
-      ? -Math.abs(Math.sin(now * 0.001 * Math.PI * WALK_BOB_HZ)) * WALK_BOB_AMP * this.dpr
-      : 0;
-    const dx = px - dw/2;
-    const dy = py - dh + 4 * this.dpr + bob;     // anchor feet near tile center
 
-    // Drop shadow stays put on the ground while the body bobs above it.
-    ctx.fillStyle = 'rgba(0,0,0,0.30)';
+    // ── Animation values ─────────────────────────────────────────
+    // Step phase 0→1 within the current tile crossing (synced to bot.stepStart).
+    const stepT = bot.state === 'walking'
+      ? Math.min(1, (now - bot.stepStart) / STEP_MS) : 0;
+
+    // Vertical bob: peaks at mid-stride (feet off ground), zero at foot-plant.
+    const bob = bot.state === 'walking'
+      ? -Math.abs(Math.sin(stepT * Math.PI)) * WALK_BOB_AMP * this.dpr
+      : 0;
+
+    // Idle / at-desk breathing: subtle scaleY oscillation.
+    const breatheAmt = (bot.state === 'idle' || bot.state === 'atDesk')
+      ? Math.sin(now * 0.00045 + (bot._uid || 0) * 0.7) * 0.012
+      : 0;
+
+    // Squash & stretch: taller at peak stride (mid-step), returns to neutral.
+    const stretchY = bot.state === 'walking'
+      ? 1 + 0.07 * Math.sin(stepT * Math.PI)
+      : 1 + breatheAmt;
+    // Width conserved — compress X slightly when stretched, expand when squashed.
+    const squashX = 1 / Math.max(0.9, stretchY);
+
+    // Directional lean: sprite tilts forward slightly during walk.
+    const leanX = bot.state === 'walking'
+      ? (bot.facing === 'right' ? 1.8 : bot.facing === 'left' ? -1.8 : 0) * this.dpr : 0;
+    const leanY = bot.state === 'walking'
+      ? (bot.facing === 'down'  ? 1.2 : bot.facing === 'up'   ? -1.2 : 0) * this.dpr : 0;
+
+    // ── Drop shadow (stays on ground — never bobs) ────────────────
+    // Shadow squashes when the bot is mid-air (mid-stride = smaller contact).
+    const airFrac  = Math.abs(Math.sin(stepT * Math.PI)); // 0 at plant, 1 at peak
+    const shadowRx = dw * (0.30 - 0.07 * airFrac);
+    const shadowRy = dh * (0.07 - 0.02 * airFrac);
+    ctx.fillStyle = `rgba(0,0,0,${0.32 - 0.08 * airFrac})`;
     ctx.beginPath();
-    ctx.ellipse(px, py + 3 * this.dpr, dw*0.30, dh*0.08, 0, 0, Math.PI*2);
+    ctx.ellipse(px, py + 3 * this.dpr, shadowRx, shadowRy, 0, 0, Math.PI * 2);
     ctx.fill();
 
-    // Active-workflow halo.
+    // ── Active-workflow halo (breathing pulse) ────────────────────
     if (bot.activeFlag) {
+      const pulse = 0.60 + 0.40 * Math.sin(now * 0.002 * Math.PI);
       ctx.save();
       ctx.shadowColor = '#58e7a4';
-      ctx.shadowBlur = 16 * this.dpr;
-      ctx.strokeStyle = 'rgba(88,231,164,0.4)';
-      ctx.lineWidth = 2 * this.dpr;
-      ctx.beginPath(); ctx.arc(px, py - dh*0.45, dw*0.32, 0, Math.PI*2); ctx.stroke();
+      ctx.shadowBlur  = (12 + 6 * pulse) * this.dpr;
+      ctx.strokeStyle = `rgba(88,231,164,${0.30 + 0.25 * pulse})`;
+      ctx.lineWidth   = 2 * this.dpr;
+      ctx.beginPath();
+      ctx.arc(px, py - dh * 0.45, dw * 0.32, 0, Math.PI * 2);
+      ctx.stroke();
       ctx.restore();
     }
 
+    // ── Transit ghost fade (slow, cinematic) ─────────────────────
     if (bot.state === 'transit') {
-      ctx.globalAlpha = 0.4 + 0.6 * Math.abs(Math.sin(now / 150));
+      ctx.globalAlpha = 0.40 + 0.55 * Math.abs(Math.sin(now * 0.0007 * Math.PI));
     }
+
+    // ── Sprite draw with squash/stretch + lean ────────────────────
     if (f.img) {
-      // dx/dy already anchor the sprite's bottom-centre at the bot's tile.
-      // For ref-scaled frames, dh is the FRAME's natural height × k —
-      // taller walk frames will reach further upward, but the ground
-      // line stays at py.
+      ctx.save();
+      // Anchor transform at the foot point so scaling grows upward.
+      ctx.translate(px + leanX, py + bob + leanY);
+      ctx.scale(squashX, stretchY);
+      const drawDy = -dh + 4 * this.dpr;   // feet at transform origin
       if (mirror) {
-        ctx.save();
-        ctx.translate(dx + dw/2, 0);
         ctx.scale(-1, 1);
-        ctx.drawImage(f.img, f.sx, f.sy, f.sw, f.sh, -dw/2, dy, dw, dh);
-        ctx.restore();
+        ctx.drawImage(f.img, f.sx, f.sy, f.sw, f.sh, -dw / 2, drawDy, dw, dh);
       } else {
-        ctx.drawImage(f.img, f.sx, f.sy, f.sw, f.sh, dx, dy, dw, dh);
+        ctx.drawImage(f.img, f.sx, f.sy, f.sw, f.sh, -dw / 2, drawDy, dw, dh);
       }
+      ctx.restore();
     }
     ctx.globalAlpha = 1;
 
-    // Focused-bot ring.
+    // ── Focused-bot selection ring ────────────────────────────────
     if (this.focusedBotId === bot.id) {
-      ctx.strokeStyle = 'rgba(108,208,255,0.9)';
-      ctx.lineWidth = 2 * this.dpr;
+      const ringPulse = 0.70 + 0.30 * Math.sin(now * 0.003 * Math.PI);
+      ctx.save();
+      ctx.shadowColor = 'rgba(108,208,255,0.6)';
+      ctx.shadowBlur  = 8 * this.dpr;
+      ctx.strokeStyle = `rgba(108,208,255,${ringPulse})`;
+      ctx.lineWidth   = 2 * this.dpr;
       ctx.beginPath();
-      ctx.ellipse(px, py + 4 * this.dpr, dw*0.32, dh*0.10, 0, 0, Math.PI*2);
+      ctx.ellipse(px, py + 4 * this.dpr, dw * 0.32, dh * 0.10, 0, 0, Math.PI * 2);
       ctx.stroke();
+      ctx.restore();
     }
 
-    // Name label when focused or in meeting.
+    // Sprite top-y for label placement (accounts for bob and stretch).
+    const labelTopY = py + bob - dh * stretchY + 4 * this.dpr;
+
+    // ── Name label ────────────────────────────────────────────────
     if (this.focusedBotId === bot.id || bot.state === 'inMeeting') {
-      ctx.font = `${12 * this.dpr}px ui-monospace,monospace`;
-      const labelW = ctx.measureText(bot.name).width + 12 * this.dpr;
-      ctx.fillStyle = '#0a081299';
-      ctx.fillRect(px - labelW/2, dy - 22 * this.dpr, labelW, 18 * this.dpr);
-      ctx.fillStyle = '#e8e7f0';
-      ctx.textAlign = 'center';
+      ctx.font = `bold ${11 * this.dpr}px "Segoe UI",ui-sans-serif,system-ui,sans-serif`;
+      const labelW = ctx.measureText(bot.name).width + 14 * this.dpr;
+      const labelH = 17 * this.dpr;
+      const lx = px - labelW / 2;
+      const ly = labelTopY - 20 * this.dpr;
+      // Pill background with subtle glow
+      ctx.save();
+      ctx.shadowColor = 'rgba(108,208,255,0.4)';
+      ctx.shadowBlur  = 6 * this.dpr;
+      ctx.fillStyle   = 'rgba(10,8,18,0.88)';
+      ctx.beginPath();
+      ctx.roundRect(lx, ly, labelW, labelH, 5 * this.dpr);
+      ctx.fill();
+      ctx.restore();
+      ctx.fillStyle    = '#e8e7f0';
+      ctx.textAlign    = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText(bot.name, px, dy - 13 * this.dpr);
+      ctx.fillText(bot.name, px, ly + labelH / 2);
     }
 
-    // Speech bubble (e.g., flashed on meeting entry).
+    // ── Speech bubble ─────────────────────────────────────────────
     const bub = this.bubbles.get(bot.id);
     if (bub) {
       if (now > bub.until) {
         this.bubbles.delete(bot.id);
       } else {
-        ctx.font = `${11 * this.dpr}px ui-monospace,monospace`;
-        const bubW = ctx.measureText(bub.text).width + 14 * this.dpr;
+        const fadeT  = Math.min(1, (bub.until - now) / 600);
+        ctx.globalAlpha = fadeT;
+        ctx.font = `${10 * this.dpr}px "Segoe UI",ui-sans-serif,system-ui,sans-serif`;
+        const bubW = ctx.measureText(bub.text).width + 16 * this.dpr;
         const bubH = 18 * this.dpr;
-        const bubY = dy - 42 * this.dpr;
-        ctx.fillStyle = 'rgba(15,12,28,0.95)';
-        ctx.strokeStyle = 'rgba(201,169,110,0.6)';
-        ctx.lineWidth = 1 * this.dpr;
+        const bubY = labelTopY - 46 * this.dpr;
+        ctx.save();
+        ctx.shadowColor = 'rgba(201,169,110,0.5)';
+        ctx.shadowBlur  = 8 * this.dpr;
+        ctx.fillStyle   = 'rgba(15,12,28,0.96)';
+        ctx.strokeStyle = 'rgba(201,169,110,0.7)';
+        ctx.lineWidth   = 1 * this.dpr;
         ctx.beginPath();
-        ctx.roundRect(px - bubW/2, bubY, bubW, bubH, 5 * this.dpr);
+        ctx.roundRect(px - bubW / 2, bubY, bubW, bubH, 5 * this.dpr);
         ctx.fill();
         ctx.stroke();
-        // Tail.
+        ctx.restore();
+        // Tail
+        ctx.fillStyle = 'rgba(15,12,28,0.96)';
+        ctx.strokeStyle = 'rgba(201,169,110,0.7)';
+        ctx.lineWidth = 1 * this.dpr;
         ctx.beginPath();
         ctx.moveTo(px - 4 * this.dpr, bubY + bubH);
         ctx.lineTo(px,                bubY + bubH + 5 * this.dpr);
@@ -286,10 +342,11 @@ export class Renderer {
         ctx.closePath();
         ctx.fill();
         ctx.stroke();
-        ctx.fillStyle = '#c9a96e';
-        ctx.textAlign = 'center';
+        ctx.fillStyle    = '#c9a96e';
+        ctx.textAlign    = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText(bub.text, px, bubY + bubH/2);
+        ctx.fillText(bub.text, px, bubY + bubH / 2);
+        ctx.globalAlpha = 1;
       }
     }
   }
@@ -327,8 +384,6 @@ export class HUD {
     this.maxActivity = 30;
 
     // Pluggable: main.js wires this to open the sprite-editor modal.
-    this.onSpriteEdit = null;
-
     // Build bot rows once; update in-place.
     this.botRows = new Map();
     for (const bot of bots) {
@@ -339,21 +394,14 @@ export class HUD {
         <span class="bot-pip idle"></span>
         <span class="bot-name">${bot.name}</span>
         <span class="bot-state">idle</span>
-        <button class="bot-gear" title="Edit ${bot.name}'s sprites" aria-label="Sprite editor">⚙</button>
       `;
-      // Row body click — focus + camera-follow (existing behaviour).
-      li.addEventListener('click', (e) => {
-        if (e.target.closest('.bot-gear')) return;     // gear handles itself
+      // Row click — focus + camera-follow.
+      li.addEventListener('click', () => {
         renderer.setFocusedBot(bot.id);
         renderer.setActiveFloor(bot.floor);
         renderer.followFocused = true;
         document.querySelectorAll('.bot-row').forEach(el => el.classList.remove('focused'));
         li.classList.add('focused');
-      });
-      // Gear button — open sprite-editor modal for this bot.
-      li.querySelector('.bot-gear').addEventListener('click', (e) => {
-        e.stopPropagation();
-        if (typeof this.onSpriteEdit === 'function') this.onSpriteEdit(bot);
       });
       this.botListEl.appendChild(li);
       this.botRows.set(bot.id, li);

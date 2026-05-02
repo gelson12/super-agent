@@ -6,8 +6,6 @@ import { Scheduler, loadSchedule } from './meetings.js';
 import { SpriteCache } from './sprites.js';
 import { Renderer, HUD } from './renderer.js';
 import { LiveFeed } from './live.js';
-import { openSpriteEditor } from './sprite_editor.js';
-
 const SIM_SPEED = 60;     // 60x real time so a meeting fires every minute or so
 
 (async function boot() {
@@ -32,7 +30,6 @@ const SIM_SPEED = 60;     // 60x real time so a meeting fires every minute or so
   renderer.setActiveFloor(2);
 
   const hud = new HUD(bots, scheduler, renderer);
-  hud.onSpriteEdit = (bot) => openSpriteEditor(bot, sprites, hud);
   const live = new LiveFeed(bots, hud);
 
   // Wire UI: floor pills (manual change disables camera follow).

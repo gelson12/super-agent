@@ -702,7 +702,7 @@
       "main": [
         [
           {
-            "node": "super-agent /chat/direct",
+            "node": "super-agent /webhook/bot-engine",
             "type": "main",
             "index": 0
           }

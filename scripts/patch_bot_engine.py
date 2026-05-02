@@ -168,10 +168,24 @@ def patch_bot(filename: str) -> dict:
                 steps.append("removed perf_self_report CTE from Execute low-risk action")
                 changed = True
 
-    # Step 4: Rename connections key
+    # Step 4a: Rename connections key (outgoing FROM /chat/direct)
     if _CHAT_DIRECT_NAME in connections:
         connections[_BOT_ENGINE_NAME] = connections.pop(_CHAT_DIRECT_NAME)
         steps.append("renamed connections key to /webhook/bot-engine")
+        changed = True
+
+    # Step 4b: Update all connection TARGET references pointing TO /chat/direct
+    # (e.g. "Assemble prompt" has {"node": "super-agent /chat/direct"} which must be updated)
+    refs_fixed = 0
+    for src_name, src_conns in connections.items():
+        for port_list in src_conns.values():
+            for branch in port_list:
+                for edge in branch:
+                    if isinstance(edge, dict) and edge.get("node") == _CHAT_DIRECT_NAME:
+                        edge["node"] = _BOT_ENGINE_NAME
+                        refs_fixed += 1
+    if refs_fixed:
+        steps.append(f"updated {refs_fixed} connection target ref(s) to /webhook/bot-engine")
         changed = True
 
     if changed:

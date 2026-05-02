@@ -5,7 +5,6 @@
       "id": "ceo",
       "name": "CEO",
       "role": "Bridge_CEO_BOT",
-      "botSprite": "ceo.png",
       "sheet": "sheet_1",
       "row": 1,
       "desk": {
@@ -124,7 +123,6 @@
       "id": "marketing",
       "name": "Marketing",
       "role": "Bridge_Marketing_bot",
-      "botSprite": "marketing.png",
       "sheet": "sheet_3",
       "row": 4,
       "desk": {
@@ -182,7 +180,6 @@
       "id": "crypto",
       "name": "Crypto",
       "role": "Bridge_Crypto_bot",
-      "botSprite": "crypto.png",
       "sheet": "sheet_3",
       "row": 2,
       "desk": {
@@ -202,7 +199,6 @@
       "id": "cto",
       "name": "CTO",
       "role": "Bridge_CTO_bot",
-      "botSprite": "cto.png",
       "sheet": "sheet_1",
       "row": 4,
       "desk": {
@@ -222,7 +218,6 @@
       "id": "coo",
       "name": "COO",
       "role": "Bridge_COO_bot",
-      "botSprite": "coo.png",
       "sheet": "sheet_1",
       "row": 7,
       "desk": {
@@ -296,6 +291,26 @@
         "balcony",
         "desk_cluster",
         "lounge"
+      ]
+    },
+    {
+      "id": "cro",
+      "name": "Chief Rev. Optimizer",
+      "role": "Bridge_ChiefRevenueOptimizer_Bot",
+      "sheet": "sheet_2",
+      "row": 1,
+      "desk": {
+        "floor": 2,
+        "tile": [
+          28,
+          7
+        ]
+      },
+      "affinity": [
+        "conference_room",
+        "meeting_room",
+        "lounge",
+        "coffee"
       ]
     }
   ]

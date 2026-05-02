@@ -13,12 +13,12 @@
 import { findPath, findRoute, dirFromDelta, nearestWalkable } from './nav.js';
 
 let _seq = 0;
-const STEP_MS = 360;          // tile-to-tile travel time — slower = readable
-const TRANSITION_MS = 600;    // stair fade duration
+export const STEP_MS = 180;   // Unity/Godot RPG pace — ~5.5 tiles/sec
+const TRANSITION_MS = 380;    // snappier floor transition
 
-// Smooth ease-in-out so steps don't snap from one tile to the next.
+// Cubic ease-in-out — crisp start/stop matching Unity's Animator default curve.
 function easeInOut(t) {
-  return t < 0.5 ? 2*t*t : 1 - Math.pow(-2*t + 2, 2) / 2;
+  return t < 0.5 ? 4*t*t*t : 1 - Math.pow(-2*t + 2, 3) / 2;
 }
 
 export class Bot {
