@@ -1,0 +1,268 @@
+{
+  "name": "Bridge_CRO_Revenue_Engine",
+  "nodes": [
+    {
+      "id": "cre-trigger",
+      "name": "Schedule: daily 06:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        300
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 0 6 * * *"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "cre-pipeline",
+      "name": "Pull revenue pipeline",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        480,
+        200
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  marketing_status,\n  COUNT(*) AS lead_count,\n  COUNT(*) FILTER (WHERE updated_at < NOW() - INTERVAL '7 days') AS stalled_count,\n  COUNT(*) FILTER (WHERE updated_at >= NOW() - INTERVAL '24 hours') AS active_24h\nFROM bridge.leads\nWHERE marketing_status NOT IN ('Paid','Closed','Rejected')\nGROUP BY marketing_status\nORDER BY lead_count DESC;",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "Ae3yvuqjgMnVRrCo",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "id": "cre-gaps",
+      "name": "Pull conversion gaps",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        480,
+        400
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  l.lead_id, l.business_name, l.niche, l.city, l.marketing_status,\n  l.updated_at,\n  EXTRACT(DAY FROM NOW() - l.updated_at)::int AS days_stalled,\n  (SELECT COUNT(*) FROM bridge.outreach_messages o\n   WHERE o.lead_id = l.lead_id AND o.direction = 'outbound'\n     AND o.sent_at >= NOW() - INTERVAL '7 days') AS recent_touches\nFROM bridge.leads l\nWHERE l.marketing_status IN ('Contacted','Interested','Proposal Sent')\n  AND l.updated_at < NOW() - INTERVAL '7 days'\n  AND l.finance_status != 'Paid'\nORDER BY days_stalled DESC\nLIMIT 10;",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "Ae3yvuqjgMnVRrCo",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "id": "cre-wins",
+      "name": "Pull recent wins + losses",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        480,
+        600
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  outcome, COUNT(*) AS count,\n  ROUND(AVG(cro_score)::numeric, 1) AS avg_cro_score,\n  ROUND(AVG(actual_revenue_usd)::numeric, 2) AS avg_revenue,\n  array_agg(project_name ORDER BY updated_at DESC) FILTER (WHERE project_name IS NOT NULL)\n    AS recent_projects\nFROM bridge.project_memory\nWHERE updated_at >= NOW() - INTERVAL '14 days'\nGROUP BY outcome;",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "Ae3yvuqjgMnVRrCo",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "id": "cre-prompt",
+      "name": "Assemble CRO analysis",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        760,
+        400
+      ],
+      "parameters": {
+        "jsCode": "const pipeline = $('Pull revenue pipeline').all().map(i => i.json);\nconst gaps = $('Pull conversion gaps').all().map(i => i.json).filter(r => r.lead_id);\nconst performance = $('Pull recent wins + losses').all().map(i => i.json);\n\nconst today = new Date().toISOString().slice(0, 10);\nconst stalledLeads = gaps.length;\nconst interestedCount = pipeline.find(p => p.marketing_status === 'Interested')?.lead_count || 0;\nconst contactedCount = pipeline.find(p => p.marketing_status === 'Contacted')?.lead_count || 0;\n\nconst prompt = `You are Bridge_CRO_BOT running the daily revenue engine. Today is ${today}.\n\nREVENUE PIPELINE:\n${JSON.stringify(pipeline, null, 2)}\n\nSTALLED CONVERSIONS (no touch in 7+ days):\n${JSON.stringify(gaps.slice(0, 5), null, 2)}\n\nRECENT PROJECT OUTCOMES:\n${JSON.stringify(performance, null, 2)}\n\nYour job: Generate 3-5 specific, actionable revenue opportunities. For each opportunity:\n1. Identify a concrete action (re-engage stalled lead, upsell existing client, new campaign)\n2. Estimate revenue potential ($)\n3. Identify which agent should execute\n4. Provide a specific memo subject and brief action body\n\nFocus on highest-ROI, lowest-effort opportunities first.\nReturn a JSON array of opportunities:\n[{\"priority\": 1, \"type\": \"re_engage|upsell|new_campaign\", \"target\": \"lead_id or general\", \"revenue_potential_usd\": 0, \"effort\": \"low|medium|high\", \"execute_agent\": \"bizdev|marketing|pm\", \"memo_subject\": \"...\", \"memo_body\": \"...\"}]`;\n\nreturn [{ json: { prompt, stalled_count: stalledLeads, interested_count: interestedCount,\n  contacted_count: contactedCount, today } }];\n"
+      }
+    },
+    {
+      "id": "cre-llm",
+      "name": "Call CRO analysis",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1000,
+        400
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPER_AGENT_URL || 'https://super-agent-production.up.railway.app' }}/chat/direct",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Token",
+              "value": "={{ $env.SUPER_AGENT_PASSWORD }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={ \"message\": {{ JSON.stringify($json.prompt) }}, \"model\": \"CLAUDE\", \"session_id\": \"bridge-cro-revenue-engine-{{ $now.format('yyyyMMdd') }}\" }",
+        "options": {
+          "timeout": 90000,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "cre-parse",
+      "name": "Parse + dispatch opportunities",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1240,
+        400
+      ],
+      "parameters": {
+        "jsCode": "const raw = $json.response || '';\nconst ctx = $('Assemble CRO analysis').first().json;\n\nlet opportunities = [];\ntry {\n  const cleaned = raw.trim().replace(/^```(?:json)?/, '').replace(/```$/, '').trim();\n  const m = cleaned.match(/\\[[\\s\\S]*\\]/);\n  if (m) opportunities = JSON.parse(m[0]);\n} catch(e) { opportunities = []; }\n\n// Keep top 3 by priority\nconst top = opportunities.slice(0, 3);\nreturn top.map(o => ({ json: {\n  to_agent: o.execute_agent || 'bizdev',\n  memo_type: 'revenue_opportunity',\n  priority: o.priority === 1 ? 'high' : 'normal',\n  subject: o.memo_subject || 'CRO Revenue Opportunity',\n  body_json: {\n    ...o,\n    source: 'cro_revenue_engine',\n    generated_date: ctx.today,\n    stalled_pipeline: ctx.stalled_count,\n    attempt_count: 0\n  }\n}}));\n"
+      }
+    },
+    {
+      "id": "cre-dispatch",
+      "name": "Dispatch revenue memos",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1480,
+        400
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO bridge.agent_memos\n  (from_agent, to_agent, memo_type, priority, subject, body_json)\nVALUES ('cro', $1, $2, $3, $4, $5::jsonb)\nRETURNING memo_id;",
+        "options": {
+          "queryReplacement": "={{ $json.to_agent }},={{ $json.memo_type }},={{ $json.priority }},={{ $json.subject }},={{ JSON.stringify($json.body_json) }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "Ae3yvuqjgMnVRrCo",
+          "name": "Postgres account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Schedule: daily 06:00": {
+      "main": [
+        [
+          {
+            "node": "Pull revenue pipeline",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Pull conversion gaps",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Pull recent wins + losses",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pull revenue pipeline": {
+      "main": [
+        [
+          {
+            "node": "Assemble CRO analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pull conversion gaps": {
+      "main": [
+        [
+          {
+            "node": "Assemble CRO analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pull recent wins + losses": {
+      "main": [
+        [
+          {
+            "node": "Assemble CRO analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Assemble CRO analysis": {
+      "main": [
+        [
+          {
+            "node": "Call CRO analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call CRO analysis": {
+      "main": [
+        [
+          {
+            "node": "Parse + dispatch opportunities",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse + dispatch opportunities": {
+      "main": [
+        [
+          {
+            "node": "Dispatch revenue memos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": null
+}

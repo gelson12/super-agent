@@ -1,0 +1,275 @@
+{
+  "name": "Bridge_Anomaly_Detector",
+  "nodes": [
+    {
+      "id": "ad-trigger",
+      "name": "Schedule: every hour",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        300
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 0 * * * *"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "ad-costs",
+      "name": "Cost spike check",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        480,
+        200
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH hourly_avg AS (\n  SELECT COALESCE(AVG(hourly_cost), 0) AS avg_cost\n  FROM (\n    SELECT DATE_TRUNC('hour', occurred_at) AS h, SUM(amount_usd) AS hourly_cost\n    FROM bridge.expenses\n    WHERE occurred_at >= NOW() - INTERVAL '7 days'\n    GROUP BY h\n  ) t\n),\nlast_hour AS (\n  SELECT COALESCE(SUM(amount_usd), 0) AS cost\n  FROM bridge.expenses\n  WHERE occurred_at >= NOW() - INTERVAL '1 hour'\n)\nSELECT last_hour.cost AS last_hour_cost, hourly_avg.avg_cost,\n  CASE WHEN hourly_avg.avg_cost > 0\n       THEN ROUND(last_hour.cost / hourly_avg.avg_cost, 2)\n       ELSE 0 END AS spike_ratio,\n  last_hour.cost > hourly_avg.avg_cost * 3 AS is_spike\nFROM last_hour, hourly_avg;",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "Ae3yvuqjgMnVRrCo",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "id": "ad-loops",
+      "name": "Loop storm check",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        480,
+        350
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  COUNT(*) FILTER (WHERE event_type = 'loop_detected') AS loops_last_30min,\n  COUNT(*) FILTER (WHERE event_type = 'auto_block_repeated_rejection') AS autoblock_last_30min,\n  COUNT(*) FILTER (WHERE event_type ILIKE '%error%') AS errors_last_30min,\n  COUNT(*) > 5 AS is_loop_storm\nFROM bridge.workflow_events\nWHERE created_at >= NOW() - INTERVAL '30 minutes'\n  AND event_type IN ('loop_detected','auto_block_repeated_rejection','error','parse_failed');",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "Ae3yvuqjgMnVRrCo",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "id": "ad-drift",
+      "name": "Agent drift check",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        480,
+        500
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT agent_name,\n  today.success_rate AS today_rate,\n  week_avg.avg_rate AS week_avg_rate,\n  today.success_rate < week_avg.avg_rate - 20 AS is_drifting,\n  today.tasks_total,\n  authority_level\nFROM (\n  SELECT agent_name, authority_level,\n    ROUND(100.0 * tasks_success / NULLIF(tasks_total, 0), 1) AS success_rate,\n    tasks_total\n  FROM bridge.agent_performance WHERE date = CURRENT_DATE AND tasks_total >= 3\n) today\nJOIN (\n  SELECT agent_name,\n    ROUND(AVG(100.0 * tasks_success / NULLIF(tasks_total, 0)), 1) AS avg_rate\n  FROM bridge.agent_performance\n  WHERE date >= CURRENT_DATE - INTERVAL '7 days'\n  GROUP BY agent_name\n) week_avg USING (agent_name)\nWHERE today.success_rate < week_avg.avg_rate - 20;",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "Ae3yvuqjgMnVRrCo",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "id": "ad-volume",
+      "name": "Memo volume spike",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        480,
+        650
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH hourly_avg AS (\n  SELECT COALESCE(AVG(cnt), 0) AS avg_memos\n  FROM (\n    SELECT DATE_TRUNC('hour', created_at) AS h, COUNT(*) AS cnt\n    FROM bridge.agent_memos\n    WHERE created_at >= NOW() - INTERVAL '7 days'\n    GROUP BY h\n  ) t\n),\nlast_hour AS (\n  SELECT COUNT(*) AS cnt FROM bridge.agent_memos\n  WHERE created_at >= NOW() - INTERVAL '1 hour'\n)\nSELECT last_hour.cnt AS last_hour_memos, ROUND(hourly_avg.avg_memos) AS avg_memos,\n  last_hour.cnt > hourly_avg.avg_memos * 5 AS is_volume_spike\nFROM last_hour, hourly_avg;",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "Ae3yvuqjgMnVRrCo",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "id": "ad-build",
+      "name": "Build anomaly report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        760,
+        420
+      ],
+      "parameters": {
+        "jsCode": "const costs = $('Cost spike check').first().json || {};\nconst loops = $('Loop storm check').first().json || {};\nconst drifters = $('Agent drift check').all().map(i => i.json).filter(r => r.agent_name && r.is_drifting);\nconst volume = $('Memo volume spike').first().json || {};\n\nconst anomalies = [];\nif (costs.is_spike) anomalies.push({ type: 'cost_spike', severity: 'critical',\n  detail: `Cost ${costs.spike_ratio}x normal (${costs.last_hour_cost} vs avg ${costs.avg_cost})` });\nif (loops.is_loop_storm) anomalies.push({ type: 'loop_storm', severity: 'critical',\n  detail: `${loops.loops_last_30min} loops + ${loops.errors_last_30min} errors in 30min` });\nif (volume.is_volume_spike) anomalies.push({ type: 'memo_volume_spike', severity: 'high',\n  detail: `${volume.last_hour_memos} memos vs avg ${volume.avg_memos}` });\nfor (const d of drifters) anomalies.push({ type: 'agent_drift', severity: 'high',\n  agent: d.agent_name, detail: `${d.today_rate}% vs ${d.week_avg_rate}% week avg` });\n\nif (anomalies.length === 0) return [{ json: { no_anomalies: true } }];\n\nconst critical = anomalies.filter(a => a.severity === 'critical');\nconst report = anomalies.map(a => `• [${a.severity.toUpperCase()}] ${a.type}: ${a.detail}`).join('\\n');\nreturn [{ json: { anomalies, critical_count: critical.length,\n  report, no_anomalies: false } }];\n"
+      }
+    },
+    {
+      "id": "ad-if",
+      "name": "Anomalies found?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1000,
+        420
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has_anomalies",
+              "leftValue": "={{ $json.no_anomalies }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "notTrue"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "ad-log",
+      "name": "Log + alert on anomalies",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1240,
+        320
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH log_anomaly AS (\n  INSERT INTO bridge.workflow_events (workflow_name, event_type, details_json)\n  VALUES ('anomaly_detector', 'anomalies_detected',\n    jsonb_build_object('anomalies', $1::jsonb, 'critical_count', $3::int))\n  RETURNING event_id\n),\nalert_cos AS (\n  INSERT INTO bridge.agent_memos\n    (from_agent, to_agent, memo_type, priority, subject, body_json)\n  VALUES (\n    'anomaly_detector', 'chief_of_staff',\n    CASE WHEN $3::int > 0 THEN 'critical_system_alert' ELSE 'system_health_alert' END,\n    CASE WHEN $3::int > 0 THEN 'urgent' ELSE 'high' END,\n    'Anomaly detected: ' || $2,\n    jsonb_build_object('anomalies', $1::jsonb, 'report', $2)\n  ) RETURNING memo_id\n)\nSELECT (SELECT event_id FROM log_anomaly) AS logged,\n       (SELECT memo_id FROM alert_cos) AS alerted;",
+        "options": {
+          "queryReplacement": "={{ JSON.stringify($json.anomalies) }},={{ $json.report }},={{ $json.critical_count }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "Ae3yvuqjgMnVRrCo",
+          "name": "Postgres account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Schedule: every hour": {
+      "main": [
+        [
+          {
+            "node": "Cost spike check",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Loop storm check",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Agent drift check",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Memo volume spike",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cost spike check": {
+      "main": [
+        [
+          {
+            "node": "Build anomaly report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop storm check": {
+      "main": [
+        [
+          {
+            "node": "Build anomaly report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Agent drift check": {
+      "main": [
+        [
+          {
+            "node": "Build anomaly report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Memo volume spike": {
+      "main": [
+        [
+          {
+            "node": "Build anomaly report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build anomaly report": {
+      "main": [
+        [
+          {
+            "node": "Anomalies found?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Anomalies found?": {
+      "main": [
+        [
+          {
+            "node": "Log + alert on anomalies",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": null
+}

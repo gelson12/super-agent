@@ -1,0 +1,229 @@
+{
+  "name": "Bridge_Self_Healing_System",
+  "nodes": [
+    {
+      "id": "sh-trigger",
+      "name": "Schedule: every 30min",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        300
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 */30 * * * *"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "sh-stalled",
+      "name": "Find stalled tasks",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        480,
+        200
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT memo_id, from_agent, to_agent, memo_type, subject, body_json,\n       created_at, EXTRACT(EPOCH FROM (NOW()-created_at))/3600 AS hours_open\nFROM bridge.agent_memos\nWHERE status = 'open'\n  AND memo_type IN ('execution_directive','cto_review_request','build_validation_request')\n  AND created_at < NOW() - INTERVAL '2 hours'\n  AND (body_json->>'self_heal_flagged') IS NULL\nORDER BY created_at ASC LIMIT 10;",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "Ae3yvuqjgMnVRrCo",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "id": "sh-failures",
+      "name": "Find recent failures",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        480,
+        400
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT workflow_name, event_type, details_json, created_at,\n       COUNT(*) OVER (PARTITION BY workflow_name) AS failure_count\nFROM bridge.workflow_events\nWHERE event_type ILIKE '%error%' OR event_type ILIKE '%fail%'\n  AND created_at >= NOW() - INTERVAL '1 hour'\nORDER BY created_at DESC LIMIT 20;",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "Ae3yvuqjgMnVRrCo",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "id": "sh-analyze",
+      "name": "Analyze + classify issues",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        300
+      ],
+      "parameters": {
+        "jsCode": "const stalled = $('Find stalled tasks').all().map(i => i.json).filter(r => r.memo_id);\nconst failures = $('Find recent failures').all().map(i => i.json).filter(r => r.workflow_name);\n\nconst issues = [];\n\n// Classify stalled tasks\nfor (const t of stalled) {\n    const hours = parseFloat(t.hours_open) || 0;\n    const severity = hours > 12 ? 'critical' : hours > 4 ? 'high' : 'medium';\n    issues.push({\n        type: 'stalled_task', severity, memo_id: t.memo_id,\n        from_agent: t.from_agent, to_agent: t.to_agent,\n        subject: t.subject, hours_open: hours,\n        fix: t.memo_type === 'cto_review_request' ? 'cto_nudge' : 'cos_escalate'\n    });\n}\n\n// Classify repeated failures\nconst wfFailMap = {};\nfor (const f of failures) {\n    wfFailMap[f.workflow_name] = (wfFailMap[f.workflow_name] || 0) + 1;\n}\nfor (const [wf, count] of Object.entries(wfFailMap)) {\n    if (count >= 2) {\n        issues.push({\n            type: 'repeated_failure', severity: count >= 5 ? 'critical' : 'high',\n            workflow_name: wf, failure_count: count,\n            fix: 'cto_architecture_review'\n        });\n    }\n}\n\nconst critical = issues.filter(i => i.severity === 'critical');\nconst high = issues.filter(i => i.severity === 'high');\nconst total = issues.length;\n\nif (total === 0) return [{ json: { no_issues: true } }];\n\nreturn [{ json: { issues, critical_count: critical.length, high_count: high.length,\n    summary: `${total} issues: ${critical.length} critical, ${high.length} high` } }];\n"
+      }
+    },
+    {
+      "id": "sh-if-issues",
+      "name": "Issues found?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        960,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has_issues",
+              "leftValue": "={{ $json.no_issues }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "notTrue"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "sh-repair",
+      "name": "Create repair memos",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1200,
+        200
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH mark_flagged AS (\n  UPDATE bridge.agent_memos\n  SET body_json = body_json || '{\"self_heal_flagged\": true}'::jsonb\n  WHERE memo_id = ANY(\n    SELECT (issue->>'memo_id')::uuid\n    FROM jsonb_array_elements($1::jsonb) AS issue\n    WHERE issue->>'memo_id' IS NOT NULL\n  )\n  RETURNING memo_id\n),\nalert_cos AS (\n  INSERT INTO bridge.agent_memos\n    (from_agent, to_agent, memo_type, priority, subject, body_json)\n  VALUES (\n    'self_healing', 'chief_of_staff', 'system_health_alert', 'high',\n    $2,\n    jsonb_build_object('issues', $1::jsonb, 'auto_generated', true,\n                       'action_required', 'review_and_dispatch_fixes')\n  ) RETURNING memo_id\n),\nlog_heal AS (\n  INSERT INTO bridge.workflow_events (workflow_name, event_type, details_json)\n  VALUES ('self_healing', 'issues_detected',\n    jsonb_build_object('summary', $2, 'issue_count', jsonb_array_length($1::jsonb)))\n  RETURNING event_id\n)\nSELECT (SELECT COUNT(*) FROM mark_flagged) AS flagged,\n       (SELECT memo_id FROM alert_cos) AS cos_alerted;",
+        "options": {
+          "queryReplacement": "={{ JSON.stringify($json.issues) }},={{ $json.summary }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "Ae3yvuqjgMnVRrCo",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "id": "sh-alert",
+      "name": "Alert CEO if critical",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1200,
+        400
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO bridge.agent_memos\n  (from_agent, to_agent, memo_type, priority, subject, body_json)\nSELECT 'self_healing', 'ceo', 'critical_system_alert', 'urgent',\n       'CRITICAL: ' || $1,\n       jsonb_build_object('critical_issues', $2::jsonb,\n                          'requires_immediate_action', true)\nWHERE $3::int > 0\nRETURNING memo_id;",
+        "options": {
+          "queryReplacement": "={{ $json.summary }},={{ JSON.stringify($json.issues.filter(i=>i.severity==='critical')) }},={{ $json.critical_count }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "Ae3yvuqjgMnVRrCo",
+          "name": "Postgres account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Schedule: every 30min": {
+      "main": [
+        [
+          {
+            "node": "Find stalled tasks",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Find recent failures",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find stalled tasks": {
+      "main": [
+        [
+          {
+            "node": "Analyze + classify issues",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find recent failures": {
+      "main": [
+        [
+          {
+            "node": "Analyze + classify issues",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze + classify issues": {
+      "main": [
+        [
+          {
+            "node": "Issues found?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Issues found?": {
+      "main": [
+        [
+          {
+            "node": "Create repair memos",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Alert CEO if critical",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": null
+}
