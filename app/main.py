@@ -847,6 +847,8 @@ class DirectChatRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=8000)
     model: str = Field(..., description="GEMINI | DEEPSEEK | CLAUDE")
     session_id: str = Field(default="default", max_length=128)
+    task_type: str | None = Field(default=None, max_length=80,
+        description="Optional task classification hint (memo|query|cleanup|escalate|no_op)")
 
 
 class ChatResponse(BaseModel):
@@ -5252,6 +5254,52 @@ def webhook_store_memory(payload: dict):
         return {"ok": True, "stored": content[:80] + ("..." if len(content) > 80 else "")}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Memory store failed: {e}")
+
+
+class TaskEnvelopeRequest(BaseModel):
+    task_id: str = Field(..., max_length=128)
+    origin: str = Field(..., max_length=80)
+    target: str = Field(..., max_length=80)
+    objective: str = Field(..., max_length=2000)
+    context: str = Field(default="", max_length=4000)
+    payload: dict = Field(default_factory=dict)
+    priority: str = Field(default="normal", pattern="^(low|medium|high|urgent)$")
+    requires_approval: bool = False
+    attempt_count: int = Field(default=0, ge=0, le=10)
+    model: str = Field(default="CLAUDE")
+    api_key: str
+
+
+@app.post("/webhook/task-envelope", tags=["webhook"])
+@limiter.limit("60/minute")
+def webhook_task_envelope(req: TaskEnvelopeRequest, request: Request):
+    """
+    Structured task envelope endpoint for Bridge agent-to-agent dispatch.
+    Loop guard: attempt_count >= 1 returns loop_detected immediately.
+    Protected by N8N_API_KEY.
+    """
+    import secrets as _secrets
+    import os as _os_te
+    _key = _os_te.environ.get("N8N_API_KEY", "")
+    if not _key or not _secrets.compare_digest(req.api_key, _key):
+        raise HTTPException(status_code=403, detail="Invalid api_key")
+    if req.attempt_count >= 1:
+        bg_log(f"[task-envelope] loop_detected task_id={req.task_id}", "task_envelope")
+        return {"ok": False, "reason": "loop_detected", "task_id": req.task_id,
+                "message": "attempt_count >= 1 — escalated to COS, not retried."}
+    _BANNED = ['PASTE_', 'TBD', 'PLACEHOLDER', 'INSERT_HERE', 'YOUR_URL']
+    if any(b in req.objective + req.context + str(req.payload) for b in _BANNED):
+        raise HTTPException(status_code=400, detail="Task envelope contains placeholder values.")
+    msg = (f"[TASK ENVELOPE]\ntask_id: {req.task_id}\norigin: {req.origin}\n"
+           f"target: {req.target}\nobjective: {req.objective}\ncontext: {req.context}\n"
+           f"payload: {req.payload}\npriority: {req.priority}\n"
+           f"requires_approval: {req.requires_approval}\nattempt_count: {req.attempt_count}")
+    sid = f"task-{req.task_id[:20]}"
+    result = dispatch(msg, force_model=req.model.upper(), session_id=sid)
+    if result["model_used"] is None:
+        raise HTTPException(status_code=400, detail=result["response"])
+    append_exchange(sid, msg, result["response"])
+    return _chat_response_from_result(result, sid)
 
 
 @app.get("/benchmark/latest", tags=["benchmark"])

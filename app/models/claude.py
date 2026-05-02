@@ -101,7 +101,7 @@ def ask_claude(prompt: str, system: str = SYSTEM_PROMPT_CLAUDE) -> str:
     try:
         from ..learning.pro_router import try_pro
         pro = try_pro(prompt, system=system)
-        if pro is not None and not pro.lstrip().startswith('{"type":"error"'):
+        if pro is not None and not pro.lstrip().startswith('{"type":"error"') and not pro.startswith('['):
             return pro
     except Exception:
         pass  # pro_router unavailable — try Gemini next
@@ -153,7 +153,7 @@ def ask_claude_haiku(prompt: str, system: str = SYSTEM_PROMPT_CLAUDE) -> str:
     try:
         from ..learning.pro_router import try_pro
         pro = try_pro(prompt, system=system)
-        if pro is not None and not pro.lstrip().startswith('{"type":"error"'):
+        if pro is not None and not pro.lstrip().startswith('{"type":"error"') and not pro.startswith('['):
             return pro
     except Exception:
         pass  # pro_router unavailable — try Gemini next

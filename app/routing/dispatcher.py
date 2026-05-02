@@ -1,5 +1,6 @@
 import logging as _logging
 import os as _os
+import re
 import time as _time
 from pathlib import Path as _Path
 
@@ -873,6 +874,28 @@ _MAX_MESSAGE_LEN = 12_000
 # Exposed at /metrics/drift-swaps for observability.
 _drift_swap_count: int = 0
 
+_BRIDGE_BANNED_PLACEHOLDERS = frozenset(['PASTE_', 'TBD', 'PLACEHOLDER', 'INSERT_HERE', 'YOUR_URL'])
+_BRIDGE_SESSION_PREFIX = "bridge-"
+
+
+def _validate_bridge_output(response: str, session_id: str) -> str:
+    """Validate & scrub Bridge bot responses before returning to caller."""
+    if not session_id.startswith(_BRIDGE_SESSION_PREFIX):
+        return response
+    if any(p in response for p in _BRIDGE_BANNED_PLACEHOLDERS):
+        _log.warning("bridge_output_validation: placeholder in session %s", session_id)
+        return '[Output validation failed — response contained placeholder values. Please provide the actual value.]'
+    _leakage_map = {
+        'n8n workflow creation': 'automation system modification',
+        'n8n workflow modification': 'automation system modification',
+        'shell command (destructive)': 'system operation',
+        'shell command': 'system operation',
+        'SQL query': 'data operation',
+    }
+    for _internal, _safe in _leakage_map.items():
+        response = re.sub(re.escape(_internal), _safe, response, flags=re.IGNORECASE)
+    return response
+
 
 def dispatch(message: str, force_model: str | None = None, session_id: str = "default",
              _dispatch_depth: int = 0) -> dict:
@@ -1375,6 +1398,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
                 except Exception:
                     continue
 
+        response = _validate_bridge_output(response, session_id)
         if actual_model in _CACHEABLE_MODELS:
             cache.set(message, actual_model, response)
         insight_log.record(message, actual_model, response, "forced", complexity, session_id)
