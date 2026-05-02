@@ -137,7 +137,7 @@ def _detect_operation_type(message: str) -> str:
 # actually request execution of those operations — the workflow's risk-tagged
 # action dispatcher gates that separately.
 _DEFAULT_WHITELIST_PATTERNS = [
-    r"^bridge-(researcher|chief_of_staff|cso|ceo|cleaner|programmer|pm|finance|marketing|website)-",
+    r"^bridge-(researcher|chief_of_staff|cso|ceo|cleaner|programmer|pm|finance|marketing|website|cro)-",
 ]
 
 

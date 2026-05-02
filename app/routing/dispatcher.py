@@ -453,6 +453,9 @@ _APPROVAL_KEYWORDS = {
     "sign off on", "greenlight", "give the go-ahead", "get ceo approval",
     "needs approval", "pending approval", "awaiting approval",
     "escalate to ceo", "escalate to cos", "chief of staff approval",
+    # CRO-specific escalations
+    "revenue signal", "upsell opportunity", "churn risk", "pricing experiment",
+    "cold lead", "deal going cold", "revenue optimizer",
 }
 
 _CACHEABLE_MODELS = {"HAIKU", "GEMINI", "DEEPSEEK", "CLAUDE"}
