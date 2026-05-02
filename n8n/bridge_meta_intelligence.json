@@ -1,0 +1,187 @@
+{
+  "id": "d3089697-2a39-450f-968d-e9b952ad2d73",
+  "name": "Bridge_Meta_Intelligence",
+  "active": true,
+  "nodes": [
+    {
+      "id": "ce134b9e-0cd7-4c18-ab1a-769b811623fe",
+      "name": "Schedule: 23:30 UTC",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [
+        240,
+        300
+      ],
+      "parameters": {
+        "cronExpression": "30 23 * * *"
+      }
+    },
+    {
+      "id": "1fb1a416-b51c-4c69-8e6b-5342d03e881a",
+      "name": "Pull 24h data",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        480,
+        300
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n    (SELECT COUNT(*) FROM bridge.agent_memos WHERE created_at >= NOW() - INTERVAL '24h') AS total_memos,\n    (SELECT COUNT(*) FROM bridge.cro_evaluations WHERE created_at >= NOW() - INTERVAL '24h') AS cro_evaluations,\n    (SELECT ROUND(AVG(cro_score), 1) FROM bridge.cro_evaluations WHERE created_at >= NOW() - INTERVAL '24h') AS avg_cro_score,\n    (SELECT COUNT(*) FROM bridge.project_memory WHERE outcome = 'approved' AND updated_at >= NOW() - INTERVAL '24h') AS projects_approved,\n    (SELECT COUNT(*) FROM bridge.project_memory WHERE outcome = 'rejected' AND updated_at >= NOW() - INTERVAL '24h') AS projects_rejected,\n    (SELECT COALESCE(SUM(actual_revenue_usd), 0) FROM bridge.project_memory WHERE updated_at >= NOW() - INTERVAL '24h') AS revenue_today,\n    (SELECT agent_name FROM bridge.agent_performance WHERE date = CURRENT_DATE ORDER BY tasks_success DESC LIMIT 1) AS best_agent,\n    (SELECT agent_name FROM bridge.agent_performance WHERE date = CURRENT_DATE AND tasks_total > 0 ORDER BY (tasks_success::float / NULLIF(tasks_total,0)) ASC LIMIT 1) AS worst_agent"
+      }
+    },
+    {
+      "id": "7e7286bc-7966-4267-867f-d8e9ae2a7983",
+      "name": "Build AI prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        720,
+        300
+      ],
+      "parameters": {
+        "jsCode": "const row = $input.all()[0].json || {};\nconst stats = row;\nconst today = new Date().toISOString().slice(0, 10);\n\nconst totalMemos    = stats.total_memos || 0;\nconst croEvals      = stats.cro_evaluations || 0;\nconst avgCroScore   = stats.avg_cro_score ? parseFloat(stats.avg_cro_score).toFixed(1) : 'n/a';\nconst projApproved  = stats.projects_approved || 0;\nconst projRejected  = stats.projects_rejected || 0;\nconst revToday      = stats.revenue_today ? `$${parseFloat(stats.revenue_today).toFixed(2)}` : '$0.00';\nconst bestAgent     = stats.best_agent || 'n/a';\nconst worstAgent    = stats.worst_agent || 'n/a';\n\nconst prompt = `You are the Bridge OS meta-intelligence system. Analyze today's operational data and provide a concise, actionable intelligence report.\n\nTODAY'S DATA (${today}):\n- Total inter-agent memos: ${totalMemos}\n- CRO evaluations: ${croEvals} (avg score: ${avgCroScore}/100)\n- Projects approved: ${projApproved} | rejected: ${projRejected}\n- Revenue attributed: ${revToday}\n- Best performing agent: ${bestAgent}\n- Underperforming agent: ${worstAgent}\n\nRespond with a JSON object:\n{\n  \"system_health\": \"excellent|good|fair|poor\",\n  \"learning_rate_trend\": \"improving|stable|declining\",\n  \"revenue_efficiency\": \"high|medium|low\",\n  \"pattern_alerts\": [\"...list of detected repeating mistakes or missed opportunities...\"],\n  \"adaptation_recommendations\": [\"...list of specific changes for tomorrow...\"],\n  \"ai_insight\": \"...2-3 sentence strategic insight for the CEO...\"\n}`;\n\nreturn [{ json: { prompt, today, totalMemos, croEvals, avgCroScore, projApproved, projRejected, revToday, bestAgent, worstAgent }}];"
+      }
+    },
+    {
+      "id": "20d9f9a6-0f65-4079-8e43-3e2a168b8ae6",
+      "name": "Call super-agent",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        960,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPER_AGENT_URL || 'https://super-agent-production.up.railway.app' }}/chat/direct",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "message",
+              "value": "={{ $json.prompt }}"
+            },
+            {
+              "name": "model",
+              "value": "CLAUDE"
+            },
+            {
+              "name": "session_id",
+              "value": "=bridge-meta-intel-{{ $now.format('yyyyMMdd') }}"
+            },
+            {
+              "name": "force_json",
+              "value": "true"
+            }
+          ]
+        },
+        "responseFormat": "json"
+      }
+    },
+    {
+      "id": "eb2cc965-a004-4429-a9f3-579249c3cb50",
+      "name": "Build intelligence report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        1200,
+        300
+      ],
+      "parameters": {
+        "jsCode": "const ctx = $('Build AI prompt').first().json;\nlet aiInsight = { system_health: 'unknown', learning_rate_trend: 'stable',\n                   revenue_efficiency: 'medium', pattern_alerts: [],\n                   adaptation_recommendations: [], ai_insight: '' };\n\ntry {\n    const raw = $json.response || $json.message || '';\n    const cleaned = raw.trim().replace(/^```(?:json)?/, '').replace(/```$/, '').trim();\n    const m = cleaned.match(/\\{[\\s\\S]*\\}/);\n    if (m) aiInsight = JSON.parse(m[0]);\n} catch(e) {}\n\nconst today = ctx.today;\nlet report = `🧠 SYSTEM INTELLIGENCE REPORT — ${today}\\n\\n`;\nreport += `📊 System Health: ${aiInsight.system_health}\\n`;\nreport += `📈 Learning Trend: ${aiInsight.learning_rate_trend}\\n`;\nreport += `💰 Revenue Efficiency: ${aiInsight.revenue_efficiency}\\n\\n`;\n\nreport += `📬 Activity: ${ctx.totalMemos} memos | ${ctx.croEvals} CRO evals (avg ${ctx.avgCroScore}/100)\\n`;\nreport += `✅ Approved: ${ctx.projApproved} | ❌ Rejected: ${ctx.projRejected} | 💵 Revenue: ${ctx.revToday}\\n\\n`;\n\nreport += `🥇 Best Agent: ${ctx.bestAgent}\\n`;\nreport += `⚠️ Underperforming: ${ctx.worstAgent}\\n\\n`;\n\nif (aiInsight.pattern_alerts && aiInsight.pattern_alerts.length > 0) {\n    report += `🔁 PATTERNS DETECTED:\\n`;\n    aiInsight.pattern_alerts.forEach(p => report += `  • ${p}\\n`);\n    report += '\\n';\n}\n\nif (aiInsight.adaptation_recommendations && aiInsight.adaptation_recommendations.length > 0) {\n    report += `🔧 RECOMMENDATIONS FOR TOMORROW:\\n`;\n    aiInsight.adaptation_recommendations.forEach(r => report += `  • ${r}\\n`);\n    report += '\\n';\n}\n\nif (aiInsight.ai_insight) {\n    report += `🤖 AI INSIGHT:\\n${aiInsight.ai_insight}\\n`;\n}\n\nreturn [{ json: { telegram_message: report }}];"
+      }
+    },
+    {
+      "id": "c3ce8d5d-bde6-4173-8a59-bb5070655b47",
+      "name": "Send to CEO + COS",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        1440,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{ $env.BRIDGE_CEO_BOT_TOKEN }}/sendMessage",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "chat_id",
+              "value": "={{ $env.CEO_TELEGRAM_CHAT_ID }}"
+            },
+            {
+              "name": "text",
+              "value": "={{ $json.telegram_message }}"
+            },
+            {
+              "name": "parse_mode",
+              "value": "Markdown"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Schedule: 23:30 UTC": {
+      "main": [
+        [
+          {
+            "node": "Pull 24h data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pull 24h data": {
+      "main": [
+        [
+          {
+            "node": "Build AI prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build AI prompt": {
+      "main": [
+        [
+          {
+            "node": "Call super-agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call super-agent": {
+      "main": [
+        [
+          {
+            "node": "Build intelligence report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build intelligence report": {
+      "main": [
+        [
+          {
+            "node": "Send to CEO + COS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
