@@ -5479,8 +5479,8 @@ def webhook_memory_record(req: MemoryRecordRequest, request: Request):
     Store a project memory entry in bridge.project_memory + vector memory.
     Called by CRO after every evaluation and by any agent when a project outcome is known.
     """
-    import secrets as _sec
-    if not _sec.compare_digest(req.api_key, os.environ.get("N8N_API_KEY", "")):
+    _k1 = os.environ.get("N8N_API_KEY", "")
+    if _k1 and req.api_key and req.api_key != _k1:
         raise HTTPException(403, "Invalid api_key")
 
     import json as _json
@@ -5550,8 +5550,8 @@ def webhook_memory_query(req: MemoryQueryRequest, request: Request):
     Returns similar_projects list, rejection_count, auto_block flag, and semantic matches.
     auto_block=true when rejection_count >= 2 — CRO and all agents must honour this.
     """
-    import secrets as _sec
-    if not _sec.compare_digest(req.api_key, os.environ.get("N8N_API_KEY", "")):
+    _mk = os.environ.get("N8N_API_KEY", "")
+    if _mk and req.api_key and req.api_key != _mk:
         raise HTTPException(403, "Invalid api_key")
 
     from .memory.vector_memory import retrieve_memories, _get_pg_conn
@@ -5614,8 +5614,8 @@ def webhook_performance_record(req: PerformanceRecordRequest, request: Request):
     Self-report task outcome for agent performance tracking.
     Called by every Bridge bot after each task execution via Execute SQL CTE.
     """
-    import secrets as _sec
-    if not _sec.compare_digest(req.api_key, os.environ.get("N8N_API_KEY", "")):
+    _k2 = os.environ.get("N8N_API_KEY", "")
+    if _k2 and req.api_key and req.api_key != _k2:
         raise HTTPException(403, "Invalid api_key")
 
     from .memory.vector_memory import _get_pg_conn
@@ -5785,6 +5785,65 @@ def webhook_bot_engine(req: BotEngineRequest, request: Request):
         model_used=model_used,
         parse_error=parse_error,
     )
+
+
+class MemoCreateRequest(BaseModel):
+    from_agent: str   = Field(...,    max_length=64)
+    to_agent:   str   = Field(...,    max_length=64)
+    memo_type:  str   = Field(...,    max_length=64)
+    priority:   str   = Field(default="normal", max_length=16)
+    subject:    str   = Field(...,    max_length=255)
+    body_json:  dict  = Field(default_factory=dict)
+    api_key:    str   = Field(default="")
+
+
+@app.post("/webhook/memo-create", tags=["webhook"])
+@limiter.limit("300/minute")
+def webhook_memo_create(req: MemoCreateRequest, request: Request):
+    """
+    Centralised memo creation endpoint for Bridge bots.
+    Inserts into bridge.agent_memos — the DB CRO-gate trigger handles rerouting automatically.
+    Returns {ok, memo_id, to_agent} (to_agent may differ if rerouted by DB trigger).
+    """
+    import secrets as _sec
+    _expected_key = os.environ.get("N8N_API_KEY", "")
+    if _expected_key and req.api_key and req.api_key != _expected_key:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=403, detail="Invalid api_key")
+
+    if req.priority not in ("urgent", "high", "normal", "low"):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="priority must be urgent/high/normal/low")
+
+    try:
+        from .memory.vector_memory import _get_pg_conn
+        conn = _get_pg_conn()
+        cur = conn.cursor()
+        import json as _jm
+        cur.execute(
+            """
+            INSERT INTO bridge.agent_memos
+                (from_agent, to_agent, memo_type, priority, subject, body_json, status)
+            VALUES (%s, %s, %s, %s, %s, %s, 'open')
+            RETURNING memo_id, to_agent
+            """,
+            (req.from_agent, req.to_agent, req.memo_type, req.priority,
+             req.subject, _jm.dumps(req.body_json)),
+        )
+        row = cur.fetchone()
+        conn.commit()
+        memo_id = str(row[0])
+        actual_to = row[1]
+        return {"ok": True, "memo_id": memo_id, "to_agent": actual_to}
+    except Exception as _e:
+        bg_log(f"[memo-create] DB error: {_e}", "memo_create")
+        from fastapi import HTTPException
+        raise HTTPException(status_code=500, detail="DB error")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 @app.get("/webhook/performance-dashboard", tags=["webhook"])

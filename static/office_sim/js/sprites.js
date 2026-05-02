@@ -83,8 +83,9 @@ const FOLDER_ALIASES = {
   nova:           ['nova', 'nova_alpha'],
   writer:         ['writer', 'writer_alpha', 'ai_writer'],
   cro:            ['cro', 'Chief Revenue Optimizer'],
+  business_development: ['business_development', 'bizdev', 'biz_dev'],
   // Reference identities (extra characters from animated_office_bots/)
-  programmer:     ['programmer', 'programmer_alpha'],
+  programmer:     ['programmer', 'programmer_alpha', 'Programmer'],
   hacker:         ['hacker', 'hacker_alpha'],
   chairman:       ['chairman', 'chairman_alpha', 'cob', 'cob_alpha'],
 };

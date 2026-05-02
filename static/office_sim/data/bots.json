@@ -312,6 +312,46 @@
         "lounge",
         "coffee"
       ]
+    },
+    {
+      "id": "business_development",
+      "name": "BizDev",
+      "role": "Bridge_BusinessDevelopment_Bot",
+      "sheet": "sheet_3",
+      "row": 3,
+      "desk": {
+        "floor": 1,
+        "tile": [
+          38,
+          23
+        ]
+      },
+      "affinity": [
+        "lounge",
+        "coffee",
+        "meeting_room",
+        "desk_cluster"
+      ]
+    },
+    {
+      "id": "programmer",
+      "name": "Programmer",
+      "role": "Bridge_Programmer_Bot",
+      "sheet": "sheet_3",
+      "row": 1,
+      "desk": {
+        "floor": 1,
+        "tile": [
+          14,
+          31
+        ]
+      },
+      "affinity": [
+        "focus",
+        "desk_cluster",
+        "coffee",
+        "ideas"
+      ]
     }
   ]
 }
