@@ -5659,9 +5659,9 @@ def webhook_performance_record(req: PerformanceRecordRequest, request: Request):
 
 class BotEngineRequest(BaseModel):
     bot_name:      str   = Field(...,    max_length=50)
-    system_prompt: str   = Field(default="", max_length=12000)
-    task_block:    str   = Field(...,    max_length=6000)
-    context_block: str   = Field(default="", max_length=4000)
+    system_prompt: str   = Field(default="", max_length=100000)
+    task_block:    str   = Field(...,    max_length=100000)
+    context_block: str   = Field(default="", max_length=100000)
     session_id:    str   = Field(default="default", max_length=128)
     api_key:       str
 
