@@ -13,7 +13,7 @@
 import { findPath, findRoute, dirFromDelta, nearestWalkable } from './nav.js';
 
 let _seq = 0;
-export const STEP_MS = 180;   // Unity/Godot RPG pace — ~5.5 tiles/sec
+export const STEP_MS = 350;   // natural office walk pace — ~2.9 tiles/sec
 const TRANSITION_MS = 380;    // snappier floor transition
 
 // Cubic ease-in-out — crisp start/stop matching Unity's Animator default curve.

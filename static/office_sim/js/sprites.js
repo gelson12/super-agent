@@ -127,38 +127,94 @@ export class SpriteCache {
             const img = new Image();
             img.src = path;
             await img.decode();
-            loaded.push(img);
+            loaded.push(this._stripWhiteBg(img));
           } catch { /* missing — fine */ }
         }
         if (loaded.length) { frames[dir] = loaded; any = true; }
       }
       if (any) {
         this.botFrames[botId] = frames;
-        // CHARACTER-SIZE LOCK. The user's frames have varying canvases (a
-        // walk pose with extended leg may be 274 px tall while the
-        // matching stand pose is only 170 px). If we scaled each frame
-        // independently the bot strobed in size every step.
-        //
-        // Reference scale: derive from the STAND-DOWN frame (or any stand
-        // frame) — that's the canonical "neutral" pose. We treat its
-        // canvas height as the character's true on-screen height. All
-        // other frames get drawn at the SAME pixels-per-canvas-px scale.
-        // Walk frames are drawn at their native canvas size relative to
-        // the stand frame — so a taller walk canvas naturally extends
-        // upward (foot raised) without changing the body's apparent size.
         const ref = frames.stand_down?.[0]
                  || frames.stand_left?.[0]
                  || frames.stand_right?.[0]
                  || frames.stand_up?.[0]
                  || Object.values(frames)[0]?.[0];
-        const refH = ref ? ref.naturalHeight : 170;
-        const refW = ref ? ref.naturalWidth  : 120;
+        const refH = ref ? (ref.naturalHeight ?? ref.height) : 170;
+        const refW = ref ? (ref.naturalWidth  ?? ref.width)  : 120;
         this.botFrames[botId]._refScale = { refW, refH };
         const dirCount = Object.keys(frames).filter(k => !k.startsWith('_')).length;
         console.log(`[sprites] bot ${botId} from "${folder}": ${dirCount} directions, ref ${refW}x${refH}`);
         return;
       }
     }
+  }
+
+  // Flood-fill white/near-white background from the 4 corners and replace with
+  // transparent pixels. Returns an OffscreenCanvas-like HTMLCanvasElement.
+  // Falls back silently if getImageData is blocked (tainted canvas, old browser).
+  _stripWhiteBg(img) {
+    const srcW = img.naturalWidth || img.width || 0;
+    const srcH = img.naturalHeight || img.height || 0;
+    const c = document.createElement('canvas');
+    c.width = srcW; c.height = srcH;
+    if (!srcW || !srcH) { c.naturalWidth = 0; c.naturalHeight = 0; return c; }
+    const ctx = c.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(img, 0, 0);
+
+    let data, imgData;
+    try {
+      imgData = ctx.getImageData(0, 0, srcW, srcH);
+      data = imgData.data;
+    } catch {
+      c.naturalWidth = srcW; c.naturalHeight = srcH;
+      return c; // CORS / security block — use raw canvas
+    }
+
+    // Detect background colour from corners (must be opaque and bright).
+    let bgR = 255, bgG = 255, bgB = 255, hasBg = false;
+    for (const [cx, cy] of [[0,0],[srcW-1,0],[0,srcH-1],[srcW-1,srcH-1]]) {
+      const p = (cy * srcW + cx) * 4;
+      const [r, g, b, a] = [data[p], data[p+1], data[p+2], data[p+3]];
+      if (a > 200 && r > 180 && g > 180 && b > 180) {
+        bgR = r; bgG = g; bgB = b; hasBg = true; break;
+      }
+    }
+    if (!hasBg) { // already transparent or dark background
+      ctx.putImageData(imgData, 0, 0);
+      c.naturalWidth = srcW; c.naturalHeight = srcH;
+      return c;
+    }
+
+    // BFS flood-fill from all 4 corners — erase connected background region.
+    const visited = new Uint8Array(srcW * srcH);
+    const queue = [];
+    const tol = 38;
+    for (const [cx, cy] of [[0,0],[srcW-1,0],[0,srcH-1],[srcW-1,srcH-1]]) {
+      const idx = cy * srcW + cx;
+      if (!visited[idx]) { visited[idx] = 1; queue.push(idx); }
+    }
+    let qi = 0;
+    while (qi < queue.length) {
+      const idx = queue[qi++];
+      data[idx * 4 + 3] = 0;
+      const x = idx % srcW, y = (idx / srcW) | 0;
+      for (const n of [
+        x > 0      ? idx - 1    : -1,
+        x < srcW-1 ? idx + 1    : -1,
+        y > 0      ? idx - srcW : -1,
+        y < srcH-1 ? idx + srcW : -1,
+      ]) {
+        if (n < 0 || visited[n]) continue;
+        const np = n * 4;
+        if (data[np+3] < 10) { visited[n] = 1; queue.push(n); continue; }
+        if (Math.abs(data[np]-bgR) < tol && Math.abs(data[np+1]-bgG) < tol && Math.abs(data[np+2]-bgB) < tol) {
+          visited[n] = 1; queue.push(n);
+        }
+      }
+    }
+    ctx.putImageData(imgData, 0, 0);
+    c.naturalWidth = srcW; c.naturalHeight = srcH;
+    return c;
   }
 
   // Reference scale for a bot — { refW, refH } pulled from the stand frame
@@ -233,7 +289,9 @@ export class SpriteCache {
     const dirFrames = this.botFrames[bot.id]?.[dirName];
     if (dirFrames && dirFrames.length) {
       const img = dirFrames[frameIndex % dirFrames.length];
-      return { img, sx: 0, sy: 0, sw: img.naturalWidth, sh: img.naturalHeight };
+      const sw = img.naturalWidth  ?? img.width  ?? 120;
+      const sh = img.naturalHeight ?? img.height ?? 170;
+      return { img, sx: 0, sy: 0, sw, sh };
     }
     // 2. Per-bot horizontal strip.
     const col = FRAME_COL[dirName] ?? 3;
@@ -287,7 +345,7 @@ export class SpriteCache {
             const img = new Image();
             img.src = `${base}/${file}${v}`;
             await img.decode();
-            loaded.push(img);
+            loaded.push(this._stripWhiteBg(img));
           } catch { /* missing — fine */ }
         }
         if (loaded.length) { frames[dir] = loaded; any = true; }
@@ -299,8 +357,8 @@ export class SpriteCache {
                  || frames.stand_right?.[0]
                  || frames.stand_up?.[0]
                  || Object.values(frames)[0]?.[0];
-        const refH = ref ? ref.naturalHeight : 170;
-        const refW = ref ? ref.naturalWidth  : 120;
+        const refH = ref ? (ref.naturalHeight ?? ref.height) : 170;
+        const refW = ref ? (ref.naturalWidth  ?? ref.width)  : 120;
         this.botFrames[botId]._refScale = { refW, refH };
         return true;
       }

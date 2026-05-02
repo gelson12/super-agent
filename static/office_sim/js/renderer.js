@@ -13,8 +13,8 @@ import { STEP_MS } from './agents.js';
 
 const SPRITE_DRAW_W = 56;
 const SPRITE_DRAW_H = 56;
-const WALK_FRAME_MS = 110;      // ~1.6 frames per step at 180 ms/tile — fluid cycle
-const WALK_BOB_AMP  = 4;        // px — more visible vertical lift
+const WALK_FRAME_MS = 175;      // frame cycle matched to 350 ms/tile — smooth walk
+const WALK_BOB_AMP  = 3;        // px — subtle vertical lift
 // Bob is step-phase-synced (not time-based), so no Hz constant needed.
 
 export class Renderer {

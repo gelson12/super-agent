@@ -10,9 +10,16 @@ function key(x, y) { return y * TILE_W + x; }
 // Manhattan distance heuristic.
 function h(ax, ay, bx, by) { return Math.abs(ax-bx) + Math.abs(ay-by); }
 
+// Navigable = walkable but NOT a stair-visual tile ('U'/'N').
+// Stair tiles span the entire visual staircase column; only the single
+// teleport tile at stairs[].tile should be reachable as a destination —
+// bots must not use the staircase column as a general-purpose corridor.
+const NAVIGABLE = new Set(['.','D','S','c','t','p','k','g','E','L','I','F','B']);
+function navigable(floor, x, y) { return NAVIGABLE.has(floor.tileAt(x, y)); }
+
 // 4-direction A* on a single floor. Returns array of {x,y} or null.
 export function findPath(floor, sx, sy, gx, gy, opts = {}) {
-  const isWalkable = opts.isWalkable || ((x,y) => floor.walkable(x,y));
+  const isWalkable = opts.isWalkable || ((x,y) => navigable(floor, x, y));
   const blockedBy = opts.blockedBy || (() => false);
   if (!isWalkable(sx, sy) || !isWalkable(gx, gy)) return null;
   if (sx === gx && sy === gy) return [{ x: sx, y: sy }];
@@ -71,7 +78,10 @@ export function findRoute(floors, srcFloor, sx, sy, dstFloor, gx, gy) {
     const nextFloor = curFloor + step;
     const stair = floors[curFloor].stairToFloor(nextFloor);
     if (!stair) return null;
-    const walk = findPath(floors[curFloor], curX, curY, stair.tile[0], stair.tile[1]);
+    // Allow the specific stair tile as destination even though it's a 'U'/'N' tile.
+    const stairX = stair.tile[0], stairY = stair.tile[1];
+    const toStair = (x, y) => (x === stairX && y === stairY) || navigable(floors[curFloor], x, y);
+    const walk = findPath(floors[curFloor], curX, curY, stairX, stairY, { isWalkable: toStair });
     if (!walk) return null;
     segments.push({ kind:'walk', floor: curFloor, path: walk });
     segments.push({ kind:'transition', fromFloor: curFloor, toFloor: nextFloor,
@@ -96,13 +106,13 @@ export function dirFromDelta(dx, dy) {
 // Find nearest walkable tile to (x, y) within a max search radius.
 // Used as a fall-back when a desired anchor is occupied / blocked.
 export function nearestWalkable(floor, x, y, radius = 5, blockedBy = () => false) {
-  if (floor.walkable(x, y) && !blockedBy(x, y)) return { x, y };
+  if (navigable(floor, x, y) && !blockedBy(x, y)) return { x, y };
   for (let r = 1; r <= radius; r++) {
     for (let dy = -r; dy <= r; dy++) {
       for (let dx = -r; dx <= r; dx++) {
         if (Math.abs(dx) !== r && Math.abs(dy) !== r) continue;
         const nx = x + dx, ny = y + dy;
-        if (floor.walkable(nx, ny) && !blockedBy(nx, ny)) return { x: nx, y: ny };
+        if (navigable(floor, nx, ny) && !blockedBy(nx, ny)) return { x: nx, y: ny };
       }
     }
   }
