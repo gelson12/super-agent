@@ -158,9 +158,9 @@ def n8n_list_workflows() -> str:
 @cached_tool(ttl=120)
 def n8n_get_workflow(workflow_id: str) -> str:
     """Get the full JSON definition of an n8n workflow by its ID."""
-    # Validate: n8n workflow IDs are numeric strings
-    if not workflow_id or not str(workflow_id).strip().isdigit():
-        return f"[n8n error: invalid workflow ID '{workflow_id}' — must be a numeric ID]"
+    # Validate: n8n v1+ uses both numeric and alphanumeric workflow IDs
+    if not workflow_id or not str(workflow_id).strip():
+        return f"[n8n error: invalid workflow ID '{workflow_id}' — must be a non-empty ID]"
     result = _get(f"/api/v1/workflows/{workflow_id.strip()}")
     if isinstance(result, str):
         return result
@@ -197,8 +197,9 @@ def n8n_get_execution(execution_id: str) -> str:
     """
     Get full details and output of a specific n8n workflow execution.
     Use this to debug failed executions — shows which node failed and the error.
+    Uses includeData=true to fetch the full error node details from the n8n API.
     """
-    result = _get(f"/api/v1/executions/{execution_id}")
+    result = _get(f"/api/v1/executions/{execution_id}?includeData=true")
     if isinstance(result, str):
         return result
     return json.dumps(result, indent=2)
@@ -421,7 +422,7 @@ def n8n_execute_workflow_and_wait(workflow_id: str, data_json: str = "{}", poll_
     deadline = time.time() + _TIMEOUT_EXEC
     while time.time() < deadline:
         time.sleep(poll_interval)
-        exec_result = _get(f"/api/v1/executions/{exec_id}")
+        exec_result = _get(f"/api/v1/executions/{exec_id}?includeData=true")
         if isinstance(exec_result, str):
             return exec_result
         status = exec_result.get("status", "running")

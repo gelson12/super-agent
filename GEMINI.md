@@ -1,5 +1,5 @@
 # Super-Agent — Gemini CLI Context
-**Last updated:** 2026-04-25
+**Last updated:** 2026-05-01
 
 This file is auto-loaded by `gemini --prompt` on every invocation inside this repo.
 It gives Gemini CLI situational awareness of the system architecture.
@@ -47,6 +47,9 @@ Classification categories:
 | `app/agents/agent_routing.py` | Operational gate, agent selection |
 | `app/agents/github_agent.py` | GitHub/website modifications |
 | `app/agents/n8n_agent.py` | n8n automation agent |
+| `app/learning/nightly_review.py` | Nightly self-review (23:00 UTC) |
+| `app/learning/claude_code_worker.py` | `ask_claude_code()` — submit/poll pattern |
+| `app/learning/gemini_cli_worker.py` | `ask_gemini_cli()` |
 | `app/memory/vector_memory.py` | pgvector + JSON fallback memory |
 | `app/tools/shell_tools.py` | Shell tools + `run_shell_via_cli_worker()` |
 | `cli_worker/task_runner.py` | Task dispatcher (claude_pro, gemini_cli, shell) |
@@ -76,11 +79,11 @@ Classification categories:
 | `ke7YzsAmGerVWVVc` | Super-Agent-Health-Monitor | INACTIVE |
 | `sCHZhoyRgEZUaxtT` | Universal Catch-All | ACTIVE |
 | `nOawPhpTyNjPPiEb` | Secretary — Outlook Email & Calendar Operations | ACTIVE |
-| `N4IBlfTKan8Oq4tQ` | Secretary — Gmail Manager | ACTIVE |
+| `N4IBlfTKan8Oq4tQ` | Secretary — Gmail Manager | INACTIVE |
 | `83ZQ9b5xReUaF6Ib` | Chief of Staff — Command Centre | ACTIVE |
 | `14cHr1Y6srSRFQpm` | Claude Inbox Trash Purge | ACTIVE |
 
-*(50 active workflows total on n8n instance)*
+*(56 active workflows total on n8n instance)*
 
 ---
 
@@ -110,8 +113,8 @@ cd /workspace/super-agent && git add <files> && git commit -m "msg" && git push 
 
 ---
 
-## PENDING ISSUES (2026-04-25)
+## PENDING ISSUES (2026-05-01)
 
-- **Health:** Claude CLI Pro monthly usage limit hit — nightly review failed to produce JSON. Budget alert has a persistent `unsupported operand type(s) for /: 'dict' and 'float'` error. n8n healthy (50 active / 29 inactive). DeepSeek balance OK ($9.98).
-- **Priorities for tomorrow:** Reset Claude Pro monthly usage. Fix budget alert calculation. Renew CLAUDE_SESSION_TOKEN (expired 342h ago).
-- **Routing observations:** None new in last 24h — keyword routing functioning normally.
+- **Health:** All systems nominal. DB healthy (4254 stored messages, PostgreSQL). Error rate: 0% in current session, ~1.9% historical. n8n: 56 active, 29 inactive, 0 recent failures. Nightly review: Claude Code CLI timed out (>130s) — same org usage limit issue persists. Gemini CLI still hitting trust-directory block. Disk ~51% used, Cloudinary at 0.178 GB.
+- **Priorities for tomorrow:** none
+- **Routing observations:** No misroutes observed (0 errors across 42 reviewed interactions). Keyword routing functioning normally. Gemini CLI trust-directory issue persists — `nightly_review.py` still uses Gemini CLI which needs `GEMINI_CLI_TRUST_WORKSPACE=true` before invocation.

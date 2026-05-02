@@ -1,5 +1,5 @@
 # Super-Agent — Claude CLI Context
-**Last updated:** 2026-04-25
+**Last updated:** 2026-05-01
 
 This file is auto-loaded by `claude -p` on every invocation inside this repo.
 It gives Claude CLI situational awareness of the system architecture.
@@ -154,11 +154,11 @@ The Claude CLI login flow in container/headless mode:
 | `yZckxfWsvugSBFZh` | Robust Health Check | INACTIVE |
 | `u0cyS73kZJWNNy8u` | Health Monitor - Fixed | INACTIVE |
 | `nOawPhpTyNjPPiEb` | Secretary — Outlook Email & Calendar Operations | ACTIVE |
-| `N4IBlfTKan8Oq4tQ` | Secretary — Gmail Manager | ACTIVE |
+| `N4IBlfTKan8Oq4tQ` | Secretary — Gmail Manager | INACTIVE |
 | `83ZQ9b5xReUaF6Ib` | Chief of Staff — Command Centre | ACTIVE |
 | `14cHr1Y6srSRFQpm` | Claude Inbox Trash Purge | ACTIVE |
 
-*(50 active workflows total on n8n instance)*
+*(56 active workflows total on n8n instance)*
 
 ---
 
@@ -176,8 +176,8 @@ The Claude CLI login flow in container/headless mode:
 
 ---
 
-## PENDING ISSUES (as of 2026-04-25)
+## PENDING ISSUES (as of 2026-05-01)
 
-- **Health:** Claude CLI Pro monthly usage limit hit — nightly review failed to generate JSON output. CLI Pro falling back to ANTHROPIC_API_KEY route. Budget alert has a persistent `unsupported operand type(s) for /: 'dict' and 'float'` error in the budget calculator. n8n is healthy (50 active / 29 inactive). DeepSeek balance OK ($9.98).
-- **Priorities for tomorrow:** Reset Claude Pro monthly usage cycle. Fix budget alert calculation bug. Renew CLAUDE_SESSION_TOKEN (expired 342h ago).
-- **Routing observations:** None new observed in last 24h — keyword routing functioning, Gemini fallback working when CLI Pro is down.
+- **Health:** All systems nominal. DB healthy (4254 stored messages, PostgreSQL). Error rate: 0% in current session, ~1.9% historical. n8n: 56 active, 29 inactive, 0 recent failures. Nightly review: Claude Code CLI timed out (>130s) — same org usage limit issue persists. Gemini CLI still hitting trust-directory block. Disk ~51% used, Cloudinary at 0.178 GB.
+- **Priorities for tomorrow:** none
+- **Routing observations:** No misroutes observed (0 errors across 42 reviewed interactions). Keyword routing functioning normally. Gemini CLI trust-directory issue persists — `nightly_review.py` still uses Gemini CLI which needs `GEMINI_CLI_TRUST_WORKSPACE=true` before invocation.

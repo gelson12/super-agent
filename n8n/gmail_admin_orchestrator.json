@@ -16,7 +16,9 @@
           ]
         },
         "simple": false,
-        "filters": {},
+        "filters": {
+          "q": "-from:(property-alerts@mail.onthemarket.com) -from:(rightmove.co.uk) -from:(zoopla.co.uk) -from:(spareroom.co.uk) -from:(openrent.co.uk) -from:(primelocation.com) -from:(iroomit.com)"
+        },
         "options": {}
       },
       "credentials": {
@@ -110,6 +112,16 @@
         },
         "includeOtherFields": true,
         "options": {}
+      }
+    },
+    {
+      "id": "property-filter",
+      "name": "Filter Property Alerts",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [600, 100],
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\nconst sender = (item.sender || item.from || '').toLowerCase();\nconst subject = (item.subject || '').toLowerCase();\nconst snippet = (item.snippet || '').toLowerCase();\n\n// Block known property listing senders\nconst blockedSenders = [\n  'property-alerts@mail.onthemarket.com',\n  'rightmove.co.uk',\n  'zoopla.co.uk',\n  'spareroom.co.uk',\n  'openrent.co.uk',\n  'primelocation.com',\n  'iroomit.com'\n];\n\nconst isBlockedSender = blockedSenders.some(s => sender.includes(s));\n\n// Block messages that look like property listings\nconst propertyKeywords = ['house shares', 'flat shares', 'rooms to rent', 'properties to rent', 'new to market', 'reduced'];\nconst isPropertyMsg = propertyKeywords.some(kw => subject.includes(kw) || snippet.includes(kw));\n\nif (isBlockedSender || isPropertyMsg) {\n  // Return empty — this item is filtered out\n  return [];\n}\n\nreturn [{ json: item, binary: $input.first().binary || {} }];"
       }
     },
     {
@@ -527,6 +539,9 @@
       "main": [[{ "node": "Normalize Trigger Data", "type": "main", "index": 0 }]]
     },
     "Normalize Trigger Data": {
+      "main": [[{ "node": "Filter Property Alerts", "type": "main", "index": 0 }]]
+    },
+    "Filter Property Alerts": {
       "main": [[{ "node": "Route by Trigger Type", "type": "main", "index": 0 }]]
     },
     "Route by Trigger Type": {
