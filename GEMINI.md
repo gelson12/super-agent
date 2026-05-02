@@ -1,5 +1,5 @@
 # Super-Agent — Gemini CLI Context
-**Last updated:** 2026-05-01
+**Last updated:** 2026-05-02
 
 This file is auto-loaded by `gemini --prompt` on every invocation inside this repo.
 It gives Gemini CLI situational awareness of the system architecture.
@@ -113,8 +113,8 @@ cd /workspace/super-agent && git add <files> && git commit -m "msg" && git push 
 
 ---
 
-## PENDING ISSUES (2026-05-01)
+## PENDING ISSUES (2026-05-02)
 
-- **Health:** All systems nominal. DB healthy (4254 stored messages, PostgreSQL). Error rate: 0% in current session, ~1.9% historical. n8n: 56 active, 29 inactive, 0 recent failures. Nightly review: Claude Code CLI timed out (>130s) — same org usage limit issue persists. Gemini CLI still hitting trust-directory block. Disk ~51% used, Cloudinary at 0.178 GB.
+- **Health:**
 - **Priorities for tomorrow:** none
-- **Routing observations:** No misroutes observed (0 errors across 42 reviewed interactions). Keyword routing functioning normally. Gemini CLI trust-directory issue persists — `nightly_review.py` still uses Gemini CLI which needs `GEMINI_CLI_TRUST_WORKSPACE=true` before invocation.
+- **Routing observations:**
