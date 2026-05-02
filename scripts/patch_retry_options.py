@@ -33,7 +33,7 @@ RETRY_PATCH = {
     "retryOnFail": True,
     "maxTries": 3,
     "waitBetweenTries": 4000,
-    "timeout": 60000,
+    "timeout": 180000,  # 3 minutes — CEO/CRO prompts with full inbox context can take >60s
 }
 
 
@@ -67,7 +67,11 @@ def patch_bot(filename):
     params = node.setdefault("parameters", {})
     options = params.setdefault("options", {})
 
-    already_done = options.get("retryOnFail") is True and options.get("maxTries") == 3
+    already_done = (
+        options.get("retryOnFail") is True
+        and options.get("maxTries") == 3
+        and options.get("timeout") == 180000
+    )
     # Merge — don't overwrite options already present (e.g. neverError)
     options.update(RETRY_PATCH)
 
