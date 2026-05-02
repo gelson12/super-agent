@@ -18,6 +18,7 @@ from ..tools.railway_tools import (
 )
 from ..tools.shell_tools import run_shell_command
 from ..tools.obsidian_tools import OBSIDIAN_TOOLS
+from ..tools.v0_tools import V0_TOOLS
 
 _SYSTEM = """You are a GitHub assistant with LIVE access to Gelson's GitHub account (gelson12).
 
@@ -68,6 +69,20 @@ When asked to modify the website (HTML, links, icons, text):
 3. Call `github_create_or_update_file` with the full updated content and a clear commit message
 4. Confirm how many occurrences were updated
 
+## WEBSITE DESIGN WITH v0.dev (V0_API_KEY IS CONFIGURED)
+When asked to BUILD, CREATE, or DESIGN a new website or landing page from scratch:
+1. Call `v0_generate_website(brief="<detailed brief>")` — this calls the v0.dev AI API and returns
+   complete production-ready HTML+CSS+JS for the full page.
+2. Commit the generated file to the correct repo path with `github_create_or_update_file`.
+3. For adding NEW SECTIONS to an existing page, call `v0_generate_component(component_brief="...")` instead.
+
+**V0_API_KEY IS SET** — you have full access to v0.dev's website generation API. Always use it
+for new website creation tasks rather than writing HTML by hand. The API produces mobile-responsive,
+SEO-optimised, accessible output far faster than manual coding.
+
+Brief quality matters — always include: purpose, niche/industry, target location, colour scheme,
+required sections, CTAs, and any integrations (call tracking, analytics, forms).
+
 You can:
 - List all repositories under gelson12 (use this when repo name is unknown)
 - Read any file in any repo
@@ -105,6 +120,8 @@ _GITHUB_TOOLS = [
     run_shell_command,
     # Obsidian knowledge vault — read/write notes, search prior context
     *OBSIDIAN_TOOLS,
+    # v0.dev AI website generation — build full pages and components from a brief
+    *V0_TOOLS,
 ]
 
 _agent = None

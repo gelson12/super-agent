@@ -444,6 +444,16 @@ _SEARCH_KEYWORDS = {
     "stock price", "live", "right now", "this week", "this year",
 }
 
+# ── Approval / escalation keywords → SELF_IMPROVE routes to COS/CEO ──────────
+# These must NOT land on Finance (which misrouted "approve project" before).
+# self_improve_agent acts as the COS relay at the super-agent level.
+_APPROVAL_KEYWORDS = {
+    "approve project", "approve this", "authorise project", "authorize project",
+    "sign off on", "greenlight", "give the go-ahead", "get ceo approval",
+    "needs approval", "pending approval", "awaiting approval",
+    "escalate to ceo", "escalate to cos", "chief of staff approval",
+}
+
 _CACHEABLE_MODELS = {"HAIKU", "GEMINI", "DEEPSEEK", "CLAUDE"}
 
 # ── Routing confidence drift tracker ──────────────────────────────────────────
@@ -1273,6 +1283,23 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
             pass  # Fall through to normal routing on any failure
 
     # ── 1. Safe word guard ────────────────────────────────────────────────────
+    # Sub-step 1a: if this message IS the safe word (or contains it) AND there
+    # is a pending blocked request for this session, replay that request instead
+    # of processing the bare safe-word string.
+    from ..security.safe_word import has_safe_word as _has_sw, pop_pending as _pop_pending, has_pending as _has_pending
+    if _has_sw(message) and _has_pending(session_id):
+        _stashed = _pop_pending(session_id)
+        if _stashed:
+            _log.info("Safe word received — replaying pending blocked request for session %s", session_id)
+            try:
+                from ..activity_log import bg_log as _bg_sw
+                _bg_sw(f"Safe word replay: session={session_id} replaying: {_stashed[:100]}", source="safe_word")
+            except Exception:
+                pass
+            # Replay the stashed request recursively (depth+1 prevents infinite loops)
+            return dispatch(_stashed, force_model=force_model, session_id=session_id,
+                            _dispatch_depth=_dispatch_depth + 1)
+
     authorized, block_reason = check_authorization(message, session_id=session_id)
     if not authorized:
         return _build_extended_result({
@@ -1566,6 +1593,28 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
             "complexity": complexity,
             "cache_hit": False,
         })
+
+    # ── 4a-approval. Approval / escalation routing → self_improve (COS relay) ──
+    # Prevents "approve project" from landing on Finance or any wrong agent.
+    # self_improve_agent escalates through the correct COS/CEO chain in n8n.
+    _msg_lower_appv = message.lower()
+    if any(k in _msg_lower_appv for k in _APPROVAL_KEYWORDS):
+        _eval_pred(session_id, "SELF_IMPROVE")
+        _write_active_task(session_id, message)
+        response = _safe_agent_call(run_self_improve_agent, _agent_message, agent_name="self_improve_agent", session_id=session_id)
+        _clear_active_task(session_id)
+        _set_last_agent(session_id, "SELF_IMPROVE")
+        _record_and_prewarm(session_id, "SELF_IMPROVE")
+        store_memory(session_id, f"Q: {message[:300]} A: {response[:300]}")
+        insight_log.record(message, "SELF_IMPROVE", response, "approval_routing", complexity, session_id)
+        adapter.tick()
+        return _build_extended_result({
+            "model_used": "SELF_IMPROVE",
+            "response": response,
+            "routed_by": "approval_gateway",
+            "complexity": complexity,
+            "cache_hit": False,
+        }, routing_explanation="Approval/escalation request — routed to self_improve agent (COS relay) to enforce CEO approval chain.")
 
     # ── 4b. N8N routing (high priority — long prompts contain many keywords) ────
     # Checked before self_improve and debug so complex n8n design prompts that
