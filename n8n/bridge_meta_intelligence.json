@@ -28,6 +28,9 @@
       "parameters": {
         "operation": "executeQuery",
         "query": "SELECT\n    (SELECT COUNT(*) FROM bridge.agent_memos WHERE created_at >= NOW() - INTERVAL '24h') AS total_memos,\n    (SELECT COUNT(*) FROM bridge.cro_evaluations WHERE created_at >= NOW() - INTERVAL '24h') AS cro_evaluations,\n    (SELECT ROUND(AVG(cro_score), 1) FROM bridge.cro_evaluations WHERE created_at >= NOW() - INTERVAL '24h') AS avg_cro_score,\n    (SELECT COUNT(*) FROM bridge.project_memory WHERE outcome = 'approved' AND updated_at >= NOW() - INTERVAL '24h') AS projects_approved,\n    (SELECT COUNT(*) FROM bridge.project_memory WHERE outcome = 'rejected' AND updated_at >= NOW() - INTERVAL '24h') AS projects_rejected,\n    (SELECT COALESCE(SUM(actual_revenue_usd), 0) FROM bridge.project_memory WHERE updated_at >= NOW() - INTERVAL '24h') AS revenue_today,\n    (SELECT agent_name FROM bridge.agent_performance WHERE date = CURRENT_DATE ORDER BY tasks_success DESC LIMIT 1) AS best_agent,\n    (SELECT agent_name FROM bridge.agent_performance WHERE date = CURRENT_DATE AND tasks_total > 0 ORDER BY (tasks_success::float / NULLIF(tasks_total,0)) ASC LIMIT 1) AS worst_agent"
+      },
+      "credentials": {
+        "postgres": {"id": "Ae3yvuqjgMnVRrCo", "name": "Postgres account"}
       }
     },
     {

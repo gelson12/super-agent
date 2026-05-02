@@ -51,6 +51,9 @@
       "parameters": {
         "operation": "executeQuery",
         "query": "SELECT project_name, cro_score, recommendation, created_at FROM bridge.cro_evaluations WHERE created_at >= NOW() - INTERVAL '24h' ORDER BY cro_score DESC"
+      },
+      "credentials": {
+        "postgres": {"id": "Ae3yvuqjgMnVRrCo", "name": "Postgres account"}
       }
     },
     {
@@ -65,6 +68,9 @@
       "parameters": {
         "operation": "executeQuery",
         "query": "SELECT project_name, outcome, cro_score, actual_revenue_usd FROM bridge.project_memory WHERE updated_at >= NOW() - INTERVAL '7d' ORDER BY updated_at DESC LIMIT 10"
+      },
+      "credentials": {
+        "postgres": {"id": "Ae3yvuqjgMnVRrCo", "name": "Postgres account"}
       }
     },
     {
@@ -108,6 +114,9 @@
         "options": {
           "queryReplacement": "={{ $json.adjustments.map(a=>a.agent_name) }},={{ $json.adjustments.map(a=>a.delta) }}"
         }
+      },
+      "credentials": {
+        "postgres": {"id": "Ae3yvuqjgMnVRrCo", "name": "Postgres account"}
       }
     },
     {
