@@ -92,7 +92,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT (value = 'true') AS enabled FROM bridge.system_limits WHERE key = 'cto_bot_enabled';",
+        "query": "SELECT COALESCE((SELECT (value = 'true') FROM bridge.system_limits WHERE key = 'cto_bot_enabled'), true) AS enabled;",
         "options": {}
       },
       "id": "node_read_enabled",
