@@ -1,0 +1,221 @@
+{
+  "id": "2af4324d-808c-4c72-ac6e-a2798b84478f",
+  "name": "Bridge_Performance_Tracker",
+  "active": true,
+  "nodes": [
+    {
+      "id": "99fdd111-9073-4c21-9f88-fa009c1185dd",
+      "name": "Schedule: 08:30 UTC",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [
+        240,
+        300
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "minutesInterval": 1
+            }
+          ]
+        },
+        "cronExpression": "30 8 * * *"
+      }
+    },
+    {
+      "id": "13f30cb3-d883-4c56-9bef-37666da8cffe",
+      "name": "Pull performance data",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        480,
+        300
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.SUPER_AGENT_URL || 'https://super-agent-production.up.railway.app' }}/webhook/performance-dashboard",
+        "responseFormat": "json"
+      }
+    },
+    {
+      "id": "f401e73d-a119-4d1e-87ba-02fd432aee5e",
+      "name": "Pull CRO evaluations",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        720,
+        300
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT project_name, cro_score, recommendation, created_at FROM bridge.cro_evaluations WHERE created_at >= NOW() - INTERVAL '24h' ORDER BY cro_score DESC"
+      }
+    },
+    {
+      "id": "eefbd48e-d3c0-418a-bd45-2b694b28ffbe",
+      "name": "Pull project memory",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        720,
+        480
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT project_name, outcome, cro_score, actual_revenue_usd FROM bridge.project_memory WHERE updated_at >= NOW() - INTERVAL '7d' ORDER BY updated_at DESC LIMIT 10"
+      }
+    },
+    {
+      "id": "3ea5f7f7-2308-4d50-aa8a-545c3efe612a",
+      "name": "Build dashboard",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        960,
+        300
+      ],
+      "parameters": {
+        "jsCode": "const data = $('Pull performance data').first().json;\nconst agents = (data && data.agents) ? data.agents : [];\nconst croRows = $('Pull CRO evaluations').first().json || {};\nconst croList = Array.isArray(croRows) ? croRows : (croRows.rows || []);\n\nconst today = new Date().toISOString().slice(0, 10);\nlet msg = `📊 AGENT PERFORMANCE DASHBOARD — ${today}\\n\\n`;\n\nconst approved = croList.filter(r => r.recommendation === 'APPROVE').length;\nconst revised  = croList.filter(r => r.recommendation === 'REVISE').length;\nconst rejected = croList.filter(r => r.recommendation === 'REJECT').length;\nconst avgScore = croList.length > 0\n    ? Math.round(croList.reduce((s,r) => s + (r.cro_score || 0), 0) / croList.length)\n    : null;\n\nmsg += `🏆 CRO GATE TODAY: ${approved} approved | ${revised} revised | ${rejected} rejected`;\nif (avgScore !== null) msg += ` | avg score: ${avgScore}/100`;\nmsg += '\\n\\n';\n\nmsg += `👥 AGENT SCORES:\\n`;\nfor (const a of agents) {\n    const rate = a.success_rate !== null ? `${a.success_rate}%` : 'n/a';\n    const flag = (a.success_rate !== null && a.success_rate < 60) ? ' ⚠️' : '';\n    const auth = `[auth:${a.authority}]`;\n    msg += `  ${a.agent}: ${a.tasks} tasks, ${rate} success ${auth}${flag}\\n`;\n}\n\nconst underperf = agents.filter(a => a.success_rate !== null && a.success_rate < 60);\nif (underperf.length > 0) {\n    msg += `\\n⚠️ UNDERPERFORMING: ${underperf.map(a => a.agent).join(', ')}`;\n    msg += ' — authority reduction pending\\n';\n}\n\nif (data.best_agent) msg += `\\n🥇 Best today: ${data.best_agent}\\n`;\n\nreturn [{ json: { telegram_message: msg, agents, underperforming: underperf.map(a => a.agent) }}];"
+      }
+    },
+    {
+      "id": "ca7c961b-4a9c-4015-baa2-197980d4300b",
+      "name": "Authority adjustment",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        1200,
+        300
+      ],
+      "parameters": {
+        "jsCode": "const data = $('Build dashboard').first().json;\nconst underperforming = data.underperforming || [];\nconst agents = data.agents || [];\n\n// Demote agents with < 50% success rate; promote agents with 0 failures (if tasks > 5)\nconst adjustments = [];\nfor (const a of agents) {\n    if (a.tasks >= 3 && a.success_rate !== null && a.success_rate < 50) {\n        adjustments.push({ agent: a.agent, delta: -1, reason: 'success_rate < 50%' });\n    } else if (a.tasks >= 5 && a.failed === 0 && a.authority < 10) {\n        adjustments.push({ agent: a.agent, delta: +1, reason: 'zero failures today (5+ tasks)' });\n    }\n}\nreturn [{ json: { adjustments, count: adjustments.length }}];"
+      }
+    },
+    {
+      "id": "e339f702-dece-45f3-adb9-724d03762936",
+      "name": "Apply authority changes",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [
+        1440,
+        300
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH adj AS (\n  SELECT\n    unnest($1::text[]) AS agent_name,\n    unnest($2::integer[]) AS delta\n)\nUPDATE bridge.agent_performance ap\nSET authority_level = GREATEST(1, LEAST(10, ap.authority_level + adj.delta))\nFROM adj\nWHERE ap.agent_name = adj.agent_name\n  AND ap.date = CURRENT_DATE\nRETURNING ap.agent_name, ap.authority_level;",
+        "options": {
+          "queryReplacement": "={{ $json.adjustments.map(a=>a.agent_name) }},={{ $json.adjustments.map(a=>a.delta) }}"
+        }
+      }
+    },
+    {
+      "id": "3e9569a7-fc26-4af3-b5dd-ff7e078cd950",
+      "name": "Send to CEO",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        1680,
+        240
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{ $env.BRIDGE_CEO_BOT_TOKEN }}/sendMessage",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "chat_id",
+              "value": "=$env.CEO_TELEGRAM_CHAT_ID"
+            },
+            {
+              "name": "text",
+              "value": "={{ $('Build dashboard').first().json.telegram_message }}"
+            },
+            {
+              "name": "parse_mode",
+              "value": "Markdown"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Schedule: 08:30 UTC": {
+      "main": [
+        [
+          {
+            "node": "Pull performance data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pull performance data": {
+      "main": [
+        [
+          {
+            "node": "Pull CRO evaluations",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Pull project memory",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pull CRO evaluations": {
+      "main": [
+        [
+          {
+            "node": "Build dashboard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build dashboard": {
+      "main": [
+        [
+          {
+            "node": "Authority adjustment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Authority adjustment": {
+      "main": [
+        [
+          {
+            "node": "Apply authority changes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apply authority changes": {
+      "main": [
+        [
+          {
+            "node": "Send to CEO",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

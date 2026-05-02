@@ -18,6 +18,8 @@ added via the SAFE_WORD_SESSION_WHITELIST env var (comma-separated regex).
 import os
 import re
 import logging
+import threading
+import time
 import unicodedata
 
 from ..config import settings
@@ -135,7 +137,7 @@ def _detect_operation_type(message: str) -> str:
 # actually request execution of those operations — the workflow's risk-tagged
 # action dispatcher gates that separately.
 _DEFAULT_WHITELIST_PATTERNS = [
-    r"^bridge-(researcher|chief_of_staff|cso|ceo|cleaner)-",
+    r"^bridge-(researcher|chief_of_staff|cso|ceo|cleaner|programmer|pm|finance|marketing|website|cro)-",
 ]
 
 
@@ -162,6 +164,44 @@ def is_whitelisted_session(session_id: str | None) -> bool:
     if not session_id:
         return False
     return any(pat.search(session_id) for pat in _WHITELIST_COMPILED)
+
+
+# ── Pending-approval store ────────────────────────────────────────────────────
+# When a critical request is blocked, we stash it here keyed by session_id.
+# On the NEXT message from the same session, if it contains the safe word,
+# we auto-approve the stashed request instead of making the user retype everything.
+# TTL: 30 minutes — stale entries are ignored and evicted on next access.
+_PENDING_TTL = 1800  # 30 minutes
+_pending: dict[str, tuple[float, str]] = {}  # session_id → (ts, original_message)
+_pending_lock = threading.Lock()
+
+
+def store_pending(session_id: str, message: str) -> None:
+    """Stash a blocked message for potential safe-word re-approval."""
+    if not session_id:
+        return
+    with _pending_lock:
+        _pending[session_id] = (time.time(), message)
+
+
+def pop_pending(session_id: str) -> str | None:
+    """Return and remove the pending blocked message for this session (if still fresh)."""
+    if not session_id:
+        return None
+    with _pending_lock:
+        entry = _pending.pop(session_id, None)
+    if entry and time.time() - entry[0] < _PENDING_TTL:
+        return entry[1]
+    return None
+
+
+def has_pending(session_id: str) -> bool:
+    """True if there is a non-expired pending blocked request for this session."""
+    if not session_id:
+        return False
+    with _pending_lock:
+        entry = _pending.get(session_id)
+    return bool(entry and time.time() - entry[0] < _PENDING_TTL)
 
 
 def check_authorization(message: str, session_id: str | None = None) -> tuple[bool, str]:
@@ -198,8 +238,18 @@ def check_authorization(message: str, session_id: str | None = None) -> tuple[bo
     except Exception:
         _log.warning("SAFE WORD BLOCK: critical op attempted without auth: %.120s", message)
 
+    # Stash the blocked request so the owner can re-approve by just sending
+    # the safe word (no need to retype the full message).
+    store_pending(session_id or "default", message)
+
+    word = settings.owner_safe_word
+    hint = f' Include the phrase `{word}` anywhere in your reply.' if word else ""
+
     return False, (
-        f"This request involves a critical operation ({op_type}). "
-        "For security, only the system owner can authorize these actions. "
-        "If you are the owner, please re-send your request with your authorization code."
+        f"⚠️ **Authorization required** — this request involves a **{op_type}**.\n\n"
+        "Only the system owner can authorize this action.\n\n"
+        f"**To approve:** reply with your authorization code and I will re-run the request automatically.{hint}\n\n"
+        f"**Request held for 30 minutes** — you do not need to retype it.\n\n"
+        "_If you did not send this request, it may have come from a scheduled workflow. "
+        "Check the activity log at `/activity` to investigate._"
     )

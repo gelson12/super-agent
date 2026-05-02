@@ -164,10 +164,10 @@ def tiered_agent_invoke(
     Unified 4-tier routing for any LangGraph agent.
 
     For informational requests:
-      Tier 1 (CLI) → Tier 2 (Gemini) → Tier 3 (Anthropic LangGraph) → Tier 3b (DeepSeek LangGraph)
+      Tier 1 (CLI) → Tier 2 (Gemini) → Tier 2.5 (Legion) → Tier 3 (DeepSeek LangGraph) → Tier 4 (Anthropic LangGraph) → Tier 5 (DeepSeek text) → Tier 5b (Legion retry)
 
     For operational requests (need tools):
-      Tier 3 (Anthropic LangGraph) → Tier 3b (DeepSeek LangGraph)
+      Tier 1 (CLI) → Tier 2.5 (Legion, text-only caveat) → Tier 3 (DeepSeek LangGraph) → Tier 4 (Anthropic LangGraph) → Tier 5 (DeepSeek text) → Tier 5b (Legion retry)
 
     Returns a response string — never raises.
 
@@ -275,11 +275,35 @@ def _tiered_agent_invoke_inner(
             if gemini and not gemini.startswith("["):
                 _log(f"✓ Gemini CLI responded ({len(gemini)} chars)", _source)
                 return gemini
-            _log(f"Gemini returned error/empty — trying DeepSeek", _source)
+            _log(f"Gemini returned error/empty — trying Legion", _source)
         except Exception as e:
-            _log(f"Gemini exception: {e} — trying DeepSeek", _source)
+            _log(f"Gemini exception: {e} — trying Legion", _source)
     else:
-        _log(f"Operational request — skipping Gemini (no tools), trying DeepSeek LangGraph", _source)
+        _log(f"Operational request — skipping Gemini (no tools), trying Legion then DeepSeek LangGraph", _source)
+
+    # ── Tier 2.5: Legion hive (free distributed models, text-only) ───────
+    # Legion covers Groq, Cerebras, GH Models, OpenRouter, HF, Ollama.
+    # Works for BOTH informational and operational requests:
+    # - Informational: full answer (text-only is sufficient)
+    # - Operational: best-effort text response when tool-calling tiers fail
+    # This is the primary safety net when Claude CLI AND Gemini are both down.
+    try:
+        from ..models.claude import _try_legion
+        legion = _try_legion(f"{system_prompt}\n\n{message}")
+        if legion:
+            _log(f"✓ Legion hive responded ({len(legion)} chars)", _source)
+            if operational:
+                # Operational request answered without tools — add caveat so
+                # caller knows tool execution did not run.
+                return (
+                    legion
+                    + "\n\n⚠️ *Answered by Legion fallback (no tool execution). "
+                    "Retry when Claude CLI is back for full action capability.*"
+                )
+            return legion
+        _log("Legion returned empty — trying DeepSeek LangGraph", _source)
+    except Exception as e:
+        _log(f"Legion exception: {e} — trying DeepSeek LangGraph", _source)
 
     # ── Tier 3: LangGraph + DeepSeek (cheap, full tool access) ──────────
     # DeepSeek is cheaper than Anthropic — try it first
@@ -334,7 +358,7 @@ def _tiered_agent_invoke_inner(
     else:
         _log("No ANTHROPIC_API_KEY — skipping", _source)
 
-    # ── Tier 5: DeepSeek text-only (absolute last resort) ───────────────
+    # ── Tier 5: DeepSeek text-only (absolute last resort before error) ──
     try:
         from ..models.deepseek import ask_deepseek
         ds = ask_deepseek(message, system=system_prompt)
@@ -344,13 +368,28 @@ def _tiered_agent_invoke_inner(
     except Exception:
         pass
 
-    _log("ALL tiers exhausted — CLI, Gemini, Anthropic API, DeepSeek all failed", _source)
+    # ── Tier 5b: Legion hive (final safety net — retried here even if it
+    # failed in Tier 2.5, in case a transient Legion error resolved) ─────
+    try:
+        from ..models.claude import _try_legion
+        legion = _try_legion(f"{system_prompt}\n\n{message}", timeout_s=20.0)
+        if legion:
+            _log(f"✓ Legion hive (final fallback) responded ({len(legion)} chars)", _source)
+            return (
+                legion
+                + "\n\n⚠️ *All primary models were unavailable. Response from Legion fallback. "
+                "Retry when Claude CLI recovers for full execution capability.*"
+            )
+    except Exception:
+        pass
+
+    _log("ALL tiers exhausted — CLI, Gemini, Legion, Anthropic API, DeepSeek all failed", _source)
     return (
         "⚠️ **All models currently unavailable.**\n\n"
-        "Tried: Claude CLI Pro → Gemini CLI → Anthropic API → DeepSeek\n\n"
+        "Tried: Claude CLI Pro → Gemini CLI → Legion hive → DeepSeek LangGraph → Anthropic API → DeepSeek text\n\n"
         "Likely causes:\n"
         "1. ANTHROPIC_API_KEY invalid or expired (check Railway Variables)\n"
         "2. DeepSeek API key issue\n"
-        "3. CLI worker down\n\n"
+        "3. CLI worker down AND Legion unreachable (LEGION_BASE_URL not set or service down)\n\n"
         "Check the activity log or /credits/pro-status for details."
     )

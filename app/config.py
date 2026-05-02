@@ -93,6 +93,11 @@ class Settings(BaseSettings):
     legion_base_url: str = ""              # set via LEGION_BASE_URL when distributed Haiku is on
     legion_api_shared_secret: str = ""
 
+    # v0.dev (Vercel AI) — website / UI component generation
+    # Set via Railway env var V0_API_KEY
+    # Obtain at: https://v0.dev → Settings → API Keys
+    v0_api_key: str = ""
+
     # Multi-framework orchestration (LangGraph custom graphs, AutoGen, CrewAI)
     # Global kill switch for the /chat/graph, /chat/crew, /chat/groupchat endpoints.
     frameworks_enabled: bool = True

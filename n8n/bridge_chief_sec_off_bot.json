@@ -1,1 +1,875 @@
-{"name":"bridge_chief_sec_off_bot","nodes":[{"parameters":{"updates":["message"],"additionalFields":{}},"id":"node_trigger_tg_cso","name":"Telegram: user DM","type":"n8n-nodes-base.telegramTrigger","typeVersion":1.1,"position":[240,200],"disabled":true,"webhookId":"fe058b2a-bfa8-4bd2-a673-1de6c96e87eb"},{"parameters":{"rule":{"interval":[{"field":"cronExpression","expression":"0 30 8 * * *"}]}},"id":"node_trigger_daily","name":"Schedule: daily","type":"n8n-nodes-base.scheduleTrigger","typeVersion":1.2,"position":[240,400]},{"parameters":{"rule":{"interval":[{"field":"cronExpression","expression":"0 0 10 * * 3"}]}},"id":"node_trigger_weekly","name":"Schedule: weekly","type":"n8n-nodes-base.scheduleTrigger","typeVersion":1.2,"position":[240,600]},{"parameters":{"httpMethod":"POST","path":"bridge-cso-invoke","responseMode":"responseNode","options":{}},"id":"node_trigger_webhook_cso","name":"Webhook: invoke","type":"n8n-nodes-base.webhook","typeVersion":2,"position":[240,800],"webhookId":"bridge-cso-invoke"},{"parameters":{"jsCode":"const src = $input.all()[0];\n\n// Detect trigger source by inspecting the item shape.\nlet task = \u0027scheduled_tick\u0027;\nlet user_text = null;\nlet chat_id = null;\nlet from_agent = \u0027system\u0027;\n\nif (src.json \u0026\u0026 src.json.message \u0026\u0026 src.json.message.chat) {\n    // Telegram trigger\n    task = \u0027user_dm\u0027;\n    let _utext = src.json.message.text || \u0027\u0027;\n    // Strip leading slash from Telegram commands so Super Agent does not classify them as shell commands.\n    if (_utext.startsWith(\u0027/\u0027)) {\n        const parts = _utext.slice(1).split(/\\s+/);\n        const cmd = (parts[0] || \u0027\u0027).toLowerCase();\n        const rest = parts.slice(1).join(\u0027 \u0027);\n        if (cmd === \u0027start\u0027 || cmd === \u0027help\u0027) { _utext = \u0027Hello - please introduce yourself, your role in Bridge Digital, and what you can help with right now.\u0027; }\n        else if (cmd === \u0027status\u0027) { _utext = \u0027Give me a brief status update on your current focus and any open items in your inbox.\u0027; }\n        else { _utext = (cmd + \u0027 \u0027 + rest).trim(); }\n    }\n    user_text = _utext;\n    chat_id = src.json.message.chat.id;\n    from_agent = \u0027user\u0027;\n} else if (src.json \u0026\u0026 src.json.body \u0026\u0026 src.json.body.task) {\n    // Webhook trigger\n    task = src.json.body.task;\n    user_text = src.json.body.message || null;\n    from_agent = src.json.body.from_agent || \u0027system\u0027;\n    chat_id = null; // webhooks do not carry a telegram chat\n} else if (src.json \u0026\u0026 src.json.timestamp) {\n    // Schedule trigger\n    task = \u0027scheduled_tick\u0027;\n    user_text = null;\n    from_agent = \u0027system\u0027;\n}\n\nreturn [{ json: {\n    bot_name: \"cso\",\n    task,\n    user_text,\n    chat_id,\n    from_agent,\n    now_iso: new Date().toISOString(),\n    daily_spec: [{\"hour\": 8, \"minute\": 30, \"task_name\": \"daily_risk_review\"}],\n    weekly_spec: [{\"weekday\": 3, \"hour\": 10, \"minute\": 0, \"task_name\": \"weekly_controls_review\"}],\n} }];"},"id":"node_build_task","name":"Build task payload","type":"n8n-nodes-base.code","typeVersion":2,"position":[460,400]},{"parameters":{"operation":"executeQuery","query":"SELECT (value = \u0027true\u0027) AS enabled FROM bridge.system_limits WHERE key = \u0027cso_bot_enabled\u0027;","options":{}},"id":"node_read_enabled","name":"Read enabled flag","type":"n8n-nodes-base.postgres","typeVersion":2.5,"position":[680,400],"credentials":{"postgres":{"id":"Ae3yvuqjgMnVRrCo","name":"Postgres account"}}},{"parameters":{"conditions":{"options":{"caseSensitive":true,"leftValue":"","typeValidation":"strict"},"conditions":[{"id":"enabled_check","leftValue":"={{ $json.enabled }}","rightValue":true,"operator":{"type":"boolean","operation":"true","singleValue":true}}],"combinator":"and"},"options":{}},"id":"node_if_enabled","name":"If enabled","type":"n8n-nodes-base.if","typeVersion":2.2,"position":[900,400]},{"parameters":{"operation":"executeQuery","query":"SELECT COALESCE(jsonb_agg(row_to_json(m) ORDER BY m.priority_rank, m.created_at), \u0027[]\u0027::jsonb)        AS open_inbox FROM (   SELECT memo_id, from_agent, memo_type, priority, subject, body_json,          created_at, related_lead_id,          CASE priority WHEN \u0027urgent\u0027 THEN 0 WHEN \u0027high\u0027 THEN 1                        WHEN \u0027normal\u0027 THEN 2 ELSE 3 END AS priority_rank   FROM bridge.agent_memos   WHERE to_agent IN (\u0027cso\u0027, \u0027all\u0027)     AND status = \u0027open\u0027   LIMIT 20 ) m;","options":{}},"id":"node_fetch_inbox","name":"Fetch open inbox","type":"n8n-nodes-base.postgres","typeVersion":2.5,"position":[1120,400],"credentials":{"postgres":{"id":"Ae3yvuqjgMnVRrCo","name":"Postgres account"}}},{"parameters":{"operation":"executeQuery","query":"SELECT jsonb_build_object(\n    \u0027now_utc\u0027, NOW(),\n    \u0027error_events_24h\u0027, (\n        SELECT COALESCE(jsonb_agg(row_to_json(e)), \u0027[]\u0027::jsonb)\n        FROM (\n            SELECT event_id, workflow_name, event_type, created_at,\n                   details_json\n            FROM bridge.workflow_events\n            WHERE created_at \u003e= NOW() - INTERVAL \u002724 hours\u0027\n              AND (\n                  event_type ILIKE \u0027%error%\u0027\n                  OR event_type ILIKE \u0027%fail%\u0027\n                  OR event_type ILIKE \u0027%denied%\u0027\n                  OR event_type ILIKE \u0027%retry%\u0027\n              )\n            ORDER BY created_at DESC\n            LIMIT 30\n        ) e\n    ),\n    \u0027workflow_event_volume_24h\u0027, (\n        SELECT COALESCE(jsonb_agg(row_to_json(v)), \u0027[]\u0027::jsonb)\n        FROM (\n            SELECT workflow_name, COUNT(*)::int AS n\n            FROM bridge.workflow_events\n            WHERE created_at \u003e= NOW() - INTERVAL \u002724 hours\u0027\n            GROUP BY workflow_name\n            ORDER BY n DESC\n        ) v\n    ),\n    \u0027suppression_list_size\u0027, (\n        SELECT COUNT(*)::int FROM bridge.suppression_list\n    ),\n    \u0027outreach_volume_24h\u0027, (\n        SELECT jsonb_build_object(\n            \u0027outbound\u0027, (SELECT COUNT(*)::int FROM bridge.outreach_messages\n                         WHERE direction=\u0027outbound\u0027 AND sent_at \u003e= NOW() - INTERVAL \u002724 hours\u0027),\n            \u0027inbound\u0027,  (SELECT COUNT(*)::int FROM bridge.outreach_messages\n                         WHERE direction=\u0027inbound\u0027  AND sent_at \u003e= NOW() - INTERVAL \u002724 hours\u0027)\n        )\n    ),\n    \u0027expense_anomalies\u0027, (\n        SELECT COALESCE(jsonb_agg(row_to_json(a)), \u0027[]\u0027::jsonb)\n        FROM (\n            SELECT vendor, ROUND(SUM(amount_usd)::numeric, 4) AS usd_24h,\n                   COUNT(*)::int AS n_calls\n            FROM bridge.expenses\n            WHERE occurred_at \u003e= NOW() - INTERVAL \u002724 hours\u0027\n            GROUP BY vendor\n            ORDER BY usd_24h DESC\n            LIMIT 5\n        ) a\n    ),\n    \u0027system_limits\u0027, (\n        SELECT COALESCE(jsonb_agg(row_to_json(l)), \u0027[]\u0027::jsonb)\n        FROM (\n            SELECT key, value FROM bridge.system_limits\n            ORDER BY key\n        ) l\n    )\n) AS context;","options":{}},"id":"node_fetch_context","name":"Fetch bot context","type":"n8n-nodes-base.postgres","typeVersion":2.5,"position":[1120,600],"credentials":{"postgres":{"id":"Ae3yvuqjgMnVRrCo","name":"Postgres account"}}},{"parameters":{"jsCode":"const task = $(\u0027Build task payload\u0027).first().json;\nconst inboxRow = $(\u0027Fetch open inbox\u0027).first().json || {};\nconst inbox = Array.isArray(inboxRow.open_inbox) ? inboxRow.open_inbox : [];\nconst ctxRow = $(\u0027Fetch bot context\u0027).first().json || {};\nconst ctx = ctxRow.context ? [ctxRow.context] : [ctxRow];\n\nconst system = \"You are Bridge_Chief_Sec_Off_bot, the enterprise security governance and risk-control super-agent inside Bridge Digital Solutions.\\n\\nROLE\\nYou are the guardian of operational security, system integrity, credential safety, access control, infrastructure trust, and risk containment across the multi-agent ecosystem.\\n\\nPRIMARY OBJECTIVES\\n1. Protect the enterprise from security, access, data, and infrastructure risks.\\n2. Identify and reduce vulnerabilities before they become incidents.\\n3. Enforce secure operational practices across agents, workflows, systems, and integrations.\\n4. Ensure that the company\u0027s automation and AI ecosystem remains trustworthy, controlled, and resilient.\\n\\nSECONDARY OBJECTIVES\\n1. Support safe scaling of the agent ecosystem.\\n2. Advise leadership on security tradeoffs and operational exposure.\\n3. Maintain security awareness in architecture, automation, and workflow design.\\n\\nCORE FUNCTIONS\\nSecurity monitoring, risk assessment, credential and access governance, policy enforcement, security review of workflows and automations, incident triage and response coordination, data handling oversight, infrastructure exposure review, vendor/tool integration risk review, security escalation reporting.\\n\\nWHAT YOU MUST MONITOR\\nsuspicious behavior, excessive permissions, insecure storage of credentials, exposed endpoints, risky integrations, automation misconfigurations, unauthorized access patterns, weak operational controls, insecure data flow between agents, missing auditability.\\n\\nDECISION PRINCIPLES\\n- Prioritize prevention over reaction.\\n- Assume risk exists where controls are weak.\\n- Prefer least privilege, compartmentalization, and traceability.\\n- Be strict with security-sensitive actions.\\n- Escalate material risk quickly and clearly.\\n- Balance security with business continuity, but do not ignore high-impact threats.\\n\\nAUTHORITY AND AUTONOMY\\nYou may flag and classify security risks, recommend controls and remediation, require review before high-risk deployment, request credential rotation or access reduction, trigger incident workflows, notify leadership of serious exposure.\\nYou may not unilaterally redefine company strategy, approve major budget reallocations, suppress material incidents from leadership.\\n\\nINTERACTION RULES\\nYou collaborate with Bridge_CEO_BOT for strategic risk visibility, Bridge_Chief_Of_Staff_bot for cross-functional remediation tracking, infrastructure/finance/legal/operations agents where applicable, Bridge_Cleaner_bot for safe archival and lifecycle hygiene.\\n\\nESCALATE IMMEDIATELY WHEN credentials may be exposed, client or enterprise data may be compromised, an agent or workflow behaves outside expected bounds, access control is bypassed, infrastructure is materially exposed, or legal/compliance risk may arise from security posture.\\n\\nOUTPUT STYLE\\nAlways structure outputs as: risk summary, severity (low|medium|high|critical), affected systems, probable cause, immediate actions, long-term remediation, required owner, escalation urgency.\\n\\nSUCCESS DEFINITION\\nYou are successful when risks are caught early, sensitive assets remain protected, and the agent ecosystem scales without unacceptable security exposure.\\n\";\n\nconst contextBlock = JSON.stringify({\n    now: task.now_iso,\n    bot: task.bot_name,\n    task_kind: task.task,\n    open_inbox: inbox,\n    bot_context: ctx,\n    daily_cadence: task.daily_spec,\n    weekly_cadence: task.weekly_spec,\n}, null, 2);\n\nconst taskBlock = task.task === \u0027user_dm\u0027\n    ? `The user sent you this message on Telegram:\\n${task.user_text}\\n\\nRespond helpfully and consider issuing actions if appropriate.`\n    : task.task === \u0027scheduled_tick\u0027\n      ? `This is a scheduled cadence run. Decide what to do given the current context, open memos, and your role.`\n      : `An inter-agent invocation arrived from \u0027${task.from_agent}\u0027: ${task.user_text || \u0027no message body\u0027}. Decide how to respond.`;\n\nconst outputGuard = `\\n\\n[OUTPUT FORMAT]\\nReturn ONLY a JSON object (no prose, no markdown fences):\\n{\\n  \"reply_text\": \"\u003cwhat to send back via Telegram; empty string when a scheduled run should stay silent\u003e\",\\n  \"actions\": [\\n    {\"type\": \"memo\",     \"payload\": {\"to_agent\": \"researcher|chief_of_staff|cso|ceo|cleaner|all\", \"memo_type\": \"status|proposal|directive|question|decision\", \"priority\": \"urgent|high|normal|low\", \"subject\": \"...\", \"body_json\": {...}}},\\n    {\"type\": \"archive\",  \"payload\": {\"memo_id\": \"\u003cuuid-from-open-inbox\u003e\", \"reason\": \"...\"}},\\n    {\"type\": \"query\",    \"payload\": {\"sql\": \"\u003csafe single SELECT\u003e\"}},\\n    {\"type\": \"escalate\", \"payload\": {\"subject\": \"...\", \"body_json\": {...}}},\\n    {\"type\": \"cleanup\",  \"payload\": {\"slug\": \"...\", \"reason\": \"...\"}},\\n    {\"type\": \"no_op\",    \"payload\": {\"reason\": \"...\"}}\\n  ]\\n}\\nKeep actions \u003c= 5. Never include non-whitelisted action types. User-facing commentary belongs in reply_text, not in alert actions.`;\n\nconst fullMessage = `${system}\\n\\n[CONTEXT]\\n${contextBlock}\\n\\n[TASK]\\n${taskBlock}${outputGuard}`;\n\nreturn [{ json: {\n    message: fullMessage,\n    session_id: `bridge-${task.bot_name}-${task.now_iso.slice(0,16).replace(/[:T-]/g,\u0027\u0027)}`,\n    task_kind: task.task,\n    user_chat_id: task.chat_id,\n    bot_name: task.bot_name,\n} }];"},"id":"node_assemble_prompt","name":"Assemble prompt","type":"n8n-nodes-base.code","typeVersion":2,"position":[1340,400]},{"parameters":{"method":"POST","url":"https://super-agent-production.up.railway.app/chat/direct","sendHeaders":true,"headerParameters":{"parameters":[{"name":"X-Token","value":"={{$env.SUPER_AGENT_PASSWORD}}"},{"name":"Content-Type","value":"application/json"}]},"sendBody":true,"specifyBody":"json","jsonBody":"={ \"message\": {{ JSON.stringify($json.message) }}, \"model\": \"CLAUDE\", \"session_id\": {{ JSON.stringify($json.session_id) }} }","options":{"timeout":60000,"response":{"response":{"neverError":true}}}},"id":"node_chat_direct","name":"super-agent /chat/direct","type":"n8n-nodes-base.httpRequest","typeVersion":4.2,"position":[1560,400]},{"parameters":{"jsCode":"const raw = $json.response || \u0027\u0027;\nconst defaultRisk = \u0027high\u0027;\nconst riskMap = {\"memo\": \"low\", \"archive\": \"low\", \"no_op\": \"low\", \"escalate\": \"low\", \"query\": \"medium\", \"cleanup\": \"high\"};\n\nlet parsed = null;\nlet parseError = null;\ntry {\n    let cleaned = raw.trim().replace(/^```(?:json)?/, \u0027\u0027).replace(/```$/, \u0027\u0027).trim();\n    parsed = JSON.parse(cleaned);\n} catch (e) { parseError = e.message; }\nif (!parsed) { try { const m = raw.match(/\\{[\\s\\S]*\\}/); if (m) parsed = JSON.parse(m[0]); } catch (e) {} }\n\nlet reply_text = \u0027\u0027;\nlet actions = [];\nif (parsed \u0026\u0026 typeof parsed === \u0027object\u0027) {\n    reply_text = typeof parsed.reply_text === \u0027string\u0027 ? parsed.reply_text : \u0027\u0027;\n    actions = Array.isArray(parsed.actions) ? parsed.actions.slice(0, 5) : [];\n} else {\n    reply_text = String(raw || \u0027\u0027).trim().slice(0, 3500) || \u0027I am online but had no response to share. Please try a more specific question.\u0027;\n    actions = [];\n}\n\nconst annotated = actions.map(a =\u003e {\n    const type = (a \u0026\u0026 typeof a.type === \u0027string\u0027) ? a.type : \u0027no_op\u0027;\n    const risk = riskMap[type] || defaultRisk;\n    return { type, risk, payload: a.payload || {} };\n});\n\nconst upstream = $(\u0027Assemble prompt\u0027).first().json;\nreturn [{ json: {\n    reply_text,\n    actions: annotated,\n    bot_name: upstream.bot_name,\n    user_chat_id: upstream.user_chat_id,\n    task_kind: upstream.task_kind,\n    model_used: $json.model_used || \u0027unknown\u0027,\n    parse_error: parseError,\n} }];"},"id":"node_parse_response","name":"Parse response + risk tag","type":"n8n-nodes-base.code","typeVersion":2,"position":[1780,400]},{"parameters":{"conditions":{"options":{"caseSensitive":true,"typeValidation":"strict"},"conditions":[{"id":"has_reply","leftValue":"={{ ($json.reply_text || \u0027\u0027).trim().length }}","rightValue":0,"operator":{"type":"number","operation":"gt"}}],"combinator":"and"},"options":{}},"id":"node_if_has_reply","name":"If has reply","type":"n8n-nodes-base.if","typeVersion":2.2,"position":[2000,200]},{"parameters":{"method":"POST","url":"=https://api.telegram.org/bot{{$env[\"Bridge _Chief_Sec_Off_bot\"] || $env[\"Bridge_Chief_Sec_Off_bot\"] || $env.Bridge_CEO_BOT}}/sendMessage","sendHeaders":true,"headerParameters":{"parameters":[{"name":"Content-Type","value":"application/json; charset=utf-8"}]},"sendBody":true,"specifyBody":"json","jsonBody":"={ \"chat_id\": {{ $(\u0027Parse response + risk tag\u0027).first().json.user_chat_id || $env.BRIDGE_ADMIN_TELEGRAM_CHAT_ID }}, \"text\": \"{{ $(\u0027Parse response + risk tag\u0027).first().json.reply_text || \u0027(no reply)\u0027 }}\" }","options":{"timeout":15000,"response":{"response":{"neverError":true}}}},"id":"node_reply_tg","name":"Reply on Telegram","type":"n8n-nodes-base.httpRequest","typeVersion":4.2,"position":[2880,400]},{"parameters":{"method":"POST","url":"https://super-agent-production.up.railway.app/memory/ingest","sendHeaders":true,"headerParameters":{"parameters":[{"name":"X-Memory-Secret","value":"={{$env.MEMORY_INGEST_SECRET}}"},{"name":"Content-Type","value":"application/json"}]},"sendBody":true,"specifyBody":"json","jsonBody":"={ \"memories\": [ { \"content\": {{ JSON.stringify(($(\u0027Parse response + risk tag\u0027).first().json.reply_text || \u0027(no reply)\u0027) + \u0027 [actions=\u0027 + (($(\u0027Parse response + risk tag\u0027).first().json.actions || []).map(a =\u003e a.type).join(\u0027,\u0027)) + \u0027]\u0027) }}, \"memory_type\": \"decision\", \"importance\": 3, \"source\": \"bridge_cso_bot\"}]}","options":{"timeout":15000,"response":{"response":{"neverError":true}}}},"id":"node_memory_ingest","name":"Memory ingest","type":"n8n-nodes-base.httpRequest","typeVersion":4.2,"position":[3100,400]},{"parameters":{"jsCode":"const p = $json;\nconst out = [];\nfor (const a of (p.actions || [])) {\n    out.push({ json: {\n        action_type: a.type,\n        action_risk: a.risk,\n        action_payload: a.payload,\n        bot_name: p.bot_name,\n        user_chat_id: p.user_chat_id,\n        task_kind: p.task_kind,\n        model_used: p.model_used,\n        reply_text: p.reply_text,\n    }});\n}\n// Always emit at least one item so the reply path runs even when no actions.\nif (out.length === 0) {\n    out.push({ json: {\n        action_type: \u0027no_op\u0027,\n        action_risk: \u0027low\u0027,\n        action_payload: { reason: \u0027no actions from LLM\u0027 },\n        bot_name: p.bot_name,\n        user_chat_id: p.user_chat_id,\n        task_kind: p.task_kind,\n        model_used: p.model_used,\n        reply_text: p.reply_text,\n    }});\n}\nreturn out;"},"id":"node_split_actions","name":"Split actions","type":"n8n-nodes-base.code","typeVersion":2,"position":[2000,400]},{"parameters":{"rules":{"values":[{"conditions":{"options":{"caseSensitive":true,"typeValidation":"strict"},"conditions":[{"leftValue":"={{ $json.action_risk }}","rightValue":"low","operator":{"type":"string","operation":"equals"}}],"combinator":"and"},"outputKey":"low"},{"conditions":{"options":{"caseSensitive":true,"typeValidation":"strict"},"conditions":[{"leftValue":"={{ $json.action_risk }}","rightValue":"medium","operator":{"type":"string","operation":"equals"}}],"combinator":"and"},"outputKey":"medium"},{"conditions":{"options":{"caseSensitive":true,"typeValidation":"strict"},"conditions":[{"leftValue":"={{ $json.action_risk }}","rightValue":"high","operator":{"type":"string","operation":"equals"}}],"combinator":"and"},"outputKey":"high"}]},"options":{"allMatchingOutputs":false,"fallbackOutput":2}},"id":"node_switch_risk","name":"Switch by risk","type":"n8n-nodes-base.switch","typeVersion":3.2,"position":[2220,400]},{"parameters":{"operation":"executeQuery","query":"\nWITH input AS (\n  SELECT $1::jsonb AS p\n),\nmemo_insert AS (\n  INSERT INTO bridge.agent_memos\n    (from_agent, to_agent, memo_type, priority, subject, body_json, related_lead_id)\n  SELECT\n    $2,\n    COALESCE(p-\u003e\u003e\u0027to_agent\u0027,\u0027all\u0027),\n    COALESCE(p-\u003e\u003e\u0027memo_type\u0027,\u0027status\u0027),\n    COALESCE(p-\u003e\u003e\u0027priority\u0027,\u0027normal\u0027),\n    COALESCE(p-\u003e\u003e\u0027subject\u0027,\u0027(no subject)\u0027),\n    COALESCE(p-\u003e\u0027body_json\u0027,\u0027{}\u0027::jsonb),\n    NULLIF(p-\u003e\u003e\u0027related_lead_id\u0027,\u0027\u0027)::uuid\n  FROM input\n  WHERE $3 = \u0027memo\u0027\n  RETURNING memo_id\n),\narchive_memo AS (\n  UPDATE bridge.agent_memos\n  SET status = \u0027resolved\u0027, resolved_at = NOW(), resolved_by = $2,\n      resolution_notes = COALESCE((SELECT p-\u003e\u003e\u0027reason\u0027 FROM input), \u0027archived by bot\u0027)\n  WHERE $3 = \u0027archive\u0027\n    AND memo_id = (SELECT NULLIF((p-\u003e\u003e\u0027memo_id\u0027),\u0027\u0027)::uuid FROM input)\n  RETURNING memo_id\n),\nevent_log AS (\n  INSERT INTO bridge.workflow_events\n    (workflow_name, event_type, details_json)\n  SELECT\n    $2 || \u0027_bot\u0027,\n    CASE $3\n      WHEN \u0027memo\u0027    THEN \u0027memo_created\u0027\n      WHEN \u0027archive\u0027 THEN \u0027memo_archived\u0027\n      WHEN \u0027no_op\u0027   THEN \u0027no_op\u0027\n      ELSE \u0027other_low_risk\u0027\n    END,\n    (SELECT p FROM input)\n  RETURNING event_id\n)\nSELECT\n  (SELECT memo_id FROM memo_insert)  AS memo_created,\n  (SELECT memo_id FROM archive_memo) AS memo_archived,\n  (SELECT event_id FROM event_log)   AS event_logged;\n","options":{"queryReplacement":"={{ JSON.stringify($json.action_payload) }},{{ $json.bot_name }},{{ $json.action_type }}"}},"id":"node_exec_low_risk","name":"Execute low-risk action","type":"n8n-nodes-base.postgres","typeVersion":2.5,"position":[2440,300],"credentials":{"postgres":{"id":"Ae3yvuqjgMnVRrCo","name":"Postgres account"}}},{"parameters":{"method":"POST","url":"=https://api.telegram.org/bot{{$env[\"Bridge _Chief_Sec_Off_bot\"] || $env[\"Bridge_Chief_Sec_Off_bot\"] || $env.Bridge_CEO_BOT}}/sendMessage","sendHeaders":true,"headerParameters":{"parameters":[{"name":"Content-Type","value":"application/json; charset=utf-8"}]},"sendBody":true,"specifyBody":"json","jsonBody":"={ \"chat_id\": {{$env.BRIDGE_ADMIN_TELEGRAM_CHAT_ID}}, \"text\": \"\\u26a0\\ufe0f  *Approval request from {{$json.bot_name}}*\\n\\n  Action:  `{{$json.action_type}}`\\n  Risk:    medium\\n  Payload: {{ JSON.stringify($json.action_payload).slice(0,600) }}\\n\\nReply *APPROVE {{$json.bot_name}} {{$json.action_type}}* to proceed, or ignore to reject.\\n\\u2014 Bridge Agents\", \"parse_mode\": \"Markdown\" }","options":{"timeout":15000,"response":{"response":{"neverError":true}}}},"id":"node_medium_approval","name":"Medium-risk: approval DM","type":"n8n-nodes-base.httpRequest","typeVersion":4.2,"position":[2440,500]},{"parameters":{"operation":"executeQuery","query":"INSERT INTO bridge.agent_memos (from_agent, to_agent, memo_type, priority, subject, body_json) VALUES ($1, \u0027chief_of_staff\u0027, \u0027approval_request\u0027, \u0027high\u0027,         \u0027Pending medium-risk action awaiting user approval\u0027, $2::jsonb) RETURNING memo_id;","options":{"queryReplacement":"={{ $json.bot_name }},{{ JSON.stringify({action_type: $json.action_type, action_payload: $json.action_payload}) }}"}},"id":"node_medium_memo","name":"Medium-risk: log pending","type":"n8n-nodes-base.postgres","typeVersion":2.5,"position":[2660,500],"credentials":{"postgres":{"id":"Ae3yvuqjgMnVRrCo","name":"Postgres account"}}},{"parameters":{"operation":"executeQuery","query":"INSERT INTO bridge.agent_memos (from_agent, to_agent, memo_type, priority, subject, body_json) VALUES (\u0027cso\u0027, \u0027ceo\u0027, \u0027escalation\u0027, \u0027urgent\u0027,         \u0027HIGH-RISK action requires manual execution\u0027, $1::jsonb) RETURNING memo_id;","options":{"queryReplacement":"={{ JSON.stringify({action_type: $json.action_type, action_payload: $json.action_payload}) }}"}},"id":"node_high_escalate","name":"High-risk: escalate to CEO","type":"n8n-nodes-base.postgres","typeVersion":2.5,"position":[2440,700],"credentials":{"postgres":{"id":"Ae3yvuqjgMnVRrCo","name":"Postgres account"}}},{"parameters":{"method":"POST","url":"=https://api.telegram.org/bot{{$env[\"Bridge _Chief_Sec_Off_bot\"] || $env[\"Bridge_Chief_Sec_Off_bot\"] || $env.Bridge_CEO_BOT}}/sendMessage","sendHeaders":true,"headerParameters":{"parameters":[{"name":"Content-Type","value":"application/json; charset=utf-8"}]},"sendBody":true,"specifyBody":"json","jsonBody":"={ \"chat_id\": {{$env.BRIDGE_ADMIN_TELEGRAM_CHAT_ID}}, \"text\": \"\\ud83d\\udea8  *HIGH-RISK action blocked (escalated to CEO)*\\n\\n  From:    {{$json.bot_name}}\\n  Action:  `{{$json.action_type}}`\\n  Payload: {{ JSON.stringify($json.action_payload).slice(0,600) }}\\n\\nThis action was NOT executed. Review the agent_memos table for the escalation.\\n\\u2014 Bridge Agents\", \"parse_mode\": \"Markdown\" }","options":{"timeout":15000,"response":{"response":{"neverError":true}}}},"id":"node_high_alert","name":"High-risk: urgent DM","type":"n8n-nodes-base.httpRequest","typeVersion":4.2,"position":[2660,700]},{"parameters":{"respondWith":"json","responseBody":"={\"ok\": true, \"bot\": {{JSON.stringify($(\"Parse response + risk tag\").first().json.bot_name)}}}","options":{}},"id":"node_respond","name":"Respond OK","type":"n8n-nodes-base.respondToWebhook","typeVersion":1.1,"position":[3320,400]}],"connections":{"Telegram: user DM":{"main":[[{"node":"Build task payload","type":"main","index":0}]]},"Schedule: daily":{"main":[[{"node":"Build task payload","type":"main","index":0}]]},"Schedule: weekly":{"main":[[{"node":"Build task payload","type":"main","index":0}]]},"Webhook: invoke":{"main":[[{"node":"Build task payload","type":"main","index":0}]]},"Build task payload":{"main":[[{"node":"Read enabled flag","type":"main","index":0}]]},"Read enabled flag":{"main":[[{"node":"If enabled","type":"main","index":0}]]},"If enabled":{"main":[[{"node":"Fetch open inbox","type":"main","index":0}],[]]},"Fetch open inbox":{"main":[[{"node":"Fetch bot context","type":"main","index":0}]]},"Fetch bot context":{"main":[[{"node":"Assemble prompt","type":"main","index":0}]]},"Assemble prompt":{"main":[[{"node":"super-agent /chat/direct","type":"main","index":0}]]},"super-agent /chat/direct":{"main":[[{"node":"Parse response + risk tag","type":"main","index":0}]]},"Parse response + risk tag":{"main":[[{"node":"If has reply","type":"main","index":0},{"node":"Memory ingest","type":"main","index":0},{"node":"Split actions","type":"main","index":0}]]},"If has reply":{"main":[[{"node":"Reply on Telegram","type":"main","index":0}],[]]},"Reply on Telegram":{"main":[[{"node":"Respond OK","type":"main","index":0}]]},"Memory ingest":{"main":[[{"node":"Respond OK","type":"main","index":0}]]},"Split actions":{"main":[[{"node":"Switch by risk","type":"main","index":0}]]},"Switch by risk":{"main":[[{"node":"Execute low-risk action","type":"main","index":0}],[{"node":"Medium-risk: approval DM","type":"main","index":0}],[{"node":"High-risk: escalate to CEO","type":"main","index":0}]]},"Execute low-risk action":{"main":[[{"node":"Respond OK","type":"main","index":0}]]},"Medium-risk: approval DM":{"main":[[{"node":"Medium-risk: log pending","type":"main","index":0}]]},"Medium-risk: log pending":{"main":[[{"node":"Respond OK","type":"main","index":0}]]},"High-risk: escalate to CEO":{"main":[[{"node":"High-risk: urgent DM","type":"main","index":0}]]},"High-risk: urgent DM":{"main":[[{"node":"Respond OK","type":"main","index":0}]]}},"settings":{"executionOrder":"v1"},"pinData":null}
+{
+  "name": "bridge_chief_sec_off_bot",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {}
+      },
+      "id": "node_trigger_tg_cso",
+      "name": "Telegram: user DM",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        200
+      ],
+      "disabled": true,
+      "webhookId": "fe058b2a-bfa8-4bd2-a673-1de6c96e87eb"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 30 8 * * *"
+            }
+          ]
+        }
+      },
+      "id": "node_trigger_daily",
+      "name": "Schedule: daily",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 0 10 * * 3"
+            }
+          ]
+        }
+      },
+      "id": "node_trigger_weekly",
+      "name": "Schedule: weekly",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "bridge-cso-invoke",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "node_trigger_webhook_cso",
+      "name": "Webhook: invoke",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        800
+      ],
+      "webhookId": "bridge-cso-invoke"
+    },
+    {
+      "parameters": {
+        "jsCode": "const src = $input.all()[0];\n// ── Loop prevention guard ────────────────────────────────────────────────────\nconst _incomingBody = (src.json && src.json.body) ? src.json.body : {};\nconst _attemptCount = (_incomingBody.attempt_count !== undefined)\n    ? parseInt(_incomingBody.attempt_count, 10) || 0 : 0;\nif (_attemptCount >= 1) {\n    return [{ json: { loop_detected: true, original_task: _incomingBody,\n        bot_name: 'cso',\n        task: 'loop_escalation', user_text: null, chat_id: null, from_agent: 'loop_guard',\n        now_iso: new Date().toISOString(), daily_spec: [], weekly_spec: [] } }];\n}\n// ── End loop prevention ──────────────────────────────────────────────────────\n\n// ── Deduplication guard ─────────────────────────────────────────────────────\nconst messageId = (src.json && src.json.message && src.json.message.message_id)\n    ? String(src.json.message.message_id)\n    : null;\n\n\n// Detect trigger source by inspecting the item shape.\nlet task = 'scheduled_tick';\nlet user_text = null;\nlet chat_id = null;\nlet from_agent = 'system';\n\nif (src.json && src.json.message && src.json.message.chat) {\n    // Telegram trigger\n    task = 'user_dm';\n    let _utext = src.json.message.text || '';\n    // Strip leading slash from Telegram commands so Super Agent does not classify them as shell commands.\n    if (_utext.startsWith('/')) {\n        const parts = _utext.slice(1).split(/\\s+/);\n        const cmd = (parts[0] || '').toLowerCase();\n        const rest = parts.slice(1).join(' ');\n        if (cmd === 'start' || cmd === 'help') { _utext = 'Hello - please introduce yourself, your role in Bridge Digital, and what you can help with right now.'; }\n        else if (cmd === 'status') { _utext = 'Give me a brief status update on your current focus and any open items in your inbox.'; }\n        else { _utext = (cmd + ' ' + rest).trim(); }\n    }\n    user_text = _utext;\n    chat_id = src.json.message.chat.id;\n    from_agent = 'user';\n} else if (src.json && src.json.body && src.json.body.task) {\n    // Webhook trigger\n    task = src.json.body.task;\n    user_text = src.json.body.message || null;\n    from_agent = src.json.body.from_agent || 'system';\n    chat_id = null; // webhooks do not carry a telegram chat\n} else if (src.json && src.json.timestamp) {\n    // Schedule trigger\n    task = 'scheduled_tick';\n    user_text = null;\n    from_agent = 'system';\n}\n\nreturn [{ json: { message_id: messageId,\n    bot_name: \"cso\",\n    task,\n    user_text,\n    chat_id,\n    from_agent,\n    now_iso: new Date().toISOString(),\n    daily_spec: [{\"hour\": 8, \"minute\": 30, \"task_name\": \"daily_risk_review\"}],\n    weekly_spec: [{\"weekday\": 3, \"hour\": 10, \"minute\": 0, \"task_name\": \"weekly_controls_review\"}],\n} }];"
+      },
+      "id": "node_build_task",
+      "name": "Build task payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT (value = 'true') AS enabled FROM bridge.system_limits WHERE key = 'cso_bot_enabled';",
+        "options": {}
+      },
+      "id": "node_read_enabled",
+      "name": "Read enabled flag",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        680,
+        400
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "Ae3yvuqjgMnVRrCo",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "enabled_check",
+              "leftValue": "={{ $json.enabled }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "node_if_enabled",
+      "name": "If enabled",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        900,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT COALESCE(jsonb_agg(row_to_json(m) ORDER BY m.priority_rank, m.created_at), '[]'::jsonb)        AS open_inbox FROM (   SELECT memo_id, from_agent, memo_type, priority, subject, body_json,          created_at, related_lead_id,          CASE priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1                        WHEN 'normal' THEN 2 ELSE 3 END AS priority_rank   FROM bridge.agent_memos   WHERE to_agent IN ('cso', 'all')     AND status = 'open'   LIMIT 20 ) m;",
+        "options": {}
+      },
+      "id": "node_fetch_inbox",
+      "name": "Fetch open inbox",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1120,
+        400
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "Ae3yvuqjgMnVRrCo",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT jsonb_build_object(\n    'now_utc', NOW(),\n    'error_events_24h', (\n        SELECT COALESCE(jsonb_agg(row_to_json(e)), '[]'::jsonb)\n        FROM (\n            SELECT event_id, workflow_name, event_type, created_at,\n                   details_json\n            FROM bridge.workflow_events\n            WHERE created_at >= NOW() - INTERVAL '24 hours'\n              AND (\n                  event_type ILIKE '%error%'\n                  OR event_type ILIKE '%fail%'\n                  OR event_type ILIKE '%denied%'\n                  OR event_type ILIKE '%retry%'\n              )\n            ORDER BY created_at DESC\n            LIMIT 30\n        ) e\n    ),\n    'workflow_event_volume_24h', (\n        SELECT COALESCE(jsonb_agg(row_to_json(v)), '[]'::jsonb)\n        FROM (\n            SELECT workflow_name, COUNT(*)::int AS n\n            FROM bridge.workflow_events\n            WHERE created_at >= NOW() - INTERVAL '24 hours'\n            GROUP BY workflow_name\n            ORDER BY n DESC\n        ) v\n    ),\n    'suppression_list_size', (\n        SELECT COUNT(*)::int FROM bridge.suppression_list\n    ),\n    'outreach_volume_24h', (\n        SELECT jsonb_build_object(\n            'outbound', (SELECT COUNT(*)::int FROM bridge.outreach_messages\n                         WHERE direction='outbound' AND sent_at >= NOW() - INTERVAL '24 hours'),\n            'inbound',  (SELECT COUNT(*)::int FROM bridge.outreach_messages\n                         WHERE direction='inbound'  AND sent_at >= NOW() - INTERVAL '24 hours')\n        )\n    ),\n    'expense_anomalies', (\n        SELECT COALESCE(jsonb_agg(row_to_json(a)), '[]'::jsonb)\n        FROM (\n            SELECT vendor, ROUND(SUM(amount_usd)::numeric, 4) AS usd_24h,\n                   COUNT(*)::int AS n_calls\n            FROM bridge.expenses\n            WHERE occurred_at >= NOW() - INTERVAL '24 hours'\n            GROUP BY vendor\n            ORDER BY usd_24h DESC\n            LIMIT 5\n        ) a\n    ),\n    'system_limits', (\n        SELECT COALESCE(jsonb_agg(row_to_json(l)), '[]'::jsonb)\n        FROM (\n            SELECT key, value FROM bridge.system_limits\n            ORDER BY key\n        ) l\n    )\n) AS context;",
+        "options": {}
+      },
+      "id": "node_fetch_context",
+      "name": "Fetch bot context",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1120,
+        600
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "Ae3yvuqjgMnVRrCo",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const _buildTask = $('Build task payload').first().json;\nif (_buildTask.loop_detected) {\n    return [{ json: {\n        message: JSON.stringify({ reply_text: '', actions: [{ type: 'no_op', payload: {\n            reason: 'loop_detected', attempt_count: (_buildTask.original_task && _buildTask.original_task.attempt_count) || 1\n        }}]}),\n        session_id: 'bridge-loop-guard-' + Date.now(),\n        task_kind: 'loop_escalation', user_chat_id: null,\n        bot_name: _buildTask.bot_name || 'unknown', _pre_formed: true\n    }}];\n}\n\nconst task = $('Build task payload').first().json;\n// ── Memory auto-block check (non-blocking) ──────────────────────────────────\nlet _autoBlockActive = false;\nconst _querySubject = task.user_text || task.subject || '';\nif (_querySubject && _querySubject.length > 5) {\n    try {\n        const _memCheck = await $http.post(\n            `${$env.SUPER_AGENT_URL || 'https://super-agent-production.up.railway.app'}/webhook/memory-query`,\n            { project_name: _querySubject.slice(0, 100), api_key: $env.N8N_API_KEY || '' }\n        );\n        if (_memCheck && _memCheck.data && _memCheck.data.auto_block === true) {\n            _autoBlockActive = true;\n            return [{ json: {\n                message: JSON.stringify({\n                    reply_text: `🚫 AUTO-BLOCK: Project has been rejected ${_memCheck.data.rejection_count} time(s). Route to CRO then CEO for override.`,\n                    actions: [{ type: 'no_op', payload: {\n                        reason: 'auto_block_repeated_rejection',\n                        rejection_count: _memCheck.data.rejection_count,\n                        similar_projects: _memCheck.data.similar_projects\n                    }}]\n                }),\n                session_id: `bridge-auto-block-${Date.now()}`,\n                task_kind: 'auto_block', user_chat_id: task.chat_id,\n                bot_name: task.bot_name, _pre_formed: true\n            }}];\n        }\n    } catch(e) { /* non-blocking */ }\n}\n\n\nconst inboxRow = $('Fetch open inbox').first().json || {};\nconst inbox = Array.isArray(inboxRow.open_inbox) ? inboxRow.open_inbox : [];\nconst ctxRow = $('Fetch bot context').first().json || {};\nconst ctx = ctxRow.context ? [ctxRow.context] : [ctxRow];\n\n\nconst globalProtocol = `\n\nGLOBAL OPERATING PROTOCOL (non-negotiable):\n1. ALWAYS respond in valid JSON only. No prose, no markdown outside JSON strings.\n2. EXACT response structure: {\"reply_text\": \"...\", \"actions\": [...]}\n3. reply_text: human-readable Telegram message. Brief, role-appropriate.\n4. actions: array of {type, payload} objects. Empty array if no actions.\n5. NEVER include PLACEHOLDER, PASTE_, TBD, INSERT_HERE values in any field.\n6. NEVER mention internal tools (n8n, shell, SQL, workflow IDs) in reply_text.\n7. If required data is missing → return no_op with status \"need_input\" + list exact missing fields.\n8. If blocked → escalate to Chief of Staff. NEVER retry autonomously.\n9. MAX_RETRIES = 1. If attempt_count >= 1 in incoming body_json → return no_op immediately.\n`;\n\nconst system = \"You are Bridge_Chief_Sec_Off_bot, the enterprise security governance and risk-control super-agent inside Bridge Digital Solutions.\\n\\nROLE\\nYou are the guardian of operational security, system integrity, credential safety, access control, infrastructure trust, and risk containment across the multi-agent ecosystem.\\n\\nPRIMARY OBJECTIVES\\n1. Protect the enterprise from security, access, data, and infrastructure risks.\\n2. Identify and reduce vulnerabilities before they become incidents.\\n3. Enforce secure operational practices across agents, workflows, systems, and integrations.\\n4. Ensure that the company's automation and AI ecosystem remains trustworthy, controlled, and resilient.\\n\\nSECONDARY OBJECTIVES\\n1. Support safe scaling of the agent ecosystem.\\n2. Advise leadership on security tradeoffs and operational exposure.\\n3. Maintain security awareness in architecture, automation, and workflow design.\\n\\nCORE FUNCTIONS\\nSecurity monitoring, risk assessment, credential and access governance, policy enforcement, security review of workflows and automations, incident triage and response coordination, data handling oversight, infrastructure exposure review, vendor/tool integration risk review, security escalation reporting.\\n\\nWHAT YOU MUST MONITOR\\nsuspicious behavior, excessive permissions, insecure storage of credentials, exposed endpoints, risky integrations, automation misconfigurations, unauthorized access patterns, weak operational controls, insecure data flow between agents, missing auditability.\\n\\nDECISION PRINCIPLES\\n- Prioritize prevention over reaction.\\n- Assume risk exists where controls are weak.\\n- Prefer least privilege, compartmentalization, and traceability.\\n- Be strict with security-sensitive actions.\\n- Escalate material risk quickly and clearly.\\n- Balance security with business continuity, but do not ignore high-impact threats.\\n\\nAUTHORITY AND AUTONOMY\\nYou may flag and classify security risks, recommend controls and remediation, require review before high-risk deployment, request credential rotation or access reduction, trigger incident workflows, notify leadership of serious exposure.\\nYou may not unilaterally redefine company strategy, approve major budget reallocations, suppress material incidents from leadership.\\n\\nINTERACTION RULES\\nYou collaborate with Bridge_CEO_BOT for strategic risk visibility, Bridge_Chief_Of_Staff_bot for cross-functional remediation tracking, infrastructure/finance/legal/operations agents where applicable, Bridge_Cleaner_bot for safe archival and lifecycle hygiene.\\n\\nESCALATE IMMEDIATELY WHEN credentials may be exposed, client or enterprise data may be compromised, an agent or workflow behaves outside expected bounds, access control is bypassed, infrastructure is materially exposed, or legal/compliance risk may arise from security posture.\\n\\nOUTPUT STYLE\\nAlways structure outputs as: risk summary, severity (low|medium|high|critical), affected systems, probable cause, immediate actions, long-term remediation, required owner, escalation urgency.\\n\\nSUCCESS DEFINITION\\nYou are successful when risks are caught early, sensitive assets remain protected, and the agent ecosystem scales without unacceptable security exposure.\\n\";\n\nconst contextBlock = JSON.stringify({\n    now: task.now_iso,\n    bot: task.bot_name,\n    task_kind: task.task,\n    open_inbox: inbox,\n    bot_context: ctx,\n    daily_cadence: task.daily_spec,\n    weekly_cadence: task.weekly_spec,\n}, null, 2);\n\nconst taskBlock = task.task === 'user_dm'\n    ? `The user sent you this message on Telegram:\\n${task.user_text}\\n\\nRespond helpfully and consider issuing actions if appropriate.`\n    : task.task === 'scheduled_tick'\n      ? `This is a scheduled cadence run. Decide what to do given the current context, open memos, and your role.`\n      : `An inter-agent invocation arrived from '${task.from_agent}': ${task.user_text || 'no message body'}. Decide how to respond.`;\n\nconst outputGuard = `\\n\\n[OUTPUT FORMAT]\\nReturn ONLY a JSON object (no prose, no markdown fences):\\n{\\n  \"reply_text\": \"<what to send back via Telegram; empty string when a scheduled run should stay silent>\",\\n  \"actions\": [\\n    {\"type\": \"memo\",     \"payload\": {\"to_agent\": \"researcher|chief_of_staff|cso|ceo|cleaner|all\", \"memo_type\": \"status|proposal|directive|question|decision\", \"priority\": \"urgent|high|normal|low\", \"subject\": \"...\", \"body_json\": {...}}},\\n    {\"type\": \"archive\",  \"payload\": {\"memo_id\": \"<uuid-from-open-inbox>\", \"reason\": \"...\"}},\\n    {\"type\": \"query\",    \"payload\": {\"sql\": \"<safe single SELECT>\"}},\\n    {\"type\": \"escalate\", \"payload\": {\"subject\": \"...\", \"body_json\": {...}}},\\n    {\"type\": \"cleanup\",  \"payload\": {\"slug\": \"...\", \"reason\": \"...\"}},\\n    {\"type\": \"no_op\",    \"payload\": {\"reason\": \"...\"}}\\n  ]\\n}\\nKeep actions <= 5. Never include non-whitelisted action types. User-facing commentary belongs in reply_text, not in alert actions.`;\n\nconst fullMessage = `${system}${globalProtocol}\\n\\n[CONTEXT]\\n${contextBlock}\\n\\n[TASK]\\n${taskBlock}${outputGuard}`;\n\nreturn [{ json: {\n    message: fullMessage,\n    session_id: `bridge-${task.bot_name}-${task.now_iso.slice(0,16).replace(/[:T-]/g,'')}`,\n    task_kind: task.task,\n    user_chat_id: task.chat_id,\n    bot_name: task.bot_name,\n} }];"
+      },
+      "id": "node_assemble_prompt",
+      "name": "Assemble prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1340,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://super-agent-production.up.railway.app/chat/direct",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Token",
+              "value": "={{$env.SUPER_AGENT_PASSWORD}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={ \"message\": {{ JSON.stringify($json.message) }}, \"model\": \"CLAUDE\", \"session_id\": {{ JSON.stringify($json.session_id) }} }",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "node_chat_direct",
+      "name": "super-agent /chat/direct",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1560,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ── Pre-formed short-circuit (loop guard) ──────────────────────────────────\nconst _upstream = $('Assemble prompt').first().json;\nif (_upstream && _upstream._pre_formed) {\n    let _pfActions;\n    try { _pfActions = JSON.parse(_upstream.message).actions; } catch(e) { _pfActions = []; }\n    return [{ json: {\n        reply_text: '',\n        actions: [{ type: 'no_op', risk: 'low',\n            payload: (_pfActions[0] && _pfActions[0].payload) || { reason: 'loop_guard' } }],\n        bot_name: _upstream.bot_name, user_chat_id: _upstream.user_chat_id,\n        task_kind: 'loop_escalation', model_used: 'loop_guard', parse_error: null\n    }}];\n}\n\n// ── Standard parse + risk + validation ─────────────────────────────────────\nconst raw = $json.response || '';\nconst riskMap = { \"memo\": \"low\", \"archive\": \"low\", \"no_op\": \"low\",\n                  \"escalate\": \"low\", \"query\": \"medium\", \"cleanup\": \"high\" };\nconst defaultRisk = 'low';\n\nlet parsed = null, parseError = null;\ntry {\n    let cleaned = raw.trim().replace(/^```(?:json)?/, '').replace(/```$/, '').trim();\n    parsed = JSON.parse(cleaned);\n} catch (e) { parseError = e.message; }\nif (!parsed) {\n    try { const m = raw.match(/\\{[\\s\\S]*\\}/); if (m) parsed = JSON.parse(m[0]); } catch (e) {}\n}\n\nlet reply_text = '', actions = [];\nif (parsed && typeof parsed === 'object' && parsed.reply_text !== undefined) {\n    reply_text = typeof parsed.reply_text === 'string' ? parsed.reply_text : '';\n    actions = Array.isArray(parsed.actions) ? parsed.actions.slice(0, 5) : [];\n} else {\n    reply_text = '';\n    actions = [{ type: 'no_op', payload: {\n        reason: 'json_parse_failed',\n        parse_error: parseError || 'no structured response from model',\n        raw_preview: String(raw).slice(0, 200)\n    }}];\n}\n\n// ── Placeholder validation ──────────────────────────────────────────────────\nconst BANNED = ['PASTE_', 'TBD', 'PLACEHOLDER', 'INSERT_HERE', 'YOUR_URL'];\nconst hasPlaceholder = (str) => BANNED.some(p => String(str).includes(p));\nif (hasPlaceholder(reply_text) || actions.some(a => hasPlaceholder(JSON.stringify(a)))) {\n    reply_text = '[Output validation failed — response contained placeholder values. Please provide the actual value.]';\n    actions = [{ type: 'no_op', payload: { reason: 'placeholder_detected' }}];\n}\n\n// ── Internal tool leakage scrubbing (non-blocking) ─────────────────────────\nconst leakageMap = {\n    'n8n workflow creation': 'automation system modification',\n    'n8n workflow modification': 'automation system modification',\n    'shell command (destructive)': 'system operation',\n    'shell command': 'system operation',\n    'SQL query': 'data operation',\n};\nfor (const [internal, safe] of Object.entries(leakageMap)) {\n    if (reply_text.toLowerCase().includes(internal.toLowerCase()))\n        reply_text = reply_text.replace(new RegExp(internal, 'gi'), safe);\n}\n\n// ── Risk annotation ─────────────────────────────────────────────────────────\nconst annotated = actions.map(a => {\n    const type = (a && typeof a.type === 'string') ? a.type : 'no_op';\n    let risk = riskMap[type] !== undefined ? riskMap[type] : defaultRisk;\n    return { type, risk, payload: a.payload || {} };\n});\n\nconst upstream = $('Assemble prompt').first().json;\nreturn [{ json: {\n    reply_text, actions: annotated,\n    bot_name: upstream.bot_name, user_chat_id: upstream.user_chat_id,\n    task_kind: upstream.task_kind, model_used: $json.model_used || 'unknown',\n    parse_error: parseError\n}}];"
+      },
+      "id": "node_parse_response",
+      "name": "Parse response + risk tag",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1780,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has_reply",
+              "leftValue": "={{ ($json.reply_text || '').trim().length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "node_if_has_reply",
+      "name": "If has reply",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2000,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{$env[\"Bridge _Chief_Sec_Off_bot\"] || $env[\"Bridge_Chief_Sec_Off_bot\"] || $env.Bridge_CEO_BOT}}/sendMessage",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json; charset=utf-8"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={ \"chat_id\": {{ $('Parse response + risk tag').first().json.user_chat_id || $env.BRIDGE_ADMIN_TELEGRAM_CHAT_ID }}, \"text\": \"{{ $('Parse response + risk tag').first().json.reply_text || '(no reply)' }}\" }",
+        "options": {
+          "timeout": 15000,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "node_reply_tg",
+      "name": "Reply on Telegram",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2880,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://super-agent-production.up.railway.app/memory/ingest",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Memory-Secret",
+              "value": "={{$env.MEMORY_INGEST_SECRET}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={ \"memories\": [ { \"content\": {{ JSON.stringify(($('Parse response + risk tag').first().json.reply_text || '(no reply)') + ' [actions=' + (($('Parse response + risk tag').first().json.actions || []).map(a => a.type).join(',')) + ']') }}, \"memory_type\": \"decision\", \"importance\": 3, \"source\": \"bridge_cso_bot\"}]}",
+        "options": {
+          "timeout": 15000,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "node_memory_ingest",
+      "name": "Memory ingest",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3100,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const p = $json;\nconst out = [];\nfor (const a of (p.actions || [])) {\n    out.push({ json: {\n        action_type: a.type,\n        action_risk: a.risk,\n        action_payload: a.payload,\n        bot_name: p.bot_name,\n        user_chat_id: p.user_chat_id,\n        task_kind: p.task_kind,\n        model_used: p.model_used,\n        reply_text: p.reply_text,\n    }});\n}\n// Always emit at least one item so the reply path runs even when no actions.\nif (out.length === 0) {\n    out.push({ json: {\n        action_type: 'no_op',\n        action_risk: 'low',\n        action_payload: { reason: 'no actions from LLM' },\n        bot_name: p.bot_name,\n        user_chat_id: p.user_chat_id,\n        task_kind: p.task_kind,\n        model_used: p.model_used,\n        reply_text: p.reply_text,\n    }});\n}\nreturn out;"
+      },
+      "id": "node_split_actions",
+      "name": "Split actions",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2000,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action_risk }}",
+                    "rightValue": "low",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "outputKey": "low"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action_risk }}",
+                    "rightValue": "medium",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "outputKey": "medium"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action_risk }}",
+                    "rightValue": "high",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "outputKey": "high"
+            }
+          ]
+        },
+        "options": {
+          "allMatchingOutputs": false,
+          "fallbackOutput": 2
+        }
+      },
+      "id": "node_switch_risk",
+      "name": "Switch by risk",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        2220,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "\nWITH input AS (\n  SELECT $1::jsonb AS p\n),\nmemo_insert AS (\n  INSERT INTO bridge.agent_memos\n    (from_agent, to_agent, memo_type, priority, subject, body_json, related_lead_id)\n  SELECT\n    $2,\n    COALESCE(p->>'to_agent','all'),\n    COALESCE(p->>'memo_type','status'),\n    COALESCE(p->>'priority','normal'),\n    COALESCE(p->>'subject','(no subject)'),\n    COALESCE(p->'body_json','{}'::jsonb) || '{\"attempt_count\": 0}'::jsonb,\n    NULLIF(p->>'related_lead_id','')::uuid\n  FROM input\n  WHERE $3 = 'memo'\n  RETURNING memo_id\n),\narchive_memo AS (\n  UPDATE bridge.agent_memos\n  SET status = 'resolved', resolved_at = NOW(), resolved_by = $2,\n      resolution_notes = COALESCE((SELECT p->>'reason' FROM input), 'archived by bot')\n  WHERE $3 = 'archive'\n    AND memo_id = (SELECT NULLIF((p->>'memo_id'),'')::uuid FROM input)\n  RETURNING memo_id\n),\nevent_log AS (\n  INSERT INTO bridge.workflow_events\n    (workflow_name, event_type, details_json)\n  SELECT\n    $2 || '_bot',\n    CASE $3\n      WHEN 'memo'    THEN 'memo_created'\n      WHEN 'archive' THEN 'memo_archived'\n      WHEN 'no_op'   THEN 'no_op'\n      ELSE 'other_low_risk'\n    END,\n    (SELECT p FROM input)\n  RETURNING event_id\n),\nperf_self_report AS (\n  INSERT INTO bridge.agent_performance\n    (agent_name, date, tasks_total, tasks_success)\n  VALUES ($2, CURRENT_DATE, 1, 1)\n  ON CONFLICT (agent_name, date) DO UPDATE SET\n    tasks_total   = bridge.agent_performance.tasks_total + 1,\n    tasks_success = bridge.agent_performance.tasks_success + 1\n  RETURNING agent_name\n)\nSELECT\n  (SELECT memo_id FROM memo_insert)  AS memo_created,\n  (SELECT memo_id FROM archive_memo) AS memo_archived,\n  (SELECT event_id FROM event_log)   AS event_logged,\n  (SELECT agent_name FROM perf_self_report) AS perf_recorded;\n",
+        "options": {
+          "queryReplacement": "={{ JSON.stringify($json.action_payload) }},{{ $json.bot_name }},{{ $json.action_type }}"
+        }
+      },
+      "id": "node_exec_low_risk",
+      "name": "Execute low-risk action",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2440,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "Ae3yvuqjgMnVRrCo",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{$env[\"Bridge _Chief_Sec_Off_bot\"] || $env[\"Bridge_Chief_Sec_Off_bot\"] || $env.Bridge_CEO_BOT}}/sendMessage",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json; charset=utf-8"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={ \"chat_id\": {{$env.BRIDGE_ADMIN_TELEGRAM_CHAT_ID}}, \"text\": \"\\u26a0\\ufe0f  *Approval request from {{$json.bot_name}}*\\n\\n  Action:  `{{$json.action_type}}`\\n  Risk:    medium\\n  Payload: {{ JSON.stringify($json.action_payload).slice(0,600) }}\\n\\nReply *APPROVE {{$json.bot_name}} {{$json.action_type}}* to proceed, or ignore to reject.\\n\\u2014 Bridge Agents\", \"parse_mode\": \"Markdown\" }",
+        "options": {
+          "timeout": 15000,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "node_medium_approval",
+      "name": "Medium-risk: approval DM",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2440,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO bridge.agent_memos (from_agent, to_agent, memo_type, priority, subject, body_json) VALUES ($1, 'chief_of_staff', 'approval_request', 'high',         'Pending medium-risk action awaiting user approval', $2::jsonb) RETURNING memo_id;",
+        "options": {
+          "queryReplacement": "={{ $json.bot_name }},{{ JSON.stringify({action_type: $json.action_type, action_payload: $json.action_payload}) }}"
+        }
+      },
+      "id": "node_medium_memo",
+      "name": "Medium-risk: log pending",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2660,
+        500
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "Ae3yvuqjgMnVRrCo",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO bridge.agent_memos (from_agent, to_agent, memo_type, priority, subject, body_json) VALUES ('cso', 'ceo', 'escalation', 'urgent',         'HIGH-RISK action requires manual execution', $1::jsonb) RETURNING memo_id;",
+        "options": {
+          "queryReplacement": "={{ JSON.stringify({action_type: $json.action_type, action_payload: $json.action_payload}) }}"
+        }
+      },
+      "id": "node_high_escalate",
+      "name": "High-risk: escalate to CEO",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2440,
+        700
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "Ae3yvuqjgMnVRrCo",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{$env[\"Bridge _Chief_Sec_Off_bot\"] || $env[\"Bridge_Chief_Sec_Off_bot\"] || $env.Bridge_CEO_BOT}}/sendMessage",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json; charset=utf-8"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={ \"chat_id\": {{$env.BRIDGE_ADMIN_TELEGRAM_CHAT_ID}}, \"text\": \"\\ud83d\\udea8  *HIGH-RISK action blocked (escalated to CEO)*\\n\\n  From:    {{$json.bot_name}}\\n  Action:  `{{$json.action_type}}`\\n  Payload: {{ JSON.stringify($json.action_payload).slice(0,600) }}\\n\\nThis action was NOT executed. Review the agent_memos table for the escalation.\\n\\u2014 Bridge Agents\", \"parse_mode\": \"Markdown\" }",
+        "options": {
+          "timeout": 15000,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "node_high_alert",
+      "name": "High-risk: urgent DM",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2660,
+        700
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\"ok\": true, \"bot\": {{JSON.stringify($(\"Parse response + risk tag\").first().json.bot_name)}}}",
+        "options": {}
+      },
+      "id": "node_respond",
+      "name": "Respond OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        3320,
+        400
+      ]
+    }
+  ],
+  "connections": {
+    "Telegram: user DM": {
+      "main": [
+        [
+          {
+            "node": "Build task payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule: daily": {
+      "main": [
+        [
+          {
+            "node": "Build task payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule: weekly": {
+      "main": [
+        [
+          {
+            "node": "Build task payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook: invoke": {
+      "main": [
+        [
+          {
+            "node": "Build task payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build task payload": {
+      "main": [
+        [
+          {
+            "node": "Read enabled flag",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read enabled flag": {
+      "main": [
+        [
+          {
+            "node": "If enabled",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If enabled": {
+      "main": [
+        [
+          {
+            "node": "Fetch open inbox",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Fetch open inbox": {
+      "main": [
+        [
+          {
+            "node": "Fetch bot context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch bot context": {
+      "main": [
+        [
+          {
+            "node": "Assemble prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Assemble prompt": {
+      "main": [
+        [
+          {
+            "node": "super-agent /chat/direct",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "super-agent /chat/direct": {
+      "main": [
+        [
+          {
+            "node": "Parse response + risk tag",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse response + risk tag": {
+      "main": [
+        [
+          {
+            "node": "If has reply",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Memory ingest",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Split actions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If has reply": {
+      "main": [
+        [
+          {
+            "node": "Reply on Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Reply on Telegram": {
+      "main": [
+        [
+          {
+            "node": "Respond OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Memory ingest": {
+      "main": [
+        [
+          {
+            "node": "Respond OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split actions": {
+      "main": [
+        [
+          {
+            "node": "Switch by risk",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch by risk": {
+      "main": [
+        [
+          {
+            "node": "Execute low-risk action",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Medium-risk: approval DM",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "High-risk: escalate to CEO",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute low-risk action": {
+      "main": [
+        [
+          {
+            "node": "Respond OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Medium-risk: approval DM": {
+      "main": [
+        [
+          {
+            "node": "Medium-risk: log pending",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Medium-risk: log pending": {
+      "main": [
+        [
+          {
+            "node": "Respond OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "High-risk: escalate to CEO": {
+      "main": [
+        [
+          {
+            "node": "High-risk: urgent DM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "High-risk: urgent DM": {
+      "main": [
+        [
+          {
+            "node": "Respond OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": null
+}

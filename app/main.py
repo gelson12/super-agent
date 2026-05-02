@@ -847,6 +847,8 @@ class DirectChatRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=8000)
     model: str = Field(..., description="GEMINI | DEEPSEEK | CLAUDE")
     session_id: str = Field(default="default", max_length=128)
+    task_type: str | None = Field(default=None, max_length=80,
+        description="Optional task classification hint (memo|query|cleanup|escalate|no_op)")
 
 
 class ChatResponse(BaseModel):
@@ -5252,6 +5254,313 @@ def webhook_store_memory(payload: dict):
         return {"ok": True, "stored": content[:80] + ("..." if len(content) > 80 else "")}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Memory store failed: {e}")
+
+
+class TaskEnvelopeRequest(BaseModel):
+    task_id: str = Field(..., max_length=128)
+    origin: str = Field(..., max_length=80)
+    target: str = Field(..., max_length=80)
+    objective: str = Field(..., max_length=2000)
+    context: str = Field(default="", max_length=4000)
+    payload: dict = Field(default_factory=dict)
+    priority: str = Field(default="normal", pattern="^(low|medium|high|urgent)$")
+    requires_approval: bool = False
+    attempt_count: int = Field(default=0, ge=0, le=10)
+    model: str = Field(default="CLAUDE")
+    api_key: str
+
+
+@app.post("/webhook/task-envelope", tags=["webhook"])
+@limiter.limit("60/minute")
+def webhook_task_envelope(req: TaskEnvelopeRequest, request: Request):
+    """
+    Structured task envelope endpoint for Bridge agent-to-agent dispatch.
+    Loop guard: attempt_count >= 1 returns loop_detected immediately.
+    Protected by N8N_API_KEY.
+    """
+    import secrets as _secrets
+    import os as _os_te
+    _key = _os_te.environ.get("N8N_API_KEY", "")
+    if not _key or not _secrets.compare_digest(req.api_key, _key):
+        raise HTTPException(status_code=403, detail="Invalid api_key")
+    if req.attempt_count >= 1:
+        bg_log(f"[task-envelope] loop_detected task_id={req.task_id}", "task_envelope")
+        return {"ok": False, "reason": "loop_detected", "task_id": req.task_id,
+                "message": "attempt_count >= 1 — escalated to COS, not retried."}
+    _BANNED = ['PASTE_', 'TBD', 'PLACEHOLDER', 'INSERT_HERE', 'YOUR_URL']
+    if any(b in req.objective + req.context + str(req.payload) for b in _BANNED):
+        raise HTTPException(status_code=400, detail="Task envelope contains placeholder values.")
+    msg = (f"[TASK ENVELOPE]\ntask_id: {req.task_id}\norigin: {req.origin}\n"
+           f"target: {req.target}\nobjective: {req.objective}\ncontext: {req.context}\n"
+           f"payload: {req.payload}\npriority: {req.priority}\n"
+           f"requires_approval: {req.requires_approval}\nattempt_count: {req.attempt_count}")
+    sid = f"task-{req.task_id[:20]}"
+    result = dispatch(msg, force_model=req.model.upper(), session_id=sid)
+    if result["model_used"] is None:
+        raise HTTPException(status_code=400, detail=result["response"])
+    append_exchange(sid, msg, result["response"])
+    return _chat_response_from_result(result, sid)
+
+
+# ── Intelligence Layer — Memory & Performance endpoints ───────────────────────
+# All four endpoints below are protected by N8N_API_KEY.
+# They power: CRO gating, project memory recall, agent performance tracking,
+# and the daily performance dashboard workflow.
+
+class MemoryRecordRequest(BaseModel):
+    project_name: str = Field(..., max_length=200)
+    outcome: str = Field(default="pending", pattern="^(pending|approved|rejected|success|failure)$")
+    cro_score: int | None = Field(default=None, ge=0, le=100)
+    agents_involved: list[str] = Field(default_factory=list)
+    expected_roi_usd: float | None = None
+    risk_level: str = Field(default="medium")
+    timeline_weeks: int | None = None
+    actual_revenue_usd: float | None = None
+    actual_cost_usd: float | None = None
+    key_insights: dict = Field(default_factory=dict)
+    reusable_pattern: bool = False
+    api_key: str
+
+
+@app.post("/webhook/memory-record", tags=["webhook"])
+@limiter.limit("60/minute")
+def webhook_memory_record(req: MemoryRecordRequest, request: Request):
+    """
+    Store a project memory entry in bridge.project_memory + vector memory.
+    Called by CRO after every evaluation and by any agent when a project outcome is known.
+    """
+    import secrets as _sec
+    if not _sec.compare_digest(req.api_key, os.environ.get("N8N_API_KEY", "")):
+        raise HTTPException(403, "Invalid api_key")
+
+    import json as _json
+    from .memory.vector_memory import store_enriched_memory, _get_pg_conn
+
+    memory_text = (
+        f"Project: {req.project_name} | Outcome: {req.outcome} | "
+        f"CRO Score: {req.cro_score} | ROI: ${req.expected_roi_usd} | "
+        f"Risk: {req.risk_level} | Insights: {_json.dumps(req.key_insights)[:200]}"
+    )
+    store_enriched_memory(
+        f"project-{req.project_name[:30].replace(' ', '-').lower()}",
+        memory_text,
+        memory_type="project_outcome",
+        importance=5 if req.outcome in ("success", "failure") else 3,
+    )
+
+    conn = _get_pg_conn()
+    if conn:
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO bridge.project_memory
+                        (project_name, outcome, cro_score, agents_involved, expected_roi_usd,
+                         risk_level, timeline_weeks, actual_revenue_usd, actual_cost_usd,
+                         key_insights, reusable_pattern)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (project_hash) DO UPDATE SET
+                        outcome            = EXCLUDED.outcome,
+                        cro_score          = COALESCE(EXCLUDED.cro_score, bridge.project_memory.cro_score),
+                        actual_revenue_usd = COALESCE(EXCLUDED.actual_revenue_usd, bridge.project_memory.actual_revenue_usd),
+                        actual_cost_usd    = COALESCE(EXCLUDED.actual_cost_usd, bridge.project_memory.actual_cost_usd),
+                        key_insights       = EXCLUDED.key_insights,
+                        agents_involved    = EXCLUDED.agents_involved,
+                        updated_at         = NOW(),
+                        rejection_count    = CASE
+                            WHEN EXCLUDED.outcome = 'rejected'
+                            THEN bridge.project_memory.rejection_count + 1
+                            ELSE bridge.project_memory.rejection_count
+                        END
+                """, (
+                    req.project_name, req.outcome, req.cro_score,
+                    req.agents_involved, req.expected_roi_usd, req.risk_level,
+                    req.timeline_weeks, req.actual_revenue_usd, req.actual_cost_usd,
+                    _json.dumps(req.key_insights), req.reusable_pattern,
+                ))
+                conn.commit()
+        except Exception as _e:
+            bg_log(f"[memory-record] DB error: {_e}", "memory_record")
+        finally:
+            conn.close()
+
+    bg_log(f"[memory-record] project={req.project_name!r} outcome={req.outcome} cro_score={req.cro_score}", "memory_record")
+    return {"ok": True, "project": req.project_name, "outcome": req.outcome}
+
+
+class MemoryQueryRequest(BaseModel):
+    project_name: str = Field(..., max_length=200)
+    api_key: str
+
+
+@app.post("/webhook/memory-query", tags=["webhook"])
+@limiter.limit("120/minute")
+def webhook_memory_query(req: MemoryQueryRequest, request: Request):
+    """
+    Query past projects similar to project_name.
+    Returns similar_projects list, rejection_count, auto_block flag, and semantic matches.
+    auto_block=true when rejection_count >= 2 — CRO and all agents must honour this.
+    """
+    import secrets as _sec
+    if not _sec.compare_digest(req.api_key, os.environ.get("N8N_API_KEY", "")):
+        raise HTTPException(403, "Invalid api_key")
+
+    from .memory.vector_memory import retrieve_memories, _get_pg_conn
+
+    results: dict = {
+        "similar_projects": [],
+        "rejection_count": 0,
+        "auto_block": False,
+        "semantic_matches": [],
+    }
+
+    conn = _get_pg_conn()
+    if conn:
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT project_name, outcome, cro_score, key_insights,
+                           actual_revenue_usd, rejection_count, reusable_pattern
+                    FROM bridge.project_memory
+                    WHERE project_hash = md5(lower(trim(%s)))
+                       OR similarity(project_name, %s) > 0.35
+                    ORDER BY created_at DESC
+                    LIMIT 5
+                """, (req.project_name, req.project_name))
+                rows = cur.fetchall()
+                for row in rows:
+                    results["similar_projects"].append({
+                        "name": row[0], "outcome": row[1], "cro_score": row[2],
+                        "insights": row[3], "revenue": float(row[4]) if row[4] else None,
+                        "rejection_count": row[5] or 0, "reusable": row[6],
+                    })
+                    results["rejection_count"] = max(results["rejection_count"], row[5] or 0)
+        except Exception as _e:
+            bg_log(f"[memory-query] DB error: {_e}", "memory_query")
+        finally:
+            conn.close()
+
+    results["auto_block"] = results["rejection_count"] >= 2
+
+    memories = retrieve_memories(req.project_name, top_k=3)
+    results["semantic_matches"] = [m[:200] for m in memories if m]
+
+    return results
+
+
+class PerformanceRecordRequest(BaseModel):
+    agent_name: str = Field(..., max_length=50)
+    success: bool = True
+    is_decision: bool = False
+    retry_count: int = Field(default=0, ge=0)
+    token_usage_est: int = Field(default=0, ge=0)
+    revenue_attributed_usd: float = 0.0
+    api_key: str
+
+
+@app.post("/webhook/performance-record", tags=["webhook"])
+@limiter.limit("600/minute")
+def webhook_performance_record(req: PerformanceRecordRequest, request: Request):
+    """
+    Self-report task outcome for agent performance tracking.
+    Called by every Bridge bot after each task execution via Execute SQL CTE.
+    """
+    import secrets as _sec
+    if not _sec.compare_digest(req.api_key, os.environ.get("N8N_API_KEY", "")):
+        raise HTTPException(403, "Invalid api_key")
+
+    from .memory.vector_memory import _get_pg_conn
+
+    conn = _get_pg_conn()
+    if conn:
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO bridge.agent_performance
+                        (agent_name, date, tasks_total, tasks_success, tasks_failed,
+                         decisions_made, retry_count, token_usage_est, revenue_attributed_usd)
+                    VALUES (%s, CURRENT_DATE,
+                        1,
+                        CASE WHEN %s THEN 1 ELSE 0 END,
+                        CASE WHEN NOT %s THEN 1 ELSE 0 END,
+                        CASE WHEN %s THEN 1 ELSE 0 END,
+                        %s, %s, %s)
+                    ON CONFLICT (agent_name, date) DO UPDATE SET
+                        tasks_total            = bridge.agent_performance.tasks_total + 1,
+                        tasks_success          = bridge.agent_performance.tasks_success + EXCLUDED.tasks_success,
+                        tasks_failed           = bridge.agent_performance.tasks_failed + EXCLUDED.tasks_failed,
+                        decisions_made         = bridge.agent_performance.decisions_made + EXCLUDED.decisions_made,
+                        retry_count            = bridge.agent_performance.retry_count + EXCLUDED.retry_count,
+                        token_usage_est        = bridge.agent_performance.token_usage_est + EXCLUDED.token_usage_est,
+                        revenue_attributed_usd = bridge.agent_performance.revenue_attributed_usd + EXCLUDED.revenue_attributed_usd
+                """, (
+                    req.agent_name,
+                    req.success, req.success,  # tasks_success, tasks_failed (opposite)
+                    req.is_decision,
+                    req.retry_count, req.token_usage_est, req.revenue_attributed_usd,
+                ))
+                conn.commit()
+        except Exception as _e:
+            bg_log(f"[performance-record] DB error: {_e}", "performance_record")
+        finally:
+            conn.close()
+
+    return {"ok": True}
+
+
+@app.get("/webhook/performance-dashboard", tags=["webhook"])
+def webhook_performance_dashboard():
+    """
+    Return today's per-agent performance summary.
+    Used by the daily Performance Tracker workflow (08:30 UTC) and COS monitoring.
+    No auth required — metrics are non-sensitive operational data.
+    """
+    import datetime as _dt
+    from .memory.vector_memory import _get_pg_conn
+
+    conn = _get_pg_conn()
+    if not conn:
+        return {"error": "DB unavailable", "agents": [], "date": str(_dt.date.today())}
+
+    agents = []
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT agent_name,
+                       tasks_total, tasks_success, tasks_failed,
+                       decisions_made, retry_count,
+                       ROUND(100.0 * tasks_success / NULLIF(tasks_total, 0), 1) AS success_rate,
+                       authority_level, revenue_attributed_usd
+                FROM bridge.agent_performance
+                WHERE date = CURRENT_DATE
+                ORDER BY (tasks_success::float / NULLIF(tasks_total, 0)) DESC NULLS LAST
+            """)
+            rows = cur.fetchall()
+            for r in rows:
+                agents.append({
+                    "agent": r[0],
+                    "tasks": r[1], "success": r[2], "failed": r[3],
+                    "decisions": r[4], "retries": r[5],
+                    "success_rate": float(r[6]) if r[6] is not None else None,
+                    "authority": r[7],
+                    "revenue_usd": float(r[8]) if r[8] else 0.0,
+                })
+    except Exception as _e:
+        bg_log(f"[performance-dashboard] DB error: {_e}", "performance_dashboard")
+        return {"error": str(_e), "agents": [], "date": str(_dt.date.today())}
+    finally:
+        conn.close()
+
+    best = agents[0]["agent"] if agents else None
+    worst = agents[-1]["agent"] if len(agents) > 1 else None
+    underperforming = [a["agent"] for a in agents if a["success_rate"] is not None and a["success_rate"] < 60]
+
+    return {
+        "date": str(_dt.date.today()),
+        "agents": agents,
+        "best_agent": best,
+        "underperforming_agent": worst,
+        "underperforming_list": underperforming,
+    }
 
 
 @app.get("/benchmark/latest", tags=["benchmark"])
