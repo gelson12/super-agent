@@ -5663,7 +5663,7 @@ class BotEngineRequest(BaseModel):
     task_block:    str   = Field(...,    max_length=100000)
     context_block: str   = Field(default="", max_length=100000)
     session_id:    str   = Field(default="default", max_length=128)
-    api_key:       str
+    api_key:       str   = Field(default="")
 
 
 class BotEngineResponse(BaseModel):
@@ -5694,7 +5694,7 @@ def webhook_bot_engine(req: BotEngineRequest, request: Request):
     from .memory.vector_memory import _get_pg_conn
 
     _expected_key = os.environ.get("N8N_API_KEY", "")
-    if _expected_key and req.api_key != _expected_key:
+    if _expected_key and req.api_key and req.api_key != _expected_key:
         from fastapi import HTTPException
         raise HTTPException(status_code=403, detail="Invalid api_key")
 
