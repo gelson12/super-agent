@@ -199,16 +199,20 @@
       ]
     },
     {
+      "id": "node_chat_direct",
+      "name": "super-agent /webhook/bot-engine",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1560,
+        400
+      ],
       "parameters": {
         "method": "POST",
-        "url": "https://super-agent-production.up.railway.app/chat/direct",
+        "url": "={{ $env.SUPER_AGENT_URL || 'https://super-agent-production.up.railway.app' }}/webhook/bot-engine",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            {
-              "name": "X-Token",
-              "value": "={{$env.SUPER_AGENT_PASSWORD}}"
-            },
             {
               "name": "Content-Type",
               "value": "application/json"
@@ -217,28 +221,23 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={ \"message\": {{ JSON.stringify($json.message) }}, \"model\": \"CLAUDE\", \"session_id\": {{ JSON.stringify($json.session_id) }} }",
+        "jsonBody": "={ \"bot_name\": {{ JSON.stringify($json.bot_name || \"unknown\") }}, \"task_block\": {{ JSON.stringify($json.message || \"\") }}, \"session_id\": {{ JSON.stringify($json.session_id || \"default\") }}, \"api_key\": {{ JSON.stringify($env.N8N_API_KEY || \"\") }} }",
         "options": {
           "timeout": 60000,
           "response": {
             "response": {
               "neverError": true
             }
-          }
+          },
+          "retryOnFail": true,
+          "maxTries": 3,
+          "waitBetweenTries": 4000
         }
-      },
-      "id": "node_chat_direct",
-      "name": "super-agent /chat/direct",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        1560,
-        400
-      ]
+      }
     },
     {
       "parameters": {
-        "jsCode": "// ── Pre-formed short-circuit (loop guard) ──────────────────────────────────\nconst _upstream = $('Assemble prompt').first().json;\nif (_upstream && _upstream._pre_formed) {\n    let _pfActions;\n    try { _pfActions = JSON.parse(_upstream.message).actions; } catch(e) { _pfActions = []; }\n    return [{ json: {\n        reply_text: '',\n        actions: [{ type: 'no_op', risk: 'low',\n            payload: (_pfActions[0] && _pfActions[0].payload) || { reason: 'loop_guard' } }],\n        bot_name: _upstream.bot_name, user_chat_id: _upstream.user_chat_id,\n        task_kind: 'loop_escalation', model_used: 'loop_guard', parse_error: null\n    }}];\n}\n\n// ── Standard parse + risk + validation ─────────────────────────────────────\nconst raw = $json.response || '';\nconst riskMap = { \"memo\": \"low\", \"archive\": \"low\", \"no_op\": \"low\",\n                  \"escalate\": \"low\", \"query\": \"medium\", \"cleanup\": \"high\" };\nconst defaultRisk = 'low';\n\nlet parsed = null, parseError = null;\ntry {\n    let cleaned = raw.trim().replace(/^```(?:json)?/, '').replace(/```$/, '').trim();\n    parsed = JSON.parse(cleaned);\n} catch (e) { parseError = e.message; }\nif (!parsed) {\n    try { const m = raw.match(/\\{[\\s\\S]*\\}/); if (m) parsed = JSON.parse(m[0]); } catch (e) {}\n}\n\nlet reply_text = '', actions = [];\nif (parsed && typeof parsed === 'object' && parsed.reply_text !== undefined) {\n    reply_text = typeof parsed.reply_text === 'string' ? parsed.reply_text : '';\n    actions = Array.isArray(parsed.actions) ? parsed.actions.slice(0, 5) : [];\n} else {\n    reply_text = '';\n    actions = [{ type: 'no_op', payload: {\n        reason: 'json_parse_failed',\n        parse_error: parseError || 'no structured response from model',\n        raw_preview: String(raw).slice(0, 200)\n    }}];\n}\n\n// ── Placeholder validation ──────────────────────────────────────────────────\nconst BANNED = ['PASTE_', 'TBD', 'PLACEHOLDER', 'INSERT_HERE', 'YOUR_URL'];\nconst hasPlaceholder = (str) => BANNED.some(p => String(str).includes(p));\nif (hasPlaceholder(reply_text) || actions.some(a => hasPlaceholder(JSON.stringify(a)))) {\n    reply_text = '[Output validation failed — response contained placeholder values. Please provide the actual value.]';\n    actions = [{ type: 'no_op', payload: { reason: 'placeholder_detected' }}];\n}\n\n// ── Internal tool leakage scrubbing (non-blocking) ─────────────────────────\nconst leakageMap = {\n    'n8n workflow creation': 'automation system modification',\n    'n8n workflow modification': 'automation system modification',\n    'shell command (destructive)': 'system operation',\n    'shell command': 'system operation',\n    'SQL query': 'data operation',\n};\nfor (const [internal, safe] of Object.entries(leakageMap)) {\n    if (reply_text.toLowerCase().includes(internal.toLowerCase()))\n        reply_text = reply_text.replace(new RegExp(internal, 'gi'), safe);\n}\n\n// ── Risk annotation ─────────────────────────────────────────────────────────\nconst annotated = actions.map(a => {\n    const type = (a && typeof a.type === 'string') ? a.type : 'no_op';\n    let risk = riskMap[type] !== undefined ? riskMap[type] : defaultRisk;\n    return { type, risk, payload: a.payload || {} };\n});\n\nconst upstream = $('Assemble prompt').first().json;\nreturn [{ json: {\n    reply_text, actions: annotated,\n    bot_name: upstream.bot_name, user_chat_id: upstream.user_chat_id,\n    task_kind: upstream.task_kind, model_used: $json.model_used || 'unknown',\n    parse_error: parseError\n}}];"
+        "jsCode": "// Passthrough — bot-engine already parsed, validated, and risk-annotated the response.\nconst _upstream = $('Assemble prompt').first().json;\nif (_upstream && _upstream._pre_formed) {\n    let _pfActions;\n    try { _pfActions = JSON.parse(_upstream.message).actions; } catch(e) { _pfActions = []; }\n    return [{ json: {\n        reply_text: '',\n        actions: [{ type: 'no_op', risk: 'low',\n            payload: (_pfActions[0] && _pfActions[0].payload) || { reason: 'loop_guard' } }],\n        bot_name: _upstream.bot_name, user_chat_id: _upstream.user_chat_id,\n        task_kind: 'loop_escalation', model_used: 'loop_guard', parse_error: null\n    }}];\n}\nconst upstream = $('Assemble prompt').first().json;\nreturn [{ json: {\n    reply_text:  $json.reply_text  || '',\n    actions:     Array.isArray($json.actions) ? $json.actions : [],\n    model_used:  $json.model_used  || 'unknown',\n    parse_error: $json.parse_error || null,\n    bot_name:    upstream.bot_name,\n    user_chat_id: upstream.user_chat_id,\n    task_kind:   upstream.task_kind,\n} }];"
       },
       "id": "node_parse_response",
       "name": "Parse response + risk tag",
@@ -448,7 +447,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "\nWITH input AS (\n  SELECT $1::jsonb AS p\n),\nmemo_insert AS (\n  INSERT INTO bridge.agent_memos\n    (from_agent, to_agent, memo_type, priority, subject, body_json, related_lead_id)\n  SELECT\n    $2,\n    COALESCE(p->>'to_agent','all'),\n    COALESCE(p->>'memo_type','status'),\n    COALESCE(p->>'priority','normal'),\n    COALESCE(p->>'subject','(no subject)'),\n    COALESCE(p->'body_json','{}'::jsonb) || '{\"attempt_count\": 0}'::jsonb,\n    NULLIF(p->>'related_lead_id','')::uuid\n  FROM input\n  WHERE $3 = 'memo'\n  RETURNING memo_id\n),\narchive_memo AS (\n  UPDATE bridge.agent_memos\n  SET status = 'resolved', resolved_at = NOW(), resolved_by = $2,\n      resolution_notes = COALESCE((SELECT p->>'reason' FROM input), 'archived by bot')\n  WHERE $3 = 'archive'\n    AND memo_id = (SELECT NULLIF((p->>'memo_id'),'')::uuid FROM input)\n  RETURNING memo_id\n),\nevent_log AS (\n  INSERT INTO bridge.workflow_events\n    (workflow_name, event_type, details_json)\n  SELECT\n    $2 || '_bot',\n    CASE $3\n      WHEN 'memo'    THEN 'memo_created'\n      WHEN 'archive' THEN 'memo_archived'\n      WHEN 'no_op'   THEN 'no_op'\n      ELSE 'other_low_risk'\n    END,\n    (SELECT p FROM input)\n  RETURNING event_id\n),\nperf_self_report AS (\n  INSERT INTO bridge.agent_performance\n    (agent_name, date, tasks_total, tasks_success)\n  VALUES ($2, CURRENT_DATE, 1, 1)\n  ON CONFLICT (agent_name, date) DO UPDATE SET\n    tasks_total   = bridge.agent_performance.tasks_total + 1,\n    tasks_success = bridge.agent_performance.tasks_success + 1\n  RETURNING agent_name\n)\nSELECT\n  (SELECT memo_id FROM memo_insert)  AS memo_created,\n  (SELECT memo_id FROM archive_memo) AS memo_archived,\n  (SELECT event_id FROM event_log)   AS event_logged,\n  (SELECT agent_name FROM perf_self_report) AS perf_recorded;\n",
+        "query": "\nWITH input AS (\n  SELECT $1::jsonb AS p\n),\nmemo_insert AS (\n  INSERT INTO bridge.agent_memos\n    (from_agent, to_agent, memo_type, priority, subject, body_json, related_lead_id)\n  SELECT\n    $2,\n    COALESCE(p->>'to_agent','all'),\n    COALESCE(p->>'memo_type','status'),\n    COALESCE(p->>'priority','normal'),\n    COALESCE(p->>'subject','(no subject)'),\n    COALESCE(p->'body_json','{}'::jsonb) || '{\"attempt_count\": 0}'::jsonb,\n    NULLIF(p->>'related_lead_id','')::uuid\n  FROM input\n  WHERE $3 = 'memo'\n  RETURNING memo_id\n),\narchive_memo AS (\n  UPDATE bridge.agent_memos\n  SET status = 'resolved', resolved_at = NOW(), resolved_by = $2,\n      resolution_notes = COALESCE((SELECT p->>'reason' FROM input), 'archived by bot')\n  WHERE $3 = 'archive'\n    AND memo_id = (SELECT NULLIF((p->>'memo_id'),'')::uuid FROM input)\n  RETURNING memo_id\n),\nevent_log AS (\n  INSERT INTO bridge.workflow_events\n    (workflow_name, event_type, details_json)\n  SELECT\n    $2 || '_bot',\n    CASE $3\n      WHEN 'memo'    THEN 'memo_created'\n      WHEN 'archive' THEN 'memo_archived'\n      WHEN 'no_op'   THEN 'no_op'\n      ELSE 'other_low_risk'\n    END,\n    (SELECT p FROM input)\n  RETURNING event_id\n)\nSELECT\n  (SELECT memo_id FROM memo_insert)  AS memo_created,\n  (SELECT memo_id FROM archive_memo) AS memo_archived,\n  (SELECT event_id FROM event_log)   AS event_logged;\n",
         "options": {
           "queryReplacement": "={{ JSON.stringify($json.action_payload) }},{{ $json.bot_name }},{{ $json.action_type }}"
         }
@@ -710,17 +709,6 @@
         ]
       ]
     },
-    "super-agent /chat/direct": {
-      "main": [
-        [
-          {
-            "node": "Parse response + risk tag",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "Parse response + risk tag": {
       "main": [
         [
@@ -861,6 +849,17 @@
         [
           {
             "node": "Respond OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "super-agent /webhook/bot-engine": {
+      "main": [
+        [
+          {
+            "node": "Parse response + risk tag",
             "type": "main",
             "index": 0
           }

@@ -199,16 +199,20 @@
       ]
     },
     {
+      "id": "node_chat_direct",
+      "name": "super-agent /webhook/bot-engine",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1560,
+        400
+      ],
       "parameters": {
         "method": "POST",
-        "url": "https://super-agent-production.up.railway.app/chat/direct",
+        "url": "={{ $env.SUPER_AGENT_URL || 'https://super-agent-production.up.railway.app' }}/webhook/bot-engine",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            {
-              "name": "X-Token",
-              "value": "={{$env.SUPER_AGENT_PASSWORD}}"
-            },
             {
               "name": "Content-Type",
               "value": "application/json"
@@ -217,24 +221,19 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={ \"message\": {{ JSON.stringify($json.message) }}, \"model\": \"CLAUDE\", \"session_id\": {{ JSON.stringify($json.session_id) }} }",
+        "jsonBody": "={ \"bot_name\": {{ JSON.stringify($json.bot_name || \"unknown\") }}, \"task_block\": {{ JSON.stringify($json.message || \"\") }}, \"session_id\": {{ JSON.stringify($json.session_id || \"default\") }}, \"api_key\": {{ JSON.stringify($env.N8N_API_KEY || \"\") }} }",
         "options": {
           "timeout": 60000,
           "response": {
             "response": {
               "neverError": true
             }
-          }
+          },
+          "retryOnFail": true,
+          "maxTries": 3,
+          "waitBetweenTries": 4000
         }
-      },
-      "id": "node_chat_direct",
-      "name": "super-agent /chat/direct",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        1560,
-        400
-      ]
+      }
     },
     {
       "parameters": {
@@ -710,17 +709,6 @@
         ]
       ]
     },
-    "super-agent /chat/direct": {
-      "main": [
-        [
-          {
-            "node": "Parse response + risk tag",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "Parse response + risk tag": {
       "main": [
         [
@@ -861,6 +849,17 @@
         [
           {
             "node": "Respond OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "super-agent /webhook/bot-engine": {
+      "main": [
+        [
+          {
+            "node": "Parse response + risk tag",
             "type": "main",
             "index": 0
           }

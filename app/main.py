@@ -24,6 +24,7 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 import anthropic as _anthropic
+import httpx
 
 from .routing.dispatcher import dispatch
 from .monitoring_api import router as _monitoring_router
@@ -62,6 +63,27 @@ def _sanitize_error(text: str) -> str:
 
 _OPEN_PATHS = {"/", "/health", "/auth", "/credits/pro-status", "/credits/pro-reset", "/agents", "/dashboard", "/observability", "/intelligence", "/spend", "/crypto", "/stats", "/stats/report", "/admin/infrastructure-info", "/memory/search", "/memory/stats", "/memory/health"}
 _OPEN_PREFIXES = ("/static", "/downloads", "/webhook", "/n8n/connection-info", "/activity", "/dashboard/", "/stats/", "/metrics/", "/monitoring")  # token-in-URL or public info
+
+# ── LISTEN/NOTIFY bot wake-up registry ───────────────────────────────────────
+_BOT_WEBHOOK_SLUGS: dict[str, str] = {
+    "ceo":            "bridge-ceo-invoke",
+    "chief_of_staff": "bridge-cos-invoke",
+    "cro":            "bridge-cro-invoke",
+    "cto":            "bridge-cto-invoke",
+    "bizdev":         "bridge-bizdev-invoke",
+    "pm":             "bridge-pm-invoke",
+    "programmer":     "bridge-programmer-invoke",
+    "cso":            "bridge-cso-invoke",
+    "finance":        "bridge-finance-invoke",
+    "researcher":     "bridge-researcher-invoke",
+    "cleaner":        "bridge-cleaner-invoke",
+}
+
+def _bot_webhook_url(agent: str) -> str | None:
+    """Build the n8n webhook URL for a given agent name."""
+    base = os.environ.get("N8N_BASE_URL", "").rstrip("/")
+    slug = _BOT_WEBHOOK_SLUGS.get(agent)
+    return f"{base}/webhook/{slug}" if base and slug else None
 # NOTE: /chat, /chat/stream, /chat/direct, and /install-guide are intentionally
 # NOT in _OPEN_PATHS/_OPEN_PREFIXES — they require X-Token when UI_PASSWORD is set.
 # /install-guide has its own inline token check (see endpoint definition below).
@@ -209,6 +231,100 @@ def _post_deploy_check() -> None:
         bg_log("Post-deploy startup check complete", source="post_deploy")
     except Exception as _e:
         bg_log(f"Post-deploy check error: {_e}", source="post_deploy")
+
+
+async def _pg_inbox_listener() -> None:
+    """
+    Background coroutine: listens for Postgres NOTIFY events on bridge_inbox_*
+    channels and immediately wakes up the corresponding n8n bot via HTTP POST.
+    Uses a dedicated psycopg2 connection in AUTOCOMMIT mode.
+    The blocking select.select() call is offloaded to a ThreadPoolExecutor so
+    the asyncio event loop is never blocked during the 5-second poll window.
+    """
+    import json as _json
+    import select as _select
+    import asyncio as _asyncio
+    import concurrent.futures as _cf
+    import psycopg2
+    from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
+
+    _LISTEN_AGENTS = list(_BOT_WEBHOOK_SLUGS.keys()) + ["all"]
+    _db_url = os.environ.get("DATABASE_URL", "")
+    _executor = _cf.ThreadPoolExecutor(max_workers=1, thread_name_prefix="pg_listen")
+    loop = _asyncio.get_event_loop()
+
+    def _blocking_connect():
+        c = psycopg2.connect(_db_url)
+        c.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
+        cur = c.cursor()
+        for _agent in _LISTEN_AGENTS:
+            cur.execute(f"LISTEN bridge_inbox_{_agent}")
+        cur.close()
+        return c
+
+    def _blocking_poll(c):
+        ready = _select.select([c], [], [], 5.0)[0]
+        if ready:
+            c.poll()
+            return True
+        return False
+
+    conn = None
+    try:
+        conn = await loop.run_in_executor(_executor, _blocking_connect)
+        bg_log("[NOTIFY] Postgres inbox listener started", source="pg_listen")
+    except Exception as _e:
+        bg_log(f"[NOTIFY] Listener failed to connect: {_e}", source="pg_listen")
+        _executor.shutdown(wait=False)
+        return
+
+    try:
+        import httpx as _httpx
+        _client = _httpx.AsyncClient(timeout=5.0)
+    except ImportError:
+        bg_log("[NOTIFY] httpx not available — listener disabled", source="pg_listen")
+        return
+
+    async with _client:
+        while True:
+            try:
+                got = await loop.run_in_executor(_executor, _blocking_poll, conn)
+                if got:
+                    for _notify in list(conn.notifies):
+                        _agent = _notify.channel.replace("bridge_inbox_", "")
+                        if _agent == "all":
+                            continue
+                        _webhook = _bot_webhook_url(_agent)
+                        if not _webhook:
+                            continue
+                        try:
+                            _payload = _json.loads(_notify.payload)
+                        except Exception:
+                            _payload = {}
+                        try:
+                            await _client.post(_webhook, json={
+                                "task":       "agent_invoke",
+                                "from_agent": _payload.get("from_agent"),
+                                "message":    _payload.get("subject"),
+                                "memo_id":    str(_payload.get("memo_id", "")),
+                                "priority":   _payload.get("priority"),
+                            })
+                            bg_log(
+                                f"[NOTIFY] Woke {_agent} for memo {_payload.get('memo_id')}",
+                                source="pg_listen",
+                            )
+                        except Exception as _we:
+                            bg_log(f"[NOTIFY] wake_bot {_agent} failed: {_we}", source="pg_listen")
+                    conn.notifies.clear()
+            except Exception as _e:
+                bg_log(f"[NOTIFY] Listener error: {_e} — reconnecting in 10s", source="pg_listen")
+                await _asyncio.sleep(10)
+                try:
+                    conn = await loop.run_in_executor(_executor, _blocking_connect)
+                    bg_log("[NOTIFY] Listener reconnected", source="pg_listen")
+                except Exception as _re:
+                    bg_log(f"[NOTIFY] Reconnect failed: {_re}", source="pg_listen")
+            await _asyncio.sleep(0.05)
 
 
 @asynccontextmanager
@@ -800,7 +916,27 @@ async def _lifespan(app: FastAPI):
     )
 
     scheduler.start()
+
+    # ── Postgres LISTEN/NOTIFY inbox watcher ─────────────────────────────────
+    _db_url = os.environ.get("DATABASE_URL", "")
+    if _db_url:
+        import asyncio as _aio
+        _inbox_task = _aio.create_task(_pg_inbox_listener())
+        bg_log("[NOTIFY] Postgres inbox listener task created", source="startup")
+    else:
+        _inbox_task = None
+        bg_log("[NOTIFY] DATABASE_URL not set — inbox listener disabled", source="startup")
+
     yield
+
+    # Cancel inbox listener on shutdown
+    if _inbox_task is not None:
+        _inbox_task.cancel()
+        try:
+            await _aio.wait_for(_inbox_task, timeout=2.0)
+        except Exception:
+            pass
+
     # Flush insight log on shutdown so activity history survives redeploys
     try:
         from .learning.insight_log import insight_log as _il
@@ -5117,6 +5253,20 @@ def webhook_verification_code(payload: dict, request: Request):
     )
     if not auth_payload:
         raise HTTPException(status_code=400, detail="payload must include 'url' or 'code' field")
+
+    # SSRF guard: if the payload looks like a URL, validate it points to Claude's
+    # own domains before handing it to the Playwright browser.
+    if auth_payload.startswith("http://") or auth_payload.startswith("https://"):
+        from .security.ssrf import assert_safe_url
+        try:
+            assert_safe_url(
+                auth_payload,
+                allowed_domains=["claude.ai", "claude.com", "anthropic.com", "platform.claude.com"],
+                resolve_dns=False,  # magic links are short-lived; skip DNS to avoid latency
+            )
+        except ValueError as _ssrf_err:
+            raise HTTPException(status_code=400, detail=f"Rejected unsafe URL: {_ssrf_err}")
+
     try:
         from .learning.cli_auto_login import receive_verification_code
         receive_verification_code(auth_payload)
@@ -5505,6 +5655,136 @@ def webhook_performance_record(req: PerformanceRecordRequest, request: Request):
             conn.close()
 
     return {"ok": True}
+
+
+class BotEngineRequest(BaseModel):
+    bot_name:      str   = Field(...,    max_length=50)
+    system_prompt: str   = Field(default="", max_length=12000)
+    task_block:    str   = Field(...,    max_length=6000)
+    context_block: str   = Field(default="", max_length=4000)
+    session_id:    str   = Field(default="default", max_length=128)
+    api_key:       str
+
+
+class BotEngineResponse(BaseModel):
+    reply_text:  str
+    actions:     list
+    model_used:  str
+    parse_error: str | None = None
+
+
+_RISK_MAP: dict[str, str] = {
+    "memo": "low", "archive": "low", "no_op": "low",
+    "escalate": "low", "query": "medium", "cleanup": "high",
+}
+
+_BOT_ENGINE_BANNED = {"PASTE_", "TBD", "PLACEHOLDER", "INSERT_HERE", "YOUR_URL"}
+
+
+@app.post("/webhook/bot-engine", tags=["webhook"])
+@limiter.limit("120/minute")
+def webhook_bot_engine(req: BotEngineRequest, request: Request):
+    """
+    Centralised bot execution endpoint.
+    Handles: Claude dispatch → JSON parse → placeholder check → risk annotation → perf record.
+    Replaces duplicated JS parse/validate logic in each n8n bot.
+    """
+    import json as _json
+    from .routing.dispatcher import dispatch
+    from .memory.vector_memory import _get_pg_conn
+
+    _expected_key = os.environ.get("N8N_API_KEY", "")
+    if _expected_key and req.api_key != _expected_key:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=403, detail="Invalid api_key")
+
+    parts = [p for p in [req.system_prompt, req.task_block, req.context_block] if p]
+    if req.system_prompt:
+        parts = [req.system_prompt,
+                 f"[TASK]\n{req.task_block}"]
+        if req.context_block:
+            parts.insert(1, f"[CONTEXT]\n{req.context_block}")
+    else:
+        parts = [f"[TASK]\n{req.task_block}"]
+        if req.context_block:
+            parts.insert(0, f"[CONTEXT]\n{req.context_block}")
+    full_message = "\n\n".join(parts)
+
+    result = dispatch(full_message, force_model="CLAUDE", session_id=req.session_id)
+    raw_text: str = result.get("response", "")
+    model_used: str = result.get("model", req.bot_name)
+
+    if not raw_text.startswith("ERROR"):
+        try:
+            from .memory.vector_memory import append_exchange
+            append_exchange(req.session_id, full_message, raw_text)
+        except Exception:
+            pass
+
+    # Extract JSON block
+    reply_text = raw_text
+    actions: list = []
+    parse_error: str | None = None
+    try:
+        start = raw_text.find("{")
+        end   = raw_text.rfind("}") + 1
+        if start != -1 and end > start:
+            parsed = _json.loads(raw_text[start:end])
+            reply_text = parsed.get("reply_text", parsed.get("message", raw_text))
+            actions    = parsed.get("actions", [])
+            if not isinstance(actions, list):
+                actions = []
+    except Exception as _pe:
+        parse_error = str(_pe)
+
+    # Placeholder detection
+    for _banned in _BOT_ENGINE_BANNED:
+        if _banned in reply_text:
+            parse_error = f"placeholder_detected:{_banned}"
+            reply_text  = "[ERROR] Bot returned a placeholder value — discarded."
+            actions     = []
+            break
+
+    # Risk annotation
+    for act in actions:
+        if isinstance(act, dict) and "risk" not in act:
+            act["risk"] = _RISK_MAP.get(act.get("type", ""), "medium")
+
+    # Performance record (fire-and-forget, best effort)
+    success = not raw_text.startswith("ERROR") and parse_error is None
+    conn = _get_pg_conn()
+    if conn:
+        try:
+            with conn.cursor() as _cur:
+                _cur.execute("""
+                    INSERT INTO bridge.agent_performance
+                        (agent_name, date, tasks_total, tasks_success, tasks_failed,
+                         decisions_made, retry_count, token_usage_est)
+                    VALUES (%s, CURRENT_DATE, 1,
+                        CASE WHEN %s THEN 1 ELSE 0 END,
+                        CASE WHEN NOT %s THEN 1 ELSE 0 END,
+                        %s, 0, %s)
+                    ON CONFLICT (agent_name, date) DO UPDATE SET
+                        tasks_total   = bridge.agent_performance.tasks_total + 1,
+                        tasks_success = bridge.agent_performance.tasks_success + EXCLUDED.tasks_success,
+                        tasks_failed  = bridge.agent_performance.tasks_failed  + EXCLUDED.tasks_failed,
+                        decisions_made = bridge.agent_performance.decisions_made + EXCLUDED.decisions_made,
+                        token_usage_est = bridge.agent_performance.token_usage_est + EXCLUDED.token_usage_est
+                """, (req.bot_name, success, success,
+                      1 if actions else 0,
+                      len(full_message) // 4))
+            conn.commit()
+        except Exception as _dbe:
+            bg_log(f"[bot-engine] perf DB error: {_dbe}", "bot_engine")
+        finally:
+            conn.close()
+
+    return BotEngineResponse(
+        reply_text=reply_text,
+        actions=actions,
+        model_used=model_used,
+        parse_error=parse_error,
+    )
 
 
 @app.get("/webhook/performance-dashboard", tags=["webhook"])

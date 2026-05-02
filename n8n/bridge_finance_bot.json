@@ -199,16 +199,20 @@
       ]
     },
     {
+      "id": "2041d81d-bc49-4d69-9971-9b919d943ed3",
+      "name": "super-agent /webhook/bot-engine",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1560,
+        400
+      ],
       "parameters": {
         "method": "POST",
-        "url": "https://super-agent-production.up.railway.app/chat/direct",
+        "url": "={{ $env.SUPER_AGENT_URL || 'https://super-agent-production.up.railway.app' }}/webhook/bot-engine",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            {
-              "name": "X-Token",
-              "value": "={{$env.SUPER_AGENT_PASSWORD}}"
-            },
             {
               "name": "Content-Type",
               "value": "application/json"
@@ -217,28 +221,23 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={ \"message\": {{ JSON.stringify($json.message) }}, \"model\": \"CLAUDE\", \"session_id\": {{ JSON.stringify($json.session_id) }} }",
+        "jsonBody": "={ \"bot_name\": {{ JSON.stringify($json.bot_name || \"unknown\") }}, \"task_block\": {{ JSON.stringify($json.message || \"\") }}, \"session_id\": {{ JSON.stringify($json.session_id || \"default\") }}, \"api_key\": {{ JSON.stringify($env.N8N_API_KEY || \"\") }} }",
         "options": {
           "timeout": 60000,
           "response": {
             "response": {
               "neverError": true
             }
-          }
+          },
+          "retryOnFail": true,
+          "maxTries": 3,
+          "waitBetweenTries": 4000
         }
-      },
-      "id": "2041d81d-bc49-4d69-9971-9b919d943ed3",
-      "name": "super-agent /chat/direct",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        1560,
-        400
-      ]
+      }
     },
     {
       "parameters": {
-        "jsCode": "// ── Pre-formed short-circuit (loop guard) ──────────────────────────────────\nconst _upstream = $('Assemble prompt').first().json;\nif (_upstream && _upstream._pre_formed) {\n    let _pfActions;\n    try { _pfActions = JSON.parse(_upstream.message).actions; } catch(e) { _pfActions = []; }\n    return [{ json: {\n        reply_text: '',\n        actions: [{ type: 'no_op', risk: 'low',\n            payload: (_pfActions[0] && _pfActions[0].payload) || { reason: 'loop_guard' } }],\n        bot_name: _upstream.bot_name, user_chat_id: _upstream.user_chat_id,\n        task_kind: 'loop_escalation', model_used: 'loop_guard', parse_error: null\n    }}];\n}\n\nconst raw = $json.response || '';\nconst riskMap = { \"memo\": \"low\", \"archive\": \"low\", \"no_op\": \"low\",\n                  \"escalate\": \"low\", \"query\": \"medium\", \"cleanup\": \"high\" };\nconst defaultRisk = 'low';\n\nlet parsed = null, parseError = null;\ntry {\n    let cleaned = raw.trim().replace(/^```(?:json)?/, '').replace(/```$/, '').trim();\n    parsed = JSON.parse(cleaned);\n} catch (e) { parseError = e.message; }\nif (!parsed) {\n    try { const m = raw.match(/\\{[\\s\\S]*\\}/); if (m) parsed = JSON.parse(m[0]); } catch (e) {}\n}\n\nlet reply_text = '', actions = [];\nif (parsed && typeof parsed === 'object' && parsed.reply_text !== undefined) {\n    reply_text = typeof parsed.reply_text === 'string' ? parsed.reply_text : '';\n    actions = Array.isArray(parsed.actions) ? parsed.actions.slice(0, 5) : [];\n} else {\n    reply_text = '';\n    actions = [{ type: 'no_op', payload: {\n        reason: 'json_parse_failed',\n        parse_error: parseError || 'no structured response from model',\n        raw_preview: String(raw).slice(0, 200)\n    }}];\n}\n\nconst BANNED = ['PASTE_', 'TBD', 'PLACEHOLDER', 'INSERT_HERE', 'YOUR_URL'];\nconst hasPlaceholder = (str) => BANNED.some(p => String(str).includes(p));\nif (hasPlaceholder(reply_text) || actions.some(a => hasPlaceholder(JSON.stringify(a)))) {\n    reply_text = '[Output validation failed — response contained placeholder values.]';\n    actions = [{ type: 'no_op', payload: { reason: 'placeholder_detected' }}];\n}\n\nconst annotated = actions.map(a => {\n    const type = (a && typeof a.type === 'string') ? a.type : 'no_op';\n    let risk = riskMap[type] !== undefined ? riskMap[type] : defaultRisk;\n    return { type, risk, payload: a.payload || {} };\n});\n\nconst upstream = $('Assemble prompt').first().json;\nreturn [{ json: {\n    reply_text, actions: annotated,\n    bot_name: upstream.bot_name, user_chat_id: upstream.user_chat_id,\n    task_kind: upstream.task_kind, model_used: $json.model_used || 'unknown',\n    parse_error: parseError\n}}];"
+        "jsCode": "// Passthrough — bot-engine already parsed, validated, and risk-annotated the response.\nconst _upstream = $('Assemble prompt').first().json;\nif (_upstream && _upstream._pre_formed) {\n    let _pfActions;\n    try { _pfActions = JSON.parse(_upstream.message).actions; } catch(e) { _pfActions = []; }\n    return [{ json: {\n        reply_text: '',\n        actions: [{ type: 'no_op', risk: 'low',\n            payload: (_pfActions[0] && _pfActions[0].payload) || { reason: 'loop_guard' } }],\n        bot_name: _upstream.bot_name, user_chat_id: _upstream.user_chat_id,\n        task_kind: 'loop_escalation', model_used: 'loop_guard', parse_error: null\n    }}];\n}\nconst upstream = $('Assemble prompt').first().json;\nreturn [{ json: {\n    reply_text:  $json.reply_text  || '',\n    actions:     Array.isArray($json.actions) ? $json.actions : [],\n    model_used:  $json.model_used  || 'unknown',\n    parse_error: $json.parse_error || null,\n    bot_name:    upstream.bot_name,\n    user_chat_id: upstream.user_chat_id,\n    task_kind:   upstream.task_kind,\n} }];"
       },
       "id": "f6c75db5-6557-4f8f-9d70-660baced655e",
       "name": "Parse response + risk tag",
@@ -448,7 +447,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "WITH input AS (\n  SELECT $1::jsonb AS p\n),\nmemo_insert AS (\n  INSERT INTO bridge.agent_memos\n    (from_agent, to_agent, memo_type, priority, subject, body_json, related_lead_id)\n  SELECT\n    $2,\n    COALESCE(p->>'to_agent','all'),\n    COALESCE(p->>'memo_type','finance_report'),\n    COALESCE(p->>'priority','normal'),\n    COALESCE(p->>'subject','(no subject)'),\n    COALESCE(p->'body_json','{}') || '{\"attempt_count\": 0}'::jsonb,\n    (p->>'related_lead_id')::uuid\n  FROM input\n  WHERE COALESCE(p->>'memo_type','finance_report') NOT IN ('query','no_op')\n  RETURNING memo_id, to_agent, memo_type\n),\nperf_self_report AS (\n  INSERT INTO bridge.agent_performance\n    (agent_name, date, tasks_total, tasks_success)\n  VALUES ($2, CURRENT_DATE, 1, 1)\n  ON CONFLICT (agent_name, date) DO UPDATE SET\n    tasks_total   = bridge.agent_performance.tasks_total + 1,\n    tasks_success = bridge.agent_performance.tasks_success + 1\n  RETURNING agent_name\n)\nSELECT\n  COALESCE(json_agg(row_to_json(memo_insert)), '[]'::json) AS inserted_memos\nFROM memo_insert;",
+        "query": "WITH input AS (\n  SELECT $1::jsonb AS p\n),\nmemo_insert AS (\n  INSERT INTO bridge.agent_memos\n    (from_agent, to_agent, memo_type, priority, subject, body_json, related_lead_id)\n  SELECT\n    $2,\n    COALESCE(p->>'to_agent','all'),\n    COALESCE(p->>'memo_type','finance_report'),\n    COALESCE(p->>'priority','normal'),\n    COALESCE(p->>'subject','(no subject)'),\n    COALESCE(p->'body_json','{}') || '{\"attempt_count\": 0}'::jsonb,\n    (p->>'related_lead_id')::uuid\n  FROM input\n  WHERE COALESCE(p->>'memo_type','finance_report') NOT IN ('query','no_op')\n  RETURNING memo_id, to_agent, memo_type\n)\nSELECT\n  COALESCE(json_agg(row_to_json(memo_insert)), '[]'::json) AS inserted_memos\nFROM memo_insert;",
         "options": {
           "queryReplacement": "={{ JSON.stringify($json.action_payload) }},{{ $json.bot_name }},{{ $json.action_type }}"
         }
@@ -710,17 +709,6 @@
         ]
       ]
     },
-    "super-agent /chat/direct": {
-      "main": [
-        [
-          {
-            "node": "Parse response + risk tag",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "Parse response + risk tag": {
       "main": [
         [
@@ -861,6 +849,17 @@
         [
           {
             "node": "Respond OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "super-agent /webhook/bot-engine": {
+      "main": [
+        [
+          {
+            "node": "Parse response + risk tag",
             "type": "main",
             "index": 0
           }
