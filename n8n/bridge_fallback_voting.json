@@ -1,0 +1,200 @@
+{
+  "name": "Bridge_Fallback_Voting_System",
+  "nodes": [
+    {
+      "id": "fv-trigger",
+      "name": "Schedule: every 6h",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        300
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 0 */6 * * *"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "fv-check",
+      "name": "Find timed-out approvals",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        480,
+        300
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT memo_id, from_agent, subject, body_json, created_at,\n       NOW() - created_at AS age,\n       EXTRACT(EPOCH FROM (NOW() - created_at))/86400 AS days_old\nFROM bridge.agent_memos\nWHERE memo_type IN ('approval_request', 'cro_review_request', 'cto_review_request')\n  AND status = 'open'\n  AND priority IN ('high', 'urgent')\n  AND created_at < NOW() - INTERVAL '5 days'\n  AND (body_json->>'vote_triggered') IS NULL\nORDER BY created_at ASC\nLIMIT 5;",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "Ae3yvuqjgMnVRrCo",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "id": "fv-if-any",
+      "name": "Any timed out?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        720,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has_rows",
+              "leftValue": "={{ $json.memo_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "fv-trigger-vote",
+      "name": "Trigger vote memos",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        960,
+        200
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH mark_voted AS (\n  UPDATE bridge.agent_memos\n  SET body_json = body_json || '{\"vote_triggered\": true}'::jsonb\n  WHERE memo_id = $1::uuid\n  RETURNING memo_id, subject, body_json\n),\nvote_request AS (\n  INSERT INTO bridge.agent_memos\n    (from_agent, to_agent, memo_type, priority, subject, body_json)\n  VALUES\n    ('chief_of_staff', 'cro',     'vote_request', 'urgent',\n     $2, jsonb_build_object('original_memo_id', $1, 'vote_deadline_hours', 24)),\n    ('chief_of_staff', 'finance',  'vote_request', 'urgent',\n     $2, jsonb_build_object('original_memo_id', $1, 'vote_deadline_hours', 24)),\n    ('chief_of_staff', 'cso',      'vote_request', 'urgent',\n     $2, jsonb_build_object('original_memo_id', $1, 'vote_deadline_hours', 24)),\n    ('chief_of_staff', 'cto',      'vote_request', 'urgent',\n     $2, jsonb_build_object('original_memo_id', $1, 'vote_deadline_hours', 24)),\n    ('chief_of_staff', 'chief_of_staff', 'vote_request', 'urgent',\n     $2, jsonb_build_object('original_memo_id', $1, 'vote_deadline_hours', 24))\n  RETURNING memo_id\n),\nlog_event AS (\n  INSERT INTO bridge.workflow_events (workflow_name, event_type, details_json)\n  VALUES ('fallback_voting', 'vote_triggered',\n    jsonb_build_object('original_memo_id', $1, 'subject', $2))\n  RETURNING event_id\n)\nSELECT $1 AS original_memo_id, COUNT(*) AS vote_memos_created\nFROM vote_request;",
+        "options": {
+          "queryReplacement": "={{ $json.memo_id }},={{ $json.subject }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "Ae3yvuqjgMnVRrCo",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "id": "fv-tally",
+      "name": "Tally completed votes",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        480,
+        500
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n  v.original_memo_id,\n  o.subject,\n  COUNT(v.memo_id) AS total_votes,\n  COUNT(CASE WHEN (v.body_json->>'vote') = 'APPROVE' THEN 1 END) AS approve_votes,\n  COUNT(CASE WHEN (v.body_json->>'vote') = 'REJECT' THEN 1 END) AS reject_votes,\n  MAX(CASE WHEN v.from_agent = 'cso' AND (v.body_json->>'vote') = 'REJECT'\n      THEN 1 ELSE 0 END) AS security_veto,\n  (o.body_json->>'high_risk')::boolean AS is_high_risk\nFROM bridge.agent_memos v\nJOIN bridge.agent_memos o ON o.memo_id = (v.body_json->>'original_memo_id')::uuid\nWHERE v.memo_type = 'vote_request'\n  AND v.status = 'resolved'\n  AND (o.body_json->>'vote_triggered') = 'true'\n  AND o.status = 'open'\nGROUP BY v.original_memo_id, o.subject, o.body_json\nHAVING COUNT(v.memo_id) >= 4\n   AND COUNT(CASE WHEN v.status = 'resolved' THEN 1 END) >= 4;",
+        "options": {}
+      },
+      "credentials": {
+        "postgres": {
+          "id": "Ae3yvuqjgMnVRrCo",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "id": "fv-decide",
+      "name": "Apply vote decision",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        720,
+        500
+      ],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH decision AS (\n  SELECT\n    $1::uuid AS memo_id,\n    CASE\n      WHEN $6::boolean = true THEN 'REJECTED'  -- high-risk never auto-approved\n      WHEN $4::int = 1 THEN 'REJECTED'          -- security veto\n      WHEN $2::int >= 4 THEN 'APPROVED'\n      ELSE 'REJECTED'\n    END AS outcome,\n    $2::int AS approve_votes,\n    $3::int AS reject_votes,\n    $4::int AS security_veto\n),\nupdate_memo AS (\n  UPDATE bridge.agent_memos\n  SET status = CASE WHEN (SELECT outcome FROM decision) = 'APPROVED'\n                   THEN 'resolved' ELSE 'resolved' END,\n      resolved_at = NOW(),\n      resolved_by = 'fallback_voting',\n      resolution_notes = (SELECT outcome FROM decision) || ' by fallback vote (' ||\n        (SELECT approve_votes::text FROM decision) || '/5 approve, security_veto=' ||\n        (SELECT security_veto::text FROM decision) || ')'\n  WHERE memo_id = $1::uuid\n  RETURNING memo_id\n),\nnotify_cos AS (\n  INSERT INTO bridge.agent_memos\n    (from_agent, to_agent, memo_type, priority, subject, body_json)\n  VALUES (\n    'fallback_voting', 'chief_of_staff', 'vote_result', 'high',\n    'Fallback vote result: ' || (SELECT outcome FROM decision),\n    jsonb_build_object(\n      'original_memo_id', $1,\n      'outcome', (SELECT outcome FROM decision),\n      'approve_votes', $2, 'reject_votes', $3,\n      'security_veto', $4, 'is_high_risk', $6\n    )\n  ) RETURNING memo_id\n),\nlog_event AS (\n  INSERT INTO bridge.workflow_events (workflow_name, event_type, details_json)\n  VALUES ('fallback_voting', 'vote_decided',\n    jsonb_build_object('memo_id', $1, 'outcome', (SELECT outcome FROM decision),\n      'votes', $2 || '/5'))\n  RETURNING event_id\n)\nSELECT (SELECT outcome FROM decision) AS final_outcome,\n       (SELECT memo_id FROM notify_cos) AS cos_notified;",
+        "options": {
+          "queryReplacement": "={{ $json.original_memo_id }},={{ $json.approve_votes }},={{ $json.reject_votes }},={{ $json.security_veto }},={{ $json.subject }},={{ $json.is_high_risk || false }}"
+        }
+      },
+      "credentials": {
+        "postgres": {
+          "id": "Ae3yvuqjgMnVRrCo",
+          "name": "Postgres account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Schedule: every 6h": {
+      "main": [
+        [
+          {
+            "node": "Find timed-out approvals",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find timed-out approvals": {
+      "main": [
+        [
+          {
+            "node": "Any timed out?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Tally completed votes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Any timed out?": {
+      "main": [
+        [
+          {
+            "node": "Trigger vote memos",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Tally completed votes": {
+      "main": [
+        [
+          {
+            "node": "Apply vote decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": null
+}
