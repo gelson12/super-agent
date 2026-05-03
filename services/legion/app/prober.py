@@ -62,6 +62,16 @@ async def _wait_ollama_ready(timeout_s: int = OLLAMA_READY_TIMEOUT_S) -> bool:
     non-fatal — the prober still walks ollama in subsequent cycles.
     """
     host = os.environ.get("OLLAMA_HOST", "127.0.0.1:11434")
+    # SSRF guard: loopback is legitimate (Ollama runs on same host), but block
+    # any RFC-1918 / routable-internal IPs that could probe the internal network.
+    try:
+        import sys as _sys
+        _sys.path.insert(0, "/app")
+        from app.security.ssrf import assert_host_not_ssrf as _assert_host
+        _assert_host(host, allow_loopback=True)
+    except ValueError as _ssrf_err:
+        log.error("prober: OLLAMA_HOST rejected by SSRF guard (%s) — skipping ollama wait", _ssrf_err)
+        return False
     base = host if host.startswith("http") else f"http://{host}"
     url = f"{base.rstrip('/')}/api/ps"
     deadline = time.monotonic() + timeout_s

@@ -1,10 +1,11 @@
 ranking:
   weights:
     alpha_historical: 0.35
-    beta_suitability: 0.30
-    gamma_latency: 0.15
+    beta_suitability: 0.25
+    gamma_latency: 0.10
     delta_reliability: 0.15
     epsilon_cost: 0.05
+    zeta_content_depth: 0.10
   min_acceptable_score: 0.35
   cold_start_sample_threshold: 30
 
@@ -55,3 +56,26 @@ modality_priors:
     deepseek: 0.05  # R1 reasoning helps for complex/multi-step code
   chat:
     gemini_b: 0.10
+
+# ── Refinement layer ──────────────────────────────────────────────────────────
+# Runs after pick_winner() to improve answer quality via cross-agent critique,
+# conditional re-answer, and chain-of-thought grounding.
+#
+# Pass 1+2 (critique + re-answer): a fast agent critiques the winner's response;
+#   if a real flaw is found the winner re-answers with the critique injected.
+# Pass 3 (CoT boost): a reasoning agent produces a thinking trace; the winner
+#   re-answers grounded in that trace. Only fires for complexity >= 4.
+#
+# Set enabled: false to disable all refinement (e.g. for high-throughput / low-latency mode).
+refinement:
+  enabled: true
+  complexity_min: 3         # only refine requests with complexity >= this (1-5)
+
+  # Cross-agent critique + conditional re-answer
+  critique_enabled: true
+  critique_deadline_ms: 6000   # time budget for the critic call
+  refine_deadline_ms: 10000    # time budget for the winner's re-answer
+
+  # Chain-of-thought boost (complexity >= 4 only)
+  cot_enabled: true
+  cot_deadline_ms: 15000       # total budget split across reasoning + answer calls

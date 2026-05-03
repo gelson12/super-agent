@@ -23,6 +23,17 @@ class HiveConfig:
     early_termination_latency_fraction_max: float = 0.4
 
 
+_DEFAULT_REFINEMENT_CFG: dict = {
+    "enabled": True,
+    "complexity_min": 3,          # only refine complexity >= this
+    "critique_enabled": True,
+    "critique_deadline_ms": 6000,
+    "refine_deadline_ms": 10000,
+    "cot_enabled": True,
+    "cot_deadline_ms": 15000,     # total budget for CoT reasoning + re-answer
+}
+
+
 @dataclass
 class LegionConfig:
     weights: RankWeights = field(default_factory=RankWeights)
@@ -32,6 +43,7 @@ class LegionConfig:
     modality_priors: dict[str, dict[str, float]] = field(default_factory=dict)
     circuit_cooldown_s: dict[str, int] = field(default_factory=dict)
     circuit_error_threshold: int = 5
+    refinement: dict = field(default_factory=lambda: dict(_DEFAULT_REFINEMENT_CFG))
 
 
 @lru_cache(maxsize=1)
@@ -46,10 +58,11 @@ def load_config(path: Path | None = None) -> LegionConfig:
     w = ranking.get("weights", {})
     weights = RankWeights(
         alpha_historical=w.get("alpha_historical", 0.35),
-        beta_suitability=w.get("beta_suitability", 0.30),
-        gamma_latency=w.get("gamma_latency", 0.15),
+        beta_suitability=w.get("beta_suitability", 0.25),
+        gamma_latency=w.get("gamma_latency", 0.10),
         delta_reliability=w.get("delta_reliability", 0.15),
         epsilon_cost=w.get("epsilon_cost", 0.05),
+        zeta_content_depth=w.get("zeta_content_depth", 0.10),
     )
 
     hive = data.get("hive", {})
@@ -63,6 +76,9 @@ def load_config(path: Path | None = None) -> LegionConfig:
     )
 
     circuit = data.get("circuit", {})
+    refinement_raw = data.get("refinement", {})
+    refinement_cfg = {**_DEFAULT_REFINEMENT_CFG, **refinement_raw}
+
     return LegionConfig(
         weights=weights,
         hive=hive_cfg,
@@ -71,4 +87,5 @@ def load_config(path: Path | None = None) -> LegionConfig:
         modality_priors=data.get("modality_priors", {}),
         circuit_cooldown_s=circuit.get("cooldown_s", {}),
         circuit_error_threshold=circuit.get("error_threshold", 5),
+        refinement=refinement_cfg,
     )

@@ -14,6 +14,7 @@ from app.config_loader import load_config
 from app.memory_client import augment_query
 from app.models import AgentResponse, RespondRequest, RespondResponse
 from app.rank import AgentProfile, pick_winner
+from app.refine import refine_winner
 from app.suitability import classify, shortlist
 
 log = logging.getLogger("legion.hive")
@@ -72,7 +73,18 @@ async def run_round(req: RespondRequest, agents: dict[str, object]) -> RespondRe
         log.info("hive: skipping OPEN-breaker agents: %s", skipped_open)
 
     if not entered:
-        raise LegionExhausted(f"all_shortlisted_agents_circuit_open:{skipped_open}")
+        # Entire shortlist is circuit-OPEN — expand to all remaining enabled agents
+        # before declaring exhaustion. This keeps Legion alive when a burst of errors
+        # trips the top-ranked agents simultaneously.
+        fallback_candidates = [aid for aid in candidates if aid not in picked]
+        for aid in fallback_candidates:
+            if await circuit.allow(aid):
+                entered.append(aid)
+        if not entered:
+            raise LegionExhausted(f"all_shortlisted_agents_circuit_open:{skipped_open}")
+        log.warning(
+            "hive: shortlist all OPEN — falling back to non-shortlisted agents: %s", entered
+        )
 
     # Pull shared-memory context from super-agent and prepend to the query
     # so every hive agent (CLI or API) sees the same KB inspiring-cat would.
@@ -157,6 +169,36 @@ async def run_round(req: RespondRequest, agents: dict[str, object]) -> RespondRe
             f"no_agent_scored_above_{cfg.min_acceptable_score}"
         )
 
+    # ── Refinement layer: cross-agent critique + CoT boost ───────────────────
+    # Runs after winner selection using whatever time remains in the deadline.
+    # Failure-safe: any exception here returns the unrefined winner unchanged.
+    was_refined = False
+    refinement_passes = 0
+    time_used_ms = int((time.monotonic() - start) * 1000)
+    time_remaining_ms = max(0, req.deadline_ms - time_used_ms)
+    refinement_cfg = getattr(cfg, "refinement", {})
+
+    if time_remaining_ms > 3000:  # only attempt if >3s still available
+        try:
+            refined, was_refined = await refine_winner(
+                winner=winner,
+                agents=agents,
+                req=req,
+                time_budget_ms=time_remaining_ms,
+                refinement_cfg=refinement_cfg,
+            )
+            if was_refined:
+                refinement_passes = 1
+                winner = refined
+                log.info(
+                    "hive: refinement improved answer for round %s (agent=%s)",
+                    round_id, winner.agent_id,
+                )
+        except Exception as exc:
+            log.warning("hive: refinement raised %s — using unrefined winner", type(exc).__name__)
+
+    latency_ms = int((time.monotonic() - start) * 1000)
+
     return RespondResponse(
         round_id=uuid.UUID(round_id),
         winner_agent=winner.agent_id,
@@ -165,6 +207,8 @@ async def run_round(req: RespondRequest, agents: dict[str, object]) -> RespondRe
         agents_entered=entered,
         scores=scores,
         early_terminated=early_terminated,
+        was_refined=was_refined,
+        refinement_passes=refinement_passes,
     )
 
 

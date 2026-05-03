@@ -4,7 +4,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    LEGION_ENABLED: bool = False
+    LEGION_ENABLED: bool = True
     L5_ENABLED: bool = False
     HIVE_EARLY_TERMINATION: bool = True
     HF_ENABLED: bool = False

@@ -61,7 +61,14 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         log.warning("volume_cache restore failed: %s", type(exc).__name__)
 
-    await db.startup()
+    try:
+        await db.startup()
+    except Exception as exc:
+        log.error(
+            "legion: DB startup failed (%s) — continuing without persistent storage; "
+            "circuit breakers and ranking will use in-memory state only",
+            type(exc).__name__,
+        )
     _AGENTS["gemini_b"] = GeminiBAgent()
     _AGENTS["ollama"] = OllamaAgent()
     _AGENTS["hf"] = HFAgent()
@@ -75,6 +82,16 @@ async def lifespan(app: FastAPI):
     _AGENTS["sambanova"] = SambaNovaAgent()
     _AGENTS["deepseek"] = DeepSeekAgent()
     enabled = [aid for aid, a in _AGENTS.items() if getattr(a, "enabled", False)]
+    if not settings.LEGION_ENABLED:
+        log.warning(
+            "LEGION_ENABLED=False — all /v1/respond requests will return 503. "
+            "Set LEGION_ENABLED=true in Railway env vars to activate the hive."
+        )
+    if not enabled:
+        log.warning(
+            "legion started with zero enabled agents — all hive calls will fail. "
+            "Check agent-specific env vars (GROQ_API_KEY, OPENROUTER_API_KEY, etc.)."
+        )
     log.info(
         "legion started: LEGION_ENABLED=%s, registered=%s, enabled=%s",
         settings.LEGION_ENABLED, list(_AGENTS), enabled,
@@ -120,8 +137,9 @@ async def health_detailed() -> dict:
 async def respond(req: RespondRequest) -> RespondResponse:
     if not settings.LEGION_ENABLED:
         raise HTTPException(status_code=503, detail="legion disabled")
-    if not _AGENTS:
-        raise HTTPException(status_code=503, detail="no agents registered")
+    enabled_agents = [aid for aid, a in _AGENTS.items() if getattr(a, "enabled", False)]
+    if not enabled_agents:
+        raise HTTPException(status_code=503, detail="no agents enabled")
     try:
         return await run_round(req, _AGENTS)
     except LegionExhausted as exc:

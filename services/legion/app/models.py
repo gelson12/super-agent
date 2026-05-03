@@ -36,3 +36,5 @@ class RespondResponse(BaseModel):
     agents_entered: list[str]
     scores: dict[str, float]
     early_terminated: bool = False
+    was_refined: bool = False       # True if the refinement layer improved the answer
+    refinement_passes: int = 0      # Number of refinement passes that changed the answer

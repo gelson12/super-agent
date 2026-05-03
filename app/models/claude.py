@@ -38,7 +38,11 @@ def clear_legion_flag() -> None:
     _tls.legion_used = False
 
 
-def _try_legion(prompt: str, timeout_s: float = 12.0) -> str | None:
+def _try_legion(
+    prompt: str,
+    timeout_s: float | None = None,
+    complexity: int = 3,
+) -> str | None:
     """
     Send the prompt to the Legion hive and return its winner content.
 
@@ -46,13 +50,42 @@ def _try_legion(prompt: str, timeout_s: float = 12.0) -> str | None:
     next in the cascade. Never raises. HMAC-signed with
     LEGION_API_SHARED_SECRET; skipped entirely when LEGION_BASE_URL or
     LEGION_API_SHARED_SECRET are unset.
+
+    timeout_s: defaults to 20s for complexity <= 3 (no deep refinement),
+               35s for complexity >= 4 (CoT + critique refinement can run).
+    complexity: 1-5, forwarded to Legion so it can gate refinement passes.
+                Auto-elevated from the prompt when caller passes the default (3).
     """
     base_url = os.environ.get("LEGION_BASE_URL", "").rstrip("/")
     secret = os.environ.get("LEGION_API_SHARED_SECRET", "")
     if not base_url or not secret:
         return None
+
+    # Auto-detect complexity from the prompt so the CoT pass fires for
+    # complex queries even when the caller didn't compute it explicitly.
+    # Only elevates; never lowers an explicitly-raised complexity value.
+    if complexity <= 3:
+        try:
+            from ..routing.preprocessor import score_complexity as _sc
+            complexity = max(complexity, _sc(prompt))
+        except Exception:
+            pass
+    complexity = max(1, min(5, complexity))
+
+    # Size the timeout to accommodate Legion's refinement layer:
+    # complexity >= 4 triggers CoT + critique (up to ~30s); lower gets quick path.
+    if timeout_s is None:
+        timeout_s = 35.0 if complexity >= 4 else 20.0
     try:
-        body = json.dumps({"query": prompt, "complexity": 3}).encode()
+        # Pass deadline_ms slightly under the HTTP timeout so Legion's internal
+        # clock matches ours, giving it time to gracefully return the best answer
+        # it has rather than timing out cold.
+        deadline_ms = max(4000, int(timeout_s * 1000) - 1000)
+        body = json.dumps({
+            "query": prompt,
+            "complexity": max(1, min(5, complexity)),
+            "deadline_ms": deadline_ms,
+        }).encode()
         ts = str(int(time.time()))
         mac = hmac.new(secret.encode(), digestmod=hashlib.sha256)
         mac.update(ts.encode())
