@@ -138,6 +138,9 @@ export class Renderer {
     // Animated TV screens — drawn on top of floor, behind bots.
     this._drawTVScreens(ctx, w, h, now);
 
+    // Projector screens — animated stats when meeting room is reserved.
+    if (this.scheduler) this._drawProjectorScreens(ctx, w, h, now);
+
     // Y-sort bots on this floor. Exclude bots in 'transit' — they are between
     // floors (physically on the staircase) and must not pop-in on the new floor
     // until they finish crossing and start walking.
@@ -176,6 +179,19 @@ export class Renderer {
   // Tile coords come from the 'tv' zone anchors in floorN.json.
   static get TV_TILES() {
     return { 1: [[55, 6]], 3: [[56, 12]] };
+  }
+
+  // Projector screens: floor → [{ tile, zones[] }]
+  // tile = where the screen is drawn; zones = reservedRooms keys that trigger it.
+  static get PROJECTOR_CONFIG() {
+    return {
+      1: [{ tile: [12, 2],  zones: ['1:meeting_l1'] }],
+      2: [{ tile: [4,  1],  zones: ['2:conference_l2', '2:meeting_l2_round'] }],
+      3: [
+        { tile: [8,  2],  zones: ['3:conference_l3'] },
+        { tile: [7,  25], zones: ['3:meeting_l3_round'] },
+      ],
+    };
   }
 
   _drawTVScreens(ctx, w, h, now) {
@@ -231,6 +247,162 @@ export class Renderer {
       glow.addColorStop(1,   'transparent');
       ctx.fillStyle = glow;
       ctx.fillRect(cx - tw*2.5, cy, tw*5, th*2);
+
+      ctx.restore();
+    }
+  }
+
+  _drawProjectorScreens(ctx, w, h, now) {
+    const configs = Renderer.PROJECTOR_CONFIG[this.activeFloor];
+    if (!configs) return;
+    const reserved = this.scheduler.reservedRooms;
+    const tw = w / TILE_W, th = h / TILE_H;
+    const t = now / 1000;
+
+    for (const { tile: [tx, ty], zones } of configs) {
+      const active = zones.some(z => reserved.has(z));
+      if (!active) continue;
+
+      const cx = (tx + 0.5) * tw;
+      const cy = (ty + 0.5) * th;
+      const sw = tw * 4.2;   // screen width in px
+      const sh = th * 2.2;   // screen height in px
+      const r  = 4;
+
+      ctx.save();
+
+      // Projector beam — wide cone from screen downward
+      const beamGrad = ctx.createLinearGradient(cx, cy + sh/2, cx, cy + sh/2 + th * 4);
+      beamGrad.addColorStop(0, 'rgba(180,210,255,0.10)');
+      beamGrad.addColorStop(1, 'transparent');
+      ctx.fillStyle = beamGrad;
+      ctx.beginPath();
+      ctx.moveTo(cx - sw/2, cy + sh/2);
+      ctx.lineTo(cx + sw/2, cy + sh/2);
+      ctx.lineTo(cx + sw/2 + tw, cy + sh/2 + th*4);
+      ctx.lineTo(cx - sw/2 - tw, cy + sh/2 + th*4);
+      ctx.closePath();
+      ctx.fill();
+
+      // Screen bezel
+      ctx.shadowColor = 'rgba(100,160,255,0.7)';
+      ctx.shadowBlur  = 16;
+      ctx.fillStyle   = '#0b1a2e';
+      ctx.beginPath();
+      ctx.roundRect(cx - sw/2 - 3, cy - sh/2 - 3, sw + 6, sh + 6, r + 1);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+
+      // Screen background
+      ctx.fillStyle = '#071220';
+      ctx.beginPath();
+      ctx.roundRect(cx - sw/2, cy - sh/2, sw, sh, r);
+      ctx.fill();
+
+      // ── Clip all content to the screen area ──
+      ctx.beginPath();
+      ctx.roundRect(cx - sw/2, cy - sh/2, sw, sh, r);
+      ctx.clip();
+
+      const sx = cx - sw/2, sy = cy - sh/2;   // screen top-left
+      const pad = sw * 0.04;
+
+      // ── Heading strip ──
+      ctx.fillStyle = 'rgba(30,80,160,0.85)';
+      ctx.fillRect(sx, sy, sw, sh * 0.18);
+      ctx.fillStyle = '#a8d4ff';
+      ctx.font = `bold ${Math.round(sh * 0.14)}px monospace`;
+      ctx.textAlign = 'center';
+      ctx.fillText('MEETING STATS', cx, sy + sh * 0.145);
+
+      // ── Bar chart (left 55% of screen) ──
+      const bars = 6;
+      const barZone = { x: sx + pad, y: sy + sh*0.22, w: sw*0.52, h: sh*0.55 };
+      const barW = (barZone.w / bars) * 0.55;
+      const barGap = barZone.w / bars;
+      const COLORS = ['#3b82f6','#06b6d4','#8b5cf6','#10b981','#f59e0b','#ef4444'];
+
+      for (let i = 0; i < bars; i++) {
+        // Each bar oscillates with its own phase and frequency
+        const phase  = i * 1.1 + 0.3;
+        const freq   = 0.4 + i * 0.07;
+        const height = (0.45 + 0.4 * Math.abs(Math.sin(t * freq + phase))) * barZone.h;
+        const bx = barZone.x + i * barGap + (barGap - barW) / 2;
+        const by = barZone.y + barZone.h - height;
+
+        // Bar gradient — brighter at top
+        const bg = ctx.createLinearGradient(bx, by, bx, by + height);
+        bg.addColorStop(0, COLORS[i]);
+        bg.addColorStop(1, COLORS[i] + '55');
+        ctx.fillStyle = bg;
+        ctx.fillRect(bx, by, barW, height);
+
+        // Value label above bar
+        const val = Math.round(40 + 55 * Math.abs(Math.sin(t * freq + phase)));
+        ctx.fillStyle = '#c8e4ff';
+        ctx.font = `${Math.round(sh * 0.1)}px monospace`;
+        ctx.textAlign = 'center';
+        ctx.fillText(val + '%', bx + barW/2, by - 2);
+      }
+
+      // Bar axis line
+      ctx.strokeStyle = 'rgba(100,160,255,0.3)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(barZone.x, barZone.y + barZone.h);
+      ctx.lineTo(barZone.x + barZone.w, barZone.y + barZone.h);
+      ctx.stroke();
+
+      // ── Line graph (right 40% of screen) ──
+      const lgZone = { x: sx + sw*0.58, y: sy + sh*0.22, w: sw*0.38, h: sh*0.55 };
+      const points = 20;
+
+      ctx.strokeStyle = '#34d399';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      for (let i = 0; i < points; i++) {
+        const px2 = lgZone.x + (i / (points-1)) * lgZone.w;
+        const v   = 0.5 + 0.38 * Math.sin(t * 0.8 + i * 0.7) + 0.12 * Math.sin(t * 2.1 + i * 1.3);
+        const py2 = lgZone.y + lgZone.h * (1 - v);
+        i === 0 ? ctx.moveTo(px2, py2) : ctx.lineTo(px2, py2);
+      }
+      ctx.stroke();
+
+      // Moving dot on line (latest data point)
+      const dotV  = 0.5 + 0.38 * Math.sin(t * 0.8 + (points-1)*0.7) + 0.12 * Math.sin(t*2.1 + (points-1)*1.3);
+      const dotPx = lgZone.x + lgZone.w;
+      const dotPy = lgZone.y + lgZone.h * (1 - dotV);
+      ctx.beginPath();
+      ctx.arc(dotPx, dotPy, 3, 0, Math.PI*2);
+      ctx.fillStyle = '#34d399';
+      ctx.fill();
+
+      // Line graph border
+      ctx.strokeStyle = 'rgba(52,211,153,0.2)';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(lgZone.x, lgZone.y, lgZone.w, lgZone.h);
+
+      // ── Bottom KPI strip ──
+      const kpis = [
+        { label: 'ROI',  val: () => (2.1 + 0.4*Math.sin(t*0.3)).toFixed(1)+'x' },
+        { label: 'Q/H',  val: () => Math.round(87 + 8*Math.sin(t*0.5))+'%' },
+        { label: 'NPS',  val: () => Math.round(72 + 5*Math.sin(t*0.4)) },
+      ];
+      const kpiY  = sy + sh*0.82;
+      const kpiW  = sw / kpis.length;
+      ctx.font      = `bold ${Math.round(sh * 0.13)}px monospace`;
+      ctx.textAlign = 'center';
+      for (let i = 0; i < kpis.length; i++) {
+        const kx = sx + kpiW * i + kpiW/2;
+        ctx.fillStyle = '#3b82f680';
+        ctx.fillRect(sx + kpiW*i + pad, kpiY - sh*0.12, kpiW - pad*2, sh*0.16);
+        ctx.fillStyle = '#fbbf24';
+        ctx.fillText(kpis[i].val(), kx, kpiY);
+        ctx.fillStyle = '#64748b';
+        ctx.font = `${Math.round(sh * 0.09)}px monospace`;
+        ctx.fillText(kpis[i].label, kx, kpiY + sh*0.11);
+        ctx.font = `bold ${Math.round(sh * 0.13)}px monospace`;
+      }
 
       ctx.restore();
     }
