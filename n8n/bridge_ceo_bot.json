@@ -25,7 +25,7 @@
           "interval": [
             {
               "field": "cronExpression",
-              "expression": "0 0 16 * * *"
+              "expression": "0 0 */4 * * *"
             }
           ]
         }
@@ -221,7 +221,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={ \"bot_name\": {{ JSON.stringify($json.bot_name || \"unknown\") }}, \"task_block\": {{ JSON.stringify($json.message || \"\") }}, \"session_id\": {{ JSON.stringify($json.session_id || \"default\") }}, \"api_key\": {{ JSON.stringify($env.N8N_API_KEY || \"\") }} }",
+        "jsonBody": "={ \"bot_name\": {{ JSON.stringify($json.bot_name || \"unknown\") }}, \"task_block\": {{ JSON.stringify($json.message || \"\") }}, \"session_id\": {{ JSON.stringify($json.session_id || \"default\") }}, \"task_kind\": {{ JSON.stringify($json.task || \"agent_invoke\") }}, \"api_key\": {{ JSON.stringify($env.N8N_API_KEY || \"\") }} }",
         "options": {
           "timeout": 180000,
           "response": {

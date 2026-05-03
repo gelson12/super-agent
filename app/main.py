@@ -5901,6 +5901,78 @@ def webhook_memo_create(req: MemoCreateRequest, request: Request):
             pass
 
 
+@app.post("/webhook/n8n-deploy-bots", tags=["webhook"])
+@limiter.limit("10/minute")
+def webhook_n8n_deploy_bots(request: Request, api_key: str = "", target: str = ""):
+    """
+    Upload Bridge bot workflow JSONs from the container filesystem to n8n.
+    Uses the server's own N8N_API_KEY — caller does not need to know it.
+    api_key: must match N8N_API_KEY env var.
+    target: optional comma-separated bot filenames to deploy (e.g. 'bridge_pm_bot,bridge_ceo_bot').
+            Omit to deploy all bots in n8n/bridge_*.json.
+    """
+    import glob as _glob
+    import json as _json
+    import urllib.request as _req
+    import urllib.error as _uerr
+
+    _key = os.environ.get("N8N_API_KEY", "")
+    if not _key or api_key != _key:
+        raise HTTPException(status_code=401, detail="invalid api_key")
+
+    _base = os.environ.get("N8N_BASE_URL", "").rstrip("/")
+    if not _base:
+        raise HTTPException(status_code=503, detail="N8N_BASE_URL not configured")
+
+    # Resolve bot JSON paths — search both repo root and /app mount
+    _search_dirs = ["/app/n8n", "/workspace/super-agent/n8n", "n8n"]
+    _bot_files: list[str] = []
+    for _sd in _search_dirs:
+        _found = sorted(_glob.glob(f"{_sd}/bridge_*.json"))
+        if _found:
+            _bot_files = _found
+            break
+
+    if not _bot_files:
+        raise HTTPException(status_code=404, detail="No bridge_*.json files found on container filesystem")
+
+    if target:
+        _targets = {t.strip().replace(".json", "") for t in target.split(",")}
+        _bot_files = [f for f in _bot_files if any(t in f for t in _targets)]
+
+    # Fetch all workflow IDs by name once
+    _list_req = _req.Request(f"{_base}/api/v1/workflows?limit=250",
+        headers={"X-N8N-API-KEY": _key})
+    try:
+        with _req.urlopen(_list_req, timeout=15) as _r:
+            _wf_map = {w["name"]: w["id"] for w in _json.loads(_r.read())["data"]}
+    except Exception as _e:
+        raise HTTPException(status_code=502, detail=f"n8n list failed: {_e}")
+
+    results = {}
+    for _fpath in _bot_files:
+        try:
+            _d = _json.loads(open(_fpath, encoding="utf-8").read())
+            _wf_name = _d.get("name", "")
+            _wf_id = _wf_map.get(_wf_name)
+            if not _wf_id:
+                results[_wf_name] = "not_found_in_n8n"
+                continue
+            _body = _json.dumps(_d).encode()
+            _put = _req.Request(f"{_base}/api/v1/workflows/{_wf_id}",
+                data=_body, method="PUT",
+                headers={"X-N8N-API-KEY": _key, "Content-Type": "application/json"})
+            with _req.urlopen(_put, timeout=30) as _r:
+                results[_wf_name] = "ok"
+        except _uerr.HTTPError as _he:
+            results[_fpath.split("/")[-1]] = f"http_{_he.code}"
+        except Exception as _e:
+            results[_fpath.split("/")[-1]] = str(_e)[:80]
+
+    deployed = sum(1 for v in results.values() if v == "ok")
+    return {"ok": True, "deployed": deployed, "total": len(_bot_files), "results": results}
+
+
 @app.get("/webhook/performance-dashboard", tags=["webhook"])
 def webhook_performance_dashboard():
     """
