@@ -51,6 +51,10 @@ const SIM_SPEED = 60;     // 60x real time so a meeting fires every minute or so
   live.onConnChange = (ok) => {
     document.getElementById('status-conn').textContent = `conn: ${ok ? 'live' : 'offline'}`;
   };
+  // Real workflow interactions (approval requests, data passing, instructions)
+  // are mirrored in the sim: the two bots walk toward each other or go to a
+  // meeting room, face each other, and stay for the duration of the interaction.
+  live.onInteraction = (botA, botB, ctx) => scheduler.triggerInteraction(botA, botB, ctx);
   live.start();
 
   // Click on canvas → focus nearest bot on the active floor.

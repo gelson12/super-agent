@@ -39,6 +39,15 @@ const _ACTIVITY_LABELS = {
   phone_booths: 'on a call', desk_cluster: 'at desk',
 };
 
+const _INTERACTION_LABELS = {
+  approval_request:        'approval request',
+  cro_review_request:      'CRO review',
+  cto_review_request:      'CTO review',
+  bot_improvement_proposal:'improvement proposal',
+  proposal:                'proposal',
+  activity:                'briefing',
+};
+
 export class Scheduler {
   constructor(floors, bots, schedule) {
     this.floors = floors;
@@ -49,6 +58,7 @@ export class Scheduler {
     this.reservedRooms = new Map();
     this.lastIdleRoll = new Map();
     this.lastChatterCheck = 0;
+    this.activeInteractions = new Map(); // sortedKey → expiresAt (ms)
     this.simSpeed = 1;
     // Default sim-time anchor: jump to 07:25 today UTC so the very first
     // scheduled cadence (07:30 Researcher) is visible within seconds of
@@ -260,6 +270,88 @@ export class Scheduler {
     }
     if (!candidates.length) return null;
     return candidates[Math.floor(Math.random() * candidates.length)];
+  }
+
+  // Called by live.js whenever a real workflow interaction is detected
+  // (pending proposal, SSE message mentioning two bots).
+  triggerInteraction(botA, botB, ctx = {}) {
+    // Deduplicate — same pair already active
+    const key = [botA.id, botB.id].sort().join(':');
+    const now = performance.now();
+    // Purge expired
+    for (const [k, exp] of this.activeInteractions) {
+      if (now > exp) this.activeInteractions.delete(k);
+    }
+    if (this.activeInteractions.has(key)) return;
+
+    // Don't disrupt transit or scheduled meetings
+    if (botA.state === 'transit' || botB.state === 'transit') return;
+    if (botA.state === 'inMeeting' || botB.state === 'inMeeting') return;
+
+    const label = _INTERACTION_LABELS[ctx.type] || 'discussion';
+    const dur = 35_000 + Math.random() * 40_000;   // 35–75s
+    this.activeInteractions.set(key, now + dur);
+
+    const samFloor = botA.floor === botB.floor;
+    const dist = samFloor ? Math.hypot(botA.x - botB.x, botA.y - botB.y) : Infinity;
+
+    const cleanup = () => {
+      botA.chatPartner = null; botB.chatPartner = null;
+      for (const bot of [botA, botB]) {
+        if (bot.state === 'social' || bot.state === 'idle') {
+          bot.state = 'idle'; bot.taskLabel = '';
+          this._sendBotHome(bot);
+        }
+      }
+    };
+
+    if (samFloor && dist <= 12) {
+      // Walk each bot to a point halfway between them (if not already adjacent).
+      if (dist > 2) {
+        const midX = Math.round((botA.x + botB.x) / 2);
+        const midY = Math.round((botA.y + botB.y) / 2);
+        botA.goTo(this.floors, botA.floor,
+          Math.round(botA.x + (midX - botA.x) * 0.55),
+          Math.round(botA.y + (midY - botA.y) * 0.55), { label });
+        botB.goTo(this.floors, botB.floor,
+          Math.round(botB.x + (midX - botB.x) * 0.55),
+          Math.round(botB.y + (midY - botB.y) * 0.55), { label });
+      }
+      // After the walk settles, lock them into social state facing each other.
+      const walkMs = Math.max(dist, 1) * 380 + 600;
+      setTimeout(() => {
+        botA.chatPartner = botB; botB.chatPartner = botA;
+        for (const bot of [botA, botB]) {
+          if (bot.state !== 'inMeeting' && bot.state !== 'transit') {
+            bot.state = 'social';
+            bot.socialEnd = performance.now() + (dur - walkMs);
+            bot.taskLabel = label;
+          }
+        }
+      }, walkMs);
+      setTimeout(cleanup, dur);
+    } else {
+      // Different floors or far apart — route both to a meeting room.
+      const room = this._pickRoom(2, null);
+      if (!room) { cleanup(); return; }
+
+      const anchors = this._anchorsForZone(room);
+      const meetId  = `interact-${now}`;
+      this.reservedRooms.set(room.zoneId, meetId);
+
+      const okA = botA.goTo(this.floors, room.floor, anchors[0].x, anchors[0].y, { label });
+      const okB = botB.goTo(this.floors, room.floor,
+        (anchors[1] || anchors[0]).x, (anchors[1] || anchors[0]).y, { label });
+
+      if (!okA && !okB) { this.reservedRooms.delete(room.zoneId); cleanup(); return; }
+
+      botA.chatPartner = botB; botB.chatPartner = botA;
+
+      setTimeout(() => {
+        this.reservedRooms.delete(room.zoneId);
+        cleanup();
+      }, dur);
+    }
   }
 
   _maintainChatter(realNow) {

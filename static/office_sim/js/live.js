@@ -18,9 +18,11 @@ export class LiveFeed {
     this.timers = [];
     this.connected = false;
     this.onConnChange = () => {};
+    this.onInteraction = () => {};   // wired in main.js → scheduler.triggerInteraction
     this.matchers = this._buildMatchers();
     // pending[agentId] = count of open proposals addressed to that bot
     this.pendingCounts = {};
+    this._seenMemoIds = new Set();   // memo_ids already turned into interactions
   }
 
   setMode(mode) {
@@ -80,6 +82,19 @@ export class LiveFeed {
     return null;
   }
 
+  // Find a second bot in text, excluding one already matched.
+  _matchBotExcluding(text, exclude) {
+    if (!text) return null;
+    const lower = text.toLowerCase();
+    for (const bot of this.bots) {
+      if (bot === exclude) continue;
+      for (const tag of this.matchers[bot.id]) {
+        if (tag && lower.includes(tag)) return bot;
+      }
+    }
+    return null;
+  }
+
   async _pollWorkflows() {
     try {
       const r = await fetch('/n8n/workflows', { headers: { 'Accept': 'application/json' } });
@@ -126,6 +141,27 @@ export class LiveFeed {
         if (p.to_agent) counts[p.to_agent] = (counts[p.to_agent] || 0) + 1;
       }
       this.pendingCounts = counts;
+
+      // Fire office-sim interactions for each unseen pending proposal.
+      const activeIds = new Set(proposals.map(p => p.memo_id).filter(Boolean));
+      // Remove expired memo_ids
+      for (const id of this._seenMemoIds) {
+        if (!activeIds.has(id)) this._seenMemoIds.delete(id);
+      }
+      for (const p of proposals) {
+        if (!p.memo_id || this._seenMemoIds.has(p.memo_id)) continue;
+        if (!p.from_agent || !p.to_agent) continue;
+        const botA = this.bots.find(b => b.id === p.from_agent);
+        const botB = this.bots.find(b => b.id === p.to_agent);
+        if (botA && botB) {
+          this._seenMemoIds.add(p.memo_id);
+          this.onInteraction(botA, botB, {
+            type: p.memo_type || 'proposal',
+            priority: p.priority,
+            subject: p.subject,
+          });
+        }
+      }
 
       // Update badge dots on HUD bot-list rows — clicking opens approval modal.
       for (const bot of this.bots) {
@@ -283,8 +319,15 @@ export class LiveFeed {
         try { const j = JSON.parse(ev.data); data = j.text || j.message || j.line || ev.data; } catch {}
         if (!data) return;
         this.hud.pushActivity(String(data).slice(0, 220));
-        const bot = this._matchBot(String(data));
-        if (bot) bot.taskLabel = String(data).split('\n')[0].slice(0, 60);
+        const botA = this._matchBot(String(data));
+        if (botA) {
+          botA.taskLabel = String(data).split('\n')[0].slice(0, 60);
+          // If a second bot is mentioned in the same message, trigger an interaction.
+          const botB = this._matchBotExcluding(String(data), botA);
+          if (botB) {
+            this.onInteraction(botA, botB, { type: 'activity', subject: String(data).slice(0, 80) });
+          }
+        }
       };
       this.es.onopen = () => this._setConn(true);
       this.es.onerror = () => this._setConn(false);
