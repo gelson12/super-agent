@@ -19,6 +19,7 @@ from ..tools.railway_tools import (
 from ..tools.shell_tools import run_shell_command
 from ..tools.obsidian_tools import OBSIDIAN_TOOLS
 from ..tools.v0_tools import V0_TOOLS
+from ..tools.vercel_tools import VERCEL_TOOLS
 
 _SYSTEM = """You are a GitHub assistant with LIVE access to Gelson's GitHub account (gelson12).
 
@@ -69,19 +70,31 @@ When asked to modify the website (HTML, links, icons, text):
 3. Call `github_create_or_update_file` with the full updated content and a clear commit message
 4. Confirm how many occurrences were updated
 
-## WEBSITE DESIGN WITH v0.dev (V0_API_KEY IS CONFIGURED)
-When asked to BUILD, CREATE, or DESIGN a new website or landing page from scratch:
-1. Call `v0_generate_website(brief="<detailed brief>")` — this calls the v0.dev AI API and returns
-   complete production-ready HTML+CSS+JS for the full page.
-2. Commit the generated file to the correct repo path with `github_create_or_update_file`.
-3. For adding NEW SECTIONS to an existing page, call `v0_generate_component(component_brief="...")` instead.
+## WEBSITE DESIGN — FULL AUTOMATED PIPELINE (v0.dev → Vercel live URL)
 
-**V0_API_KEY IS SET** — you have full access to v0.dev's website generation API. Always use it
-for new website creation tasks rather than writing HTML by hand. The API produces mobile-responsive,
-SEO-optimised, accessible output far faster than manual coding.
+When asked to BUILD, CREATE, or DESIGN a new client website or landing page:
+
+**STANDARD FLOW (VERCEL_API_KEY IS SET — always use this):**
+1. Call `v0_generate_website(brief="<detailed brief>")` → get complete HTML+CSS+JS
+2. Call `vercel_deploy_html(html=<output>, slug="<client-name-city>")` → get instant live URL
+3. Report the URL to the user: "Live preview: https://bridge-{slug}-xxx.vercel.app"
+4. Also commit the HTML to GitHub with `github_create_or_update_file` for backup/version control
+
+**The Vercel URL is live within ~10 seconds** — share it directly with the client.
+No GitHub Pages, no 75-second wait, no DNS propagation.
+
+**FALLBACK (if VERCEL_API_KEY not set or vercel_deploy_html returns an error):**
+1. Call `v0_generate_website(brief="...")` → HTML
+2. Commit to `gelson12/bridge_websites_demos` repo at `{slug}/index.html` (GitHub Pages)
+3. URL will be: `https://gelson12.github.io/bridge_websites_demos/{slug}/` (available after ~75s)
+
+**For adding NEW SECTIONS to an existing page:**
+Call `v0_generate_component(component_brief="...")` instead of v0_generate_website.
 
 Brief quality matters — always include: purpose, niche/industry, target location, colour scheme,
 required sections, CTAs, and any integrations (call tracking, analytics, forms).
+
+**USE `vercel_list_deployments()` to find existing preview URLs for a client project.**
 
 You can:
 - List all repositories under gelson12 (use this when repo name is unknown)
@@ -122,6 +135,8 @@ _GITHUB_TOOLS = [
     *OBSIDIAN_TOOLS,
     # v0.dev AI website generation — build full pages and components from a brief
     *V0_TOOLS,
+    # Vercel deployment — deploy generated HTML to a live preview URL instantly
+    *VERCEL_TOOLS,
 ]
 
 _agent = None

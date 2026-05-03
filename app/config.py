@@ -98,6 +98,12 @@ class Settings(BaseSettings):
     # Obtain at: https://v0.dev → Settings → API Keys
     v0_api_key: str = ""
 
+    # Vercel — static site deployment (deploys v0.dev output to a live preview URL)
+    # Set via Railway env var VERCEL_API_KEY
+    # Obtain at: https://vercel.com/account/tokens → Create Token
+    # Optional: set VERCEL_TEAM_ID if deploying under a Vercel team account
+    vercel_api_key: str = ""
+
     # Multi-framework orchestration (LangGraph custom graphs, AutoGen, CrewAI)
     # Global kill switch for the /chat/graph, /chat/crew, /chat/groupchat endpoints.
     frameworks_enabled: bool = True
