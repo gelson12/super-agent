@@ -482,7 +482,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={ \"chat_id\": {{$env.BRIDGE_ADMIN_TELEGRAM_CHAT_ID}}, \"text\": \"\\u26a0\\ufe0f  *Approval request from {{$json.bot_name}}*\\n\\n  Action:  `{{$json.action_type}}`\\n  Risk:    medium\\n  Payload: {{ JSON.stringify($json.action_payload).slice(0,600) }}\\n\\nReply *APPROVE {{$json.bot_name}} {{$json.action_type}}* to proceed, or ignore to reject.\\n\\u2014 Bridge Agents\", \"parse_mode\": \"Markdown\" }",
+        "jsonBody": "={ \"chat_id\": {{$env.BRIDGE_ADMIN_TELEGRAM_CHAT_ID}}, \"text\": \"\\u26a0\\ufe0f  *Approval request from {{$json.bot_name}}*\\n\\n  Action:  `{{$json.action_type}}`\\n  Risk:    medium\\n  Payload: {{ JSON.stringify($json.action_payload).replace(/\"/g, \"'\").slice(0,600) }}\\n\\nReply *APPROVE {{$json.bot_name}} {{$json.action_type}}* to proceed, or ignore to reject.\\n\\u2014 Bridge Agents\", \"parse_mode\": \"Markdown\" }",
         "options": {
           "timeout": 15000,
           "response": {

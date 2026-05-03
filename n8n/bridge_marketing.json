@@ -1,0 +1,519 @@
+{
+  "name": "bridge_marketing",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "bridge-marketing-trigger",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "node_trigger",
+      "name": "Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        400
+      ],
+      "webhookId": "bridge-marketing-trigger"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH picked AS (\n  SELECT l.lead_id, l.business_name, l.normalized_business_name, l.category,\n         l.city, l.region, l.postcode, l.country,\n         l.phone_raw, l.email, l.email_status,\n         l.website_url_found, l.reviews_rating, l.reviews_count,\n         wp.slug AS demo_slug,\n         wp.preview_url AS demo_preview_url,\n         wp.copy_json AS demo_copy\n  FROM bridge.leads l\n  LEFT JOIN bridge.website_projects wp ON wp.lead_id = l.lead_id\n     AND wp.deployment_status = 'live'\n  WHERE l.website_status = 'Ready for Marketing'\n    AND l.marketing_status = 'Queued'\n    AND l.archived_flag = FALSE\n  ORDER BY l.updated_at ASC\n  LIMIT 1\n  FOR UPDATE OF l SKIP LOCKED\n),\nadvanced AS (\n  UPDATE bridge.leads\n  SET marketing_status = 'Sending',\n      updated_at = NOW()\n  WHERE lead_id IN (SELECT lead_id FROM picked)\n  RETURNING lead_id\n)\nSELECT p.* FROM picked p;",
+        "options": {}
+      },
+      "id": "node_pick_lead",
+      "name": "Pick lead + claim",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        460,
+        400
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "Ae3yvuqjgMnVRrCo",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{$env.BRIDGE_MARKETING_BOT_TOKEN}}/sendMessage",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json; charset=utf-8"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={ \"chat_id\": {{$env.BRIDGE_ADMIN_TELEGRAM_CHAT_ID}}, \"text\": \"\\ud83d\\udce7  Outreach in motion\\n\\n  Prospect:  {{ $('Pick lead + claim').first().json.business_name }}\\n  City:      {{ $('Pick lead + claim').first().json.city }}\\n  Demo:      {{ $('Pick lead + claim').first().json.demo_preview_url }}\\n\\nWriting the email now. Short, honest, no hype.\\n\\u2014 Marketing\" }",
+        "options": {
+          "timeout": 15000,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "node_mkt_start",
+      "name": "Marketing bot: starting",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        680,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const lead = $('Pick lead + claim').first().json;\nif (!lead || !lead.lead_id) {\n  return { json: { __no_work__: true, reason: 'no lead ready for marketing' } };\n}\nconst body = $('Trigger').first().json.body || {};\n\nconst leadEmail = (lead.email && lead.email.trim()) ? lead.email.trim() : null;\nconst hasValidEmail = !!leadEmail;\nconst dry_run = (body.dry_run === true) || !hasValidEmail;\nconst adminEmail = $env.BRIDGE_ADMIN_EMAIL || 'bridge.digital.solution@gmail.com';\nconst to_email = dry_run ? adminEmail : leadEmail;\n\n// Prompt: generate a short, honest B2B cold email. HAIKU-sized.\nconst sys = \"You write short UK B2B outreach emails for Bridge Digital \"\n  + \"Solution. Every email: (1) opens warmly addressing the business owner, \"\n  + \"(2) explains we built a no-commitment demo website based on their \"\n  + \"public info, (3) includes the demo URL, (4) invites them to reply by \"\n  + \"email or WhatsApp/phone, (5) ends with a polite one-line opt-out. No \"\n  + \"hype, no promises about rank/traffic, no fabricated testimonials. \"\n  + \"Return ONLY a single JSON object {\\\"subject\\\":\\\"<=70 chars\\\",\"\n  + \"\\\"body\\\":\\\"plain-text body, 100-220 words, uses \\\\n for line breaks\\\"}. \"\n  + \"No markdown, no code fences.\";\n\nconst userFacts = \"BUSINESS: \" + lead.business_name\n  + \" | CATEGORY: \" + (lead.category || 'service')\n  + \" | CITY: \" + (lead.city || '')\n  + \" | CURRENT_WEBSITE: \" + (lead.website_url_found || 'none')\n  + \" | RATING: \" + (lead.reviews_rating ?? 'null')\n  + \" | REVIEWS: \" + (lead.reviews_count ?? 0)\n  + \" | DEMO_URL: \" + (lead.demo_preview_url || 'none')\n  + \" | SENDER_NAME: Gelson at Bridge Digital Solution\"\n  + \" | REPLY_TO: bridge.digital.solution@gmail.com\"\n  + \" | WHATSAPP: +44 7345 787028\";\n\nreturn { json: {\n  ...lead,\n  to_email,\n  dry_run,\n  hasValidEmail,\n  llm_request: {\n    message: sys + \" FACTS: \" + userFacts,\n    model: 'HAIKU',\n    session_id: 'bridge-email-' + lead.lead_id,\n  }\n}};",
+        "mode": "runOnceForAllItems"
+      },
+      "id": "node_build_email_req",
+      "name": "Build email request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://super-agent-production.up.railway.app/chat/direct",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Token",
+              "value": "={{$env.SUPER_AGENT_PASSWORD}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.llm_request) }}",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "node_llm",
+      "name": "super-agent compose",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1120,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse LLM output, compute expense, prepare Gmail send payload.\nconst prev = $('Build email request').first().json;\nconst api = $json;\n\nlet parsed = null;\nlet parseError = null;\ntry {\n  const raw = (api.response || '').trim()\n    .replace(/^```json\\s*/, '').replace(/```$/, '').trim();\n  parsed = JSON.parse(raw);\n} catch (e) { parseError = e.message; }\n\n// Fallback \u2014 honest, facts-only body.\nfunction fallback() {\n  const biz = prev.business_name || 'your business';\n  const demo = prev.demo_preview_url || '';\n  const city = prev.city || '';\n  const subject = `Demo website for ${biz}`;\n  const body = [\n    `Hi ${biz} team,`,\n    ``,\n    `I put together a quick demo website based on the public info about ${biz}`,\n    city ? `in ${city}. No commitment \u2014 just something to look at:` : `. No commitment \u2014 just something to look at:`,\n    demo || '(preview pending)',\n    ``,\n    `If it looks useful, reply to this email or ping me on WhatsApp at +44 7345 787028`,\n    `and I'll walk you through pricing and timelines.`,\n    ``,\n    `If not, no worries \u2014 reply with \"no thanks\" and I won't follow up.`,\n    ``,\n    `Gelson`,\n    `Bridge Digital Solution`,\n    `bridge.digital.solution@gmail.com`,\n  ].join('\\n');\n  return { subject, body, __fallback__: true, __fallback_reason__: parseError || 'empty' };\n}\n\nconst email = parsed || fallback();\nif (prev.dry_run) {\n  email.subject = '[DRY-RUN] ' + email.subject;\n  email.body = '[DRY-RUN \u2014 would have gone to ' + (prev.hasValidEmail ? prev.email : '(no lead email)') + ']\\n\\n' + email.body;\n}\n\n// Rough token-based cost estimate (Anthropic HAIKU 2026-04: $0.80/M in, $4/M out)\nconst chars_in  = (JSON.stringify(prev.llm_request) || '').length;\nconst chars_out = (api.response || '').length;\nconst input_tokens  = Math.ceil(chars_in / 4);\nconst output_tokens = Math.ceil(chars_out / 4);\nconst llm_cost_usd = Number(((input_tokens * 0.80 + output_tokens * 4) / 1_000_000).toFixed(4));\n\nreturn { json: {\n  ...prev,\n  subject: email.subject,\n  body: email.body,\n  llm_cost_usd,\n  llm_meta: { input_tokens, output_tokens, model: api.model_used || 'HAIKU', fallback: email.__fallback__ === true }\n}};",
+        "mode": "runOnceForAllItems"
+      },
+      "id": "node_parse_email",
+      "name": "Parse email + compute cost",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1340,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "sendTo": "={{ $json.to_email }}",
+        "subject": "={{ $json.subject }}",
+        "emailType": "text",
+        "message": "={{ $json.body }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "node_gmail",
+      "name": "Gmail: send",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1560,
+        400
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "T55BDHntJ3i1NFYw",
+          "name": "Gmail account 2"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Gmail send node returns the message object with id + threadId on success.\n// With neverError true, a failure lands here too \u2014 detect by checking id.\nconst prev = $('Parse email + compute cost').first().json;\nconst resp = $json || {};\n\nconst send_ok = !!(resp.id || resp.messageId);\nconst provider_message_id = resp.id || resp.messageId || null;\nconst thread_id = resp.threadId || null;\n\nreturn { json: { ...prev, send_ok, provider_message_id, thread_id, send_raw: resp } };",
+        "mode": "runOnceForAllItems"
+      },
+      "id": "node_parse_send",
+      "name": "Parse Gmail send",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1780,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH p AS (SELECT $1::jsonb AS d)\nINSERT INTO bridge.outreach_messages\n  (lead_id, channel, direction, template_key, subject, body,\n   provider_message_id, thread_id, delivery_status, sent_at)\nSELECT\n  (d->>'lead_id')::uuid,\n  'email',\n  'outbound',\n  COALESCE(d->>'template_key', 'initial_email_v1'),\n  d->>'subject',\n  d->>'body',\n  d->>'provider_message_id',\n  d->>'thread_id',\n  CASE WHEN (d->>'send_ok')::boolean THEN 'sent' ELSE 'failed' END,\n  CASE WHEN (d->>'send_ok')::boolean THEN NOW() ELSE NULL END\nFROM p\nRETURNING message_id, delivery_status;",
+        "options": {
+          "queryReplacement": "={{ JSON.stringify({lead_id: $json.lead_id, template_key: 'initial_email_v1', subject: $json.subject, body: $json.body, provider_message_id: $json.provider_message_id, thread_id: $json.thread_id, send_ok: $json.send_ok}) }}"
+        }
+      },
+      "id": "node_insert_msg",
+      "name": "Insert outreach_message",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2000,
+        400
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "Ae3yvuqjgMnVRrCo",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH p AS (SELECT $1::jsonb AS d)\nUPDATE bridge.leads\nSET marketing_status = CASE\n      WHEN (d->>'send_ok')::boolean THEN 'Awaiting Reply'\n      ELSE 'Queued'   -- retry-able\n    END,\n    updated_at = NOW()\nFROM p\nWHERE lead_id = (d->>'lead_id')::uuid\nRETURNING lead_id, marketing_status, business_name;",
+        "options": {
+          "queryReplacement": "={{ JSON.stringify({lead_id: $('Parse Gmail send').first().json.lead_id, send_ok: $('Parse Gmail send').first().json.send_ok}) }}"
+        }
+      },
+      "id": "node_update_lead",
+      "name": "Lead \u2192 Awaiting Reply (gated)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2220,
+        400
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "Ae3yvuqjgMnVRrCo",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH p AS (SELECT $1::jsonb AS d)\nINSERT INTO bridge.expenses\n  (workflow_name, lead_id, category, vendor, description, units, unit_label, amount_usd, details_json)\nSELECT\n  'marketing', (d->>'lead_id')::uuid, 'llm_tokens', 'anthropic_haiku',\n  'HAIKU outreach email generation for '||(d->>'business_name'),\n  1, 'calls',\n  CAST(d->>'llm_cost_usd' AS NUMERIC(10,4)),\n  (d->'llm_meta')::jsonb\nFROM p\nRETURNING expense_id, amount_usd;",
+        "options": {
+          "queryReplacement": "={{ JSON.stringify({lead_id: $('Parse Gmail send').first().json.lead_id, business_name: $('Parse Gmail send').first().json.business_name, llm_cost_usd: $('Parse Gmail send').first().json.llm_cost_usd, llm_meta: $('Parse Gmail send').first().json.llm_meta}) }}"
+        }
+      },
+      "id": "node_log_expense",
+      "name": "Log LLM expense",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2440,
+        400
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "Ae3yvuqjgMnVRrCo",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH p AS (SELECT $1::jsonb AS d)\nINSERT INTO bridge.workflow_events\n  (lead_id, workflow_name, event_type, old_status, new_status, details_json)\nSELECT\n  (d->>'lead_id')::uuid, 'marketing',\n  CASE WHEN (d->>'send_ok')::boolean THEN 'email_sent' ELSE 'email_failed' END,\n  'Queued',\n  CASE WHEN (d->>'send_ok')::boolean THEN 'Awaiting Reply' ELSE 'Queued' END,\n  jsonb_build_object(\n    'channel', 'email',\n    'subject', d->>'subject',\n    'to_email', d->>'to_email',\n    'dry_run', (d->>'dry_run')::boolean,\n    'provider_message_id', d->>'provider_message_id',\n    'thread_id', d->>'thread_id',\n    'llm_cost_usd', d->>'llm_cost_usd'\n  )\nFROM p\nRETURNING event_id;",
+        "options": {
+          "queryReplacement": "={{ JSON.stringify({lead_id: $('Parse Gmail send').first().json.lead_id, subject: $('Parse Gmail send').first().json.subject, to_email: $('Parse Gmail send').first().json.to_email, dry_run: $('Parse Gmail send').first().json.dry_run, provider_message_id: $('Parse Gmail send').first().json.provider_message_id, thread_id: $('Parse Gmail send').first().json.thread_id, send_ok: $('Parse Gmail send').first().json.send_ok, llm_cost_usd: $('Parse Gmail send').first().json.llm_cost_usd}) }}"
+        }
+      },
+      "id": "node_log_event",
+      "name": "Log workflow_event",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2660,
+        400
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "Ae3yvuqjgMnVRrCo",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{$env.BRIDGE_MARKETING_BOT_TOKEN}}/sendMessage",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json; charset=utf-8"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={ \"chat_id\": {{$env.BRIDGE_ADMIN_TELEGRAM_CHAT_ID}}, \"text\": \"{{ $('Parse Gmail send').first().json.send_ok ? '\\u2709\\ufe0f  Email sent' : '\\u26a0\\ufe0f  Send failed' }}{{ $('Parse Gmail send').first().json.dry_run ? '  \\u00b7  DRY-RUN' : '' }}\\n\\n  Prospect:  {{ $('Parse Gmail send').first().json.business_name }}\\n  To:        {{ $('Parse Gmail send').first().json.to_email }}\\n  Subject:   {{ $('Parse Gmail send').first().json.subject }}\\n  Thread:    {{ $('Parse Gmail send').first().json.thread_id || 'n/a' }}\\n\\n  Status:    {{ $('Parse Gmail send').first().json.send_ok ? 'Awaiting Reply' : 'Queued (retry)' }}\\n  Next:      watching for reply \\u00b7 follow-up in 24h if silent\\n\\n\\u2014 Marketing\" }",
+        "options": {
+          "timeout": 15000,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "node_mkt_done",
+      "name": "Marketing bot: done",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2880,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{$env.BRIDGE_FINANCE_BOT_TOKEN}}/sendMessage",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json; charset=utf-8"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={ \"chat_id\": {{$env.BRIDGE_ADMIN_TELEGRAM_CHAT_ID}}, \"text\": \"\\ud83e\\uddfe  Outreach email billed\\n\\n  Lead:      {{ $('Parse Gmail send').first().json.business_name }}\\n  Model:     HAIKU ({{ $('Parse Gmail send').first().json.llm_meta.input_tokens }} tok in / {{ $('Parse Gmail send').first().json.llm_meta.output_tokens }} tok out)\\n  Cost:      ${{ $('Parse Gmail send').first().json.llm_cost_usd }}\\n\\nLogged to bridge.expenses.\\n\\u2014 Accounts\" }",
+        "options": {
+          "timeout": 15000,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "node_fin",
+      "name": "Finance bot: cost",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2880,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={ \"status\": \"ok\", \"lead_id\": {{ JSON.stringify($('Parse Gmail send').first().json.lead_id) }}, \"to_email\": {{ JSON.stringify($('Parse Gmail send').first().json.to_email) }}, \"dry_run\": {{ $('Parse Gmail send').first().json.dry_run }}, \"subject\": {{ JSON.stringify($('Parse Gmail send').first().json.subject) }}, \"send_ok\": {{ $('Parse Gmail send').first().json.send_ok }}, \"thread_id\": {{ JSON.stringify($('Parse Gmail send').first().json.thread_id) }}, \"llm_cost_usd\": {{ $('Parse Gmail send').first().json.llm_cost_usd }} }",
+        "options": {}
+      },
+      "id": "node_respond",
+      "name": "Respond OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        3100,
+        400
+      ]
+    }
+  ],
+  "connections": {
+    "Trigger": {
+      "main": [
+        [
+          {
+            "node": "Pick lead + claim",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pick lead + claim": {
+      "main": [
+        [
+          {
+            "node": "Marketing bot: starting",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Marketing bot: starting": {
+      "main": [
+        [
+          {
+            "node": "Build email request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build email request": {
+      "main": [
+        [
+          {
+            "node": "super-agent compose",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "super-agent compose": {
+      "main": [
+        [
+          {
+            "node": "Parse email + compute cost",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse email + compute cost": {
+      "main": [
+        [
+          {
+            "node": "Gmail: send",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gmail: send": {
+      "main": [
+        [
+          {
+            "node": "Parse Gmail send",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Gmail send": {
+      "main": [
+        [
+          {
+            "node": "Insert outreach_message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert outreach_message": {
+      "main": [
+        [
+          {
+            "node": "Lead \u2192 Awaiting Reply (gated)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lead \u2192 Awaiting Reply (gated)": {
+      "main": [
+        [
+          {
+            "node": "Log LLM expense",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log LLM expense": {
+      "main": [
+        [
+          {
+            "node": "Log workflow_event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log workflow_event": {
+      "main": [
+        [
+          {
+            "node": "Marketing bot: done",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Marketing bot: done": {
+      "main": [
+        [
+          {
+            "node": "Finance bot: cost",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Finance bot: cost": {
+      "main": [
+        [
+          {
+            "node": "Respond OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

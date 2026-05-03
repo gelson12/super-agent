@@ -41,7 +41,8 @@ CREATE TABLE IF NOT EXISTS engagements (
     evidence_handling_notes TEXT,
     created_at              TIMESTAMPTZ DEFAULT NOW(),
     closed_at               TIMESTAMPTZ,
-    created_by              TEXT
+    created_by              TEXT,
+    lab_only                BOOLEAN DEFAULT FALSE
 );
 
 CREATE INDEX IF NOT EXISTS idx_engagements_client ON engagements(client_id);
@@ -55,7 +56,7 @@ CREATE TABLE IF NOT EXISTS scope_rules (
     engagement_id   UUID REFERENCES engagements(id) ON DELETE CASCADE,
     value           TEXT NOT NULL,
     scope_type      TEXT NOT NULL
-        CHECK (scope_type IN ('domain','subdomain_wildcard','ip','cidr','web_app','api','environment')),
+        CHECK (scope_type IN ('domain','subdomain_wildcard','ip','cidr','web_app','api','environment','wifi_lab','subnet_lab')),
     in_scope        BOOLEAN DEFAULT TRUE,
     notes           TEXT,
     added_at        TIMESTAMPTZ DEFAULT NOW(),
@@ -139,10 +140,12 @@ CREATE TABLE IF NOT EXISTS scan_jobs (
     completed_at    TIMESTAMPTZ,
     error_message   TEXT,
     raw_output_ref  TEXT,
+    module_type     TEXT,
     created_at      TIMESTAMPTZ DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_scan_jobs_engagement ON scan_jobs(engagement_id, status);
+CREATE INDEX IF NOT EXISTS idx_scan_jobs_module ON scan_jobs(module_type);
 
 -- ============================================================
 -- RAW FINDINGS

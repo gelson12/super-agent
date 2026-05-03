@@ -1,0 +1,36 @@
+{
+  "name": "_RECON_OS_PHASE1_MIGRATION_TEMP",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "recon-os-phase1-migrate",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "wh",
+      "name": "Migrate Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "recon-os-phase1-migrate"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "ALTER TABLE engagements ADD COLUMN IF NOT EXISTS lab_only BOOLEAN DEFAULT FALSE;\nALTER TABLE scan_jobs ADD COLUMN IF NOT EXISTS module_type TEXT;\nCREATE INDEX IF NOT EXISTS idx_scan_jobs_module ON scan_jobs(module_type);\nALTER TABLE scope_rules DROP CONSTRAINT IF EXISTS scope_rules_scope_type_check;\nALTER TABLE scope_rules ADD CONSTRAINT scope_rules_scope_type_check CHECK (scope_type IN ('domain','subdomain_wildcard','ip','cidr','web_app','api','environment','wifi_lab','subnet_lab'));\nSELECT column_name FROM information_schema.columns WHERE table_name='engagements' AND column_name='lab_only';",
+        "options": {}
+      },
+      "id": "pg",
+      "name": "Apply Phase1 ALTERs",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [460, 300],
+      "credentials": { "postgres": { "id": "oHS3dvjMW1h1PkMp", "name": "RECON OS PostgreSQL" } }
+    }
+  ],
+  "connections": {
+    "Migrate Trigger": { "main": [[{ "node": "Apply Phase1 ALTERs", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" }
+}

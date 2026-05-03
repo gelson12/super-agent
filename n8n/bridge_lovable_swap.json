@@ -1,0 +1,179 @@
+{
+  "name": "bridge_lovable_swap",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "bridge-lovable-swap",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": false
+        }
+      },
+      "id": "node_trigger",
+      "name": "Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        400
+      ],
+      "webhookId": "bridge-lovable-swap"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH\n  params AS (\n    SELECT\n      NULLIF($1, '') AS lead_id_str,\n      NULLIF($2, '') AS preview_url\n  ),\n  -- Only accept a plausible Lovable URL to avoid garbage being posted in.\n  valid AS (\n    SELECT\n      p.lead_id_str,\n      p.preview_url,\n      p.lead_id_str IS NOT NULL AND p.preview_url IS NOT NULL\n        AND p.preview_url ~ '^https://[^/ ]+\\.lovable\\.app(/|$)'     AS ok_lovable,\n      p.lead_id_str IS NOT NULL AND p.preview_url IS NOT NULL\n        AND p.preview_url ~ '^https?://'                             AS ok_any_url\n    FROM params p\n  ),\n  updated AS (\n    UPDATE bridge.website_projects wp\n    SET preview_url = v.preview_url,\n        build_method = 'lovable',\n        deployment_status = 'live_lovable',\n        updated_at = NOW()\n    FROM valid v\n    WHERE v.ok_lovable\n      AND wp.lead_id = (v.lead_id_str)::uuid\n    RETURNING wp.website_project_id, wp.slug, wp.preview_url, wp.lead_id\n  ),\n  lead_info AS (\n    SELECT l.lead_id, l.business_name, l.city\n    FROM bridge.leads l\n    JOIN updated u ON u.lead_id = l.lead_id\n  )\nSELECT jsonb_build_object(\n  'ok',           (SELECT ok_lovable FROM valid),\n  'ok_any_url',   (SELECT ok_any_url FROM valid),\n  'lead_id_str',  (SELECT lead_id_str FROM valid),\n  'preview_url',  (SELECT preview_url FROM valid),\n  'updated',      COALESCE((SELECT jsonb_build_object(\n                    'website_project_id', website_project_id,\n                    'slug', slug,\n                    'preview_url', preview_url,\n                    'lead_id', lead_id\n                  ) FROM updated LIMIT 1), NULL),\n  'lead',         (SELECT jsonb_build_object(\n                    'business_name', business_name,\n                    'city', city\n                  ) FROM lead_info LIMIT 1)\n) AS result;",
+        "options": {
+          "queryReplacement": "={{ $json.query?.lead_id || '' }},{{ $json.query?.preview_url || '' }}"
+        }
+      },
+      "id": "node_swap",
+      "name": "Validate + swap",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        460,
+        400
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "Ae3yvuqjgMnVRrCo",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH p AS (SELECT $1::jsonb AS d)\nINSERT INTO bridge.workflow_events\n  (lead_id, workflow_name, event_type, old_status, new_status, details_json)\nSELECT\n  (d->>'lead_id')::uuid, 'website', 'lovable_swap',\n  'static_template', 'lovable',\n  jsonb_build_object(\n    'new_preview_url', d->>'preview_url',\n    'slug',            d->>'slug'\n  )\nFROM p\nWHERE d->>'lead_id' IS NOT NULL AND d->>'lead_id' <> ''\nRETURNING event_id;",
+        "options": {
+          "queryReplacement": "={{ $json.result.updated ? JSON.stringify({lead_id: $json.result.updated.lead_id, preview_url: $json.result.updated.preview_url, slug: $json.result.updated.slug}) : JSON.stringify({}) }}"
+        }
+      },
+      "id": "node_event",
+      "name": "Log workflow_event",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        680,
+        400
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "Ae3yvuqjgMnVRrCo",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{$env.BRIDGE_WEBSITE_BOT_TOKEN}}/sendMessage",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json; charset=utf-8"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={ \"chat_id\": {{$env.BRIDGE_ADMIN_TELEGRAM_CHAT_ID}}, \"text\": \"{{ $('Validate + swap').first().json.result.ok ? '\\u2705  Lovable preview swapped in for ' + $('Validate + swap').first().json.result.lead.business_name + '\\\\n\\\\n  New preview: ' + $('Validate + swap').first().json.result.updated.preview_url + '\\\\n  Marketing will use this URL.\\\\n\\u2014 Web Team' : '\\u26a0\\ufe0f  Lovable swap failed \\u2014 preview_url did not look like a Lovable URL.\\\\n  Expected: https://*.lovable.app/\\\\n  Got: ' + ($('Validate + swap').first().json.result.preview_url || '(empty)') + '\\\\n\\u2014 Web Team' }}\" }",
+        "options": {
+          "timeout": 15000,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "node_bot",
+      "name": "Website bot: swap result",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        900,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $('Validate + swap').first().json.result.ok ? '<!doctype html><html><body style=\"font-family:system-ui;padding:3rem;text-align:center\"><h1 style=\"color:#1b3a5b\">\u2705 Lovable preview swapped</h1><p>Business: <b>' + ($('Validate + swap').first().json.result.lead?.business_name || 'lead') + '</b></p><p>New preview URL stored: <code>' + $('Validate + swap').first().json.result.updated.preview_url + '</code></p><p>The Marketing workflow will now use this URL when it sends outreach.</p><p style=\"color:#888;font-size:.85rem;margin-top:2rem\">\u2014 Bridge Digital Solution</p></body></html>' : '<!doctype html><html><body style=\"font-family:system-ui;padding:3rem;text-align:center\"><h1 style=\"color:#c62828\">\u26a0\ufe0f Swap failed</h1><p>The preview_url did not look like a Lovable URL.</p><p>Expected pattern: <code>https://*.lovable.app/</code></p><p>Got: <code>' + ($('Validate + swap').first().json.result.preview_url || '(empty)') + '</code></p><p>Double-check the URL you pasted and try again.</p></body></html>' }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/html; charset=utf-8"
+              }
+            ]
+          }
+        }
+      },
+      "id": "node_respond",
+      "name": "Respond HTML",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1120,
+        400
+      ]
+    }
+  ],
+  "connections": {
+    "Trigger": {
+      "main": [
+        [
+          {
+            "node": "Validate + swap",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate + swap": {
+      "main": [
+        [
+          {
+            "node": "Log workflow_event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log workflow_event": {
+      "main": [
+        [
+          {
+            "node": "Website bot: swap result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Website bot: swap result": {
+      "main": [
+        [
+          {
+            "node": "Respond HTML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}
