@@ -1,0 +1,157 @@
+{
+  "name": "bridge_arch_migration",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "bridge-arch-migration",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "am_trigger",
+      "name": "Webhook trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "bridge-arch-migration"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "CREATE TABLE IF NOT EXISTS bridge.outcomes (\n    outcome_id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),\n    memo_id            UUID REFERENCES bridge.agent_memos(memo_id) ON DELETE SET NULL,\n    action_type        TEXT NOT NULL,\n    target_bot         TEXT,\n    lead_id            UUID,\n    outcome_text       TEXT,\n    success            BOOLEAN,\n    measured_at        TIMESTAMPTZ DEFAULT NOW(),\n    created_at         TIMESTAMPTZ DEFAULT NOW()\n);\nCREATE INDEX IF NOT EXISTS idx_outcomes_memo    ON bridge.outcomes(memo_id);\nCREATE INDEX IF NOT EXISTS idx_outcomes_bot     ON bridge.outcomes(target_bot);\nCREATE INDEX IF NOT EXISTS idx_outcomes_lead    ON bridge.outcomes(lead_id);\nCREATE INDEX IF NOT EXISTS idx_outcomes_created ON bridge.outcomes(created_at);",
+        "options": {}
+      },
+      "id": "am_outcomes",
+      "name": "Create outcomes table",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [460, 200],
+      "credentials": {
+        "postgres": {
+          "id": "Ae3yvuqjgMnVRrCo",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "CREATE TABLE IF NOT EXISTS bridge.lead_interactions (\n    id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),\n    lead_id          UUID NOT NULL,\n    interaction_type TEXT NOT NULL,\n    notes            TEXT,\n    metadata_json    JSONB DEFAULT '{}',\n    created_at       TIMESTAMPTZ DEFAULT NOW()\n);\nCREATE INDEX IF NOT EXISTS idx_lead_interactions_lead    ON bridge.lead_interactions(lead_id);\nCREATE INDEX IF NOT EXISTS idx_lead_interactions_created ON bridge.lead_interactions(created_at);",
+        "options": {}
+      },
+      "id": "am_lead_interactions",
+      "name": "Create lead_interactions table",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [460, 360],
+      "credentials": {
+        "postgres": {
+          "id": "Ae3yvuqjgMnVRrCo",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "CREATE TABLE IF NOT EXISTS bridge.bot_working_memory (\n    id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),\n    bot_name   TEXT NOT NULL,\n    key        TEXT NOT NULL,\n    value      TEXT NOT NULL,\n    updated_at TIMESTAMPTZ DEFAULT NOW(),\n    UNIQUE (bot_name, key)\n);\nCREATE INDEX IF NOT EXISTS idx_bot_wm_bot ON bridge.bot_working_memory(bot_name, updated_at DESC);",
+        "options": {}
+      },
+      "id": "am_bot_wm",
+      "name": "Create bot_working_memory table",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [460, 520],
+      "credentials": {
+        "postgres": {
+          "id": "Ae3yvuqjgMnVRrCo",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "DO $$\nBEGIN\n    IF NOT EXISTS (\n        SELECT 1 FROM pg_indexes\n        WHERE schemaname = 'bridge'\n          AND tablename  = 'agent_memos'\n          AND indexname  = 'uix_memo_dedup'\n    ) THEN\n        CREATE UNIQUE INDEX uix_memo_dedup\n        ON bridge.agent_memos (from_agent, to_agent, memo_type, subject, (created_at::date))\n        WHERE status = 'open';\n    END IF;\nEXCEPTION WHEN OTHERS THEN\n    NULL;\nEND $$;",
+        "options": {}
+      },
+      "id": "am_idempotency",
+      "name": "Memo idempotency index",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [680, 200],
+      "credentials": {
+        "postgres": {
+          "id": "Ae3yvuqjgMnVRrCo",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "ALTER TABLE bridge.bot_context_overrides\n    ADD COLUMN IF NOT EXISTS baseline_success_rate  FLOAT,\n    ADD COLUMN IF NOT EXISTS baseline_snapshot_at   TIMESTAMPTZ,\n    ADD COLUMN IF NOT EXISTS last_review_at         TIMESTAMPTZ,\n    ADD COLUMN IF NOT EXISTS improved               BOOLEAN;\n\nALTER TABLE bridge.agent_performance\n    ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();\n\nCREATE INDEX IF NOT EXISTS idx_agent_perf_created_at\n    ON bridge.agent_performance(created_at);",
+        "options": {}
+      },
+      "id": "am_columns",
+      "name": "Add feedback + TTL columns",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [680, 360],
+      "credentials": {
+        "postgres": {
+          "id": "Ae3yvuqjgMnVRrCo",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "CREATE OR REPLACE FUNCTION bridge.enforce_cro_gate()\nRETURNS TRIGGER AS $$\nBEGIN\n    IF NEW.to_agent = 'ceo'\n       AND NEW.memo_type IN ('approval_request', 'project_proposal', 'cro_review_complete')\n       AND (\n           (NEW.body_json->>'cro_score') IS NULL\n           OR (NEW.body_json->>'cro_score')::integer < 70\n       )\n    THEN\n        NEW.to_agent  := 'cro';\n        NEW.memo_type := 'cro_review_request';\n        NEW.body_json := NEW.body_json || jsonb_build_object(\n            'auto_rerouted', true,\n            'original_to',   'ceo',\n            'reroute_reason','missing_or_low_cro_score'\n        );\n    END IF;\n    RETURN NEW;\nEND;\n$$ LANGUAGE plpgsql;\n\nDROP TRIGGER IF EXISTS trg_cro_gate ON bridge.agent_memos;\nCREATE TRIGGER trg_cro_gate\nBEFORE INSERT ON bridge.agent_memos\nFOR EACH ROW EXECUTE FUNCTION bridge.enforce_cro_gate();\n\nDROP TRIGGER IF EXISTS trg_cro_gate_update ON bridge.agent_memos;\nCREATE TRIGGER trg_cro_gate_update\nBEFORE UPDATE ON bridge.agent_memos\nFOR EACH ROW\nWHEN (NEW.to_agent = 'ceo' AND OLD.to_agent IS DISTINCT FROM NEW.to_agent)\nEXECUTE FUNCTION bridge.enforce_cro_gate();",
+        "options": {}
+      },
+      "id": "am_cro_trigger",
+      "name": "CRO gate INSERT+UPDATE triggers",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [680, 520],
+      "credentials": {
+        "postgres": {
+          "id": "Ae3yvuqjgMnVRrCo",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={ \"ok\": true, \"message\": \"Bridge OS arch migration complete\" }"
+      },
+      "id": "am_respond",
+      "name": "Respond OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [900, 360]
+    }
+  ],
+  "connections": {
+    "Webhook trigger": {
+      "main": [[
+        {"node": "Create outcomes table",         "type": "main", "index": 0},
+        {"node": "Create lead_interactions table", "type": "main", "index": 0},
+        {"node": "Create bot_working_memory table","type": "main", "index": 0}
+      ]]
+    },
+    "Create outcomes table":          {"main": [[{"node": "Memo idempotency index",         "type": "main", "index": 0}]]},
+    "Create lead_interactions table":  {"main": [[{"node": "Add feedback + TTL columns",       "type": "main", "index": 0}]]},
+    "Create bot_working_memory table": {"main": [[{"node": "CRO gate INSERT+UPDATE triggers",  "type": "main", "index": 0}]]},
+    "Memo idempotency index":          {"main": [[{"node": "Respond OK", "type": "main", "index": 0}]]},
+    "Add feedback + TTL columns":      {"main": [[{"node": "Respond OK", "type": "main", "index": 0}]]},
+    "CRO gate INSERT+UPDATE triggers": {"main": [[{"node": "Respond OK", "type": "main", "index": 0}]]}
+  },
+  "settings": { "executionOrder": "v1" },
+  "staticData": null,
+  "meta": { "templateCredsSetupCompleted": true },
+  "pinData": {}
+}

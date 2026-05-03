@@ -1045,6 +1045,22 @@ async def _lifespan(app: FastAPI):
     import asyncio as _aio_sync
     _aio_sync.create_task(_n8n_auto_sync())
 
+    # ── Legion cold-start warm-up (fix 9) ────────────────────────────────────
+    # Ping Legion /health 30s after startup so the first real request doesn't
+    # pay the cold-start penalty. Best-effort — failure is logged and ignored.
+    async def _legion_warmup():
+        await _aio_sync.sleep(30)
+        _legion_url = os.environ.get("LEGION_URL", "").rstrip("/")
+        if not _legion_url:
+            return
+        try:
+            import urllib.request as _lureq
+            _lureq.urlopen(f"{_legion_url}/health", timeout=5)
+            bg_log("[legion-warmup] Legion pinged successfully", source="startup")
+        except Exception as _lwe:
+            bg_log(f"[legion-warmup] Legion ping failed (ok on cold-start): {_lwe}", source="startup")
+    _aio_sync.create_task(_legion_warmup())
+
     # ── Postgres LISTEN/NOTIFY inbox watcher ─────────────────────────────────
     _db_url = os.environ.get("DATABASE_URL", "")
     if _db_url:
@@ -5863,6 +5879,51 @@ def webhook_bot_engine(req: BotEngineRequest, request: Request):
     if _approved_hint:
         _ctx = f"[CEO DIRECTIVE]\n{_approved_hint}\n\n{_ctx}".strip() if _ctx else f"[CEO DIRECTIVE]\n{_approved_hint}"
 
+    # ── Bot working memory (fix 3) ────────────────────────────────────────────
+    # Inject the bot's rolling key-value store (≤10 entries) so it can recall
+    # facts across invocations without relying on session history alone.
+    try:
+        _wm_conn = _get_pg_conn()
+        if _wm_conn:
+            with _wm_conn.cursor() as _wmc:
+                _wmc.execute(
+                    "SELECT key, value FROM bridge.bot_working_memory "
+                    "WHERE bot_name = %s ORDER BY updated_at DESC LIMIT 10",
+                    (req.bot_name,)
+                )
+                _wm_rows = _wmc.fetchall()
+                if _wm_rows:
+                    _wm_block = "[BOT MEMORY]\n" + "\n".join(f"{k}: {v}" for k, v in _wm_rows)
+                    _ctx = f"{_wm_block}\n\n{_ctx}".strip() if _ctx else _wm_block
+            _wm_conn.close()
+    except Exception:
+        pass
+
+    # ── Lead-specific interaction history (fix 2) ─────────────────────────────
+    # For BizDev and Researcher bots: prepend the last 10 interactions with the
+    # lead so the bot doesn't repeat outreach or miss context from prior touches.
+    if req.bot_name in ("bizdev", "researcher") and req.variables.get("lead_id"):
+        try:
+            _li_conn = _get_pg_conn()
+            if _li_conn:
+                with _li_conn.cursor() as _lic:
+                    _lic.execute(
+                        "SELECT interaction_type, notes, created_at::date "
+                        "FROM bridge.lead_interactions "
+                        "WHERE lead_id = %s::uuid "
+                        "ORDER BY created_at DESC LIMIT 10",
+                        (req.variables["lead_id"],)
+                    )
+                    _li_rows = _lic.fetchall()
+                    if _li_rows:
+                        _li_block = "[LEAD HISTORY]\n" + "\n".join(
+                            f"{r[2]} {r[0]}: {r[1]}" for r in _li_rows
+                        )
+                        _ctx = f"{_li_block}\n\n{_ctx}".strip() if _ctx else _li_block
+                _li_conn.close()
+        except Exception:
+            pass
+
     parts = [p for p in [req.system_prompt, req.task_block, _ctx] if p]
     if req.system_prompt:
         parts = [req.system_prompt, f"[TASK]\n{req.task_block}"]
@@ -5967,6 +6028,38 @@ def webhook_bot_engine(req: BotEngineRequest, request: Request):
         if isinstance(act, dict) and "risk" not in act:
             act["risk"] = _RISK_MAP.get(act.get("type", ""), "medium")
 
+    # ── Bot working memory writes (fix 3) ─────────────────────────────────────
+    # Actions of type "memory_set" persist key/value pairs for future invocations.
+    # Enforce max 10 keys per bot by evicting the oldest when the cap is hit.
+    _mem_writes = [a for a in actions if isinstance(a, dict) and a.get("type") == "memory_set"]
+    if _mem_writes:
+        try:
+            _mw_conn = _get_pg_conn()
+            if _mw_conn:
+                with _mw_conn.cursor() as _mwc:
+                    for _mw in _mem_writes:
+                        _mwc.execute("""
+                            INSERT INTO bridge.bot_working_memory (bot_name, key, value, updated_at)
+                            VALUES (%s, %s, %s, NOW())
+                            ON CONFLICT (bot_name, key) DO UPDATE SET
+                                value      = EXCLUDED.value,
+                                updated_at = NOW()
+                        """, (req.bot_name, str(_mw.get("key", ""))[:120], str(_mw.get("value", ""))[:2000]))
+                    # Evict oldest keys beyond the 10-key cap
+                    _mwc.execute("""
+                        DELETE FROM bridge.bot_working_memory
+                        WHERE bot_name = %s
+                          AND key NOT IN (
+                              SELECT key FROM bridge.bot_working_memory
+                              WHERE bot_name = %s
+                              ORDER BY updated_at DESC LIMIT 10
+                          )
+                    """, (req.bot_name, req.bot_name))
+                _mw_conn.commit()
+                _mw_conn.close()
+        except Exception:
+            pass
+
     # Performance record (fire-and-forget, best effort)
     success = not raw_text.startswith("ERROR") and parse_error is None
     conn = _get_pg_conn()
@@ -6054,6 +6147,28 @@ def webhook_apply_bot_context(req: ApplyBotContextRequest, request: Request):
                     SET status = 'applied', applied_at = NOW()
                     WHERE id = %s::uuid
                 """, (req.proposal_id,))
+        # ── CEO feedback loop: snapshot baseline success_rate (fix 6) ─────────
+        # Store current success_rate so we can detect improvement (or lack of)
+        # after the context override has had time to take effect.
+        try:
+            _cur.execute("""
+                SELECT CASE WHEN tasks_total > 0
+                            THEN tasks_success::float / tasks_total
+                            ELSE NULL END
+                FROM bridge.agent_performance
+                WHERE agent_name = %s
+                ORDER BY date DESC LIMIT 1
+            """, (req.bot_name,))
+            _perf_row = _cur.fetchone()
+            if _perf_row and _perf_row[0] is not None:
+                _cur.execute("""
+                    UPDATE bridge.bot_context_overrides
+                    SET baseline_success_rate = %s,
+                        baseline_snapshot_at  = NOW()
+                    WHERE bot_name = %s
+                """, (_perf_row[0], req.bot_name))
+        except Exception:
+            pass
         _conn.commit()
         bg_log(
             f"[apply-bot-context] {req.bot_name} context updated by {req.approved_by}",
