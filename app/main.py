@@ -5753,6 +5753,27 @@ def webhook_bot_engine(req: BotEngineRequest, request: Request):
     except Exception as _pe:
         parse_error = str(_pe)
 
+    # Scheduled-tick parse-error retry: Legion/Haiku returned bad JSON → try Claude CLI once.
+    # Fires only when: task_kind=scheduled_tick AND non-Claude model answered AND JSON was invalid.
+    # Does NOT loop; if CLI also fails the original parse_error stands and the next cycle retries.
+    if parse_error and req.task_kind == "scheduled_tick" and model_used not in ("CLAUDE", "CLAUDE_CLI_RETRY"):
+        try:
+            from .models.claude import ask_claude as _ask_claude
+            _retry_raw = _ask_claude(full_message)
+            if _retry_raw and not _retry_raw.startswith("["):
+                _rs = _retry_raw.find("{")
+                _re = _retry_raw.rfind("}") + 1
+                if _rs != -1 and _re > _rs:
+                    _rp = _json.loads(_retry_raw[_rs:_re])
+                    reply_text  = _rp.get("reply_text", _rp.get("message", _retry_raw))
+                    actions     = _rp.get("actions", [])
+                    if not isinstance(actions, list):
+                        actions = []
+                    parse_error = None
+                    model_used  = "CLAUDE_CLI_RETRY"
+        except Exception:
+            pass  # retry failed; keep original parse_error, next cycle will try again
+
     # Placeholder detection
     for _banned in _BOT_ENGINE_BANNED:
         if _banned in reply_text:
