@@ -160,10 +160,10 @@ export class Scheduler {
       const last = this.lastIdleRoll.get(bot.id) ?? 0;
       if (realNow - last < IDLE_PICK_MS) continue;
       this.lastIdleRoll.set(bot.id, realNow);
-      // 60% stay (work at desk), 40% wander to an affinity zone.
+      // 60% stay (work at desk), 40% wander to an affinity zone on their home floor.
       if (Math.random() < 0.6) continue;
       const zoneType = bot.affinity[Math.floor(Math.random() * bot.affinity.length)];
-      const dst = this._pickRandomAnchorOfType(zoneType);
+      const dst = this._pickRandomAnchorOfType(zoneType, bot.deskFloor);
       if (dst) bot.goTo(this.floors, dst.floor, dst.x, dst.y, { label: zoneType });
     }
   }
@@ -178,7 +178,7 @@ export class Scheduler {
       stagger += 800;                                  // next real roll is ~30s later
       if (Math.random() > 0.7) continue;
       const zoneType = bot.affinity[Math.floor(Math.random() * bot.affinity.length)];
-      const dst = this._pickRandomAnchorOfType(zoneType);
+      const dst = this._pickRandomAnchorOfType(zoneType, bot.deskFloor);
       if (dst) bot.goTo(this.floors, dst.floor, dst.x, dst.y, { label: zoneType });
     }
   }
@@ -206,9 +206,12 @@ export class Scheduler {
     return this.floors[zone.floor].zoneAnchors(zone);
   }
 
-  _pickRandomAnchorOfType(type) {
+  // homeFloor: restrict to that floor only (idle wandering stays on home floor).
+  // If no zone of that type exists on homeFloor, returns null rather than crossing floors.
+  _pickRandomAnchorOfType(type, homeFloor = null) {
+    const floors = homeFloor ? [homeFloor] : [1, 2, 3];
     const candidates = [];
-    for (const fId of [1,2,3]) {
+    for (const fId of floors) {
       for (const z of this.floors[fId].zonesByType(type)) {
         const anchors = this.floors[fId].zoneAnchors(z);
         for (const a of anchors) candidates.push({ floor: fId, x: a.x, y: a.y });
