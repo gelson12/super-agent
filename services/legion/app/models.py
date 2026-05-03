@@ -13,9 +13,10 @@ class RespondRequest(BaseModel):
     query: str = Field(min_length=1)
     complexity: int = Field(default=3, ge=1, le=5)
     modality: Modality = "text"
-    deadline_ms: int = Field(default=8000, ge=500, le=60_000)
+    deadline_ms: int = Field(default=8000, ge=500, le=120_000)  # raised cap to 120s for bridge_bots
     budget_cents: float = Field(default=2.0, ge=0.0)
     shortlist_override: list[str] | None = None
+    task_kind: str = Field(default="chat", max_length=50)  # e.g. bridge_bots, scheduled_tick, chat
 
 
 class AgentResponse(BaseModel):

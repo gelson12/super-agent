@@ -77,18 +77,35 @@ modality_priors:
 # Set enabled: false to disable all refinement (e.g. for high-throughput / low-latency mode).
 refinement:
   enabled: true
-  complexity_min: 3              # critique+CoT threshold (complexity >= this)
-  synthesis_complexity_min: 2    # MoA synthesis threshold (fires more broadly)
+  complexity_min: 2              # critique fires from complexity 2 (was 3)
+  synthesis_complexity_min: 1    # MoA synthesis fires for ALL tasks (was 2)
 
   # MoA synthesis (Pass 0) — fuses winner + runner-up when models disagree
   synthesis_enabled: true
-  synthesis_deadline_ms: 10000  # budget for the synthesis agent call
+  synthesis_deadline_ms: 12000  # slightly more budget for synthesis
 
   # Cross-agent critique + conditional re-answer
   critique_enabled: true
-  critique_deadline_ms: 6000   # time budget for the critic call
-  refine_deadline_ms: 10000    # time budget for the winner's re-answer
+  critique_deadline_ms: 8000    # more time for elite critique (was 6000)
+  refine_deadline_ms: 14000     # more time for re-answer (was 10000)
 
-  # Chain-of-thought boost (complexity >= 4 only)
+  # Chain-of-thought boost (complexity >= 3 now, was >= 4)
   cot_enabled: true
-  cot_deadline_ms: 15000       # total budget split across reasoning + answer calls
+  cot_complexity_min: 3         # fire CoT one level earlier than before
+  cot_deadline_ms: 20000        # more budget for deep reasoning traces (was 15000)
+
+# ── Per-task-kind refinement overrides ───────────────────────────────────────
+# bridge_bots = high-quality business decisions — maximum refinement budget
+refinement_task_kind_overrides:
+  bridge_bots:
+    complexity_min: 1            # always refine business decisions
+    synthesis_complexity_min: 1
+    cot_complexity_min: 2        # CoT on any moderately complex business task
+    critique_deadline_ms: 10000
+    refine_deadline_ms: 18000
+    cot_deadline_ms: 25000
+    synthesis_deadline_ms: 15000
+  scheduled_tick:
+    complexity_min: 4            # skip refinement on simple ticks (save quota)
+    synthesis_complexity_min: 3
+    cot_complexity_min: 5        # effectively never for ticks

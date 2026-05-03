@@ -41,19 +41,24 @@ log = logging.getLogger("legion.refine")
 # ── Prompt templates ──────────────────────────────────────────────────────────
 
 _CRITIQUE_PROMPT = """\
-You are a senior technical reviewer holding answers to the standard of GPT-4o / Claude Sonnet.
+You are an elite AI quality reviewer. Your job is to hold every answer to the \
+standard of a world-class expert — not just "correct", but genuinely insightful, \
+thorough, and actionable. The bar is higher than GPT-4o or Claude Sonnet: you are \
+looking for what a top-1% domain expert would add or improve.
 
-Read the question and the draft answer below.
+Evaluate the draft answer against these criteria:
+1. Correctness — zero factual errors, no outdated or hallucinated information
+2. Completeness — every sub-question answered; no important edge cases missed
+3. Depth — real reasoning shown (not just conclusions); concrete examples, numbers, \
+   or code where relevant; "why" explained, not just "what"
+4. Actionability — can the reader immediately act on this? Are next steps clear?
+5. Precision — no vague qualifiers like "it depends" without explaining what it depends on
 
-Evaluate against these criteria:
-1. Correctness — no factual errors, no outdated information
-2. Completeness — all sub-questions answered, nothing important omitted
-3. Depth — reasoning shown, not just conclusions; examples or code included where helpful
-4. Clarity — structured, easy to follow, not vague or hand-wavy
+Identify the SINGLE most important improvement that would make this answer \
+significantly better. Be specific and direct (2–4 sentences max). \
+Focus on substance, not style.
 
-Identify the MOST IMPORTANT flaw or gap. Be specific (2–4 sentences max).
-
-If the answer fully meets the standard above — correct, complete, well-reasoned, and clear —
+If the answer already meets expert-level standard on ALL five criteria, \
 respond with exactly: LGTM
 
 Question:
@@ -67,18 +72,31 @@ Critique:"""
 _REFINE_PROMPT = """\
 {query}
 
-[Quality review note: a senior reviewer found this issue with the previous draft:
+[QUALITY UPGRADE REQUIRED: An elite reviewer identified this specific flaw in your \
+previous answer:
+
 {critique}
 
-Rewrite your answer addressing this critique. Be thorough: show reasoning, include
-examples or code where relevant, and ensure every part of the question is answered.]"""
+Rewrite your answer from scratch addressing this critique directly. Requirements:
+- Show your reasoning step-by-step, not just conclusions
+- Include concrete examples, numbers, or code snippets where they add clarity
+- Answer every part of the question — leave nothing vague or hand-wavy
+- Make your answer immediately actionable: the reader should know exactly what to do next
+Your rewritten answer must be measurably better than the draft.]"""
 
 _COT_REASON_PROMPT = """\
-You are a reasoning specialist. Think through the following question carefully and
-produce a detailed reasoning trace — intermediate steps, considerations, edge cases,
-and key insights. This trace will be used to ground a final answer.
+You are an expert reasoning engine. Your job is to think through this problem \
+at the deepest level possible before any answer is written.
 
-Do NOT write the final answer itself. Only the reasoning process.
+Produce a detailed reasoning trace covering:
+- Problem decomposition: what exactly is being asked?
+- Key constraints, assumptions, and dependencies
+- Multiple solution approaches and their trade-offs
+- Edge cases and failure modes
+- The most critical insight a non-expert would miss
+
+This trace will be used to ground a final expert-level answer. \
+Do NOT write the final answer itself — only the reasoning process.
 
 Question:
 {query}
@@ -88,21 +106,31 @@ Reasoning trace:"""
 _COT_ANSWER_PROMPT = """\
 {query}
 
-[A reasoning specialist has already worked through this problem. Use the trace below
-as your foundation — ground your answer in it, but write a clean, complete response
-for the user (not a repetition of the trace):
+[A deep reasoning analysis has already been completed for this problem. \
+The reasoning trace below contains the key insights, trade-offs, and edge cases. \
+Your job: use this foundation to write a final answer that is:
+- More complete and accurate than a model without this reasoning
+- Structured clearly with concrete examples or code where applicable
+- Actionable — the reader knows exactly what to do
+- Genuinely expert-level, not generic
 
-{trace}]
+Reasoning foundation:
+{trace}
 
-Final answer:"""
+Do NOT repeat the trace — synthesize it into a superior final answer:]"""
 
 _SYNTHESIS_PROMPT = """\
-Two independent AI models answered the same question. Synthesize them into one \
-superior answer — extract the strongest reasoning, facts, and examples from each, \
-reconcile any differences, and produce the most complete and accurate response possible.
+Two independent AI systems answered the same question and their answers diverge — \
+meaning each captured something the other missed. Your job is to synthesize them \
+into a single answer that is strictly better than either alone.
 
-Do NOT copy one response verbatim. Do NOT list both answers side-by-side. \
-Write a single, unified answer in your own words that is better than either input alone.
+Rules:
+- Extract the strongest reasoning, facts, numbers, and examples from EACH model
+- Where they agree: reinforce that point concisely
+- Where they disagree: determine which is correct (or explain both if genuinely uncertain)
+- Where one has depth the other lacks: incorporate that depth
+- Do NOT copy either verbatim. Do NOT list them side-by-side. Write ONE unified answer.
+- The result must be more complete, more accurate, and more actionable than either input.
 
 Question:
 {query}
@@ -113,7 +141,7 @@ Model A answer:
 Model B answer:
 {answer_b}
 
-Synthesized answer:"""
+Superior synthesized answer:"""
 
 # Minimum critique length (words) to be considered substantive
 _CRITIQUE_MIN_WORDS = 8
@@ -414,23 +442,31 @@ async def refine_winner(
     time_budget_ms: int,
     refinement_cfg: dict,
     runner_up: AgentResponse | None = None,
+    task_kind_overrides: dict[str, dict] | None = None,
 ) -> tuple[AgentResponse, bool]:
     """
     Run the full refinement pipeline on the hive winner.
 
     Pipeline (each pass failure-safe, skipped when time runs out):
-      Pass 0 — MoA Synthesis (complexity >= 2, runner_up exists, models disagree)
-      Pass 3 — CoT boost     (complexity >= 4)
-      Pass 1+2 — Critique → re-answer (complexity >= 3)
+      Pass 0 — MoA Synthesis (complexity >= synthesis_threshold)
+      Pass 3 — CoT boost     (complexity >= cot_threshold)
+      Pass 1+2 — Critique → re-answer (complexity >= critique_threshold)
 
+    task_kind_overrides: per-task-kind refinement budget overrides from config.
     Returns (final_response, was_refined).
     """
     if not refinement_cfg.get("enabled", True):
         return winner, False
 
-    # MoA synthesis fires from complexity 2 upwards — lower bar than critique
-    synthesis_threshold = refinement_cfg.get("synthesis_complexity_min", 2)
-    critique_threshold  = refinement_cfg.get("complexity_min", 3)
+    # Merge task_kind-specific overrides on top of base config
+    task_kind = getattr(req, "task_kind", "chat") or "chat"
+    tk_override = (task_kind_overrides or {}).get(task_kind, {})
+    effective_cfg = {**refinement_cfg, **tk_override}
+
+    synthesis_threshold = effective_cfg.get("synthesis_complexity_min", 1)
+    critique_threshold  = effective_cfg.get("complexity_min", 2)
+    cot_threshold       = effective_cfg.get("cot_complexity_min",
+                          effective_cfg.get("complexity_min", 3))
 
     # Skip the whole pipeline only if even synthesis wouldn't fire
     if req.complexity < synthesis_threshold:
@@ -465,9 +501,9 @@ async def refine_winner(
             except Exception as exc:
                 log.warning("refine: synthesis raised %s — skipping", type(exc).__name__)
 
-    # ── Pass 3: CoT boost (complexity >= 4, before critique) ─────────────────
-    if req.complexity >= 4 and refinement_cfg.get("cot_enabled", True) and _remaining() > 4000:
-        cot_budget = min(refinement_cfg.get("cot_deadline_ms", 15000), _remaining() - 3000)
+    # ── Pass 3: CoT boost (task_kind-aware threshold) ────────────────────────
+    if req.complexity >= cot_threshold and effective_cfg.get("cot_enabled", True) and _remaining() > 4000:
+        cot_budget = min(effective_cfg.get("cot_deadline_ms", 20000), _remaining() - 3000)
         if cot_budget > 2000:
             try:
                 current = await _cot_boost(
@@ -479,9 +515,9 @@ async def refine_winner(
                 log.warning("refine: CoT boost raised %s — skipping", type(exc).__name__)
 
     # ── Pass 1+2: Cross-agent critique → conditional re-answer ───────────────
-    if req.complexity >= critique_threshold and refinement_cfg.get("critique_enabled", True):
-        critique_budget = min(refinement_cfg.get("critique_deadline_ms", 6000), _remaining() - 1000)
-        refine_budget   = min(refinement_cfg.get("refine_deadline_ms", 10000), _remaining() - 500)
+    if req.complexity >= critique_threshold and effective_cfg.get("critique_enabled", True):
+        critique_budget = min(effective_cfg.get("critique_deadline_ms", 8000), _remaining() - 1000)
+        refine_budget   = min(effective_cfg.get("refine_deadline_ms", 14000), _remaining() - 500)
         if critique_budget > 1500 and refine_budget > 2000:
             try:
                 current = await _critique_and_refine(

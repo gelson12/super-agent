@@ -1424,7 +1424,7 @@ def proposal_approve(memo_id: str, request: Request):
 
 @app.post("/dashboard/bridge/proposals/{memo_id}/reject", tags=["meta"])
 def proposal_reject(memo_id: str, request: Request):
-    """Reject a pending agent memo."""
+    """Reject a pending agent memo and write reason back to originating bot."""
     from .memory.vector_memory import _get_pg_conn as _pgp
     conn = _pgp()
     if not conn:
@@ -1432,8 +1432,8 @@ def proposal_reject(memo_id: str, request: Request):
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT memo_id, from_agent, subject FROM bridge.agent_memos "
-                "WHERE memo_id = %s AND status = 'open'",
+                "SELECT memo_id, from_agent, to_agent, memo_type, subject, body_json "
+                "FROM bridge.agent_memos WHERE memo_id = %s AND status = 'open'",
                 (memo_id,)
             )
             row = cur.fetchone()
@@ -1444,11 +1444,26 @@ def proposal_reject(memo_id: str, request: Request):
                 "approved_by='human', approved_at=NOW() WHERE memo_id = %s",
                 (memo_id,)
             )
+            # Write structured rejection reason back to originating bot
+            # so it can learn and improve its next proposal
+            memo_type = row[3] or ""
+            rejection_reason = (
+                "CRO score too low or insufficient revenue justification."
+                if "cro" in memo_type else
+                "Proposal does not meet quality/risk threshold. "
+                "Ensure CRO score ≥ 70 and clear ROI before resubmitting."
+            )
             cur.execute("""
                 INSERT INTO bridge.agent_memos (from_agent, to_agent, memo_type, priority, subject, body_json)
                 VALUES ('human', %s, 'approval_denied', 'high', %s,
-                        jsonb_build_object('original_memo_id', %s::text, 'rejected_by', 'human'))
-            """, (row[1], f"REJECTED: {row[2]}", memo_id))
+                        jsonb_build_object(
+                            'original_memo_id', %s::text,
+                            'rejected_by', 'human',
+                            'rejection_reason', %s,
+                            'original_type', %s,
+                            'resubmit_hint', 'Attach CRO score ≥70 and expected_roi_usd before resubmitting.'
+                        ))
+            """, (row[1], f"REJECTED: {row[4]}", memo_id, rejection_reason, memo_type))
         conn.commit()
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
@@ -6106,9 +6121,16 @@ def webhook_bot_engine(req: BotEngineRequest, request: Request):
     except Exception:
         _complexity = 3  # safe default: route to Claude CLI
 
+    # Pass task_kind to Legion so it can apply per-kind refinement budgets.
+    # bridge_bots = maximum quality mode for all business agent decisions.
+    _legion_task_kind = (
+        "scheduled_tick" if req.task_kind == "scheduled_tick"
+        else "bridge_bots"
+    )
+
     if req.task_kind == "scheduled_tick" or _complexity <= 2:
         _leg_c = min(_complexity, 1) if req.task_kind == "scheduled_tick" else _complexity
-        _leg   = _legion(full_message, complexity=_leg_c)
+        _leg   = _legion(full_message, complexity=_leg_c, task_kind=_legion_task_kind)
         if _leg is not None:
             raw_text   = _leg
             model_used = "LEGION"

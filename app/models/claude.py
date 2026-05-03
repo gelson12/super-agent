@@ -60,6 +60,7 @@ def _try_legion(
     prompt: str,
     timeout_s: float | None = None,
     complexity: int = 3,
+    task_kind: str = "chat",
 ) -> str | None:
     """
     Send the prompt to the Legion hive and return its winner content.
@@ -95,16 +96,20 @@ def _try_legion(
     # Size the timeout to accommodate Legion's refinement layer:
     # complexity >= 4 triggers CoT + critique (up to ~30s); lower gets quick path.
     if timeout_s is None:
-        timeout_s = 35.0 if complexity >= 4 else 20.0
+        # bridge_bots gets full 60s — it runs MoA + CoT + critique at max quality
+        if task_kind == "bridge_bots":
+            timeout_s = 60.0
+        elif complexity >= 4:
+            timeout_s = 45.0
+        else:
+            timeout_s = 25.0
     try:
-        # Pass deadline_ms slightly under the HTTP timeout so Legion's internal
-        # clock matches ours, giving it time to gracefully return the best answer
-        # it has rather than timing out cold.
         deadline_ms = max(4000, int(timeout_s * 1000) - 1000)
         body = json.dumps({
             "query": prompt,
             "complexity": max(1, min(5, complexity)),
             "deadline_ms": deadline_ms,
+            "task_kind": task_kind,
         }).encode()
         ts = str(int(time.time()))
         mac = hmac.new(secret.encode(), digestmod=hashlib.sha256)

@@ -69,13 +69,36 @@ def clear_session(session_id: str) -> None:
     _cache_invalidate(session_id)
 
 
+_SESSION_MAX_MESSAGES = 40  # 20 exchanges (user+ai pairs) — hard rolling window
+
 def append_exchange(session_id: str, user_msg: str, ai_msg: str) -> None:
-    """Save one human→AI exchange to the session store."""
+    """Save one human→AI exchange, trimming to the last 20 exchanges (40 messages)."""
     try:
         history = get_session_history(session_id)
         history.add_user_message(user_msg)
         history.add_ai_message(ai_msg)
-        # Invalidate compression cache — new messages make the cached summary stale
+        # Rolling window: evict oldest messages beyond the cap
+        msgs = history.messages
+        if len(msgs) > _SESSION_MAX_MESSAGES:
+            excess = len(msgs) - _SESSION_MAX_MESSAGES
+            for msg in msgs[:excess]:
+                try:
+                    history.clear()
+                    break
+                except Exception:
+                    break
+            # Re-add the kept tail after clearing
+            if len(msgs) > _SESSION_MAX_MESSAGES:
+                kept = msgs[excess:]
+                try:
+                    history.clear()
+                    for m in kept:
+                        if m.type == "human":
+                            history.add_user_message(m.content)
+                        else:
+                            history.add_ai_message(m.content)
+                except Exception:
+                    pass
         _cache_invalidate(session_id)
     except Exception as e:
         _log.warning("append_exchange failed for session %s: %s", session_id, e)

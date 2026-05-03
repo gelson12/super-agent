@@ -45,6 +45,7 @@ class LegionConfig:
     circuit_cooldown_s: dict[str, int] = field(default_factory=dict)
     circuit_error_threshold: int = 5
     refinement: dict = field(default_factory=lambda: dict(_DEFAULT_REFINEMENT_CFG))
+    refinement_task_kind_overrides: dict[str, dict] = field(default_factory=dict)
 
 
 @lru_cache(maxsize=1)
@@ -90,4 +91,5 @@ def load_config(path: Path | None = None) -> LegionConfig:
         circuit_cooldown_s=circuit.get("cooldown_s", {}),
         circuit_error_threshold=circuit.get("error_threshold", 5),
         refinement=refinement_cfg,
+        refinement_task_kind_overrides=data.get("refinement_task_kind_overrides", {}),
     )

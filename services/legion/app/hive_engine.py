@@ -196,6 +196,7 @@ async def run_round(req: RespondRequest, agents: dict[str, object]) -> RespondRe
                 runner_up=runner_up,
                 time_budget_ms=time_remaining_ms,
                 refinement_cfg=refinement_cfg,
+                task_kind_overrides=getattr(cfg, "refinement_task_kind_overrides", {}),
             )
             if was_refined:
                 refinement_passes = 1
