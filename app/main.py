@@ -5663,6 +5663,7 @@ class BotEngineRequest(BaseModel):
     task_block:    str   = Field(...,    max_length=100000)
     context_block: str   = Field(default="", max_length=100000)
     session_id:    str   = Field(default="default", max_length=128)
+    task_kind:     str   = Field(default="agent_invoke", max_length=32)
     api_key:       str   = Field(default="")
 
 
@@ -5710,7 +5711,9 @@ def webhook_bot_engine(req: BotEngineRequest, request: Request):
             parts.insert(0, f"[CONTEXT]\n{req.context_block}")
     full_message = "\n\n".join(parts)
 
-    result = dispatch(full_message, force_model="CLAUDE", session_id=req.session_id)
+    # Use Haiku for routine scheduled ticks to preserve Claude Pro/Sonnet quota
+    _model = "HAIKU" if req.task_kind == "scheduled_tick" else "CLAUDE"
+    result = dispatch(full_message, force_model=_model, session_id=req.session_id)
     raw_text: str = result.get("response", "")
     model_used: str = result.get("model", req.bot_name)
 
