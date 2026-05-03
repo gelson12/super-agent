@@ -14,7 +14,6 @@ hive:
   shortlist_max: 5
   deadlines_ms:
     claude_b: 8000
-    kimi: 6000
     gemini_b: 25000  # Node CLI cold-starts ~10-16s before first token
     ollama: 4000
     hf: 6000
@@ -41,7 +40,6 @@ circuit:
   error_threshold: 5
   cooldown_s:
     claude_b: 300
-    kimi: 120
     gemini_b: 60
     ollama: 15
     hf: 60
@@ -53,7 +51,6 @@ circuit:
 modality_priors:
   code:
     claude_b: 0.10
-    kimi: 0.10
     mistral: 0.10   # Codestral is the dedicated code specialist
     deepseek: 0.05  # R1 reasoning helps for complex/multi-step code
   chat:

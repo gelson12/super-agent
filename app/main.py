@@ -918,6 +918,44 @@ async def _lifespan(app: FastAPI):
 
     scheduler.start()
 
+    # ── Bridge schema migrations (idempotent — IF NOT EXISTS) ────────────────
+    # Adds tables required by CEO intelligence + context override system.
+    # Runs on every deploy; safe to re-run.
+    try:
+        import psycopg2 as _pg2
+        _dbu = os.environ.get("DATABASE_URL", "")
+        if _dbu:
+            _mc = _pg2.connect(_dbu)
+            _mc.autocommit = True
+            with _mc.cursor() as _cur:
+                _cur.execute("""
+                    CREATE TABLE IF NOT EXISTS bridge.bot_improvement_proposals (
+                        id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                        proposed_by     TEXT DEFAULT 'ceo',
+                        bot_name        TEXT NOT NULL,
+                        change_type     TEXT NOT NULL,
+                        proposed_change TEXT NOT NULL,
+                        rationale       TEXT,
+                        status          TEXT DEFAULT 'pending',
+                        created_at      TIMESTAMPTZ DEFAULT NOW(),
+                        reviewed_at     TIMESTAMPTZ,
+                        reviewed_by     TEXT,
+                        applied_at      TIMESTAMPTZ
+                    );
+                    CREATE TABLE IF NOT EXISTS bridge.bot_context_overrides (
+                        bot_name        TEXT PRIMARY KEY,
+                        context_hint    TEXT NOT NULL,
+                        approved_by     TEXT DEFAULT 'human',
+                        approved_at     TIMESTAMPTZ DEFAULT NOW(),
+                        proposal_id     UUID,
+                        updated_at      TIMESTAMPTZ DEFAULT NOW()
+                    );
+                """)
+            _mc.close()
+            bg_log("[startup] Bridge schema migrations applied", source="startup")
+    except Exception as _me:
+        bg_log(f"[startup] Bridge schema migration skipped: {_me}", source="startup")
+
     # ── Auto-sync Bridge bot JSONs to n8n on every deploy ────────────────────
     # Runs in the background 15s after startup (let n8n finish its own boot).
     # Compares a SHA-256 hash of each local JSON against the live workflow —
@@ -5769,16 +5807,40 @@ def webhook_bot_engine(req: BotEngineRequest, request: Request):
         from fastapi import HTTPException
         raise HTTPException(status_code=403, detail="Invalid api_key")
 
-    parts = [p for p in [req.system_prompt, req.task_block, req.context_block] if p]
+    # ── Inject CEO-approved context overrides ─────────────────────────────────
+    # CEO can propose adjustments (focus area, quality hints, priority notes) which
+    # are stored in bridge.bot_context_overrides after human approval via CoS.
+    # Each bot sees its own approved hint automatically — no workflow changes needed.
+    _approved_hint = ""
+    try:
+        from .memory.vector_memory import _get_pg_conn as _pgc
+        _oc = _pgc()
+        if _oc:
+            with _oc.cursor() as _ocur:
+                _ocur.execute(
+                    "SELECT context_hint FROM bridge.bot_context_overrides WHERE bot_name = %s",
+                    (req.bot_name,)
+                )
+                _row = _ocur.fetchone()
+                if _row:
+                    _approved_hint = _row[0]
+            _oc.close()
+    except Exception:
+        pass
+
+    _ctx = req.context_block
+    if _approved_hint:
+        _ctx = f"[CEO DIRECTIVE]\n{_approved_hint}\n\n{_ctx}".strip() if _ctx else f"[CEO DIRECTIVE]\n{_approved_hint}"
+
+    parts = [p for p in [req.system_prompt, req.task_block, _ctx] if p]
     if req.system_prompt:
-        parts = [req.system_prompt,
-                 f"[TASK]\n{req.task_block}"]
-        if req.context_block:
-            parts.insert(1, f"[CONTEXT]\n{req.context_block}")
+        parts = [req.system_prompt, f"[TASK]\n{req.task_block}"]
+        if _ctx:
+            parts.insert(1, f"[CONTEXT]\n{_ctx}")
     else:
         parts = [f"[TASK]\n{req.task_block}"]
-        if req.context_block:
-            parts.insert(0, f"[CONTEXT]\n{req.context_block}")
+        if _ctx:
+            parts.insert(0, f"[CONTEXT]\n{_ctx}")
     full_message = "\n\n".join(parts)
 
     # ── Complexity-aware routing ──────────────────────────────────────────────
@@ -5909,6 +5971,118 @@ def webhook_bot_engine(req: BotEngineRequest, request: Request):
         model_used=model_used,
         parse_error=parse_error,
     )
+
+
+class ApplyBotContextRequest(BaseModel):
+    bot_name:        str  = Field(..., max_length=64)
+    context_hint:    str  = Field(..., max_length=4000)
+    approved_by:     str  = Field(default="human", max_length=64)
+    proposal_id:     str  = Field(default="", max_length=64)
+    api_key:         str  = Field(default="")
+
+
+@app.post("/webhook/apply-bot-context", tags=["webhook"])
+@limiter.limit("60/minute")
+def webhook_apply_bot_context(req: ApplyBotContextRequest, request: Request):
+    """
+    Store a CEO-proposed, human-approved context hint for a specific bot.
+    On every subsequent call to /webhook/bot-engine for that bot, the hint
+    is prepended to context_block as [CEO DIRECTIVE].
+    Authenticated by N8N_API_KEY (same pattern as all webhook endpoints).
+    """
+    from .memory.vector_memory import _get_pg_conn as _pgc2
+    _key = os.environ.get("N8N_API_KEY", "")
+    if _key and req.api_key != _key:
+        raise HTTPException(status_code=401, detail="invalid api_key")
+    if not req.context_hint.strip():
+        raise HTTPException(status_code=400, detail="context_hint cannot be empty")
+
+    _conn = _pgc2()
+    if not _conn:
+        raise HTTPException(status_code=503, detail="database unavailable")
+    try:
+        with _conn.cursor() as _cur:
+            _cur.execute("""
+                INSERT INTO bridge.bot_context_overrides
+                    (bot_name, context_hint, approved_by, proposal_id, updated_at)
+                VALUES (%s, %s, %s, %s::uuid, NOW())
+                ON CONFLICT (bot_name) DO UPDATE SET
+                    context_hint = EXCLUDED.context_hint,
+                    approved_by  = EXCLUDED.approved_by,
+                    proposal_id  = EXCLUDED.proposal_id,
+                    updated_at   = NOW()
+            """, (
+                req.bot_name,
+                req.context_hint.strip(),
+                req.approved_by,
+                req.proposal_id if req.proposal_id else None,
+            ))
+            if req.proposal_id:
+                _cur.execute("""
+                    UPDATE bridge.bot_improvement_proposals
+                    SET status = 'applied', applied_at = NOW()
+                    WHERE id = %s::uuid
+                """, (req.proposal_id,))
+        _conn.commit()
+        bg_log(
+            f"[apply-bot-context] {req.bot_name} context updated by {req.approved_by}",
+            "apply_bot_context"
+        )
+        return {"ok": True, "bot_name": req.bot_name, "approved_by": req.approved_by}
+    except Exception as _e:
+        _conn.rollback()
+        bg_log(f"[apply-bot-context] DB error: {_e}", "apply_bot_context")
+        raise HTTPException(status_code=500, detail=str(_e)[:120])
+    finally:
+        _conn.close()
+
+
+@app.delete("/webhook/apply-bot-context/{bot_name}", tags=["webhook"])
+@limiter.limit("30/minute")
+def webhook_remove_bot_context(bot_name: str, api_key: str = "", request: Request = None):
+    """Remove a context override for a bot (resets it to default behaviour)."""
+    from .memory.vector_memory import _get_pg_conn as _pgc3
+    _key = os.environ.get("N8N_API_KEY", "")
+    if _key and api_key != _key:
+        raise HTTPException(status_code=401, detail="invalid api_key")
+    _conn = _pgc3()
+    if not _conn:
+        raise HTTPException(status_code=503, detail="database unavailable")
+    try:
+        with _conn.cursor() as _cur:
+            _cur.execute("DELETE FROM bridge.bot_context_overrides WHERE bot_name = %s", (bot_name,))
+            deleted = _cur.rowcount
+        _conn.commit()
+        return {"ok": True, "deleted": deleted, "bot_name": bot_name}
+    finally:
+        _conn.close()
+
+
+@app.get("/webhook/bot-context-overrides", tags=["webhook"])
+@limiter.limit("60/minute")
+def webhook_list_bot_contexts(api_key: str = "", request: Request = None):
+    """List all active context overrides (for dashboard/audit)."""
+    from .memory.vector_memory import _get_pg_conn as _pgc4
+    _key = os.environ.get("N8N_API_KEY", "")
+    if _key and api_key != _key:
+        raise HTTPException(status_code=401, detail="invalid api_key")
+    _conn = _pgc4()
+    if not _conn:
+        return {"overrides": []}
+    try:
+        with _conn.cursor() as _cur:
+            _cur.execute("""
+                SELECT bot_name, context_hint, approved_by, approved_at, updated_at
+                FROM bridge.bot_context_overrides ORDER BY updated_at DESC
+            """)
+            rows = _cur.fetchall()
+        return {"overrides": [
+            {"bot_name": r[0], "context_hint": r[1], "approved_by": r[2],
+             "approved_at": str(r[3]), "updated_at": str(r[4])}
+            for r in rows
+        ]}
+    finally:
+        _conn.close()
 
 
 class MemoCreateRequest(BaseModel):
