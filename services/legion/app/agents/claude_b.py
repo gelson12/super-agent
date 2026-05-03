@@ -22,9 +22,12 @@ class ClaudeBAgent:
     agent_id = "claude_b"
 
     def __init__(self) -> None:
-        self.enabled = os.environ.get("DUAL_ACCOUNT_ENABLED", "false").lower() == "true"
+        _dual = os.environ.get("DUAL_ACCOUNT_ENABLED", "false").lower() == "true"
         self.account_email = os.environ.get("CLAUDE_ACCOUNT_B_EMAIL", "")
         self.binary = os.environ.get("CLAUDE_BINARY", "claude")
+        # Auto-disable if credentials file doesn't exist — avoids 369-failure loops
+        _creds = os.path.join(ACCOUNT_B_HOME, ".claude", ".credentials.json")
+        self.enabled = _dual and os.path.isfile(_creds)
 
     async def respond(self, query: str, deadline_ms: int) -> AgentResponse:
         if not self.enabled:

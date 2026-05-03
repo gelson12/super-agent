@@ -16,8 +16,8 @@ class HFAgent:
     agent_id = "hf"
 
     def __init__(self) -> None:
-        self.enabled = os.environ.get("HF_ENABLED", "false").lower() == "true"
         self.api_key = os.environ.get("HF_API_KEY", "")
+        self.enabled = os.environ.get("HF_ENABLED", "false").lower() == "true" and bool(self.api_key)
         self.base_url = "https://api-inference.huggingface.co/models"
 
     async def respond(
