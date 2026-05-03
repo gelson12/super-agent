@@ -995,6 +995,26 @@ async def _lifespan(app: FastAPI):
                     _local = _json2.loads(open(_fpath, encoding="utf-8").read())
                     _wf_name = _local.get("name", "")
                     if _wf_name not in _wf_map:
+                        # New workflow — POST to create, then activate
+                        _create_body = _json2.dumps({**_local, "active": False}).encode()
+                        _post = _ureq.Request(f"{_n8n_base}/api/v1/workflows",
+                            data=_create_body, method="POST",
+                            headers={"X-N8N-API-KEY": _n8n_key, "Content-Type": "application/json"})
+                        with _ureq.urlopen(_post, timeout=30) as _rpost:
+                            _created = _json2.loads(_rpost.read())
+                            _new_id = _created.get("id")
+                        # Activate after creation
+                        if _new_id:
+                            _act = _ureq.Request(
+                                f"{_n8n_base}/api/v1/workflows/{_new_id}/activate",
+                                data=b"", method="POST",
+                                headers={"X-N8N-API-KEY": _n8n_key, "Content-Type": "application/json"})
+                            try:
+                                _ureq.urlopen(_act, timeout=15)
+                            except Exception:
+                                pass
+                        uploaded += 1
+                        bg_log(f"[n8n-sync] created+activated: {_wf_name}", source="startup")
                         continue
                     _wf_id, _remote = _wf_map[_wf_name]
                     # Compare node count + connections as cheap diff (full JSON compare would be noisy)
