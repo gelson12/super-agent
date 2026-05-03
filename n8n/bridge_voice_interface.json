@@ -1,0 +1,207 @@
+{
+  "name": "bridge_voice_interface",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {}
+      },
+      "id": "voice-tg-trigger",
+      "name": "Telegram: voice message",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 300],
+      "webhookId": "voice-interface-webhook-001"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Only process voice messages\nconst msg = $json.message || {};\nif (!msg.voice && !msg.audio) {\n  return [];\n}\nconst fileId = (msg.voice || msg.audio).file_id;\nconst chatId = msg.chat.id;\nconst from = msg.from ? (msg.from.first_name || 'Gelson') : 'Gelson';\nreturn [{ json: { file_id: fileId, chat_id: chatId, from_name: from } }];"
+      },
+      "id": "voice-filter",
+      "name": "Filter: voice only",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/getFile?file_id={{ $json.file_id }}",
+        "options": {}
+      },
+      "id": "voice-get-file",
+      "name": "Telegram: get file path",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "url": "=https://api.telegram.org/file/bot{{ $env.TELEGRAM_BOT_TOKEN }}/{{ $json.result.file_path }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          }
+        }
+      },
+      "id": "voice-download",
+      "name": "Download audio file",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://api.openai.com/v1/audio/transcriptions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.OPENAI_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "file",
+              "inputDataFieldName": "data"
+            },
+            {
+              "name": "model",
+              "value": "whisper-1"
+            },
+            {
+              "name": "language",
+              "value": "en"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "voice-whisper",
+      "name": "OpenAI Whisper transcribe",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const transcript = $json.text || '';\nconst prevItem = $('voice-filter').item.json;\nreturn [{ json: { \n  transcript,\n  chat_id: prevItem.chat_id,\n  from_name: prevItem.from_name,\n  message: transcript\n}}];"
+      },
+      "id": "voice-extract-text",
+      "name": "Extract transcript",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.SUPER_AGENT_BASE_URL }}/webhook/bot-engine",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "bot_name",
+              "value": "chief_of_staff"
+            },
+            {
+              "name": "task_block",
+              "value": "={{ $json.message }}"
+            },
+            {
+              "name": "context_block",
+              "value": "=Voice instruction from Gelson (transcribed via Whisper). Treat as a direct command from the owner."
+            },
+            {
+              "name": "session_id",
+              "value": "gelson_voice"
+            },
+            {
+              "name": "api_key",
+              "value": "={{ $env.N8N_API_KEY }}"
+            }
+          ]
+        },
+        "options": {
+          "retryOnFail": true,
+          "maxTries": 3,
+          "waitBetweenTries": 4000,
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "voice-cos-call",
+      "name": "CoS bot: process instruction",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1560, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const reply = ($json.reply_text || '').trim();\nconst transcript = $('voice-extract-text').item.json.transcript;\nconst chatId = $('voice-filter').item.json.chat_id;\n\nconst _BOT_HEADER = '🎙️ *Voice processed* | 🧑‍💼 *CoS*\\n\\n';\nconst formatted = _BOT_HEADER + \n  `*Your instruction:* _${transcript}_\\n\\n` +\n  reply;\n\nreturn [{ json: { chat_id: chatId, text: formatted } }];"
+      },
+      "id": "voice-format-reply",
+      "name": "Format reply",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1780, 300]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chat_id }}",
+        "text": "={{ $json.text }}",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "voice-tg-reply",
+      "name": "Telegram: send reply",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [2000, 300]
+    }
+  ],
+  "connections": {
+    "Telegram: voice message": {
+      "main": [[{"node": "Filter: voice only", "type": "main", "index": 0}]]
+    },
+    "Filter: voice only": {
+      "main": [[{"node": "Telegram: get file path", "type": "main", "index": 0}]]
+    },
+    "Telegram: get file path": {
+      "main": [[{"node": "Download audio file", "type": "main", "index": 0}]]
+    },
+    "Download audio file": {
+      "main": [[{"node": "OpenAI Whisper transcribe", "type": "main", "index": 0}]]
+    },
+    "OpenAI Whisper transcribe": {
+      "main": [[{"node": "Extract transcript", "type": "main", "index": 0}]]
+    },
+    "Extract transcript": {
+      "main": [[{"node": "CoS bot: process instruction", "type": "main", "index": 0}]]
+    },
+    "CoS bot: process instruction": {
+      "main": [[{"node": "Format reply", "type": "main", "index": 0}]]
+    },
+    "Format reply": {
+      "main": [[{"node": "Telegram: send reply", "type": "main", "index": 0}]]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": ["bridge", "voice", "gelson"]
+}

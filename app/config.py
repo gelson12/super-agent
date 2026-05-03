@@ -109,6 +109,27 @@ class Settings(BaseSettings):
     # Obtain at: https://dashboard.stripe.com/apikeys
     stripe_secret_key: str = ""
 
+    # Twilio WhatsApp — client comms (proposals, payment chasers, status updates)
+    # Set via Railway env vars: TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_WHATSAPP_FROM
+    # Obtain at: https://console.twilio.com — enable WhatsApp Sandbox (free to test)
+    # Production: apply for WhatsApp Business API via Meta at business.whatsapp.com
+    twilio_account_sid: str = ""
+    twilio_auth_token: str = ""
+    twilio_whatsapp_from: str = ""   # e.g. whatsapp:+14155238886 (sandbox) or your approved number
+
+    # Companies House API — outbound lead generation
+    # Free public API key at https://developer.company-information.service.gov.uk
+    companies_house_api_key: str = ""
+
+    # Google Reviews URL — used in testimonial/review sequences
+    # Get from Google Business Profile → Get more reviews → Share review form
+    google_review_url: str = ""
+
+    # OpenAI API — for Whisper voice transcription (voice interface for Gelson)
+    # Set via Railway env var OPENAI_API_KEY
+    # Obtain at: https://platform.openai.com/api-keys
+    openai_api_key: str = ""
+
     # Multi-framework orchestration (LangGraph custom graphs, AutoGen, CrewAI)
     # Global kill switch for the /chat/graph, /chat/crew, /chat/groupchat endpoints.
     frameworks_enabled: bool = True

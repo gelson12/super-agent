@@ -22,6 +22,8 @@ from ..tools.v0_tools import V0_TOOLS
 from ..tools.vercel_tools import VERCEL_TOOLS
 from ..tools.stripe_tools import STRIPE_TOOLS
 from ..tools.document_tools import DOCUMENT_TOOLS
+from ..tools.whatsapp_tools import WHATSAPP_TOOLS
+from ..tools.lead_tools import LEAD_TOOLS
 
 _SYSTEM = """You are a GitHub assistant with LIVE access to Gelson's GitHub account (gelson12).
 
@@ -172,6 +174,10 @@ _GITHUB_TOOLS = [
     *STRIPE_TOOLS,
     # Document generation — proposals and contracts as HTML/PDF
     *DOCUMENT_TOOLS,
+    # WhatsApp — send proposals, payment reminders, status updates via Twilio
+    *WHATSAPP_TOOLS,
+    # Lead generation — add and list outbound sales leads
+    *LEAD_TOOLS,
 ]
 
 _agent = None

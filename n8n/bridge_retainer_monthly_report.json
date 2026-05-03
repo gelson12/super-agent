@@ -1,0 +1,105 @@
+{
+  "name": "bridge_retainer_monthly_report",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 0 9 1 * *"
+            }
+          ]
+        }
+      },
+      "id": "retainer-cron",
+      "name": "1st of month 09:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.SUPER_AGENT_BASE_URL }}/dashboard/kpi",
+        "options": {}
+      },
+      "id": "retainer-kpi",
+      "name": "Fetch KPI data",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.SUPER_AGENT_BASE_URL }}/webhook/bot-engine",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "bot_name",
+              "value": "programmer"
+            },
+            {
+              "name": "task_block",
+              "value": "=Generate a monthly retainer client report email body. KPI data: {{ JSON.stringify($json) }}. Include: work completed this month (website maintenance, SEO updates, content changes), performance highlights, next month preview, renewal reminder. Keep it professional, warm, and brief."
+            },
+            {
+              "name": "session_id",
+              "value": "retainer_report_monthly"
+            },
+            {
+              "name": "api_key",
+              "value": "={{ $env.N8N_API_KEY }}"
+            }
+          ]
+        },
+        "options": {
+          "retryOnFail": true,
+          "maxTries": 3,
+          "waitBetweenTries": 4000,
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "retainer-generate-report",
+      "name": "Generate monthly report",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $env.TELEGRAM_OWNER_CHAT_ID }}",
+        "text": "=📋 *Monthly Retainer Report Generated*\n\n{{ ($json.reply_text || '').substring(0, 800) }}\n\n_Approve and send to retainer clients, or /veto to skip this month_",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "retainer-notify-cos",
+      "name": "Notify Gelson via Telegram",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [900, 300]
+    }
+  ],
+  "connections": {
+    "1st of month 09:00": {
+      "main": [[{"node": "Fetch KPI data", "type": "main", "index": 0}]]
+    },
+    "Fetch KPI data": {
+      "main": [[{"node": "Generate monthly report", "type": "main", "index": 0}]]
+    },
+    "Generate monthly report": {
+      "main": [[{"node": "Notify Gelson via Telegram", "type": "main", "index": 0}]]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": ["bridge", "retainer", "monthly"]
+}

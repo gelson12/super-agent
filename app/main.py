@@ -917,6 +917,173 @@ async def _lifespan(app: FastAPI):
         replace_existing=True,
     )
 
+    def _auto_approve_job():
+        """
+        Auto-approve low-risk pending memos every 15 minutes.
+        Criteria: cro_score >= 70 AND (amount_gbp < 1000 OR no amount specified)
+        Sends Telegram notification via CoS webhook with 30-min veto window.
+        """
+        try:
+            import datetime as _dt
+            import json as _jaa
+            import urllib.request as _ureq_aa
+            from .memory.vector_memory import _get_pg_conn as _pgaa
+            conn = _pgaa()
+            if not conn:
+                return
+            try:
+                with conn.cursor() as cur:
+                    # Find auto-approvable memos not yet flagged
+                    cur.execute("""
+                        SELECT memo_id, from_agent, to_agent, subject, body_json,
+                               COALESCE((body_json->>'cro_score')::int, 0) AS cro_score,
+                               COALESCE((body_json->>'amount_gbp')::float, 0.0) AS amount_gbp
+                        FROM bridge.agent_memos
+                        WHERE status = 'open'
+                          AND memo_type IN ('approval_request', 'cro_review_complete')
+                          AND (body_json->>'auto_approved') IS NULL
+                          AND COALESCE((body_json->>'cro_score')::int, 0) >= 70
+                          AND COALESCE((body_json->>'amount_gbp')::float, 0.0) < 1000
+                        ORDER BY created_at ASC
+                        LIMIT 10
+                    """)
+                    rows = cur.fetchall()
+                if not rows:
+                    return
+                _veto_base = os.environ.get("SUPER_AGENT_BASE_URL",
+                    "https://super-agent-production.up.railway.app")
+                for row in rows:
+                    memo_id, from_agent, to_agent, subject, body_json, cro_score, amount_gbp = row
+                    memo_id_str = str(memo_id)
+                    with conn.cursor() as cur2:
+                        # Mark auto_approved in body_json
+                        cur2.execute("""
+                            UPDATE bridge.agent_memos
+                            SET status = 'approved',
+                                approved_by = 'auto',
+                                approved_at = NOW(),
+                                body_json = body_json || jsonb_build_object(
+                                    'auto_approved', true,
+                                    'auto_approved_at', NOW()::text,
+                                    'veto_deadline', (NOW() + INTERVAL '30 minutes')::text
+                                )
+                            WHERE memo_id = %s AND status = 'open'
+                        """, (memo_id,))
+                        # Insert approval_granted memo
+                        cur2.execute("""
+                            INSERT INTO bridge.agent_memos
+                              (from_agent, to_agent, memo_type, priority, subject, body_json)
+                            VALUES ('auto_approve', %s, 'approval_granted', 'high', %s,
+                                    jsonb_build_object(
+                                        'original_memo_id', %s::text,
+                                        'approved_by', 'auto',
+                                        'cro_score', %s,
+                                        'amount_gbp', %s,
+                                        'veto_url', %s
+                                    ))
+                        """, (
+                            from_agent,
+                            f"AUTO-APPROVED: {subject}",
+                            memo_id_str, cro_score, amount_gbp,
+                            f"{_veto_base}/webhook/veto-approval/{memo_id_str}",
+                        ))
+                    conn.commit()
+                    # Notify via CoS n8n webhook
+                    _n8n = os.environ.get("N8N_BASE_URL", "").rstrip("/")
+                    _key = os.environ.get("N8N_API_KEY", "")
+                    if _n8n and _key:
+                        amt_str = f" (£{amount_gbp:.0f})" if amount_gbp > 0 else ""
+                        _payload = _jaa.dumps({
+                            "task": "telegram_notify",
+                            "message": (
+                                f"✅ *AUTO-APPROVED* (CRO {cro_score}/100{amt_str})\n"
+                                f"_{subject}_\n\n"
+                                f"⏱ Veto within 30 min:\n"
+                                f"`POST {_veto_base}/webhook/veto-approval/{memo_id_str}`\n"
+                                f"or reply /veto\\_{memo_id_str[:8]} to CoS"
+                            ),
+                            "api_key": _key,
+                        }).encode()
+                        try:
+                            _req = _ureq_aa.Request(
+                                f"{_n8n}/webhook/bridge-cos-invoke",
+                                data=_payload, method="POST",
+                                headers={"Content-Type": "application/json"},
+                            )
+                            _ureq_aa.urlopen(_req, timeout=5)
+                        except Exception:
+                            pass
+                    bg_log(
+                        f"[auto-approve] approved memo {memo_id_str}: {subject[:60]}",
+                        source="auto_approve",
+                    )
+            except Exception as _aae:
+                bg_log(f"[auto-approve] error: {_aae}", source="auto_approve")
+                try: conn.rollback()
+                except Exception: pass
+            finally:
+                try: conn.close()
+                except Exception: pass
+        except Exception as _aae2:
+            bg_log(f"[auto-approve] outer error: {_aae2}", source="auto_approve")
+
+    scheduler.add_job(
+        _auto_approve_job,
+        "interval",
+        minutes=15,
+        id="auto_approve",
+        replace_existing=True,
+    )
+
+    def _lead_generation_job():
+        """
+        Weekly outbound lead generation (Monday 09:00 UTC).
+        Queries Companies House for recently incorporated UK companies,
+        checks for missing websites, queues as BizDev memos for approval.
+        """
+        try:
+            from .tools.lead_tools import find_new_leads, queue_leads_as_memos
+            leads = find_new_leads(max_leads=20)
+            if leads:
+                queued = queue_leads_as_memos(leads)
+                bg_log(f"[lead-gen] queued {queued} new leads for BizDev review", source="lead_gen")
+            else:
+                bg_log("[lead-gen] no new leads found this run", source="lead_gen")
+        except Exception as _lge:
+            bg_log(f"[lead-gen] error: {_lge}", source="lead_gen")
+
+    scheduler.add_job(
+        _lead_generation_job,
+        "cron",
+        day_of_week="mon",
+        hour=9,
+        minute=0,
+        id="lead_generation",
+        replace_existing=True,
+    )
+
+    def _testimonial_sequence_job():
+        """
+        Daily (09:15 UTC): process automated client testimonial/review sequences.
+        Day 3: warm check-in. Day 14: Google review request. Day 30: free audit offer.
+        """
+        try:
+            from .tools.testimonial_tools import run_testimonial_sequences
+            sent = run_testimonial_sequences()
+            if sent:
+                bg_log(f"[testimonial] processed {sent} sequence steps", source="testimonial")
+        except Exception as _te:
+            bg_log(f"[testimonial] error: {_te}", source="testimonial")
+
+    scheduler.add_job(
+        _testimonial_sequence_job,
+        "cron",
+        hour=9,
+        minute=15,
+        id="testimonial_sequence",
+        replace_existing=True,
+    )
+
     scheduler.start()
 
     # ── Bridge schema migrations (idempotent — IF NOT EXISTS) ────────────────
@@ -950,6 +1117,50 @@ async def _lifespan(app: FastAPI):
                         approved_at     TIMESTAMPTZ DEFAULT NOW(),
                         proposal_id     UUID,
                         updated_at      TIMESTAMPTZ DEFAULT NOW()
+                    );
+                    CREATE TABLE IF NOT EXISTS bridge.leads (
+                        id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                        company_name    TEXT NOT NULL,
+                        contact_name    TEXT,
+                        contact_email   TEXT,
+                        phone           TEXT,
+                        website         TEXT,
+                        source          TEXT DEFAULT 'companies_house',
+                        source_ref      TEXT,
+                        status          TEXT DEFAULT 'queued',
+                        notes           TEXT,
+                        outreach_sent_at TIMESTAMPTZ,
+                        response_at     TIMESTAMPTZ,
+                        created_at      TIMESTAMPTZ DEFAULT NOW(),
+                        updated_at      TIMESTAMPTZ DEFAULT NOW()
+                    );
+                    CREATE TABLE IF NOT EXISTS bridge.retainer_subscriptions (
+                        id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                        client_name     TEXT NOT NULL,
+                        client_email    TEXT NOT NULL,
+                        plan_name       TEXT NOT NULL DEFAULT 'Website + SEO + Support',
+                        price_gbp       NUMERIC(10,2) NOT NULL DEFAULT 99.00,
+                        stripe_subscription_id TEXT,
+                        stripe_customer_id TEXT,
+                        status          TEXT DEFAULT 'active',
+                        started_at      TIMESTAMPTZ DEFAULT NOW(),
+                        next_billing_at TIMESTAMPTZ,
+                        cancelled_at    TIMESTAMPTZ,
+                        notes           TEXT,
+                        created_at      TIMESTAMPTZ DEFAULT NOW()
+                    );
+                    CREATE TABLE IF NOT EXISTS bridge.review_sequences (
+                        id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                        client_name     TEXT NOT NULL,
+                        client_email    TEXT NOT NULL,
+                        project_id      UUID,
+                        delivery_date   DATE NOT NULL,
+                        day3_sent_at    TIMESTAMPTZ,
+                        day14_sent_at   TIMESTAMPTZ,
+                        day30_sent_at   TIMESTAMPTZ,
+                        review_received BOOLEAN DEFAULT FALSE,
+                        google_review_url TEXT,
+                        created_at      TIMESTAMPTZ DEFAULT NOW()
                     );
                 """)
             _mc.close()
@@ -1471,6 +1682,327 @@ def proposal_reject(memo_id: str, request: Request):
         try: conn.close()
         except Exception: pass
     return {"ok": True, "message": "Proposal rejected."}
+
+
+@app.post("/webhook/veto-approval/{memo_id}", tags=["webhook"])
+def veto_auto_approval(memo_id: str, request: Request):
+    """
+    Reverse an auto-approved memo within the 30-minute veto window.
+    Callable by Gelson via direct URL or CoS bot Telegram command.
+    No auth required — memo_id acts as the token (UUID).
+    """
+    from .memory.vector_memory import _get_pg_conn as _pgv
+    import datetime as _dtv
+    conn = _pgv()
+    if not conn:
+        return JSONResponse({"ok": False, "error": "db unavailable"}, status_code=503)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT memo_id, from_agent, to_agent, subject, body_json "
+                "FROM bridge.agent_memos WHERE memo_id = %s AND approved_by = 'auto'",
+                (memo_id,)
+            )
+            row = cur.fetchone()
+            if not row:
+                return JSONResponse({"ok": False, "error": "not found or not auto-approved"}, status_code=404)
+            body_json = row[4] if isinstance(row[4], dict) else {}
+            veto_deadline_str = body_json.get("veto_deadline", "")
+            if veto_deadline_str:
+                try:
+                    import dateutil.parser as _dp
+                    veto_deadline = _dp.parse(veto_deadline_str)
+                    if _dtv.datetime.now(_dtv.timezone.utc) > veto_deadline.astimezone(_dtv.timezone.utc):
+                        return JSONResponse({"ok": False, "error": "veto window expired (30 min)"}, status_code=410)
+                except Exception:
+                    pass
+            # Revert to open, remove auto_approved flags
+            cur.execute("""
+                UPDATE bridge.agent_memos
+                SET status = 'open',
+                    approved_by = NULL,
+                    approved_at = NULL,
+                    body_json = body_json - 'auto_approved' - 'auto_approved_at' - 'veto_deadline'
+                                || '{"vetoed_by_human": true}'::jsonb
+                WHERE memo_id = %s
+            """, (memo_id,))
+            # Remove the auto-generated approval_granted reply
+            cur.execute("""
+                DELETE FROM bridge.agent_memos
+                WHERE memo_type = 'approval_granted'
+                  AND (body_json->>'original_memo_id') = %s
+                  AND approved_by IS NULL
+            """, (memo_id,))
+        conn.commit()
+        bg_log(f"[veto] Gelson vetoed auto-approval of {memo_id}", source="veto")
+        return {"ok": True, "message": "Auto-approval reversed. Memo is open again."}
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+    finally:
+        try: conn.close()
+        except Exception: pass
+
+
+@app.get("/dashboard/kpi", tags=["meta"])
+def dashboard_kpi():
+    """
+    Business KPI dashboard: leads, proposals, payments, MRR, conversion rates.
+    Data is pulled from bridge.leads, bridge.agent_memos, bridge.client_projects,
+    bridge.retainer_subscriptions, and bridge.agent_performance.
+    """
+    import datetime as _dtkpi
+    from .memory.vector_memory import _get_pg_conn as _pgkpi
+    conn = _pgkpi()
+    if not conn:
+        return {"error": "DB unavailable"}
+    result = {}
+    try:
+        with conn.cursor() as cur:
+            # Leads this week
+            cur.execute("""
+                SELECT COUNT(*) AS total,
+                       COUNT(*) FILTER (WHERE status = 'contacted') AS contacted,
+                       COUNT(*) FILTER (WHERE status = 'responded') AS responded,
+                       COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '7 days') AS this_week
+                FROM bridge.leads
+            """)
+            row = cur.fetchone() or (0, 0, 0, 0)
+            result["leads"] = {
+                "total": row[0], "contacted": row[1],
+                "responded": row[2], "this_week": row[3],
+                "contact_rate_pct": round(100 * row[1] / row[0], 1) if row[0] else 0,
+            }
+            # Proposals sent vs paid (from agent_memos + client_projects)
+            cur.execute("""
+                SELECT
+                  COUNT(*) FILTER (WHERE memo_type = 'proposal_sent') AS proposals_sent,
+                  COUNT(*) FILTER (WHERE memo_type = 'payment_received') AS payments_received,
+                  COALESCE(SUM((body_json->>'amount_gbp')::numeric)
+                    FILTER (WHERE memo_type = 'payment_received'), 0) AS revenue_gbp
+                FROM bridge.agent_memos
+                WHERE created_at >= NOW() - INTERVAL '90 days'
+            """)
+            row2 = cur.fetchone() or (0, 0, 0)
+            proposals_sent = max(row2[0] or 0, 1)
+            payments = row2[1] or 0
+            result["pipeline"] = {
+                "proposals_sent_90d": row2[0] or 0,
+                "payments_received_90d": payments,
+                "revenue_gbp_90d": float(row2[2] or 0),
+                "conversion_rate_pct": round(100 * payments / proposals_sent, 1),
+            }
+            # Active retainers / MRR
+            cur.execute("""
+                SELECT COUNT(*), COALESCE(SUM(price_gbp), 0)
+                FROM bridge.retainer_subscriptions
+                WHERE status = 'active'
+            """)
+            row3 = cur.fetchone() or (0, 0)
+            result["retainers"] = {
+                "active_count": row3[0] or 0,
+                "mrr_gbp": float(row3[1] or 0),
+                "arr_gbp": float(row3[1] or 0) * 12,
+            }
+            # Avg project value from client_projects (if table exists)
+            try:
+                cur.execute("""
+                    SELECT COUNT(*), COALESCE(AVG(budget_gbp), 0),
+                           COALESCE(AVG(EXTRACT(DAY FROM (completed_at - created_at))), 0)
+                    FROM bridge.client_projects
+                    WHERE status IN ('delivered', 'completed')
+                """)
+                row4 = cur.fetchone() or (0, 0, 0)
+                result["projects"] = {
+                    "completed_count": row4[0] or 0,
+                    "avg_value_gbp": round(float(row4[1] or 0), 2),
+                    "avg_days_to_delivery": round(float(row4[2] or 0), 1),
+                }
+            except Exception:
+                result["projects"] = {"completed_count": 0, "avg_value_gbp": 0, "avg_days_to_delivery": 0}
+            # Best performing agent today
+            cur.execute("""
+                SELECT agent_name, tasks_success, tasks_total,
+                       ROUND(100.0 * tasks_success / NULLIF(tasks_total, 0), 1) AS success_rate
+                FROM bridge.agent_performance
+                WHERE date = CURRENT_DATE
+                ORDER BY tasks_success DESC NULLS LAST
+                LIMIT 1
+            """)
+            row5 = cur.fetchone()
+            result["top_agent_today"] = {
+                "name": row5[0] if row5 else None,
+                "tasks": row5[1] if row5 else 0,
+                "success_rate_pct": float(row5[3]) if row5 and row5[3] else None,
+            }
+            result["generated_at"] = _dtkpi.datetime.utcnow().isoformat() + "Z"
+        conn.commit()
+    except Exception as _ke:
+        result["error"] = str(_ke)
+    finally:
+        try: conn.close()
+        except Exception: pass
+    return result
+
+
+@app.post("/dashboard/leads/add", tags=["meta"])
+def dashboard_leads_add(request: Request):
+    """
+    Manually add a lead to the pipeline.
+    Body: { company_name, contact_email, contact_name?, phone?, website?, notes? }
+    """
+    import asyncio as _al
+    body = asyncio.get_event_loop().run_until_complete(request.json()) if False else None
+    # Sync wrapper for simplicity
+    import json as _jl
+    from .memory.vector_memory import _get_pg_conn as _pgl
+    conn = _pgl()
+    if not conn:
+        return JSONResponse({"ok": False, "error": "db unavailable"}, status_code=503)
+    try:
+        import asyncio as _asyncio_l
+        body_bytes = _asyncio_l.run(request.body())
+        data = _jl.loads(body_bytes)
+        company_name = data.get("company_name", "").strip()
+        if not company_name:
+            return JSONResponse({"ok": False, "error": "company_name required"}, status_code=400)
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO bridge.leads
+                  (company_name, contact_name, contact_email, phone, website, source, notes)
+                VALUES (%s, %s, %s, %s, %s, 'manual', %s)
+                RETURNING id
+            """, (
+                company_name,
+                data.get("contact_name"),
+                data.get("contact_email"),
+                data.get("phone"),
+                data.get("website"),
+                data.get("notes"),
+            ))
+            new_id = str(cur.fetchone()[0])
+        conn.commit()
+        return {"ok": True, "lead_id": new_id}
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+    finally:
+        try: conn.close()
+        except Exception: pass
+
+
+@app.get("/dashboard/leads", tags=["meta"])
+def dashboard_leads(status: str = "queued", limit: int = 50):
+    """Return the leads pipeline filtered by status."""
+    from .memory.vector_memory import _get_pg_conn as _pgl2
+    conn = _pgl2()
+    if not conn:
+        return {"leads": [], "error": "DB unavailable"}
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, company_name, contact_name, contact_email, phone,
+                       website, source, status, notes, outreach_sent_at, created_at
+                FROM bridge.leads
+                WHERE (%s = 'all' OR status = %s)
+                ORDER BY created_at DESC
+                LIMIT %s
+            """, (status, status, limit))
+            rows = cur.fetchall()
+        conn.commit()
+        return {"leads": [
+            {
+                "id": str(r[0]), "company_name": r[1], "contact_name": r[2],
+                "contact_email": r[3], "phone": r[4], "website": r[5],
+                "source": r[6], "status": r[7], "notes": r[8],
+                "outreach_sent_at": r[9].isoformat() if r[9] else None,
+                "created_at": r[10].isoformat() if r[10] else None,
+            }
+            for r in rows
+        ]}
+    except Exception as e:
+        return {"leads": [], "error": str(e)}
+    finally:
+        try: conn.close()
+        except Exception: pass
+
+
+@app.post("/dashboard/retainers/add", tags=["meta"])
+def dashboard_retainers_add(request: Request):
+    """Add a new monthly retainer subscription client."""
+    import json as _jr
+    import asyncio as _ar
+    from .memory.vector_memory import _get_pg_conn as _pgr
+    conn = _pgr()
+    if not conn:
+        return JSONResponse({"ok": False, "error": "db unavailable"}, status_code=503)
+    try:
+        body_bytes = _ar.run(request.body())
+        data = _jr.loads(body_bytes)
+        client_email = data.get("client_email", "").strip()
+        client_name = data.get("client_name", "").strip()
+        if not client_email or not client_name:
+            return JSONResponse({"ok": False, "error": "client_email and client_name required"}, status_code=400)
+        price = float(data.get("price_gbp", 99.0))
+        plan = data.get("plan_name", "Website + SEO + Support — £99/month")
+        stripe_sub_id = None
+        # Optionally create Stripe subscription if tools available
+        try:
+            from .tools.stripe_tools import stripe_create_payment_link as _spl
+            link_result = _spl.invoke({
+                "params_json": __import__("json").dumps({
+                    "amount_gbp": price,
+                    "description": plan,
+                    "client_name": client_name,
+                    "client_email": client_email,
+                })
+            })
+        except Exception:
+            link_result = None
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO bridge.retainer_subscriptions
+                  (client_name, client_email, plan_name, price_gbp, next_billing_at)
+                VALUES (%s, %s, %s, %s, NOW() + INTERVAL '1 month')
+                RETURNING id
+            """, (client_name, client_email, plan, price))
+            new_id = str(cur.fetchone()[0])
+        conn.commit()
+        return {"ok": True, "retainer_id": new_id, "payment_link": link_result}
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+    finally:
+        try: conn.close()
+        except Exception: pass
+
+
+@app.post("/webhook/register-delivery", tags=["webhook"])
+def register_project_delivery(request: Request):
+    """
+    Called when a project is delivered to start the automated review sequence.
+    Body: { client_name, client_email, delivery_date?, project_id?, google_review_url?, api_key }
+    """
+    import json as _jrd
+    import asyncio as _ard
+    from .tools.testimonial_tools import register_delivery as _reg_del
+    _expected_key = os.environ.get("N8N_API_KEY", "")
+    try:
+        body_bytes = _ard.run(request.body())
+        data = _jrd.loads(body_bytes)
+    except Exception:
+        return JSONResponse({"ok": False, "error": "invalid JSON"}, status_code=400)
+    if _expected_key and not secrets.compare_digest(data.get("api_key", ""), _expected_key):
+        return JSONResponse({"ok": False, "error": "unauthorized"}, status_code=401)
+    client_email = data.get("client_email", "").strip()
+    client_name = data.get("client_name", "").strip()
+    if not client_email or not client_name:
+        return JSONResponse({"ok": False, "error": "client_email and client_name required"}, status_code=400)
+    seq_id = _reg_del(
+        client_name=client_name,
+        client_email=client_email,
+        delivery_date=data.get("delivery_date"),
+        project_id=data.get("project_id"),
+        google_review_url=data.get("google_review_url"),
+    )
+    return {"ok": True, "sequence_id": seq_id, "message": f"Review sequence started for {client_name}"}
 
 
 @app.get("/dashboard/agents/status", tags=["meta"])
