@@ -72,7 +72,12 @@ modality_priors:
 # Set enabled: false to disable all refinement (e.g. for high-throughput / low-latency mode).
 refinement:
   enabled: true
-  complexity_min: 3         # only refine requests with complexity >= this (1-5)
+  complexity_min: 3              # critique+CoT threshold (complexity >= this)
+  synthesis_complexity_min: 2    # MoA synthesis threshold (fires more broadly)
+
+  # MoA synthesis (Pass 0) — fuses winner + runner-up when models disagree
+  synthesis_enabled: true
+  synthesis_deadline_ms: 10000  # budget for the synthesis agent call
 
   # Cross-agent critique + conditional re-answer
   critique_enabled: true

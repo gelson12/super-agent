@@ -55,7 +55,7 @@ def pick_winner(
     weights: RankWeights,
     min_acceptable: float = 0.35,
     cold_start_sample_threshold: int = 30,
-) -> tuple[AgentResponse | None, dict[str, float]]:
+) -> tuple[AgentResponse | None, AgentResponse | None, dict[str, float]]:
     # Compute max content length across successful responses for depth normalisation.
     # A 2000-char answer scores 1.0; shorter answers scale proportionally (capped at 1.0).
     # This rewards substantive, complete answers without penalising very long ones.
@@ -66,9 +66,9 @@ def pick_winner(
     )
     depth_scale = max(max_len, _DEPTH_TARGET_CHARS)
 
+    scored_responses: list[tuple[float, AgentResponse]] = []
     scores: dict[str, float] = {}
-    best: AgentResponse | None = None
-    best_score = float("-inf")
+
     for r in responses:
         if not r.success:
             scores[r.agent_id] = 0.0
@@ -83,9 +83,13 @@ def pick_winner(
             content_depth=content_depth,
         )
         scores[r.agent_id] = s
-        if s > best_score:
-            best_score = s
-            best = r
-    if best is None or best_score < min_acceptable:
-        return None, scores
-    return best, scores
+        scored_responses.append((s, r))
+
+    scored_responses.sort(key=lambda t: t[0], reverse=True)
+
+    if not scored_responses or scored_responses[0][0] < min_acceptable:
+        return None, None, scores
+
+    winner = scored_responses[0][1]
+    runner_up = scored_responses[1][1] if len(scored_responses) > 1 else None
+    return winner, runner_up, scores

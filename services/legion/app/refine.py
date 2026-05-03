@@ -1,27 +1,26 @@
 """
 Legion Refinement Layer — quality-improvement pipeline that runs after pick_winner().
 
-Mirrors the quality stack in the main app (peer_review, red_team, cot_handoff) but
-implemented natively inside Legion so every Legion response benefits, regardless of
-which upstream model won.
+Four passes, each gated to avoid latency/cost regression.
+Pipeline order (all failure-safe — any exception skips that pass):
 
-Three passes, each gated to avoid latency/cost regression:
+  Pass 0 — MoA Synthesis       (complexity >= 2, runner_up available)
+    Mixture-of-Agents: fuse winner + runner-up into one superior answer.
+    Only fires when models DISAGREE (word overlap < 50%) — if they agree,
+    synthesis would just produce a longer version of the same thing.
+    Based on Together AI's MoA paper: consistently outperforms best-of-N selection.
 
-  Pass 1 — Cross-agent critique  (complexity >= 3)
-    A DIFFERENT fast agent critiques the winner's answer.
-    Prompt asks for ONE specific flaw. "LGTM" = answer is good enough, skip refinement.
+  Pass 3 — Chain-of-thought boost  (complexity >= 4)
+    A reasoning-capable agent produces a thinking trace.
+    The winner re-answers grounded in that trace.
+    Fires before critique so the refined answer already benefits from CoT.
 
-  Pass 2 — Refinement re-answer  (if critique is substantive)
-    The winner agent re-answers with the critique injected as context.
-    Only replaces the original if the refined answer is measurably better.
+  Pass 1+2 — Cross-agent critique → conditional re-answer  (complexity >= 3)
+    A DIFFERENT fast agent critiques the current best answer.
+    "LGTM" = skip. Substantive critique → winner re-answers with it injected.
+    Only replaces original if refined answer is measurably better.
 
-  Pass 3 — Chain-of-thought boost  (complexity >= 4, opt-in)
-    A reasoning-capable agent (deepseek R1 preferred) produces a reasoning trace.
-    The winner agent then answers using that trace as grounding.
-    Fires BEFORE Pass 1/2 so the refined answer already benefits from the trace.
-
-All passes are failure-safe — any exception skips that pass and returns the
-previous best answer. Refinement never degrades; it can only improve.
+Refinement never degrades — any pass that produces a worse result is discarded.
 
 Configuration: controlled by the `refinement:` block in legion_config.yaml.
 """
@@ -93,8 +92,33 @@ for the user (not a repetition of the trace):
 
 Final answer:"""
 
+_SYNTHESIS_PROMPT = """\
+Two independent AI models answered the same question. Synthesize them into one \
+superior answer — extract the strongest reasoning, facts, and examples from each, \
+reconcile any differences, and produce the most complete and accurate response possible.
+
+Do NOT copy one response verbatim. Do NOT list both answers side-by-side. \
+Write a single, unified answer in your own words that is better than either input alone.
+
+Question:
+{query}
+
+Model A answer:
+{answer_a}
+
+Model B answer:
+{answer_b}
+
+Synthesized answer:"""
+
 # Minimum critique length (words) to be considered substantive
 _CRITIQUE_MIN_WORDS = 8
+
+# Preferred agents for MoA synthesis (fast API agents first)
+_SYNTHESIS_AGENT_PREFERENCE = [
+    "groq", "cerebras", "sambanova", "github_models",
+    "chatgpt", "openrouter", "mistral", "glm", "claude_b",
+]
 
 # Preferred agents for critique, in priority order (fast/free-tier first)
 _CRITIQUE_AGENT_PREFERENCE = [
@@ -127,6 +151,79 @@ def _pick_agent(
         if aid != exclude and getattr(agent, "enabled", False):
             return agent
     return None
+
+
+# ── Pass 0: MoA Synthesis ────────────────────────────────────────────────────
+
+def _word_overlap(a: str, b: str) -> float:
+    """Jaccard similarity on word sets. 1.0 = identical, 0.0 = no shared words."""
+    wa = set(a.lower().split())
+    wb = set(b.lower().split())
+    if not wa or not wb:
+        return 0.0
+    return len(wa & wb) / len(wa | wb)
+
+
+async def _synthesis_pass(
+    winner: AgentResponse,
+    runner_up: AgentResponse,
+    agents: dict[str, object],
+    query: str,
+    budget_ms: int,
+) -> AgentResponse:
+    """
+    Mixture-of-Agents: fuse the top-2 responses into one answer that exceeds either.
+
+    Skipped when overlap > 50% — models essentially agree, so synthesis would just
+    produce a longer version of the same content (not worth the latency).
+    When models disagree, synthesis captures the best of both worlds and consistently
+    outperforms best-of-N selection (Together AI MoA paper, 2024).
+    """
+    overlap = _word_overlap(winner.content or "", runner_up.content or "")
+    if overlap > 0.50:
+        log.debug("refine: synthesis skipped — models agree (overlap=%.2f)", overlap)
+        return winner
+
+    synth_agent = _pick_agent(_SYNTHESIS_AGENT_PREFERENCE, agents, exclude="")
+    if synth_agent is None:
+        log.debug("refine: synthesis skipped — no available agent")
+        return winner
+
+    synth_query = _SYNTHESIS_PROMPT.format(
+        query=query[:2000],
+        answer_a=(winner.content or "")[:2000],
+        answer_b=(runner_up.content or "")[:2000],
+    )
+    log.info(
+        "refine: MoA synthesis — %s + %s → %s (overlap=%.2f)",
+        winner.agent_id, runner_up.agent_id,
+        getattr(synth_agent, "agent_id", "?"), overlap,
+    )
+    synth_resp = await run_with_deadline(synth_agent, synth_query, budget_ms)
+
+    if not synth_resp.success or not synth_resp.content:
+        log.debug("refine: synthesis agent failed — keeping winner")
+        return winner
+
+    synth_len  = len(synth_resp.content)
+    winner_len = len(winner.content or "")
+
+    if synth_len >= winner_len * 0.75:
+        log.info(
+            "refine: synthesis accepted (orig=%d chars → synth=%d chars)",
+            winner_len, synth_len,
+        )
+        return AgentResponse(
+            agent_id=f"{winner.agent_id}+{runner_up.agent_id}→synth",
+            content=synth_resp.content,
+            success=True,
+            latency_ms=winner.latency_ms + synth_resp.latency_ms,
+            self_confidence=max(winner.self_confidence, 0.85),
+            cost_cents=winner.cost_cents + synth_resp.cost_cents,
+        )
+
+    log.debug("refine: synthesis too short (%d < %d*0.75) — keeping winner", synth_len, winner_len)
+    return winner
 
 
 # ── Pass 1+2: Cross-agent critique → conditional re-answer ───────────────────
@@ -295,20 +392,29 @@ async def refine_winner(
     req: RespondRequest,
     time_budget_ms: int,
     refinement_cfg: dict,
+    runner_up: AgentResponse | None = None,
 ) -> tuple[AgentResponse, bool]:
     """
-    Run the refinement pipeline on the hive winner.
+    Run the full refinement pipeline on the hive winner.
 
-    Returns:
-        (final_response, was_refined)
-        was_refined=True if the content changed from the original winner.
+    Pipeline (each pass failure-safe, skipped when time runs out):
+      Pass 0 — MoA Synthesis (complexity >= 2, runner_up exists, models disagree)
+      Pass 3 — CoT boost     (complexity >= 4)
+      Pass 1+2 — Critique → re-answer (complexity >= 3)
+
+    Returns (final_response, was_refined).
     """
     if not refinement_cfg.get("enabled", True):
         return winner, False
 
-    complexity_threshold = refinement_cfg.get("complexity_min", 3)
-    if req.complexity < complexity_threshold:
-        log.debug("refine: complexity=%d < threshold=%d — skipping", req.complexity, complexity_threshold)
+    # MoA synthesis fires from complexity 2 upwards — lower bar than critique
+    synthesis_threshold = refinement_cfg.get("synthesis_complexity_min", 2)
+    critique_threshold  = refinement_cfg.get("complexity_min", 3)
+
+    # Skip the whole pipeline only if even synthesis wouldn't fire
+    if req.complexity < synthesis_threshold:
+        log.debug("refine: complexity=%d below synthesis threshold=%d — skipping all",
+                  req.complexity, synthesis_threshold)
         return winner, False
 
     if not winner.content or len(winner.content.strip()) < 20:
@@ -318,12 +424,29 @@ async def refine_winner(
     current = winner
     refine_start = time.monotonic()
 
-    # ── Pass 3: CoT boost (complexity >= 4, before critique so critique sees CoT answer)
-    if req.complexity >= 4 and refinement_cfg.get("cot_enabled", True):
-        cot_budget = min(
-            refinement_cfg.get("cot_deadline_ms", 15000),
-            max(0, time_budget_ms - int((time.monotonic() - refine_start) * 1000) - 3000),
-        )
+    def _remaining() -> int:
+        return max(0, time_budget_ms - int((time.monotonic() - refine_start) * 1000))
+
+    # ── Pass 0: MoA Synthesis (complexity >= 2, runner_up available) ─────────
+    if (
+        req.complexity >= synthesis_threshold
+        and runner_up is not None
+        and runner_up.success
+        and runner_up.content
+        and _remaining() > 4000
+    ):
+        synth_budget = min(refinement_cfg.get("synthesis_deadline_ms", 10000), _remaining() - 2000)
+        if synth_budget > 3000:
+            try:
+                current = await _synthesis_pass(
+                    current, runner_up, agents, req.query, synth_budget
+                )
+            except Exception as exc:
+                log.warning("refine: synthesis raised %s — skipping", type(exc).__name__)
+
+    # ── Pass 3: CoT boost (complexity >= 4, before critique) ─────────────────
+    if req.complexity >= 4 and refinement_cfg.get("cot_enabled", True) and _remaining() > 4000:
+        cot_budget = min(refinement_cfg.get("cot_deadline_ms", 15000), _remaining() - 3000)
         if cot_budget > 2000:
             try:
                 current = await _cot_boost(
@@ -334,16 +457,10 @@ async def refine_winner(
             except Exception as exc:
                 log.warning("refine: CoT boost raised %s — skipping", type(exc).__name__)
 
-    # ── Pass 1+2: Cross-agent critique → conditional re-answer
-    if refinement_cfg.get("critique_enabled", True):
-        critique_budget = min(
-            refinement_cfg.get("critique_deadline_ms", 6000),
-            max(0, time_budget_ms - int((time.monotonic() - refine_start) * 1000) - 1000),
-        )
-        refine_budget = min(
-            refinement_cfg.get("refine_deadline_ms", 10000),
-            max(0, time_budget_ms - int((time.monotonic() - refine_start) * 1000) - 500),
-        )
+    # ── Pass 1+2: Cross-agent critique → conditional re-answer ───────────────
+    if req.complexity >= critique_threshold and refinement_cfg.get("critique_enabled", True):
+        critique_budget = min(refinement_cfg.get("critique_deadline_ms", 6000), _remaining() - 1000)
+        refine_budget   = min(refinement_cfg.get("refine_deadline_ms", 10000), _remaining() - 500)
         if critique_budget > 1500 and refine_budget > 2000:
             try:
                 current = await _critique_and_refine(

@@ -132,7 +132,7 @@ async def run_round(req: RespondRequest, agents: dict[str, object]) -> RespondRe
             await circuit.record_failure(r.agent_id)
 
     profiles = await _load_profiles(entered)
-    winner, scores = pick_winner(
+    winner, runner_up, scores = pick_winner(
         responses,
         suitability_scores,
         profiles,
@@ -184,6 +184,7 @@ async def run_round(req: RespondRequest, agents: dict[str, object]) -> RespondRe
                 winner=winner,
                 agents=agents,
                 req=req,
+                runner_up=runner_up,
                 time_budget_ms=time_remaining_ms,
                 refinement_cfg=refinement_cfg,
             )

@@ -27,15 +27,15 @@ def _heuristic(query: str, agent_ids: list[str]) -> dict[str, float]:
     scores: dict[str, float] = {}
     code_agents = (
         "claude_b", "chatgpt", "groq", "cerebras", "github_models",
-        "openrouter", "mistral", "sambanova", "deepseek",
+        "openrouter", "mistral", "sambanova", "deepseek", "glm",
     )
     chat_agents = (
         "gemini_b", "ollama", "chatgpt", "groq", "cerebras",
-        "github_models", "openrouter", "sambanova", "deepseek",
+        "github_models", "openrouter", "sambanova", "deepseek", "glm",
     )
     api_general = (
         "chatgpt", "groq", "cerebras", "github_models", "openrouter",
-        "mistral", "sambanova", "deepseek",
+        "mistral", "sambanova", "deepseek", "glm",
     )
     for aid in agent_ids:
         if is_code and aid in code_agents:
