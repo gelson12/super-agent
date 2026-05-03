@@ -10,6 +10,11 @@
 const PRE_GATHER_MS = 5 * 60_000;       // 5 minutes before scheduled start
 const DEFAULT_MEETING_MS = 8 * 60_000;  // 8 minutes
 const IDLE_PICK_MS = 30_000;            // re-roll idle target every 30s
+const CHATTER_CHECK_MS = 12_000;        // how often to scan for nearby idle bots to chat
+const CHAT_RADIUS = 3;                  // tiles — bots within this distance can spontaneously chat
+const CHAT_MS_MIN = 25_000;            // min spontaneous chat duration
+const CHAT_MS_MAX = 55_000;            // max spontaneous chat duration
+const GROUP_CHAT_MIN = 3;              // 3+ idle bots nearby → route them to a meeting room
 
 // How long bots linger at each leisure zone (ms). 0 = instant leave.
 const LEISURE_DURATION_MS = {
@@ -43,6 +48,7 @@ export class Scheduler {
     this.lastFiredKey = new Set();
     this.reservedRooms = new Map();
     this.lastIdleRoll = new Map();
+    this.lastChatterCheck = 0;
     this.simSpeed = 1;
     // Default sim-time anchor: jump to 07:25 today UTC so the very first
     // scheduled cadence (07:30 Researcher) is visible within seconds of
@@ -89,6 +95,7 @@ export class Scheduler {
     this._fireDailyTriggers(simTime);
     this._tickActiveMeetings(realNow, simTime);
     this._maintainIdle(realNow);
+    this._maintainChatter(realNow);
     // Periodic cleanup so lastFiredKey doesn't grow unbounded across days.
     if (this.lastFiredKey.size > 200) this._purgeOldKeys(simTime);
   }
@@ -253,6 +260,78 @@ export class Scheduler {
     }
     if (!candidates.length) return null;
     return candidates[Math.floor(Math.random() * candidates.length)];
+  }
+
+  _maintainChatter(realNow) {
+    if (realNow - this.lastChatterCheck < CHATTER_CHECK_MS) return;
+    this.lastChatterCheck = realNow;
+
+    // Collect idle/atDesk bots grouped by floor.
+    const byFloor = new Map();
+    for (const bot of this.bots) {
+      if (bot.state !== 'idle' && bot.state !== 'atDesk') continue;
+      if (!byFloor.has(bot.floor)) byFloor.set(bot.floor, []);
+      byFloor.get(bot.floor).push(bot);
+    }
+
+    const paired = new Set();
+
+    for (const [, floorBots] of byFloor) {
+      for (let i = 0; i < floorBots.length; i++) {
+        const a = floorBots[i];
+        if (paired.has(a.id)) continue;
+
+        // Find all other idle bots within CHAT_RADIUS on this floor.
+        const nearby = floorBots.filter(b =>
+          b !== a && !paired.has(b.id) &&
+          Math.abs(b.x - a.x) + Math.abs(b.y - a.y) <= CHAT_RADIUS
+        );
+        if (!nearby.length) continue;
+
+        // 30% chance to start a chat on each check — keeps it natural.
+        if (Math.random() > 0.30) continue;
+
+        if (nearby.length >= GROUP_CHAT_MIN - 1) {
+          // 3+ bots close together → route the group to a nearby meeting room.
+          const group = [a, ...nearby.slice(0, GROUP_CHAT_MIN - 1)];
+          const room  = this._pickRoom(group.length, null);
+          if (room) {
+            const anchors = this._anchorsForZone(room);
+            const meetId  = `chat-${realNow}`;
+            this.reservedRooms.set(room.zoneId, meetId);
+            group.forEach((bot, idx) => {
+              const anchor = anchors[idx % anchors.length];
+              const ok = bot.goTo(this.floors, room.floor, anchor.x, anchor.y, { label: 'impromptu chat' });
+              if (ok) {
+                paired.add(bot.id);
+                bot.chatPartner = group[(idx + 1) % group.length];
+              }
+            });
+            // Auto-release room after a short chat duration.
+            const dur = CHAT_MS_MIN + Math.random() * (CHAT_MS_MAX - CHAT_MS_MIN);
+            setTimeout(() => {
+              this.reservedRooms.delete(room.zoneId);
+              for (const bot of group) {
+                if (bot.state === 'inMeeting' || bot.state === 'idle') {
+                  bot.chatPartner = null;
+                  bot.state = 'idle';
+                  this._sendBotHome(bot);
+                }
+              }
+            }, dur);
+          }
+        } else {
+          // Just two bots — face each other and chat in place.
+          const b = nearby[0];
+          const dur = CHAT_MS_MIN + Math.random() * (CHAT_MS_MAX - CHAT_MS_MIN);
+          const end = realNow + dur;
+          a.state = 'social'; a.socialEnd = end; a.taskLabel = 'chatting'; a.chatPartner = b;
+          b.state = 'social'; b.socialEnd = end; b.taskLabel = 'chatting'; b.chatPartner = a;
+          paired.add(a.id);
+          paired.add(b.id);
+        }
+      }
+    }
   }
 
   _sendBotHome(bot) {

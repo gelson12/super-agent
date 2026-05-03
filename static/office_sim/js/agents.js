@@ -52,6 +52,7 @@ export class Bot {
     this.taskLabel = '';           // human-readable current task
     this.socialEnd = 0;            // when social activity expires (ms)
     this.pendingActivity = null;   // { label, durationMs } — set by goTo for leisure zones
+    this.chatPartner = null;       // Bot instance this bot is currently talking to
 
     this._uid = ++_seq;
   }
@@ -111,6 +112,14 @@ export class Bot {
       if (now >= this.socialEnd) {
         this.state = 'idle';
         this.taskLabel = '';
+        this.chatPartner = null;
+      } else if (this.chatPartner) {
+        // Keep facing the person we're talking to.
+        const dx = this.chatPartner.x - this.x;
+        const dy = this.chatPartner.y - this.y;
+        if (Math.abs(dx) > 0.1 || Math.abs(dy) > 0.1) {
+          this.facing = dirFromDelta(dx, dy);
+        }
       }
       return;
     }
