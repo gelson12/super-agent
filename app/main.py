@@ -5711,18 +5711,35 @@ def webhook_bot_engine(req: BotEngineRequest, request: Request):
             parts.insert(0, f"[CONTEXT]\n{req.context_block}")
     full_message = "\n\n".join(parts)
 
-    # Routing strategy:
-    # scheduled_tick → Legion PRIMARY (free, parallel) → Haiku fallback.
-    #   Claude CLI quota is preserved entirely for user-triggered agent_invoke calls.
-    # agent_invoke → Claude CLI → Legion → Sonnet (existing cascade, Legion already position 2).
-    if req.task_kind == "scheduled_tick":
-        from .models.claude import _try_legion
-        _leg = _try_legion(full_message, complexity=1)
+    # ── Complexity-aware routing ──────────────────────────────────────────────
+    # Tiers ordered by quota cost:
+    #   TIER 0  Legion      — free ensemble (Groq / Cerebras / GH Models / …)
+    #   TIER 1  Claude CLI  — Pro/Max weekly quota
+    #   TIER 2  Paid API    — Haiku (cheap) or Sonnet (expensive), last resort
+    #
+    # Decision:
+    #   scheduled_tick OR complexity ≤ 2  →  TIER 0 primary
+    #     fallback on Legion unreachable:
+    #       scheduled_tick  → Haiku  (ticks are low-stakes; don't burn CLI quota)
+    #       agent_invoke    → Claude CLI  (may carry real actions; quality matters)
+    #   complexity ≥ 3  →  TIER 1 primary (Legion already sits at pos-2 inside
+    #     ask_claude() cascade, so it fires automatically if CLI is down)
+    from .models.claude import _try_legion as _legion
+    try:
+        from .routing.preprocessor import score_complexity as _sc
+        _complexity = _sc(full_message)
+    except Exception:
+        _complexity = 3  # safe default: route to Claude CLI
+
+    if req.task_kind == "scheduled_tick" or _complexity <= 2:
+        _leg_c = min(_complexity, 1) if req.task_kind == "scheduled_tick" else _complexity
+        _leg   = _legion(full_message, complexity=_leg_c)
         if _leg is not None:
-            raw_text  = _leg
+            raw_text   = _leg
             model_used = "LEGION"
         else:
-            _r = dispatch(full_message, force_model="HAIKU", session_id=req.session_id)
+            _fallback = "HAIKU" if req.task_kind == "scheduled_tick" else "CLAUDE"
+            _r = dispatch(full_message, force_model=_fallback, session_id=req.session_id)
             raw_text   = _r.get("response", "")
             model_used = _r.get("model", req.bot_name)
     else:
@@ -5753,10 +5770,10 @@ def webhook_bot_engine(req: BotEngineRequest, request: Request):
     except Exception as _pe:
         parse_error = str(_pe)
 
-    # Scheduled-tick parse-error retry: Legion/Haiku returned bad JSON → try Claude CLI once.
-    # Fires only when: task_kind=scheduled_tick AND non-Claude model answered AND JSON was invalid.
-    # Does NOT loop; if CLI also fails the original parse_error stands and the next cycle retries.
-    if parse_error and req.task_kind == "scheduled_tick" and model_used not in ("CLAUDE", "CLAUDE_CLI_RETRY"):
+    # Safety net: Legion answered but returned malformed JSON → retry once with Claude CLI.
+    # Covers both scheduled_tick and low-complexity agent_invoke. No loop — if CLI also
+    # fails the original parse_error stands and the bot retries on its next cycle.
+    if parse_error and model_used == "LEGION":
         try:
             from .models.claude import ask_claude as _ask_claude
             _retry_raw = _ask_claude(full_message)
@@ -5772,7 +5789,7 @@ def webhook_bot_engine(req: BotEngineRequest, request: Request):
                     parse_error = None
                     model_used  = "CLAUDE_CLI_RETRY"
         except Exception:
-            pass  # retry failed; keep original parse_error, next cycle will try again
+            pass
 
     # Placeholder detection
     for _banned in _BOT_ENGINE_BANNED:
