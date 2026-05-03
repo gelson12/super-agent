@@ -21,6 +21,7 @@ hive:
     mistral: 8000     # API; Codestral can be slower than chat models
     sambanova: 4000   # ~500-1000 tok/s — fast like Cerebras
     deepseek: 30000   # R1 reasoning emits long chain-of-thought; needs headroom
+    glm: 15000        # glm-4-flash is fast; z1-flash (reasoning) needs more headroom
   early_termination:
     confidence_min: 0.85
     latency_fraction_max: 0.4
@@ -47,6 +48,7 @@ circuit:
     mistral: 60
     sambanova: 60
     deepseek: 120  # R1 quota refills slower — back off longer on burst errors
+    glm: 120       # 2-min cooldown; rate limits usually clear within 5 min
 
 modality_priors:
   code:
@@ -56,6 +58,7 @@ modality_priors:
     deepseek: 0.05  # R1 reasoning helps for complex/multi-step code
   chat:
     gemini_b: 0.10
+    glm: 0.08        # GLM-4-Flash excels at multilingual chat and concise replies
 
 # ── Refinement layer ──────────────────────────────────────────────────────────
 # Runs after pick_winner() to improve answer quality via cross-agent critique,

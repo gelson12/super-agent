@@ -12,6 +12,7 @@ from app.agents.chatgpt import ChatGPTAgent
 from app.agents.claude_b import ClaudeBAgent
 from app.agents.deepseek import DeepSeekAgent
 from app.agents.gemini_b import GeminiBAgent
+from app.agents.glm import GLMAgent
 from app.agents.github_models import GitHubModelsAgent
 from app.agents.groq import GroqAgent
 from app.agents.hf import HFAgent
@@ -81,6 +82,7 @@ async def lifespan(app: FastAPI):
     _AGENTS["mistral"] = MistralAgent()
     _AGENTS["sambanova"] = SambaNovaAgent()
     _AGENTS["deepseek"] = DeepSeekAgent()
+    _AGENTS["glm"] = GLMAgent()
     enabled = [aid for aid, a in _AGENTS.items() if getattr(a, "enabled", False)]
     if not settings.LEGION_ENABLED:
         log.warning(
