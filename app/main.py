@@ -1318,6 +1318,62 @@ def _fetch_cli_worker_detailed() -> dict:
     return _cli_detailed_cache
 
 
+@app.get("/dashboard/bridge/pending", tags=["meta"])
+def dashboard_bridge_pending():
+    """
+    Pending Bridge OS proposals, approvals, and overrides — consumed by the
+    office sim (bot badge dots) and monitoring page.
+    Returns: { proposals: [{to_agent, memo_type, subject, priority, hours_old}],
+               overrides: [{bot_name, hint_preview, updated_at}] }
+    """
+    from .memory.vector_memory import _get_pg_conn as _pgp
+    result: dict = {"proposals": [], "overrides": []}
+    conn = _pgp()
+    if not conn:
+        return result
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT to_agent, memo_type, subject, priority,
+                       ROUND(EXTRACT(EPOCH FROM (NOW() - created_at))/3600, 1) AS hours_old
+                FROM bridge.agent_memos
+                WHERE status = 'open'
+                  AND memo_type IN (
+                    'approval_request','cro_review_request',
+                    'cto_review_request','bot_improvement_proposal'
+                  )
+                ORDER BY
+                    CASE priority WHEN 'urgent' THEN 1 WHEN 'high' THEN 2 ELSE 3 END,
+                    created_at ASC
+                LIMIT 15
+            """)
+            result["proposals"] = [
+                {"to_agent": r[0], "memo_type": r[1], "subject": (r[2] or "")[:80],
+                 "priority": r[3], "hours_old": float(r[4] or 0)}
+                for r in cur.fetchall()
+            ]
+            cur.execute("""
+                SELECT bot_name,
+                       LEFT(context_hint, 60) AS hint_preview,
+                       updated_at
+                FROM bridge.bot_context_overrides
+                ORDER BY updated_at DESC
+            """)
+            result["overrides"] = [
+                {"bot_name": r[0], "hint_preview": r[1], "updated_at": r[2].isoformat() if r[2] else None}
+                for r in cur.fetchall()
+            ]
+        conn.commit()
+    except Exception:
+        pass
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    return result
+
+
 @app.get("/dashboard/agents/status", tags=["meta"])
 def agents_status():
     """

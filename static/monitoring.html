@@ -291,6 +291,41 @@ main{flex:1;padding:24px 28px;display:flex;flex-direction:column;gap:24px;max-wi
   #cli-layers{grid-template-columns:repeat(2,1fr)}
   #stat-row{grid-template-columns:1fr 1fr}
 }
+
+/* ── Active Overrides ─────────────────────────────────────────────────── */
+#overrides-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:14px}
+.override-card{
+  background:var(--glass);border:1px solid var(--border);border-radius:10px;
+  padding:18px 20px;backdrop-filter:blur(8px);
+  border-left:4px solid var(--purple);transition:box-shadow 0.2s;
+}
+.override-card:hover{box-shadow:0 0 20px rgba(123,47,255,0.15)}
+.ov-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.ov-bot{font-family:var(--font-hud);font-size:13px;font-weight:700;color:var(--cyan);letter-spacing:1px;text-transform:uppercase}
+.ov-by{font-size:10px;color:var(--text-dim);letter-spacing:1px}
+.ov-hint{font-size:12px;color:var(--text);line-height:1.6;margin-bottom:12px;
+  padding:8px 12px;background:rgba(123,47,255,0.08);border-radius:6px;border:1px solid rgba(123,47,255,0.2)}
+.ov-stats{display:flex;gap:20px;font-size:11px}
+.ov-stat-label{color:var(--text-dim);letter-spacing:1px;text-transform:uppercase;font-size:10px;margin-bottom:2px}
+.ov-stat-val{font-family:var(--font-hud);font-size:15px;font-weight:700}
+.delta-up{color:var(--green)}.delta-down{color:var(--red)}.delta-flat{color:var(--text-dim)}
+
+/* ── 7-Day Performance ────────────────────────────────────────────────── */
+#perf-table{display:flex;flex-direction:column;gap:8px}
+.perf-row{
+  display:grid;grid-template-columns:140px 1fr 80px 80px 60px;
+  align-items:center;gap:12px;
+  background:var(--glass);border:1px solid var(--border);border-radius:8px;
+  padding:12px 16px;
+}
+.perf-row:hover{border-color:var(--cyan-dim)}
+.perf-name{font-family:var(--font-hud);font-size:11px;color:var(--text);letter-spacing:1px;text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.perf-bar-wrap{position:relative;height:8px;background:rgba(255,255,255,0.05);border-radius:4px;overflow:hidden}
+.perf-bar-fill{height:100%;border-radius:4px;transition:width 0.6s ease}
+.perf-total{font-size:11px;color:var(--text-dim);text-align:right}
+.perf-success{font-size:11px;color:var(--green);text-align:right}
+.perf-pct{font-family:var(--font-hud);font-size:12px;font-weight:700;text-align:right}
+.perf-header{display:grid;grid-template-columns:140px 1fr 80px 80px 60px;gap:12px;padding:4px 16px;font-size:9px;letter-spacing:2px;color:var(--text-dim);text-transform:uppercase}
 </style>
 </head>
 <body>
@@ -426,6 +461,21 @@ main{flex:1;padding:24px 28px;display:flex;flex-direction:column;gap:24px;max-wi
       <div id="suggestions-list"><div class="loading"><div class="spinner"></div>LOADING</div></div>
     </div>
 
+  </div>
+
+  <!-- Active CEO Overrides -->
+  <div>
+    <div class="section-label">Active CEO Directives</div>
+    <div id="overrides-grid"><div class="loading"><div class="spinner"></div>LOADING</div></div>
+  </div>
+
+  <!-- 7-Day Bot Performance -->
+  <div>
+    <div class="section-label">7-Day Bot Performance</div>
+    <div class="perf-header">
+      <span>Bot</span><span>Success Rate</span><span>Total</span><span>Success</span><span>%</span>
+    </div>
+    <div id="perf-table"><div class="loading"><div class="spinner"></div>LOADING</div></div>
   </div>
 
 </main>
@@ -780,12 +830,98 @@ function esc(str) {
     .replace(/"/g,'&quot;');
 }
 
+// ── Load active overrides ─────────────────────────────────────────────────────
+async function loadOverrides() {
+  const el = document.getElementById('overrides-grid');
+  try {
+    const r = await fetch(`${API}/overrides`);
+    const data = await r.json();
+    if (!data.length) {
+      el.innerHTML = `<div class="empty"><div class="empty-icon">◈</div><div class="empty-msg">No active CEO directives.</div></div>`;
+      return;
+    }
+    el.innerHTML = data.map(o => {
+      const base = o.baseline_success_rate != null ? Math.round(o.baseline_success_rate * 100) : null;
+      const curr = o.current_success_pct != null ? parseFloat(o.current_success_pct) : null;
+      let deltaHtml = '';
+      if (base != null && curr != null) {
+        const diff = (curr - base).toFixed(1);
+        const cls = diff > 0 ? 'delta-up' : diff < 0 ? 'delta-down' : 'delta-flat';
+        const sign = diff > 0 ? '+' : '';
+        deltaHtml = `<span class="${cls}">${sign}${diff}%</span>`;
+      }
+      return `
+      <div class="override-card">
+        <div class="ov-header">
+          <span class="ov-bot">${esc(o.bot_name)}</span>
+          <span class="ov-by">by ${esc(o.approved_by || 'human')} · ${timeAgo(o.updated_at)}</span>
+        </div>
+        <div class="ov-hint">${esc(o.context_hint || '')}</div>
+        <div class="ov-stats">
+          <div>
+            <div class="ov-stat-label">Baseline</div>
+            <div class="ov-stat-val delta-flat">${base != null ? base+'%' : '—'}</div>
+          </div>
+          <div>
+            <div class="ov-stat-label">Current 7d</div>
+            <div class="ov-stat-val">${curr != null ? curr+'%' : '—'}</div>
+          </div>
+          <div>
+            <div class="ov-stat-label">Delta</div>
+            <div class="ov-stat-val">${deltaHtml || '—'}</div>
+          </div>
+          <div>
+            <div class="ov-stat-label">Tasks 7d</div>
+            <div class="ov-stat-val neu">${o.tasks_7d || 0}</div>
+          </div>
+        </div>
+      </div>`;
+    }).join('');
+  } catch(e) {
+    el.innerHTML = `<div class="empty"><div class="empty-msg" style="color:var(--red)">Error loading overrides</div></div>`;
+  }
+}
+
+// ── Load 7-day bot performance ────────────────────────────────────────────────
+async function loadBotPerformance() {
+  const el = document.getElementById('perf-table');
+  try {
+    const r = await fetch(`${API}/bot-performance`);
+    const data = await r.json();
+    if (!data.length) {
+      el.innerHTML = `<div class="empty"><div class="empty-icon">◈</div><div class="empty-msg">No performance data yet.</div></div>`;
+      return;
+    }
+    const maxTotal = Math.max(...data.map(d => Number(d.total) || 0), 1);
+    el.innerHTML = data.map(d => {
+      const pct = parseFloat(d.success_pct) || 0;
+      const barW = Math.round((Number(d.total) / maxTotal) * 100);
+      const barColor = pct >= 80 ? 'var(--green)' : pct >= 50 ? 'var(--yellow)' : 'var(--red)';
+      const pctColor = pct >= 80 ? 'var(--green)' : pct >= 50 ? 'var(--yellow)' : 'var(--red)';
+      return `
+      <div class="perf-row">
+        <div class="perf-name">${esc(d.agent_name)}</div>
+        <div class="perf-bar-wrap">
+          <div class="perf-bar-fill" style="width:${barW}%;background:${barColor}"></div>
+        </div>
+        <div class="perf-total">${d.total}</div>
+        <div class="perf-success">${d.success}</div>
+        <div class="perf-pct" style="color:${pctColor}">${pct}%</div>
+      </div>`;
+    }).join('');
+  } catch(e) {
+    el.innerHTML = `<div class="empty"><div class="empty-msg" style="color:var(--red)">Error loading performance data</div></div>`;
+  }
+}
+
 // ── Bootstrap ─────────────────────────────────────────────────────────────────
 async function loadAll() {
   await Promise.all([
     loadStatus(),
     loadReports(),
     loadSuggestions(currentFilter),
+    loadOverrides(),
+    loadBotPerformance(),
   ]);
 }
 

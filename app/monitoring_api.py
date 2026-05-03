@@ -328,6 +328,82 @@ def api_check_status():
     return {"running": _check_running}
 
 
+# ── API: active CEO context overrides ────────────────────────────────────────
+
+@router.get("/api/overrides")
+def api_overrides():
+    """
+    All active bot_context_overrides with baseline vs current success rate.
+    Used by the monitoring dashboard 'Active Overrides' tab.
+    """
+    try:
+        conn = _get_db()
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    bco.bot_name,
+                    bco.context_hint,
+                    bco.approved_by,
+                    bco.updated_at,
+                    bco.baseline_success_rate,
+                    bco.baseline_snapshot_at,
+                    ROUND(
+                        SUM(ap.tasks_success)::numeric
+                        / NULLIF(SUM(ap.tasks_total), 0) * 100, 1
+                    ) AS current_success_pct,
+                    SUM(ap.tasks_total)   AS tasks_7d,
+                    SUM(ap.tasks_success) AS success_7d
+                FROM bridge.bot_context_overrides bco
+                LEFT JOIN bridge.agent_performance ap
+                    ON ap.agent_name = bco.bot_name
+                    AND ap.date >= CURRENT_DATE - INTERVAL '7 days'
+                GROUP BY bco.bot_name, bco.context_hint, bco.approved_by,
+                         bco.updated_at, bco.baseline_success_rate, bco.baseline_snapshot_at
+                ORDER BY bco.updated_at DESC
+            """)
+            rows = cur.fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+# ── API: 7-day bot performance ────────────────────────────────────────────────
+
+@router.get("/api/bot-performance")
+def api_bot_performance():
+    """
+    Per-bot task totals, success rate, and daily trend for the last 7 days.
+    Used by the monitoring dashboard '7-Day Performance' tab.
+    """
+    try:
+        conn = _get_db()
+        with conn.cursor() as cur:
+            # Aggregated totals
+            cur.execute("""
+                SELECT
+                    agent_name,
+                    SUM(tasks_total)   AS total,
+                    SUM(tasks_success) AS success,
+                    SUM(tasks_failed)  AS failed,
+                    ROUND(
+                        SUM(tasks_success)::numeric
+                        / NULLIF(SUM(tasks_total), 0) * 100, 1
+                    ) AS success_pct,
+                    MAX(date) AS last_active
+                FROM bridge.agent_performance
+                WHERE date >= CURRENT_DATE - INTERVAL '7 days'
+                GROUP BY agent_name
+                ORDER BY SUM(tasks_total) DESC
+                LIMIT 20
+            """)
+            rows = cur.fetchall()
+        conn.close()
+        return [dict(r) for r in rows]
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
 # ── Self-Improvement forwarding ───────────────────────────────────────────────
 
 def _forward_to_self_improve(suggestion: dict, action: str) -> None:
