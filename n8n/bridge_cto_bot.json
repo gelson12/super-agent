@@ -282,7 +282,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "=https://api.telegram.org/bot{{$env.BRIDGE_PM_BOT_TOKEN || $env.Bridge_CEO_BOT}}/sendMessage",
+        "url": "=https://api.telegram.org/bot{{$env.BRIDGE_CTO_BOT_TOKEN || $env.Bridge_CEO_BOT}}/sendMessage",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
