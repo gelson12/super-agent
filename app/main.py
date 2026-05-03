@@ -1336,7 +1336,8 @@ def dashboard_bridge_pending():
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT to_agent, memo_type, subject, priority,
+                SELECT memo_id, from_agent, to_agent, memo_type, subject, priority,
+                       body_json,
                        ROUND(EXTRACT(EPOCH FROM (NOW() - created_at))/3600, 1) AS hours_old
                 FROM bridge.agent_memos
                 WHERE status = 'open'
@@ -1350,8 +1351,16 @@ def dashboard_bridge_pending():
                 LIMIT 15
             """)
             result["proposals"] = [
-                {"to_agent": r[0], "memo_type": r[1], "subject": (r[2] or "")[:80],
-                 "priority": r[3], "hours_old": float(r[4] or 0)}
+                {
+                    "memo_id":   str(r[0]),
+                    "from_agent": r[1] or "",
+                    "to_agent":  r[2],
+                    "memo_type": r[3],
+                    "subject":   (r[4] or "")[:120],
+                    "priority":  r[5],
+                    "body":      r[6] if isinstance(r[6], dict) else {},
+                    "hours_old": float(r[7] or 0),
+                }
                 for r in cur.fetchall()
             ]
             cur.execute("""
@@ -1374,6 +1383,79 @@ def dashboard_bridge_pending():
         except Exception:
             pass
     return result
+
+
+@app.post("/dashboard/bridge/proposals/{memo_id}/approve", tags=["meta"])
+def proposal_approve(memo_id: str, request: Request):
+    """Approve a pending agent memo (marks status='approved', notifies originating bot)."""
+    from .memory.vector_memory import _get_pg_conn as _pgp
+    conn = _pgp()
+    if not conn:
+        return JSONResponse({"ok": False, "error": "db unavailable"}, status_code=503)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT memo_id, from_agent, memo_type, subject, body_json "
+                "FROM bridge.agent_memos WHERE memo_id = %s AND status = 'open'",
+                (memo_id,)
+            )
+            row = cur.fetchone()
+            if not row:
+                return JSONResponse({"ok": False, "error": "not found or already actioned"}, status_code=404)
+            cur.execute(
+                "UPDATE bridge.agent_memos SET status='approved', "
+                "approved_by='human', approved_at=NOW() WHERE memo_id = %s",
+                (memo_id,)
+            )
+            # Write a reply memo back to the originating bot
+            cur.execute("""
+                INSERT INTO bridge.agent_memos (from_agent, to_agent, memo_type, priority, subject, body_json)
+                VALUES ('human', %s, 'approval_granted', 'high', %s,
+                        jsonb_build_object('original_memo_id', %s::text, 'approved_by', 'human'))
+            """, (row[1], f"APPROVED: {row[3]}", memo_id))
+        conn.commit()
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+    finally:
+        try: conn.close()
+        except Exception: pass
+    return {"ok": True, "message": f"Proposal approved and {row[1]} notified."}
+
+
+@app.post("/dashboard/bridge/proposals/{memo_id}/reject", tags=["meta"])
+def proposal_reject(memo_id: str, request: Request):
+    """Reject a pending agent memo."""
+    from .memory.vector_memory import _get_pg_conn as _pgp
+    conn = _pgp()
+    if not conn:
+        return JSONResponse({"ok": False, "error": "db unavailable"}, status_code=503)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT memo_id, from_agent, subject FROM bridge.agent_memos "
+                "WHERE memo_id = %s AND status = 'open'",
+                (memo_id,)
+            )
+            row = cur.fetchone()
+            if not row:
+                return JSONResponse({"ok": False, "error": "not found or already actioned"}, status_code=404)
+            cur.execute(
+                "UPDATE bridge.agent_memos SET status='rejected', "
+                "approved_by='human', approved_at=NOW() WHERE memo_id = %s",
+                (memo_id,)
+            )
+            cur.execute("""
+                INSERT INTO bridge.agent_memos (from_agent, to_agent, memo_type, priority, subject, body_json)
+                VALUES ('human', %s, 'approval_denied', 'high', %s,
+                        jsonb_build_object('original_memo_id', %s::text, 'rejected_by', 'human'))
+            """, (row[1], f"REJECTED: {row[2]}", memo_id))
+        conn.commit()
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+    finally:
+        try: conn.close()
+        except Exception: pass
+    return {"ok": True, "message": "Proposal rejected."}
 
 
 @app.get("/dashboard/agents/status", tags=["meta"])

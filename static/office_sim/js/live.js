@@ -117,6 +117,9 @@ export class LiveFeed {
       const json = await r.json();
       const proposals = json.proposals || [];
 
+      // Cache full proposal list for the modal
+      this._pendingProposals = proposals;
+
       // Count proposals per to_agent
       const counts = {};
       for (const p of proposals) {
@@ -124,9 +127,7 @@ export class LiveFeed {
       }
       this.pendingCounts = counts;
 
-      // Update badge dots on HUD bot-list rows.
-      // Each <li> has data-bot-id matching bots.json id (e.g. "ceo", "cto").
-      // We add/remove a <span class="pending-badge"> showing the count.
+      // Update badge dots on HUD bot-list rows — clicking opens approval modal.
       for (const bot of this.bots) {
         const li = document.querySelector(`[data-bot-id="${bot.id}"]`);
         if (!li) continue;
@@ -136,15 +137,16 @@ export class LiveFeed {
           if (!badge) {
             badge = document.createElement('span');
             badge.className = 'pending-badge';
-            badge.title = `${count} pending proposal${count > 1 ? 's' : ''}`;
             li.appendChild(badge);
           }
           badge.textContent = count;
+          badge.title = `${count} pending proposal${count > 1 ? 's' : ''} — click to review`;
           badge.style.cssText =
-            'display:inline-flex;align-items:center;justify-content:center;' +
+            'display:inline-flex;align-items:center;justify-content:center;cursor:pointer;' +
             'min-width:16px;height:16px;border-radius:8px;font-size:9px;font-weight:700;' +
             'background:#ff2d55;color:#fff;margin-left:6px;padding:0 4px;' +
             'animation:pendingPulse 1.5s infinite;flex-shrink:0';
+          badge.onclick = (e) => { e.stopPropagation(); this._openApprovalModal(bot.id); };
         } else if (badge) {
           badge.remove();
         }
@@ -158,6 +160,119 @@ export class LiveFeed {
         document.head.appendChild(s);
       }
     } catch (e) { /* fail-soft */ }
+  }
+
+  _openApprovalModal(botId) {
+    const modal   = document.getElementById('approval-modal');
+    const content = document.getElementById('modal-proposals');
+    const closeBtn = document.getElementById('modal-close');
+    if (!modal || !content) return;
+
+    const proposals = (this._pendingProposals || []).filter(p => !botId || p.to_agent === botId);
+
+    const PRIORITY_COLOUR = { urgent: '#ef4444', high: '#f59e0b', medium: '#3b82f6', low: '#64748b' };
+    const TYPE_ICON = {
+      approval_request:       '📋',
+      cro_review_request:     '💰',
+      cto_review_request:     '🖥️',
+      bot_improvement_proposal:'💡',
+    };
+
+    if (!proposals.length) {
+      content.innerHTML = '<p style="color:#64748b;font-size:.85rem;text-align:center;padding:1rem">No pending proposals for this agent.</p>';
+    } else {
+      content.innerHTML = proposals.map((p, idx) => {
+        const typeIcon  = TYPE_ICON[p.memo_type] || '📝';
+        const priColor  = PRIORITY_COLOUR[p.priority] || '#64748b';
+        const ageText   = p.hours_old < 1 ? `${Math.round(p.hours_old * 60)}m ago`
+                        : p.hours_old < 24 ? `${p.hours_old}h ago`
+                        : `${(p.hours_old/24).toFixed(1)}d ago`;
+
+        // Extract meaningful body preview
+        const body = p.body || {};
+        const bodyLines = [];
+        if (body.description)  bodyLines.push(body.description);
+        if (body.proposed_fix) bodyLines.push(`💡 Fix: ${body.proposed_fix}`);
+        if (body.cro_score)    bodyLines.push(`📈 CRO score: ${body.cro_score}`);
+        if (body.risk_level)   bodyLines.push(`⚠️ Risk: ${body.risk_level}`);
+        const bodyHtml = bodyLines.slice(0,3).map(l =>
+          `<p style="color:#94a3b8;font-size:.78rem;margin:.25rem 0">${l.slice(0,200)}</p>`
+        ).join('');
+
+        return `
+        <div id="proposal-card-${p.memo_id}" style="border:1px solid #1e3048;border-radius:8px;
+          padding:.85rem 1rem;margin-bottom:.75rem;background:#0a1628">
+          <div style="display:flex;align-items:flex-start;gap:.5rem;margin-bottom:.4rem">
+            <span style="font-size:1.1rem;flex-shrink:0">${typeIcon}</span>
+            <div style="flex:1;min-width:0">
+              <div style="font-weight:600;font-size:.9rem;color:#e0e8f0;line-height:1.3">${p.subject}</div>
+              <div style="display:flex;gap:.5rem;margin-top:.3rem;flex-wrap:wrap">
+                <span style="background:${priColor}22;color:${priColor};border:1px solid ${priColor}44;
+                  padding:1px 7px;border-radius:10px;font-size:.7rem;font-weight:700">${p.priority.toUpperCase()}</span>
+                <span style="color:#475569;font-size:.7rem">from ${p.from_agent || '?'} → ${p.to_agent}</span>
+                <span style="color:#334155;font-size:.7rem">${ageText}</span>
+              </div>
+            </div>
+          </div>
+          ${bodyHtml}
+          <div style="display:flex;gap:.5rem;margin-top:.7rem">
+            <button onclick="window._approveProposal('${p.memo_id}')"
+              style="flex:1;padding:.45rem;background:#10b981;color:#fff;border:none;border-radius:6px;
+                cursor:pointer;font-weight:700;font-size:.8rem">✅ Approve</button>
+            <button onclick="window._rejectProposal('${p.memo_id}')"
+              style="flex:1;padding:.45rem;background:#ef4444;color:#fff;border:none;border-radius:6px;
+                cursor:pointer;font-weight:700;font-size:.8rem">❌ Reject</button>
+          </div>
+          <div id="proposal-feedback-${p.memo_id}" style="margin-top:.4rem;font-size:.75rem;color:#64748b;min-height:1rem"></div>
+        </div>`;
+      }).join('');
+    }
+
+    // Wire up global approve/reject handlers
+    const self = this;
+    window._approveProposal = async (memoId) => {
+      const fb = document.getElementById(`proposal-feedback-${memoId}`);
+      if (fb) fb.textContent = 'Approving…';
+      try {
+        const res = await fetch(`/dashboard/bridge/proposals/${memoId}/approve`, { method: 'POST' });
+        const data = await res.json();
+        if (data.ok) {
+          const card = document.getElementById(`proposal-card-${memoId}`);
+          if (card) { card.style.opacity = '.4'; card.style.pointerEvents = 'none'; }
+          if (fb) { fb.textContent = '✅ Approved!'; fb.style.color = '#10b981'; }
+          // Refresh pending after short delay
+          setTimeout(() => self._pollPending(), 1500);
+        } else {
+          if (fb) { fb.textContent = `Error: ${data.error || 'failed'}`; fb.style.color = '#ef4444'; }
+        }
+      } catch (e) {
+        if (fb) { fb.textContent = 'Network error'; fb.style.color = '#ef4444'; }
+      }
+    };
+
+    window._rejectProposal = async (memoId) => {
+      const fb = document.getElementById(`proposal-feedback-${memoId}`);
+      if (fb) fb.textContent = 'Rejecting…';
+      try {
+        const res = await fetch(`/dashboard/bridge/proposals/${memoId}/reject`, { method: 'POST' });
+        const data = await res.json();
+        if (data.ok) {
+          const card = document.getElementById(`proposal-card-${memoId}`);
+          if (card) { card.style.opacity = '.4'; card.style.pointerEvents = 'none'; }
+          if (fb) { fb.textContent = '❌ Rejected.'; fb.style.color = '#ef4444'; }
+          setTimeout(() => self._pollPending(), 1500);
+        } else {
+          if (fb) { fb.textContent = `Error: ${data.error || 'failed'}`; fb.style.color = '#ef4444'; }
+        }
+      } catch (e) {
+        if (fb) { fb.textContent = 'Network error'; fb.style.color = '#ef4444'; }
+      }
+    };
+
+    // Show modal
+    modal.style.display = 'flex';
+    closeBtn.onclick = () => { modal.style.display = 'none'; };
+    modal.onclick = (e) => { if (e.target === modal) modal.style.display = 'none'; };
   }
 
   _connectStream() {

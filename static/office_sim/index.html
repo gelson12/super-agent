@@ -59,6 +59,32 @@
     <span id="status-bots">bots: 0</span>
   </footer>
 
+  <!-- Approval modal -->
+  <div id="approval-modal" style="display:none;position:fixed;inset:0;z-index:9999;
+    background:rgba(0,0,0,.65);backdrop-filter:blur(4px);align-items:center;justify-content:center">
+    <div style="background:#0f1923;border:1px solid #2a3f55;border-radius:12px;
+      max-width:560px;width:calc(100% - 2rem);max-height:80vh;overflow-y:auto;
+      box-shadow:0 8px 48px rgba(0,0,0,.8);font-family:inherit;color:#e0e8f0">
+
+      <!-- Header -->
+      <div style="display:flex;align-items:center;justify-content:space-between;
+        padding:1rem 1.25rem .75rem;border-bottom:1px solid #1e3048">
+        <div style="display:flex;align-items:center;gap:.6rem">
+          <span style="font-size:1.3rem">📬</span>
+          <span style="font-weight:700;font-size:1rem;color:#7dd3fc">Pending Approvals</span>
+        </div>
+        <button id="modal-close" style="background:none;border:none;color:#64748b;
+          font-size:1.4rem;cursor:pointer;line-height:1;padding:0 4px"
+          title="Close">✕</button>
+      </div>
+
+      <!-- Proposal list -->
+      <div id="modal-proposals" style="padding:.75rem 1.25rem 1.25rem">
+        <p style="color:#64748b;font-size:.85rem">Loading…</p>
+      </div>
+    </div>
+  </div>
+
   <script type="module" src="js/main.js"></script>
 </body>
 </html>
