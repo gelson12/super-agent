@@ -46,17 +46,20 @@ def test_pick_winner_returns_highest_scorer():
         "a": AgentProfile("a", sample_count=50, rolling_win_rate=0.5),
         "b": AgentProfile("b", sample_count=50, rolling_win_rate=0.5),
     }
-    winner, scores = pick_winner(responses, {"a": 0.5, "b": 0.5}, profiles, weights)
+    winner, runner_up, scores = pick_winner(responses, {"a": 0.5, "b": 0.5}, profiles, weights)
     assert winner is not None
     assert winner.agent_id == "b"
+    assert runner_up is not None
+    assert runner_up.agent_id == "a"
     assert scores["b"] > scores["a"]
 
 
 def test_pick_winner_all_failed_returns_none():
     weights = RankWeights()
     responses = [_resp("a", success=False), _resp("b", success=False)]
-    winner, scores = pick_winner(responses, {}, {}, weights)
+    winner, runner_up, scores = pick_winner(responses, {}, {}, weights)
     assert winner is None
+    assert runner_up is None
     assert scores == {"a": 0.0, "b": 0.0}
 
 
@@ -65,5 +68,6 @@ def test_pick_winner_below_minimum_returns_none():
     # Make every score very low by crushing suitability + reliability + historical
     responses = [_resp("a", latency_ms=60_000, cost=20.0)]
     profiles = {"a": AgentProfile("a", sample_count=50, rolling_win_rate=0.0, error_rate_7d=1.0)}
-    winner, _ = pick_winner(responses, {"a": 0.0}, profiles, weights, min_acceptable=0.5)
+    winner, runner_up, _ = pick_winner(responses, {"a": 0.0}, profiles, weights, min_acceptable=0.5)
     assert winner is None
+    assert runner_up is None
