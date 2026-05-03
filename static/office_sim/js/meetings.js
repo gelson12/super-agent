@@ -22,6 +22,10 @@ const LEISURE_DURATION_MS = {
   lounge:    30_000 + Math.random() * 30_000,  // 30–60s in lounge
 };
 
+// Leisure zones are cross-floor — a bot will walk upstairs/downstairs for these.
+// Work zones stay on the bot's home floor to avoid desk-area confusion.
+const CROSS_FLOOR_ZONES = new Set(['tv', 'ping_pong', 'snooker', 'relax', 'beanbag', 'lounge', 'coffee']);
+
 const _ACTIVITY_LABELS = {
   tv: 'watching TV', ping_pong: 'playing ping-pong', snooker: 'playing snooker',
   relax: 'relaxing', beanbag: 'on beanbag', coffee: 'getting coffee',
@@ -182,7 +186,8 @@ export class Scheduler {
       // 60% stay (work at desk), 40% wander to an affinity zone on their home floor.
       if (Math.random() < 0.6) continue;
       const zoneType = bot.affinity[Math.floor(Math.random() * bot.affinity.length)];
-      const dst = this._pickRandomAnchorOfType(zoneType, bot.deskFloor);
+      const floorFilter = CROSS_FLOOR_ZONES.has(zoneType) ? null : bot.deskFloor;
+      const dst = this._pickRandomAnchorOfType(zoneType, floorFilter);
       if (dst) {
         const durationMs = LEISURE_DURATION_MS[zoneType] ?? 0;
         bot.goTo(this.floors, dst.floor, dst.x, dst.y, { label: _ACTIVITY_LABELS[zoneType] || zoneType, durationMs });
@@ -200,7 +205,8 @@ export class Scheduler {
       stagger += 800;                                  // next real roll is ~30s later
       if (Math.random() > 0.7) continue;
       const zoneType = bot.affinity[Math.floor(Math.random() * bot.affinity.length)];
-      const dst = this._pickRandomAnchorOfType(zoneType, bot.deskFloor);
+      const floorFilter = CROSS_FLOOR_ZONES.has(zoneType) ? null : bot.deskFloor;
+      const dst = this._pickRandomAnchorOfType(zoneType, floorFilter);
       if (dst) {
         const durationMs = LEISURE_DURATION_MS[zoneType] ?? 0;
         bot.goTo(this.floors, dst.floor, dst.x, dst.y, { label: _ACTIVITY_LABELS[zoneType] || zoneType, durationMs });
