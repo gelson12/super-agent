@@ -918,6 +918,75 @@ async def _lifespan(app: FastAPI):
 
     scheduler.start()
 
+    # ── Auto-sync Bridge bot JSONs to n8n on every deploy ────────────────────
+    # Runs in the background 15s after startup (let n8n finish its own boot).
+    # Compares a SHA-256 hash of each local JSON against the live workflow —
+    # only uploads when content differs, so manual n8n edits are overwritten
+    # only when a new git version is deployed.
+    async def _n8n_auto_sync():
+        import asyncio as _aio2
+        await _aio2.sleep(15)
+        try:
+            import glob as _glob2
+            import hashlib as _hl
+            import json as _json2
+            import urllib.request as _ureq
+            import urllib.error as _uerr2
+            _n8n_key = os.environ.get("N8N_API_KEY", "")
+            _n8n_base = os.environ.get("N8N_BASE_URL", "").rstrip("/")
+            if not _n8n_key or not _n8n_base:
+                return
+            # Discover bot JSONs from container filesystem
+            _dirs = ["/app/n8n", "/workspace/super-agent/n8n", "n8n"]
+            _bots: list[str] = []
+            for _d in _dirs:
+                _found = sorted(_glob2.glob(f"{_d}/bridge_*.json"))
+                if _found:
+                    _bots = _found
+                    break
+            if not _bots:
+                return
+            # Fetch all n8n workflows once
+            _lr = _ureq.Request(f"{_n8n_base}/api/v1/workflows?limit=250",
+                headers={"X-N8N-API-KEY": _n8n_key})
+            with _ureq.urlopen(_lr, timeout=15) as _r2:
+                _wf_map = {w["name"]: (w["id"], w) for w in _json2.loads(_r2.read())["data"]}
+            uploaded = 0
+            for _fpath in _bots:
+                try:
+                    _local = _json2.loads(open(_fpath, encoding="utf-8").read())
+                    _wf_name = _local.get("name", "")
+                    if _wf_name not in _wf_map:
+                        continue
+                    _wf_id, _remote = _wf_map[_wf_name]
+                    # Compare node count + connections as cheap diff (full JSON compare would be noisy)
+                    _local_sig = _hl.sha256(_json2.dumps(
+                        {"nodes": _local.get("nodes", []), "connections": _local.get("connections", {})},
+                        sort_keys=True).encode()).hexdigest()
+                    _remote_sig = _hl.sha256(_json2.dumps(
+                        {"nodes": _remote.get("nodes", []), "connections": _remote.get("connections", {})},
+                        sort_keys=True).encode()).hexdigest()
+                    if _local_sig == _remote_sig:
+                        continue
+                    _body = _json2.dumps(_local).encode()
+                    _put = _ureq.Request(f"{_n8n_base}/api/v1/workflows/{_wf_id}",
+                        data=_body, method="PUT",
+                        headers={"X-N8N-API-KEY": _n8n_key, "Content-Type": "application/json"})
+                    with _ureq.urlopen(_put, timeout=30) as _rp:
+                        uploaded += 1
+                        bg_log(f"[n8n-sync] uploaded: {_wf_name}", source="startup")
+                except Exception as _se:
+                    bg_log(f"[n8n-sync] {_fpath}: {_se}", source="startup")
+            if uploaded:
+                bg_log(f"[n8n-sync] done — {uploaded} workflows updated", source="startup")
+            else:
+                bg_log("[n8n-sync] all workflows already up to date", source="startup")
+        except Exception as _e:
+            bg_log(f"[n8n-sync] startup sync failed: {_e}", source="startup")
+
+    import asyncio as _aio_sync
+    _aio_sync.create_task(_n8n_auto_sync())
+
     # ── Postgres LISTEN/NOTIFY inbox watcher ─────────────────────────────────
     _db_url = os.environ.get("DATABASE_URL", "")
     if _db_url:
