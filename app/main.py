@@ -28,6 +28,7 @@ import httpx
 
 from .routing.dispatcher import dispatch
 from .monitoring_api import router as _monitoring_router
+from .client_portal_api import router as _client_portal_router
 from .memory.session import append_exchange, get_messages, clear_session
 from .activity_log import bg_log, recent_lines as _activity_recent_lines, ACTIVITY_LOG
 from .storage.cloudinary_manager import get_storage_status, upload_file
@@ -1171,6 +1172,7 @@ if os.path.isdir(_static_dir):
     app.mount("/static", StaticFiles(directory=_static_dir), name="static")
 
 app.include_router(_monitoring_router)
+app.include_router(_client_portal_router)
 
 @app.get("/", include_in_schema=False)
 def root():

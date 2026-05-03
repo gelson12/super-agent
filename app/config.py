@@ -104,6 +104,11 @@ class Settings(BaseSettings):
     # Optional: set VERCEL_TEAM_ID if deploying under a Vercel team account
     vercel_api_key: str = ""
 
+    # Stripe — payment links and payment status
+    # Set via Railway env var STRIPE_SECRET_KEY
+    # Obtain at: https://dashboard.stripe.com/apikeys
+    stripe_secret_key: str = ""
+
     # Multi-framework orchestration (LangGraph custom graphs, AutoGen, CrewAI)
     # Global kill switch for the /chat/graph, /chat/crew, /chat/groupchat endpoints.
     frameworks_enabled: bool = True

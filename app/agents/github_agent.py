@@ -20,6 +20,8 @@ from ..tools.shell_tools import run_shell_command
 from ..tools.obsidian_tools import OBSIDIAN_TOOLS
 from ..tools.v0_tools import V0_TOOLS
 from ..tools.vercel_tools import VERCEL_TOOLS
+from ..tools.stripe_tools import STRIPE_TOOLS
+from ..tools.document_tools import DOCUMENT_TOOLS
 
 _SYSTEM = """You are a GitHub assistant with LIVE access to Gelson's GitHub account (gelson12).
 
@@ -96,6 +98,35 @@ required sections, CTAs, and any integrations (call tracking, analytics, forms).
 
 **USE `vercel_list_deployments()` to find existing preview URLs for a client project.**
 
+## COMPLETE CLIENT SALES PIPELINE
+
+For a full client engagement, you have all the tools to close the deal autonomously:
+
+**Step 1 — Build the website (see above)**
+**Step 2 — Send a proposal:**
+  `generate_proposal(client_name, service, price_gbp, notes)` → returns HTML
+  → Deploy on Vercel OR commit to GitHub and share the raw URL
+
+**Step 3 — Create a payment link:**
+  `stripe_create_payment_link(amount_gbp, description, client_name, client_email)`
+  → Returns a Stripe checkout URL — share via WhatsApp/email/SMS immediately
+  → For a deposit: use amount_gbp = price_gbp * 0.5
+
+**Step 4 — Set up client status portal:**
+  POST to `/client/api/create` (internal) to create a project token
+  → Share `https://super-agent-production.up.railway.app/client/{token}` with the client
+  → Update status as work progresses via `/client/api/{token}/update`
+
+**Step 5 — Generate the contract (when client is ready to sign):**
+  `generate_contract(client_name, service, price_gbp, start_date, payment_terms)`
+  → Deploy on Vercel or commit to GitHub — share URL for e-signature or printout
+
+**CHECKING PAYMENT STATUS:**
+  `stripe_get_payment_status(payment_link_id)` → shows paid sessions and total collected
+
+**WHEN THE CLIENT ASKS "IS MY WEBSITE READY?" / "WHAT'S THE STATUS?"**
+  Direct them to their portal URL (you created at Step 4). Update the portal status first.
+
 You can:
 - List all repositories under gelson12 (use this when repo name is unknown)
 - Read any file in any repo
@@ -137,6 +168,10 @@ _GITHUB_TOOLS = [
     *V0_TOOLS,
     # Vercel deployment — deploy generated HTML to a live preview URL instantly
     *VERCEL_TOOLS,
+    # Stripe — create payment links and check payment status
+    *STRIPE_TOOLS,
+    # Document generation — proposals and contracts as HTML/PDF
+    *DOCUMENT_TOOLS,
 ]
 
 _agent = None
