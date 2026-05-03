@@ -96,7 +96,10 @@
       "affinity": [
         "desk_cluster",
         "coffee",
-        "balcony"
+        "balcony",
+        "snooker",
+        "relax",
+        "tv"
       ]
     },
     {
@@ -116,6 +119,7 @@
         "meeting_room",
         "coffee",
         "lounge",
+        "tv",
         "desk_cluster"
       ]
     },
@@ -135,6 +139,7 @@
       "affinity": [
         "coffee",
         "lounge",
+        "tv",
         "desk_cluster"
       ]
     },
@@ -173,7 +178,8 @@
       "affinity": [
         "desk_cluster",
         "coffee",
-        "lounge"
+        "lounge",
+        "tv"
       ]
     },
     {
@@ -192,6 +198,9 @@
       "affinity": [
         "focus",
         "balcony",
+        "snooker",
+        "relax",
+        "tv",
         "desk_cluster"
       ]
     },
@@ -249,6 +258,8 @@
       "affinity": [
         "focus",
         "ping_pong",
+        "relax",
+        "tv",
         "coffee",
         "balcony"
       ]
@@ -268,6 +279,9 @@
       },
       "affinity": [
         "snooker",
+        "ping_pong",
+        "relax",
+        "tv",
         "lounge",
         "coffee",
         "desk_cluster"
@@ -289,6 +303,10 @@
       "affinity": [
         "coffee",
         "balcony",
+        "ping_pong",
+        "relax",
+        "beanbag",
+        "tv",
         "desk_cluster",
         "lounge"
       ]
@@ -329,6 +347,7 @@
       "affinity": [
         "lounge",
         "coffee",
+        "tv",
         "meeting_room",
         "desk_cluster"
       ]
@@ -350,6 +369,7 @@
         "focus",
         "desk_cluster",
         "coffee",
+        "tv",
         "ideas"
       ]
     }

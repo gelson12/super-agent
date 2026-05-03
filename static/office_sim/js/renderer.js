@@ -135,6 +135,9 @@ export class Renderer {
     // Optional debug grid overlay (toggled by 'g').
     if (this.debugGrid) this._drawTileGrid(ctx, w, h);
 
+    // Animated TV screens — drawn on top of floor, behind bots.
+    this._drawTVScreens(ctx, w, h, now);
+
     // Y-sort bots on this floor. Exclude bots in 'transit' — they are between
     // floors (physically on the staircase) and must not pop-in on the new floor
     // until they finish crossing and start walking.
@@ -166,6 +169,70 @@ export class Renderer {
         else if (c === 'D') { ctx.fillStyle='rgba(201,169,110,0.25)'; ctx.fillRect(x*tw, y*th, tw, th); }
         else if (c === 'U' || c === 'N') { ctx.fillStyle='rgba(108,208,255,0.25)'; ctx.fillRect(x*tw, y*th, tw, th); }
       }
+    }
+  }
+
+  // TV screens: floor → [tile, ...] (one entry per TV on that floor).
+  // Tile coords come from the 'tv' zone anchors in floorN.json.
+  static get TV_TILES() {
+    return { 1: [[55, 6]], 3: [[56, 12]] };
+  }
+
+  _drawTVScreens(ctx, w, h, now) {
+    const tvTiles = Renderer.TV_TILES[this.activeFloor];
+    if (!tvTiles) return;
+
+    const tw = w / TILE_W;
+    const th = h / TILE_H;
+
+    for (const [tx, ty] of tvTiles) {
+      // Screen occupies roughly 1.6 × 0.7 tiles, centred on the TV tile.
+      const cx = (tx + 0.5) * tw;
+      const cy = (ty + 0.5) * th;
+      const sw = tw * 1.6;
+      const sh = th * 0.72;
+
+      const t = now / 1000;  // seconds
+
+      // Bezel (dark rounded frame)
+      ctx.save();
+      ctx.shadowColor = 'rgba(80,180,255,0.55)';
+      ctx.shadowBlur  = 14;
+      ctx.fillStyle = '#111';
+      ctx.beginPath();
+      const r = 5;
+      ctx.roundRect(cx - sw/2 - 3, cy - sh/2 - 3, sw + 6, sh + 6, r);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+
+      // Animated screen content — slow hue rotation + scanlines
+      const hue = (t * 18) % 360;  // drifts through colours
+      const bright = 0.55 + 0.1 * Math.sin(t * 0.7);
+      const grad = ctx.createLinearGradient(cx - sw/2, cy - sh/2, cx + sw/2, cy + sh/2);
+      grad.addColorStop(0,   `hsla(${hue},        70%, ${bright*100}%, 0.95)`);
+      grad.addColorStop(0.5, `hsla(${(hue+40)%360},60%, ${bright*80}%, 0.95)`);
+      grad.addColorStop(1,   `hsla(${(hue+80)%360},70%, ${bright*100}%, 0.95)`);
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.roundRect(cx - sw/2, cy - sh/2, sw, sh, r - 2);
+      ctx.fill();
+
+      // Scanlines — subtle horizontal dark bands
+      ctx.globalAlpha = 0.13;
+      ctx.fillStyle = '#000';
+      for (let line = 0; line < sh; line += 4) {
+        ctx.fillRect(cx - sw/2, cy - sh/2 + line, sw, 2);
+      }
+      ctx.globalAlpha = 1;
+
+      // Soft glow spilling onto the floor below
+      const glow = ctx.createRadialGradient(cx, cy + sh/2, 0, cx, cy + sh/2, tw * 2.5);
+      glow.addColorStop(0,   `hsla(${hue},80%,70%,0.18)`);
+      glow.addColorStop(1,   'transparent');
+      ctx.fillStyle = glow;
+      ctx.fillRect(cx - tw*2.5, cy, tw*5, th*2);
+
+      ctx.restore();
     }
   }
 

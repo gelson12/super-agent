@@ -11,6 +11,25 @@ const PRE_GATHER_MS = 5 * 60_000;       // 5 minutes before scheduled start
 const DEFAULT_MEETING_MS = 8 * 60_000;  // 8 minutes
 const IDLE_PICK_MS = 30_000;            // re-roll idle target every 30s
 
+// How long bots linger at each leisure zone (ms). 0 = instant leave.
+const LEISURE_DURATION_MS = {
+  tv:        60_000 + Math.random() * 60_000,  // 1–2 min watching TV
+  ping_pong: 90_000 + Math.random() * 90_000,  // 1.5–3 min playing
+  snooker:   90_000 + Math.random() * 90_000,  // 1.5–3 min playing
+  relax:     45_000 + Math.random() * 75_000,  // 45s–2 min chilling
+  beanbag:   45_000 + Math.random() * 75_000,  // 45s–2 min on beanbag
+  coffee:    20_000 + Math.random() * 20_000,  // 20–40s at coffee
+  lounge:    30_000 + Math.random() * 30_000,  // 30–60s in lounge
+};
+
+const _ACTIVITY_LABELS = {
+  tv: 'watching TV', ping_pong: 'playing ping-pong', snooker: 'playing snooker',
+  relax: 'relaxing', beanbag: 'on beanbag', coffee: 'getting coffee',
+  lounge: 'in lounge', focus: 'deep focus', ideas: 'brainstorming',
+  meeting_room: 'in meeting room', conference_room: 'in conf. room',
+  phone_booths: 'on a call', desk_cluster: 'at desk',
+};
+
 export class Scheduler {
   constructor(floors, bots, schedule) {
     this.floors = floors;
@@ -156,7 +175,7 @@ export class Scheduler {
 
   _maintainIdle(realNow) {
     for (const bot of this.bots) {
-      if (bot.state === 'walking' || bot.state === 'transit' || bot.state === 'inMeeting') continue;
+      if (bot.state === 'walking' || bot.state === 'transit' || bot.state === 'inMeeting' || bot.state === 'social') continue;
       const last = this.lastIdleRoll.get(bot.id) ?? 0;
       if (realNow - last < IDLE_PICK_MS) continue;
       this.lastIdleRoll.set(bot.id, realNow);
@@ -164,7 +183,10 @@ export class Scheduler {
       if (Math.random() < 0.6) continue;
       const zoneType = bot.affinity[Math.floor(Math.random() * bot.affinity.length)];
       const dst = this._pickRandomAnchorOfType(zoneType, bot.deskFloor);
-      if (dst) bot.goTo(this.floors, dst.floor, dst.x, dst.y, { label: zoneType });
+      if (dst) {
+        const durationMs = LEISURE_DURATION_MS[zoneType] ?? 0;
+        bot.goTo(this.floors, dst.floor, dst.x, dst.y, { label: _ACTIVITY_LABELS[zoneType] || zoneType, durationMs });
+      }
     }
   }
 
@@ -179,7 +201,10 @@ export class Scheduler {
       if (Math.random() > 0.7) continue;
       const zoneType = bot.affinity[Math.floor(Math.random() * bot.affinity.length)];
       const dst = this._pickRandomAnchorOfType(zoneType, bot.deskFloor);
-      if (dst) bot.goTo(this.floors, dst.floor, dst.x, dst.y, { label: zoneType });
+      if (dst) {
+        const durationMs = LEISURE_DURATION_MS[zoneType] ?? 0;
+        bot.goTo(this.floors, dst.floor, dst.x, dst.y, { label: _ACTIVITY_LABELS[zoneType] || zoneType, durationMs });
+      }
     }
   }
 

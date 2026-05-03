@@ -50,6 +50,8 @@ export class Bot {
 
     this.activeFlag = false;       // mirrors live n8n workflow active=true
     this.taskLabel = '';           // human-readable current task
+    this.socialEnd = 0;            // when social activity expires (ms)
+    this.pendingActivity = null;   // { label, durationMs } — set by goTo for leisure zones
 
     this._uid = ++_seq;
   }
@@ -65,6 +67,7 @@ export class Bot {
     this.route = route;
     this.routeIdx = 0;
     this.taskLabel = ctx.label || '';
+    this.pendingActivity = ctx.durationMs ? { label: ctx.label || '', durationMs: ctx.durationMs } : null;
     this._enterNextSegment();
     return true;
   }
@@ -99,6 +102,13 @@ export class Bot {
       }
       return;
     }
+    if (this.state === 'social') {
+      if (now >= this.socialEnd) {
+        this.state = 'idle';
+        this.taskLabel = '';
+      }
+      return;
+    }
     if (this.state !== 'walking') return;
 
     if (this.tx === Math.round(this.x) && this.ty === Math.round(this.y)) {
@@ -110,7 +120,14 @@ export class Bot {
           this._enterNextSegment();
         } else {
           this.route = null;
-          this.state = 'idle';
+          if (this.pendingActivity) {
+            this.state = 'social';
+            this.socialEnd = performance.now() + this.pendingActivity.durationMs;
+            this.taskLabel = this.pendingActivity.label;
+            this.pendingActivity = null;
+          } else {
+            this.state = 'idle';
+          }
         }
         return;
       }
@@ -136,7 +153,7 @@ export class Bot {
     if (this.state === 'walking')   return 'walking';
     if (this.state === 'transit')   return 'on stairs';
     if (this.state === 'inMeeting') return 'in meeting';
-    if (this.state === 'social')    return 'social';
+    if (this.state === 'social')    return this.taskLabel || 'social';
     if (this.state === 'atDesk')    return 'at desk';
     return 'idle';
   }
