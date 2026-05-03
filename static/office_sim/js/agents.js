@@ -59,6 +59,11 @@ export class Bot {
   // Compute a navigation route to (floor, x, y) and start walking.
   // Returns true on success, false if unreachable.
   goTo(floors, dstFloor, dx, dy, ctx = {}) {
+    // Never interrupt a staircase crossing — bot.floor and bot.x/y are already
+    // set to the *destination* stair landing, so building a route from here
+    // would place the bot on the wrong floor without any visible transition.
+    if (this.state === 'transit') return false;
+
     // Steer to nearest walkable if dest is blocked (e.g., furniture tile).
     const target = nearestWalkable(floors[dstFloor], dx, dy, 4) || { x: dx, y: dy };
     const route = findRoute(floors, this.floor, Math.round(this.x), Math.round(this.y),

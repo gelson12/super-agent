@@ -153,7 +153,7 @@ export class Scheduler {
       for (const bot of m.participants) {
         if (m.arrived.has(bot.id)) continue;
         const a = m.anchorAssignment.get(bot.id);
-        if (bot.floor === m.room.floor && Math.round(bot.x) === a.x && Math.round(bot.y) === a.y && bot.state !== 'walking') {
+        if (bot.state !== 'walking' && bot.state !== 'transit' && bot.floor === m.room.floor && Math.round(bot.x) === a.x && Math.round(bot.y) === a.y) {
           m.arrived.add(bot.id);
           bot.state = 'inMeeting';
           // Face the table center.
@@ -166,8 +166,11 @@ export class Scheduler {
       // End meeting.
       if (simTime >= m.endMs && !m._endedEmitted) {
         for (const bot of m.participants) {
-          bot.state = 'idle';
-          this._sendBotHome(bot);
+          // Don't interrupt transit — bot is on the stairs and will settle on its own.
+          if (bot.state !== 'transit') {
+            bot.state = 'idle';
+            this._sendBotHome(bot);
+          }
         }
         this.reservedRooms.delete(m.room.zoneId);
         m._endedEmitted = true;
