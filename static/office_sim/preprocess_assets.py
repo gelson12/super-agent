@@ -164,21 +164,20 @@ def _bfs(grid, sx, sy):
     return seen
 
 
-def _required_anchors(floor_json):
-    """Tiles that MUST stay reachable. Doors and stairs are surgical
-    portals — never severed. Spawn must be reachable. For each zone,
-    at least ONE anchor must be reachable (not all) — relaxed from the
-    previous "all anchors" rule so an anchor that lands on a visible
-    table can be blocked without breaking room connectivity. The
-    snap-to-walkable step then moves the affected bot desks to the
-    nearest real chair."""
-    out = [tuple(floor_json["spawn"])]
+def _required_anchors(floor_json, base_grid):
+    """Tiles that MUST stay reachable: spawn + only those doors/stairs
+    that are already reachable in the base grid (before PNG blocks).
+    Doors that are already cut off by the floor JSON layout (sealed room
+    interiors) are excluded — they can't be severed further."""
+    spawn = tuple(floor_json["spawn"])
+    candidates = [spawn]
     for s in floor_json.get("stairs", []):
-        out.append(tuple(s["tile"]))
+        candidates.append(tuple(s["tile"]))
     for d in floor_json.get("doors", []):
-        out.append(tuple(d["tile"]))
-    # NOTE: zone-anchor reachability is enforced in a softer way below.
-    return list(set(out))
+        candidates.append(tuple(d["tile"]))
+    # Only keep tiles reachable from spawn in the base (un-overlaid) grid.
+    base_reach = _bfs(base_grid[:], spawn[0], spawn[1])
+    return [a for a in set(candidates) if a in base_reach]
 
 
 def _zone_anchor_groups(floor_json):
@@ -205,8 +204,7 @@ def write_obstacles_overlay():
         grid = _build_grid_from_floor_json(floor_json_path)
         candidates = derive_obstacles(floor_png, grid)
         spawn = tuple(floor_json["spawn"])
-        hard_required = _required_anchors(floor_json)        # spawn + doors + stairs
-        zone_groups = _zone_anchor_groups(floor_json)        # per-zone anchor lists
+        hard_required = _required_anchors(floor_json, grid[:])   # spawn + reachable doors/stairs
 
         accepted = []
         rejected = 0
@@ -216,13 +214,9 @@ def write_obstacles_overlay():
             grid[idx] = '#'
             reach = _bfs(grid, spawn[0], spawn[1])
             # Hard rule: spawn + doors + stairs must always be reachable.
+            # Zone anchors are NOT checked — a blocked anchor just won't be
+            # visited; bots snap to the nearest walkable neighbour at runtime.
             ok = all(a in reach for a in hard_required)
-            # Soft rule: at least ONE anchor per zone must be reachable.
-            if ok:
-                for group in zone_groups:
-                    if not any(a in reach for a in group):
-                        ok = False
-                        break
             if ok:
                 accepted.append([tx, ty])
             else:
