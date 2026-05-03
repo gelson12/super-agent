@@ -740,6 +740,21 @@ async def receive_verification_code(body: dict, req: Request):
     if not auth_payload:
         return {"ok": False, "error": "No 'url' or 'code' field in payload"}
 
+    # SSRF guard: reject URLs that don't point to Claude's own domains.
+    if auth_payload.startswith("http://") or auth_payload.startswith("https://"):
+        try:
+            import sys as _sys
+            _sys.path.insert(0, "/app")
+            from app.security.ssrf import assert_safe_url as _assert_safe_url
+            _assert_safe_url(
+                auth_payload,
+                allowed_domains=["claude.ai", "claude.com", "anthropic.com", "platform.claude.com"],
+                resolve_dns=False,
+            )
+        except ValueError as _ssrf_err:
+            _bg_log(f"Verification webhook: SSRF blocked — {_ssrf_err}", "webhook")
+            return {"ok": False, "error": f"Rejected unsafe URL: {_ssrf_err}"}
+
     preview = auth_payload[:60] + "..." if len(auth_payload) > 60 else auth_payload
     _bg_log(f"Verification webhook: delivering magic link to local browser queue: {preview}", "webhook")
 

@@ -64,6 +64,18 @@ def _poll_task(cli_url: str, task_id: str, timeout: int = _POLL_TIMEOUT) -> str:
     return f"[claude_code: timed out waiting for CLI worker after {timeout}s]"
 
 
+def _legion_fallback(prompt: str) -> str | None:
+    """
+    Try Legion hive as a fallback. Returns None if Legion is unavailable or
+    unconfigured so the caller can chain further fallbacks.
+    """
+    try:
+        from ..models.claude import _try_legion
+        return _try_legion(prompt, complexity=3)
+    except Exception:
+        return None
+
+
 def ask_claude_code(prompt: str) -> str:
     """
     Run the Claude Code CLI non-interactively with the given prompt.
@@ -71,6 +83,13 @@ def ask_claude_code(prompt: str) -> str:
     is skipped entirely, saving Pro quota.  On a miss the response is cached
     for future identical prompts.  Usage is recorded to pro_usage_tracker
     regardless of cache status.
+
+    Fallback chain:
+      1. Cache hit (instant)
+      2. Claude CLI via CLI worker (durable, HMAC-authenticated)
+      3. Claude CLI direct subprocess (dev/local mode)
+      4. Gemini CLI (free fallback — on timeout or CLI missing)
+      5. Legion hive (multi-agent, free — when Gemini also unavailable)
 
     Returns the response string. Never raises — returns an error string
     so ThreadPoolExecutor competitors keep running on failure.
@@ -94,7 +113,14 @@ def ask_claude_code(prompt: str) -> str:
         from .pro_router import is_pro_available
         if not is_pro_available():
             from .gemini_cli_worker import ask_gemini_cli
-            return ask_gemini_cli(prompt)
+            gemini = ask_gemini_cli(prompt)
+            if gemini and not gemini.startswith("["):
+                return gemini
+            # Gemini also unavailable — fall through to Legion
+            legion = _legion_fallback(prompt)
+            if legion:
+                return legion
+            return gemini or "[claude_code: Pro unavailable and all fallbacks failed]"
     except Exception:
         pass
 
@@ -118,7 +144,22 @@ def ask_claude_code(prompt: str) -> str:
                 _pro_record(len(prompt), len(output), was_cached=False)
             except Exception:
                 pass
-        return output
+            return output
+
+        # CLI worker returned an error — try Gemini then Legion before giving up
+        try:
+            from .gemini_cli_worker import ask_gemini_cli
+            gemini = ask_gemini_cli(prompt)
+            if gemini and not gemini.startswith("["):
+                return gemini
+        except Exception:
+            pass
+
+        legion = _legion_fallback(prompt)
+        if legion:
+            return legion
+
+        return output  # return original CLI worker error as last resort
 
     # ── Direct subprocess fallback (no CLI worker configured / dev mode) ──────
     try:
@@ -145,18 +186,53 @@ def ask_claude_code(prompt: str) -> str:
             pass
 
         return output
+
     except subprocess.TimeoutExpired:
+        # Claude CLI timed out — try Gemini, then Legion
         try:
             from .gemini_cli_worker import ask_gemini_cli
             gemini_result = ask_gemini_cli(prompt)
-            if not gemini_result.startswith("["):
+            if gemini_result and not gemini_result.startswith("["):
                 return gemini_result
         except Exception:
             pass
-        return f"[claude_code: timed out after {_TIMEOUT}s]"
+
+        legion = _legion_fallback(prompt)
+        if legion:
+            return legion
+
+        return f"[claude_code: timed out after {_TIMEOUT}s — Gemini and Legion also unavailable]"
+
     except FileNotFoundError:
+        # Claude CLI binary missing — try Gemini, then Legion
+        try:
+            from .gemini_cli_worker import ask_gemini_cli
+            gemini_result = ask_gemini_cli(prompt)
+            if gemini_result and not gemini_result.startswith("["):
+                return gemini_result
+        except Exception:
+            pass
+
+        legion = _legion_fallback(prompt)
+        if legion:
+            return legion
+
         return "[claude_code: claude CLI not found — set CLI_WORKER_URL or install claude CLI]"
+
     except Exception as e:
+        # Unexpected error — still try Gemini and Legion before surfacing it
+        try:
+            from .gemini_cli_worker import ask_gemini_cli
+            gemini_result = ask_gemini_cli(prompt)
+            if gemini_result and not gemini_result.startswith("["):
+                return gemini_result
+        except Exception:
+            pass
+
+        legion = _legion_fallback(prompt)
+        if legion:
+            return legion
+
         return f"[claude_code error: {e}]"
 
 

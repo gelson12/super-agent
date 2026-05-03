@@ -14,7 +14,7 @@ import { findPath, findRoute, dirFromDelta, nearestWalkable } from './nav.js';
 
 let _seq = 0;
 export const STEP_MS = 350;   // natural office walk pace — ~2.9 tiles/sec
-const TRANSITION_MS = 380;    // snappier floor transition
+const TRANSITION_MS = 900;    // stair crossing pause — long enough to read as "going upstairs"
 
 // Cubic ease-in-out — crisp start/stop matching Unity's Animator default curve.
 function easeInOut(t) {

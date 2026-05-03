@@ -1779,6 +1779,17 @@ def _automate_browser(oauth_url: str, email: str) -> tuple[bool, str | None]:
         # We collected URLs in arrival order (oldest first), so iterate REVERSED.
         for _ml_idx, magic_url in enumerate(reversed(magic_urls)):
             _log(f"Browser: trying magic link {_ml_idx + 1}/{len(magic_urls)}: {magic_url[:100]}...")
+            # SSRF guard: only allow navigation to Claude/Anthropic domains.
+            try:
+                from ..security.ssrf import assert_safe_url as _assert_safe_url
+                _assert_safe_url(
+                    magic_url,
+                    allowed_domains=["claude.ai", "claude.com", "anthropic.com", "platform.claude.com"],
+                    resolve_dns=False,
+                )
+            except ValueError as _ssrf_err:
+                _log(f"Browser: SSRF guard rejected magic link {_ml_idx + 1}: {_ssrf_err} — skipping")
+                continue
             try:
                 page.goto(magic_url, timeout=30000)
             except Exception as _nav_e:

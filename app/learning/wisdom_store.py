@@ -101,8 +101,10 @@ class WisdomStore:
 
     def _download_from_cloudinary(self, url: str) -> Optional[dict]:
         try:
+            from ..security.ssrf import assert_safe_url
+            assert_safe_url(url, allowed_domains=["cloudinary.com", "res.cloudinary.com"])
             import requests
-            resp = requests.get(url, timeout=10)
+            resp = requests.get(url, timeout=10, allow_redirects=False)
             resp.raise_for_status()
             return resp.json()
         except Exception:

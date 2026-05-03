@@ -44,11 +44,17 @@ def _base() -> str:
 
 
 def _check_config() -> str | None:
-    """Return an error string if config is missing, else None."""
+    """Return an error string if config is missing or unsafe, else None."""
     if not settings.n8n_base_url:
         return "[n8n error: N8N_BASE_URL not set — add it in Railway Variables]"
     if not settings.n8n_api_key:
         return "[n8n error: N8N_API_KEY not set — add it in Railway Variables]"
+    # SSRF guard: N8N_BASE_URL must not point to private/loopback IPs.
+    try:
+        from ..security.ssrf import assert_safe_url
+        assert_safe_url(settings.n8n_base_url, resolve_dns=False)
+    except ValueError as _err:
+        return f"[n8n error: N8N_BASE_URL rejected by SSRF guard — {_err}]"
     return None
 
 

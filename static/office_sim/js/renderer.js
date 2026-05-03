@@ -135,8 +135,10 @@ export class Renderer {
     // Optional debug grid overlay (toggled by 'g').
     if (this.debugGrid) this._drawTileGrid(ctx, w, h);
 
-    // Y-sort bots on this floor.
-    const onFloor = this.bots.filter(b => b.floor === this.activeFloor);
+    // Y-sort bots on this floor. Exclude bots in 'transit' — they are between
+    // floors (physically on the staircase) and must not pop-in on the new floor
+    // until they finish crossing and start walking.
+    const onFloor = this.bots.filter(b => b.floor === this.activeFloor && b.state !== 'transit');
     onFloor.sort((a, b) => a.y - b.y);
 
     for (const bot of onFloor) this._drawBot(ctx, bot, now);
