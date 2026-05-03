@@ -5711,11 +5711,24 @@ def webhook_bot_engine(req: BotEngineRequest, request: Request):
             parts.insert(0, f"[CONTEXT]\n{req.context_block}")
     full_message = "\n\n".join(parts)
 
-    # Use Haiku for routine scheduled ticks to preserve Claude Pro/Sonnet quota
-    _model = "HAIKU" if req.task_kind == "scheduled_tick" else "CLAUDE"
-    result = dispatch(full_message, force_model=_model, session_id=req.session_id)
-    raw_text: str = result.get("response", "")
-    model_used: str = result.get("model", req.bot_name)
+    # Routing strategy:
+    # scheduled_tick → Legion PRIMARY (free, parallel) → Haiku fallback.
+    #   Claude CLI quota is preserved entirely for user-triggered agent_invoke calls.
+    # agent_invoke → Claude CLI → Legion → Sonnet (existing cascade, Legion already position 2).
+    if req.task_kind == "scheduled_tick":
+        from .models.claude import _try_legion
+        _leg = _try_legion(full_message, complexity=1)
+        if _leg is not None:
+            raw_text  = _leg
+            model_used = "LEGION"
+        else:
+            _r = dispatch(full_message, force_model="HAIKU", session_id=req.session_id)
+            raw_text   = _r.get("response", "")
+            model_used = _r.get("model", req.bot_name)
+    else:
+        _r = dispatch(full_message, force_model="CLAUDE", session_id=req.session_id)
+        raw_text   = _r.get("response", "")
+        model_used = _r.get("model", req.bot_name)
 
     if not raw_text.startswith("ERROR"):
         try:
