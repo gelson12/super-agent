@@ -5789,6 +5789,11 @@ _RISK_MAP: dict[str, str] = {
 
 _BOT_ENGINE_BANNED = {"PASTE_", "TBD", "PLACEHOLDER", "INSERT_HERE", "YOUR_URL"}
 
+# 60-second in-memory cache for bot_context_overrides — eliminates a DB round-trip
+# on every bot-engine call while still picking up new overrides within a minute.
+_ctx_override_cache: dict[str, tuple[str, float]] = {}  # {bot_name: (hint, expires_at)}
+_CTX_CACHE_TTL_S = 60.0
+
 
 @app.post("/webhook/bot-engine", tags=["webhook"])
 @limiter.limit("120/minute")
@@ -5807,26 +5812,32 @@ def webhook_bot_engine(req: BotEngineRequest, request: Request):
         from fastapi import HTTPException
         raise HTTPException(status_code=403, detail="Invalid api_key")
 
-    # ── Inject CEO-approved context overrides ─────────────────────────────────
+    # ── Inject CEO-approved context overrides (cached 60s) ────────────────────
     # CEO can propose adjustments (focus area, quality hints, priority notes) which
     # are stored in bridge.bot_context_overrides after human approval via CoS.
     # Each bot sees its own approved hint automatically — no workflow changes needed.
+    import time as _time_mod
     _approved_hint = ""
-    try:
-        from .memory.vector_memory import _get_pg_conn as _pgc
-        _oc = _pgc()
-        if _oc:
-            with _oc.cursor() as _ocur:
-                _ocur.execute(
-                    "SELECT context_hint FROM bridge.bot_context_overrides WHERE bot_name = %s",
-                    (req.bot_name,)
-                )
-                _row = _ocur.fetchone()
-                if _row:
-                    _approved_hint = _row[0]
-            _oc.close()
-    except Exception:
-        pass
+    _now_ts = _time_mod.monotonic()
+    _cached = _ctx_override_cache.get(req.bot_name)
+    if _cached and _cached[1] > _now_ts:
+        _approved_hint = _cached[0]
+    else:
+        try:
+            from .memory.vector_memory import _get_pg_conn as _pgc
+            _oc = _pgc()
+            if _oc:
+                with _oc.cursor() as _ocur:
+                    _ocur.execute(
+                        "SELECT context_hint FROM bridge.bot_context_overrides WHERE bot_name = %s",
+                        (req.bot_name,)
+                    )
+                    _row = _ocur.fetchone()
+                    _approved_hint = _row[0] if _row else ""
+                _oc.close()
+                _ctx_override_cache[req.bot_name] = (_approved_hint, _now_ts + _CTX_CACHE_TTL_S)
+        except Exception:
+            pass
 
     _ctx = req.context_block
     if _approved_hint:

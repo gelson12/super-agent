@@ -1,0 +1,214 @@
+{
+  "name": "bridge_health_monitor",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 */5 * * * *"
+            }
+          ]
+        }
+      },
+      "id": "hm_trigger",
+      "name": "Schedule: every 5 min",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.SUPER_AGENT_URL || 'https://super-agent-production.up.railway.app' }}/health",
+        "options": {
+          "timeout": 10000,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "hm_check1",
+      "name": "Health check (attempt 1)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "status_ok",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "ok",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "hm_if_ok1",
+      "name": "Is healthy?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "amount": 60,
+        "unit": "seconds"
+      },
+      "id": "hm_wait",
+      "name": "Wait 60s",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [900, 460],
+      "webhookId": "hm-wait-confirm"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.SUPER_AGENT_URL || 'https://super-agent-production.up.railway.app' }}/health",
+        "options": {
+          "timeout": 10000,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "hm_check2",
+      "name": "Health check (attempt 2)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1120, 460]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "status_ok2",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "ok",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "hm_if_ok2",
+      "name": "Still down?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1340, 460]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{$env.Bridge_CoS_BOT}}/sendMessage",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json; charset=utf-8"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={ \"chat_id\": {{$env.BRIDGE_ADMIN_TELEGRAM_CHAT_ID}}, \"text\": \"🚨 *SUPER-AGENT DOWN*\\n\\nTwo consecutive health checks failed (60s apart).\\n\\nService: super-agent-production.up.railway.app\\nTime: {{ new Date().toISOString() }}\\n\\nCheck Railway dashboard → super-agent service logs.\\n— Bridge Health Monitor\", \"parse_mode\": \"Markdown\" }",
+        "options": {
+          "timeout": 15000,
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "hm_alert",
+      "name": "Alert: Telegram CoS",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1560, 600]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO bridge.workflow_events (workflow_name, event_type, details_json) VALUES ('bridge_health_monitor', 'service_down_alert', '{\"service\": \"super-agent\", \"checks_failed\": 2}'::jsonb);",
+        "options": {}
+      },
+      "id": "hm_log",
+      "name": "Log alert to DB",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1560, 780],
+      "credentials": {
+        "postgres": {
+          "id": "Ae3yvuqjgMnVRrCo",
+          "name": "Postgres account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Schedule: every 5 min": {
+      "main": [[{"node": "Health check (attempt 1)", "type": "main", "index": 0}]]
+    },
+    "Health check (attempt 1)": {
+      "main": [[{"node": "Is healthy?", "type": "main", "index": 0}]]
+    },
+    "Is healthy?": {
+      "main": [
+        [],
+        [{"node": "Wait 60s", "type": "main", "index": 0}]
+      ]
+    },
+    "Wait 60s": {
+      "main": [[{"node": "Health check (attempt 2)", "type": "main", "index": 0}]]
+    },
+    "Health check (attempt 2)": {
+      "main": [[{"node": "Still down?", "type": "main", "index": 0}]]
+    },
+    "Still down?": {
+      "main": [
+        [],
+        [
+          {"node": "Alert: Telegram CoS", "type": "main", "index": 0},
+          {"node": "Log alert to DB", "type": "main", "index": 0}
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "pinData": {}
+}

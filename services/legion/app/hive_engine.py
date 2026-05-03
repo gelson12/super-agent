@@ -34,8 +34,15 @@ async def run_round(req: RespondRequest, agents: dict[str, object]) -> RespondRe
     # only called us on fallback; this check catches misrouted traffic where
     # the primary is actually fine. Skipped when DUAL_ACCOUNT_ENABLED is off
     # so P0-P2 behaviour is unchanged.
+    #
+    # EXCEPTION: scheduled_tick and low-complexity (<=2) requests are deliberately
+    # routed to Legion for quota savings — never defer these even if primary is healthy.
+    _is_quota_save_route = (
+        getattr(req, "task_kind", "chat") == "scheduled_tick"
+        or getattr(req, "complexity", 3) <= 2
+    )
     if os.environ.get("DUAL_ACCOUNT_ENABLED", "false").lower() == "true":
-        if primary_healthy():
+        if not _is_quota_save_route and primary_healthy():
             raise LegionExhausted("primary_is_healthy_defer_upstream")
 
     if req.shortlist_override:

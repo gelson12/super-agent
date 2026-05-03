@@ -22,6 +22,9 @@ Pipeline order (all failure-safe — any exception skips that pass):
 
 Refinement never degrades — any pass that produces a worse result is discarded.
 
+Quota-awareness: _pick_agent() skips agents currently in a 429-cooldown window
+so refinement calls don't steal quota from the primary hive.
+
 Configuration: controlled by the `refinement:` block in legion_config.yaml.
 """
 from __future__ import annotations
@@ -29,6 +32,7 @@ from __future__ import annotations
 import logging
 import time
 
+from app import quota_state
 from app.agents.base import run_with_deadline
 from app.models import AgentResponse, RespondRequest
 
@@ -139,17 +143,34 @@ def _pick_agent(
     agents: dict[str, object],
     exclude: str,
 ) -> object | None:
-    """Return the first enabled, non-excluded agent from preference list."""
+    """
+    Return the first enabled, non-excluded, quota-available agent from preference list.
+    Agents in a 429-cooldown window are skipped to preserve their quota for hive calls.
+    Falls back to any available agent if all preferred ones are exhausted.
+    """
+    def _is_quota_ok(aid: str, agent: object) -> bool:
+        model = getattr(agent, "model", aid)
+        return not quota_state.is_exhausted(aid, model)
+
+    # Pass 1: preferred order, quota-available only
     for aid in preference:
         if aid == exclude:
             continue
         agent = agents.get(aid)
-        if agent and getattr(agent, "enabled", False):
+        if agent and getattr(agent, "enabled", False) and _is_quota_ok(aid, agent):
             return agent
-    # fallback: any enabled agent that isn't the winner
+
+    # Pass 2: any enabled non-excluded agent that isn't quota-exhausted
+    for aid, agent in agents.items():
+        if aid != exclude and getattr(agent, "enabled", False) and _is_quota_ok(aid, agent):
+            return agent
+
+    # Pass 3: last resort — any enabled non-excluded agent even if quota-exhausted
+    # (better to try and get a 429 than skip refinement entirely)
     for aid, agent in agents.items():
         if aid != exclude and getattr(agent, "enabled", False):
             return agent
+
     return None
 
 
