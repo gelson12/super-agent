@@ -362,6 +362,36 @@ canvas {
   color: var(--text);
   background: var(--gold-glow);
 }
+.kpi-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.kpi-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 6px;
+  padding: 4px 7px;
+  background: var(--bg-soft);
+  border-left: 2px solid var(--line);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  font-size: 9.5px;
+  line-height: 1.5;
+}
+.kpi-label {
+  font-family: var(--font-mono);
+  color: var(--text-soft);
+  white-space: nowrap;
+}
+.kpi-val {
+  font-family: var(--font-mono);
+  color: var(--cyan);
+  font-weight: 600;
+  text-align: right;
+  min-width: 60px;
+}
 
 /* ─── Status bar ─────────────────────────────────────────────── */
 .statusbar {

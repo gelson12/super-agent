@@ -8,6 +8,7 @@
 const N8N_POLL_MS     = 30_000;
 const DASH_POLL_MS    = 5_000;
 const PENDING_POLL_MS = 30_000;
+const KPI_POLL_MS     = 120_000;   // refresh every 2 minutes
 
 export class LiveFeed {
   constructor(bots, hud) {
@@ -36,10 +37,12 @@ export class LiveFeed {
     this._pollWorkflows();
     this._pollAgentsStatus();
     this._pollPending();
+    this._pollKpi();
     this._connectStream();
     this.timers.push(setInterval(() => this._pollWorkflows(), N8N_POLL_MS));
     this.timers.push(setInterval(() => this._pollAgentsStatus(), DASH_POLL_MS));
     this.timers.push(setInterval(() => this._pollPending(), PENDING_POLL_MS));
+    this.timers.push(setInterval(() => this._pollKpi(), KPI_POLL_MS));
   }
 
   stop() {
@@ -309,6 +312,37 @@ export class LiveFeed {
     modal.style.display = 'flex';
     closeBtn.onclick = () => { modal.style.display = 'none'; };
     modal.onclick = (e) => { if (e.target === modal) modal.style.display = 'none'; };
+  }
+
+  async _pollKpi() {
+    try {
+      const r = await fetch('/dashboard/kpi', { headers: { 'Accept': 'application/json' } });
+      if (!r.ok) return;
+      const d = await r.json();
+      if (d.error) return;
+
+      const _set = (id, val) => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = val ?? '—';
+      };
+
+      const leads = d.leads || {};
+      _set('kpi-leads', `${leads.total ?? 0} total · ${leads.this_week ?? 0} this wk`);
+
+      const pipe = d.pipeline || {};
+      _set('kpi-proposals', pipe.proposals_sent_90d ?? 0);
+      _set('kpi-conversion', pipe.conversion_rate_pct != null ? `${pipe.conversion_rate_pct}%` : '—');
+      const rev = pipe.revenue_gbp_90d ?? 0;
+      _set('kpi-revenue', rev > 0 ? `£${rev.toLocaleString('en-GB', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}` : '£0');
+
+      const ret = d.retainers || {};
+      _set('kpi-retainers', ret.active_count ?? 0);
+      const mrr = ret.mrr_gbp ?? 0;
+      _set('kpi-mrr', mrr > 0 ? `£${mrr.toLocaleString('en-GB', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}/mo` : '£0/mo');
+
+      const top = d.top_agent_today || {};
+      _set('kpi-top-agent', top.name ? `${top.name} (${top.success_rate_pct ?? '?'}%)` : '—');
+    } catch { /* fail-soft */ }
   }
 
   _connectStream() {

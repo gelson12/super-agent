@@ -146,7 +146,7 @@
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT COALESCE(jsonb_agg(row_to_json(m) ORDER BY m.priority_rank, m.created_at), '[]'::jsonb)        AS open_inbox FROM (   SELECT memo_id, from_agent, memo_type, priority, subject, body_json,          created_at, related_lead_id,          CASE priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1                        WHEN 'normal' THEN 2 ELSE 3 END AS priority_rank   FROM bridge.agent_memos   WHERE to_agent IN ('ceo', 'all')     AND status = 'open'   LIMIT 20 ) m;",
+        "query": "SELECT COALESCE(jsonb_agg(row_to_json(m) ORDER BY m.priority_rank, m.created_at), '[]'::jsonb)        AS open_inbox FROM (   SELECT memo_id, from_agent, memo_type, priority, subject, body_json,          created_at, related_lead_id,          CASE priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1                        WHEN 'normal' THEN 2 ELSE 3 END AS priority_rank   FROM bridge.agent_memos   WHERE to_agent IN ('ceo', 'cro', 'all')     AND status = 'open'   LIMIT 20 ) m;",
         "options": {}
       },
       "id": "c56ec86d-bc65-419a-853f-0d2559423dc1",
@@ -282,7 +282,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "=https://api.telegram.org/bot{{$env.Bridge_CEO_BOT || $env.Bridge_CEO_BOT}}/sendMessage",
+        "url": "=https://api.telegram.org/bot{{$env.Bridge_ChiefRevenueOptimizer_BOT}}/sendMessage",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -470,7 +470,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "=https://api.telegram.org/bot{{$env.Bridge_CEO_BOT || $env.Bridge_CEO_BOT}}/sendMessage",
+        "url": "=https://api.telegram.org/bot{{$env.Bridge_ChiefRevenueOptimizer_BOT}}/sendMessage",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -550,7 +550,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "=https://api.telegram.org/bot{{$env.Bridge_CEO_BOT || $env.Bridge_CEO_BOT}}/sendMessage",
+        "url": "=https://api.telegram.org/bot{{$env.Bridge_ChiefRevenueOptimizer_BOT}}/sendMessage",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
