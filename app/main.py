@@ -67,7 +67,7 @@ _OPEN_PREFIXES = ("/static", "/downloads", "/webhook", "/n8n/connection-info", "
 # ── LISTEN/NOTIFY bot wake-up registry ───────────────────────────────────────
 _BOT_WEBHOOK_SLUGS: dict[str, str] = {
     "ceo":            "bridge-ceo-invoke",
-    "chief_of_staff": "bridge-cos-invoke",
+    "chief_of_staff": "bridge-chief-of-staff-invoke",  # was "bridge-cos-invoke" — slug mismatch
     "cro":            "bridge-cro-invoke",
     "cto":            "bridge-cto-invoke",
     "bizdev":         "bridge-bizdev-invoke",
@@ -77,6 +77,7 @@ _BOT_WEBHOOK_SLUGS: dict[str, str] = {
     "finance":        "bridge-finance-invoke",
     "researcher":     "bridge-researcher-invoke",
     "cleaner":        "bridge-cleaner-invoke",
+    "security_risk":  "bridge-security-invoke",
 }
 
 def _bot_webhook_url(agent: str) -> str | None:
