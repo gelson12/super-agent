@@ -127,8 +127,9 @@ def _get_client() -> Anthropic:
 def ask_claude(prompt: str, system: str = SYSTEM_PROMPT_CLAUDE) -> str:
     """Send a prompt to Claude Sonnet and return the text response.
 
-    Routing: Claude CLI (Pro/Max) → Gemini CLI (free fallback) → Anthropic API.
-    Gemini is tried before the API so credits are only consumed as a last resort.
+    Routing: Claude CLI → Legion hive → Gemini CLI → Anthropic API.
+    Legion is tried before Gemini because Gemini CLI has a persistent
+    trust-directory block that makes it unreliable.
     """
     # 1. Claude CLI (Pro/Max subscription — zero API cost)
     try:
@@ -137,23 +138,23 @@ def ask_claude(prompt: str, system: str = SYSTEM_PROMPT_CLAUDE) -> str:
         if pro is not None and not pro.lstrip().startswith('{"type":"error"') and not pro.startswith('['):
             return pro
     except Exception:
-        pass  # pro_router unavailable — try Gemini next
+        pass  # pro_router unavailable — try Legion next
 
-    # 2. Gemini CLI (free-tier fallback — preserves Anthropic credits)
+    # 2. Legion hive — multi-agent free fallback (Groq, Cerebras, GH Models,
+    #    OpenRouter, HF, Ollama, Claude-B, ChatGPT). Tried before Gemini CLI
+    #    because Gemini CLI has a persistent trust-directory block.
+    legion = _try_legion(prompt)
+    if legion is not None:
+        return legion
+
+    # 3. Gemini CLI (free-tier, kept as tertiary fallback)
     try:
         from ..learning.gemini_cli_worker import ask_gemini_cli
         gemini = ask_gemini_cli(prompt)
         if gemini and not gemini.startswith("["):
             return gemini
     except Exception:
-        pass  # Gemini unavailable — fall through to Legion next
-
-    # 3. Legion hive (multi-agent fallback — Groq, Cerebras, GH Models,
-    #    OpenRouter, HF, Ollama, Claude-B, ChatGPT — picks the best free
-    #    responder before we touch Anthropic credits).
-    legion = _try_legion(prompt)
-    if legion is not None:
-        return legion
+        pass
 
     # 4. Last-resort Anthropic API
     if not settings.anthropic_api_key:
@@ -181,7 +182,7 @@ def ask_claude(prompt: str, system: str = SYSTEM_PROMPT_CLAUDE) -> str:
 def ask_claude_haiku(prompt: str, system: str = SYSTEM_PROMPT_CLAUDE) -> str:
     """Send a prompt to Claude Haiku (fast, economical) and return the text response.
 
-    Routing: Claude CLI (Pro/Max) → Gemini CLI (free fallback) → Anthropic API Haiku.
+    Routing: Claude CLI → Legion hive → Gemini CLI → Anthropic API Haiku.
     """
     try:
         from ..learning.pro_router import try_pro
@@ -189,21 +190,21 @@ def ask_claude_haiku(prompt: str, system: str = SYSTEM_PROMPT_CLAUDE) -> str:
         if pro is not None and not pro.lstrip().startswith('{"type":"error"') and not pro.startswith('['):
             return pro
     except Exception:
-        pass  # pro_router unavailable — try Gemini next
+        pass
 
+    # 2. Legion hive — free multi-agent fallback, tried before Gemini CLI
+    legion = _try_legion(prompt)
+    if legion is not None:
+        return legion
+
+    # 3. Gemini CLI (tertiary free fallback)
     try:
         from ..learning.gemini_cli_worker import ask_gemini_cli
         gemini = ask_gemini_cli(prompt)
         if gemini and not gemini.startswith("["):
             return gemini
     except Exception:
-        pass  # Gemini unavailable — fall through to Legion next
-
-    # 3. Legion hive (multi-agent fallback — keeps n8n workflows alive during
-    #    Claude CLI cooloff when Gemini is also unavailable).
-    legion = _try_legion(prompt)
-    if legion is not None:
-        return legion
+        pass
 
     # 4. Last-resort Anthropic API
     if not settings.anthropic_api_key:

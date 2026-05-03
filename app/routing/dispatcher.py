@@ -204,21 +204,22 @@ def _cross_provider_fallback(message: str, primary_model: str, primary_response)
     Returns (model_used, response). When everything fails, returns the
     primary's original error so the caller can surface it.
     """
-    # Gemini-CLI is the cheapest fallback — free tier, ~1500 req/day.
-    try:
-        from ..learning.gemini_cli_worker import ask_gemini_cli
-        gemini_cli_resp = ask_gemini_cli(message)
-        if not _is_error_response(gemini_cli_resp):
-            return ("GEMINI_CLI", gemini_cli_resp)
-    except Exception:
-        pass
-
-    # Legion hive — multi-agent vote across Groq/Cerebras/HF/etc.
+    # Legion hive — tried FIRST because Gemini CLI has a persistent
+    # trust-directory block making it unreliable as a fallback.
     try:
         from ..models.claude import _try_legion
         legion_resp = _try_legion(message)
         if legion_resp:
             return ("LEGION", legion_resp)
+    except Exception:
+        pass
+
+    # Gemini-CLI — tertiary free fallback.
+    try:
+        from ..learning.gemini_cli_worker import ask_gemini_cli
+        gemini_cli_resp = ask_gemini_cli(message)
+        if not _is_error_response(gemini_cli_resp):
+            return ("GEMINI_CLI", gemini_cli_resp)
     except Exception:
         pass
 
