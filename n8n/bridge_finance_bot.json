@@ -63,7 +63,7 @@
       "parameters": {
         "httpMethod": "POST",
         "path": "bridge-finance-invoke",
-        "responseMode": "responseNode",
+        "responseMode": "lastNode",
         "options": {}
       },
       "id": "358bbf01-ceb8-4180-bfb7-0c92cc16e2ee",

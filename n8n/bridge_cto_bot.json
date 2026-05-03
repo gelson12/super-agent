@@ -63,7 +63,7 @@
       "parameters": {
         "httpMethod": "POST",
         "path": "bridge-cto-invoke",
-        "responseMode": "responseNode",
+        "responseMode": "lastNode",
         "options": {}
       },
       "id": "node_trigger_webhook_cto",
