@@ -24,6 +24,14 @@ hive:
   early_termination:
     confidence_min: 0.85
     latency_fraction_max: 0.4
+    # Per-task-kind overrides — lower threshold = exit faster on easy tasks
+    task_kind_overrides:
+      scheduled_tick:
+        confidence_min: 0.60   # ticks are low-stakes; exit early, save quota
+        latency_fraction_max: 0.25
+      agent_invoke:
+        confidence_min: 0.85   # real actions need quality; keep default
+        latency_fraction_max: 0.4
 
 failover:
   primary_to_legion:

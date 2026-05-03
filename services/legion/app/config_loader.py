@@ -21,6 +21,7 @@ class HiveConfig:
     deadlines_ms: dict[str, int] = field(default_factory=dict)
     early_termination_confidence_min: float = 0.85
     early_termination_latency_fraction_max: float = 0.4
+    early_termination_task_kind_overrides: dict[str, dict[str, float]] = field(default_factory=dict)
 
 
 _DEFAULT_REFINEMENT_CFG: dict = {
@@ -73,6 +74,7 @@ def load_config(path: Path | None = None) -> LegionConfig:
         deadlines_ms=hive.get("deadlines_ms", {}),
         early_termination_confidence_min=et.get("confidence_min", 0.85),
         early_termination_latency_fraction_max=et.get("latency_fraction_max", 0.4),
+        early_termination_task_kind_overrides=et.get("task_kind_overrides", {}),
     )
 
     circuit = data.get("circuit", {})

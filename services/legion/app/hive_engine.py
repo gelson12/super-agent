@@ -108,8 +108,10 @@ async def run_round(req: RespondRequest, agents: dict[str, object]) -> RespondRe
 
     responses: list[AgentResponse] = []
     early_terminated = False
-    et_conf = cfg.hive.early_termination_confidence_min
-    et_lat_frac = cfg.hive.early_termination_latency_fraction_max
+    _task_kind = getattr(req, "task_kind", "chat")
+    _et_overrides = cfg.hive.early_termination_task_kind_overrides.get(_task_kind, {})
+    et_conf = _et_overrides.get("confidence_min", cfg.hive.early_termination_confidence_min)
+    et_lat_frac = _et_overrides.get("latency_fraction_max", cfg.hive.early_termination_latency_fraction_max)
     pending = set(tasks.values())
 
     while pending:

@@ -38,6 +38,24 @@ def clear_legion_flag() -> None:
     _tls.legion_used = False
 
 
+# Circuit breaker for Legion: open for 120s after 3 failures in a 60s window.
+_legion_cb_lock = threading.Lock()
+_legion_cb_failures: list[float] = []
+_legion_cb_open_until: float = 0.0
+
+def _legion_cb_record_failure() -> None:
+    with _legion_cb_lock:
+        now = time.monotonic()
+        _legion_cb_failures[:] = [t for t in _legion_cb_failures if now - t < 60.0]
+        _legion_cb_failures.append(now)
+        if len(_legion_cb_failures) >= 3:
+            global _legion_cb_open_until
+            _legion_cb_open_until = now + 120.0
+
+def _legion_cb_is_open() -> bool:
+    return time.monotonic() < _legion_cb_open_until
+
+
 def _try_legion(
     prompt: str,
     timeout_s: float | None = None,
@@ -56,6 +74,8 @@ def _try_legion(
     complexity: 1-5, forwarded to Legion so it can gate refinement passes.
                 Auto-elevated from the prompt when caller passes the default (3).
     """
+    if _legion_cb_is_open():
+        return None
     base_url = os.environ.get("LEGION_BASE_URL", "").rstrip("/")
     secret = os.environ.get("LEGION_API_SHARED_SECRET", "")
     if not base_url or not secret:
@@ -110,10 +130,13 @@ def _try_legion(
         _tls.legion_used = True
         return content
     except (urllib.error.URLError, urllib.error.HTTPError):
+        _legion_cb_record_failure()
         return None
     except (json.JSONDecodeError, KeyError, TypeError):
+        _legion_cb_record_failure()
         return None
     except Exception:
+        _legion_cb_record_failure()
         return None
 
 

@@ -5886,6 +5886,24 @@ _BOT_ENGINE_BANNED = {"PASTE_", "TBD", "PLACEHOLDER", "INSERT_HERE", "YOUR_URL"}
 _ctx_override_cache: dict[str, tuple[str, float]] = {}  # {bot_name: (hint, expires_at)}
 _CTX_CACHE_TTL_S = 60.0
 
+# Per-bot rate limiter (Tier 1 audit fix 5): max 30 calls/bot/minute in-memory.
+# Prevents a single misconfigured bot from consuming the full 120/min global quota.
+_BOT_RATE_WINDOWS: dict[str, tuple[int, float]] = {}
+_BOT_RATE_LIMIT_PER_MIN = 30
+
+
+def _bot_rate_ok(bot_name: str) -> bool:
+    import time as _tr
+    now = _tr.monotonic()
+    count, ws = _BOT_RATE_WINDOWS.get(bot_name, (0, now))
+    if now - ws >= 60.0:
+        _BOT_RATE_WINDOWS[bot_name] = (1, now)
+        return True
+    if count >= _BOT_RATE_LIMIT_PER_MIN:
+        return False
+    _BOT_RATE_WINDOWS[bot_name] = (count + 1, ws)
+    return True
+
 
 @app.post("/webhook/bot-engine", tags=["webhook"])
 @limiter.limit("120/minute")
@@ -5900,48 +5918,47 @@ def webhook_bot_engine(req: BotEngineRequest, request: Request):
     from .memory.vector_memory import _get_pg_conn
 
     _expected_key = os.environ.get("N8N_API_KEY", "")
-    if _expected_key and req.api_key and req.api_key != _expected_key:
-        from fastapi import HTTPException
+    if _expected_key and not secrets.compare_digest(req.api_key or "", _expected_key):
         raise HTTPException(status_code=403, detail="Invalid api_key")
 
-    # ── Inject CEO-approved context overrides (cached 60s) ────────────────────
-    # CEO can propose adjustments (focus area, quality hints, priority notes) which
-    # are stored in bridge.bot_context_overrides after human approval via CoS.
-    # Each bot sees its own approved hint automatically — no workflow changes needed.
+    if not _bot_rate_ok(req.bot_name):
+        raise HTTPException(status_code=429, detail="bot rate limit exceeded")
+
+    # ── Single shared DB connection for all context reads ─────────────────────
     import time as _time_mod
-    _approved_hint = ""
     _now_ts = _time_mod.monotonic()
+    _approved_hint = ""
+    _ctx = req.context_block
+
+    try:
+        _shared_conn = _get_pg_conn()
+    except Exception:
+        _shared_conn = None
+
+    # CEO context override (60s cache)
     _cached = _ctx_override_cache.get(req.bot_name)
     if _cached and _cached[1] > _now_ts:
         _approved_hint = _cached[0]
-    else:
+    elif _shared_conn:
         try:
-            from .memory.vector_memory import _get_pg_conn as _pgc
-            _oc = _pgc()
-            if _oc:
-                with _oc.cursor() as _ocur:
-                    _ocur.execute(
-                        "SELECT context_hint FROM bridge.bot_context_overrides WHERE bot_name = %s",
-                        (req.bot_name,)
-                    )
-                    _row = _ocur.fetchone()
-                    _approved_hint = _row[0] if _row else ""
-                _oc.close()
-                _ctx_override_cache[req.bot_name] = (_approved_hint, _now_ts + _CTX_CACHE_TTL_S)
+            with _shared_conn.cursor() as _ocur:
+                _ocur.execute(
+                    "SELECT context_hint FROM bridge.bot_context_overrides WHERE bot_name = %s",
+                    (req.bot_name,)
+                )
+                _row = _ocur.fetchone()
+                _approved_hint = _row[0] if _row else ""
+            _ctx_override_cache[req.bot_name] = (_approved_hint, _now_ts + _CTX_CACHE_TTL_S)
         except Exception:
             pass
 
-    _ctx = req.context_block
     if _approved_hint:
         _ctx = f"[CEO DIRECTIVE]\n{_approved_hint}\n\n{_ctx}".strip() if _ctx else f"[CEO DIRECTIVE]\n{_approved_hint}"
 
-    # ── Bot working memory (fix 3) ────────────────────────────────────────────
-    # Inject the bot's rolling key-value store (≤10 entries) so it can recall
-    # facts across invocations without relying on session history alone.
-    try:
-        _wm_conn = _get_pg_conn()
-        if _wm_conn:
-            with _wm_conn.cursor() as _wmc:
+    # Bot working memory injection
+    if _shared_conn:
+        try:
+            with _shared_conn.cursor() as _wmc:
                 _wmc.execute(
                     "SELECT key, value FROM bridge.bot_working_memory "
                     "WHERE bot_name = %s ORDER BY updated_at DESC LIMIT 10",
@@ -5951,32 +5968,26 @@ def webhook_bot_engine(req: BotEngineRequest, request: Request):
                 if _wm_rows:
                     _wm_block = "[BOT MEMORY]\n" + "\n".join(f"{k}: {v}" for k, v in _wm_rows)
                     _ctx = f"{_wm_block}\n\n{_ctx}".strip() if _ctx else _wm_block
-            _wm_conn.close()
-    except Exception:
-        pass
+        except Exception:
+            pass
 
-    # ── Lead-specific interaction history (fix 2) ─────────────────────────────
-    # For BizDev and Researcher bots: prepend the last 10 interactions with the
-    # lead so the bot doesn't repeat outreach or miss context from prior touches.
-    if req.bot_name in ("bizdev", "researcher") and req.variables.get("lead_id"):
+    # Lead interaction history for BizDev / Researcher
+    if req.bot_name in ("bizdev", "researcher") and req.variables.get("lead_id") and _shared_conn:
         try:
-            _li_conn = _get_pg_conn()
-            if _li_conn:
-                with _li_conn.cursor() as _lic:
-                    _lic.execute(
-                        "SELECT interaction_type, notes, created_at::date "
-                        "FROM bridge.lead_interactions "
-                        "WHERE lead_id = %s::uuid "
-                        "ORDER BY created_at DESC LIMIT 10",
-                        (req.variables["lead_id"],)
+            with _shared_conn.cursor() as _lic:
+                _lic.execute(
+                    "SELECT interaction_type, notes, created_at::date "
+                    "FROM bridge.lead_interactions "
+                    "WHERE lead_id = %s::uuid "
+                    "ORDER BY created_at DESC LIMIT 10",
+                    (req.variables["lead_id"],)
+                )
+                _li_rows = _lic.fetchall()
+                if _li_rows:
+                    _li_block = "[LEAD HISTORY]\n" + "\n".join(
+                        f"{r[2]} {r[0]}: {r[1]}" for r in _li_rows
                     )
-                    _li_rows = _lic.fetchall()
-                    if _li_rows:
-                        _li_block = "[LEAD HISTORY]\n" + "\n".join(
-                            f"{r[2]} {r[0]}: {r[1]}" for r in _li_rows
-                        )
-                        _ctx = f"{_li_block}\n\n{_ctx}".strip() if _ctx else _li_block
-                _li_conn.close()
+                    _ctx = f"{_li_block}\n\n{_ctx}".strip() if _ctx else _li_block
         except Exception:
             pass
 
@@ -6084,25 +6095,24 @@ def webhook_bot_engine(req: BotEngineRequest, request: Request):
         if isinstance(act, dict) and "risk" not in act:
             act["risk"] = _RISK_MAP.get(act.get("type", ""), "medium")
 
-    # ── Bot working memory writes (fix 3) ─────────────────────────────────────
-    # Actions of type "memory_set" persist key/value pairs for future invocations.
-    # Enforce max 10 keys per bot by evicting the oldest when the cap is hit.
+    # ── DB writes: memory_set + outcomes + performance (shared connection) ──────
+    success = not raw_text.startswith("ERROR") and parse_error is None
     _mem_writes = [a for a in actions if isinstance(a, dict) and a.get("type") == "memory_set"]
-    if _mem_writes:
+    _outcome_acts = [a for a in actions if isinstance(a, dict) and a.get("type") in ("escalate", "memo", "send_memo")]
+
+    if _shared_conn:
         try:
-            _mw_conn = _get_pg_conn()
-            if _mw_conn:
-                with _mw_conn.cursor() as _mwc:
-                    for _mw in _mem_writes:
-                        _mwc.execute("""
-                            INSERT INTO bridge.bot_working_memory (bot_name, key, value, updated_at)
-                            VALUES (%s, %s, %s, NOW())
-                            ON CONFLICT (bot_name, key) DO UPDATE SET
-                                value      = EXCLUDED.value,
-                                updated_at = NOW()
-                        """, (req.bot_name, str(_mw.get("key", ""))[:120], str(_mw.get("value", ""))[:2000]))
-                    # Evict oldest keys beyond the 10-key cap
-                    _mwc.execute("""
+            with _shared_conn.cursor() as _wc:
+                # Memory writes
+                for _mw in _mem_writes:
+                    _wc.execute("""
+                        INSERT INTO bridge.bot_working_memory (bot_name, key, value, updated_at)
+                        VALUES (%s, %s, %s, NOW())
+                        ON CONFLICT (bot_name, key) DO UPDATE SET
+                            value = EXCLUDED.value, updated_at = NOW()
+                    """, (req.bot_name, str(_mw.get("key", ""))[:120], str(_mw.get("value", ""))[:2000]))
+                if _mem_writes:
+                    _wc.execute("""
                         DELETE FROM bridge.bot_working_memory
                         WHERE bot_name = %s
                           AND key NOT IN (
@@ -6111,18 +6121,25 @@ def webhook_bot_engine(req: BotEngineRequest, request: Request):
                               ORDER BY updated_at DESC LIMIT 10
                           )
                     """, (req.bot_name, req.bot_name))
-                _mw_conn.commit()
-                _mw_conn.close()
-        except Exception:
-            pass
 
-    # Performance record (fire-and-forget, best effort)
-    success = not raw_text.startswith("ERROR") and parse_error is None
-    conn = _get_pg_conn()
-    if conn:
-        try:
-            with conn.cursor() as _cur:
-                _cur.execute("""
+                # Outcome writes for escalate/memo actions
+                for _oa in _outcome_acts:
+                    try:
+                        _wc.execute("""
+                            INSERT INTO bridge.outcomes
+                                (action_type, target_bot, outcome_text, success, measured_at)
+                            VALUES (%s, %s, %s, %s, NOW())
+                        """, (
+                            _oa.get("type", "memo"),
+                            _oa.get("to", _oa.get("to_agent", "")),
+                            str(_oa.get("subject", _oa.get("message", "")))[:500],
+                            success,
+                        ))
+                    except Exception:
+                        pass
+
+                # Performance record
+                _wc.execute("""
                     INSERT INTO bridge.agent_performance
                         (agent_name, date, tasks_total, tasks_success, tasks_failed,
                          decisions_made, retry_count, token_usage_est)
@@ -6131,19 +6148,18 @@ def webhook_bot_engine(req: BotEngineRequest, request: Request):
                         CASE WHEN NOT %s THEN 1 ELSE 0 END,
                         %s, 0, %s)
                     ON CONFLICT (agent_name, date) DO UPDATE SET
-                        tasks_total   = bridge.agent_performance.tasks_total + 1,
-                        tasks_success = bridge.agent_performance.tasks_success + EXCLUDED.tasks_success,
-                        tasks_failed  = bridge.agent_performance.tasks_failed  + EXCLUDED.tasks_failed,
+                        tasks_total    = bridge.agent_performance.tasks_total + 1,
+                        tasks_success  = bridge.agent_performance.tasks_success + EXCLUDED.tasks_success,
+                        tasks_failed   = bridge.agent_performance.tasks_failed  + EXCLUDED.tasks_failed,
                         decisions_made = bridge.agent_performance.decisions_made + EXCLUDED.decisions_made,
                         token_usage_est = bridge.agent_performance.token_usage_est + EXCLUDED.token_usage_est
-                """, (req.bot_name, success, success,
-                      1 if actions else 0,
-                      len(full_message) // 4))
-            conn.commit()
+                """, (req.bot_name, success, success, 1 if actions else 0, len(full_message) // 4))
+
+            _shared_conn.commit()
         except Exception as _dbe:
-            bg_log(f"[bot-engine] perf DB error: {_dbe}", "bot_engine")
+            bg_log(f"[bot-engine] DB write error: {_dbe}", "bot_engine")
         finally:
-            conn.close()
+            _shared_conn.close()
 
     return BotEngineResponse(
         reply_text=reply_text,
