@@ -46,11 +46,12 @@ class GLMAgent:
     agent_id = "glm"
 
     def __init__(self) -> None:
-        self.glm_key      = os.environ.get("GLM_API_KEY", "")
-        self.cerebras_key = os.environ.get("CEREBRAS_API_KEY", "")
-        self.enabled      = (
+        self.glm_key       = os.environ.get("GLM_API_KEY", "")
+        self.glm_key_b     = os.environ.get("Bridge_Zbigmodel_api", "")  # second independent key
+        self.cerebras_key  = os.environ.get("CEREBRAS_API_KEY", "")
+        self.enabled       = (
             os.environ.get("GLM_ENABLED", "false").lower() == "true"
-            and bool(self.glm_key or self.cerebras_key)
+            and bool(self.glm_key or self.glm_key_b or self.cerebras_key)
         )
 
     # ── shared low-level HTTP call ────────────────────────────────────────────
@@ -148,11 +149,15 @@ class GLMAgent:
                 latency_ms=0, self_confidence=0.0, error_class="disabled",
             )
 
-        # Build ordered path list depending on which keys are available
+        # Build ordered path list depending on which keys are available.
+        # Each key is a separate quota pool — rate-limit on one doesn't block the other.
         paths: list[tuple[str, str, str, str]] = []  # (path_id, base, key, model)
         if self.glm_key:
             for m in _ZHIPU_MODELS:
-                paths.append((f"zhipu/{m}", _ZHIPU_BASE, self.glm_key, m))
+                paths.append((f"zhipu_a/{m}", _ZHIPU_BASE, self.glm_key, m))
+        if self.glm_key_b:
+            for m in _ZHIPU_MODELS:
+                paths.append((f"zhipu_b/{m}", _ZHIPU_BASE, self.glm_key_b, m))
         if self.cerebras_key:
             paths.append(("cerebras/glm-4.7", _CEREBRAS_BASE, self.cerebras_key, _CEREBRAS_MODEL))
 
