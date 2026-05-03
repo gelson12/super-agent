@@ -282,7 +282,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "=https://api.telegram.org/bot{{$env.Bridge_ChiefRevenueOptimizer_BOT}}/sendMessage",
+        "url": "=https://api.telegram.org/bot{{$env.Bridge_ChiefRevenueOptimizer_Bot}}/sendMessage",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -470,7 +470,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "=https://api.telegram.org/bot{{$env.Bridge_ChiefRevenueOptimizer_BOT}}/sendMessage",
+        "url": "=https://api.telegram.org/bot{{$env.Bridge_ChiefRevenueOptimizer_Bot}}/sendMessage",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -550,7 +550,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "=https://api.telegram.org/bot{{$env.Bridge_ChiefRevenueOptimizer_BOT}}/sendMessage",
+        "url": "=https://api.telegram.org/bot{{$env.Bridge_ChiefRevenueOptimizer_Bot}}/sendMessage",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
