@@ -163,6 +163,11 @@ _DAILY_PHRASES = (
     "limit resets",
     "try again in",
     "available again in",
+    "hit your limit",
+    "you've hit",
+    "you have hit",
+    "usage limit reached",
+    "weekly limit",
 )
 
 # BURST: momentary server overload — no quota consumed

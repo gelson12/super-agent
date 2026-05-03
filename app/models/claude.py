@@ -132,10 +132,11 @@ def ask_claude(prompt: str, system: str = SYSTEM_PROMPT_CLAUDE) -> str:
     trust-directory block that makes it unreliable.
     """
     # 1. Claude CLI (Pro/Max subscription — zero API cost)
+    _limit_phrases = ("hit your limit", "you've hit", "you have hit", "daily limit", "limit resets", "resets at", "resets in", "weekly limit")
     try:
         from ..learning.pro_router import try_pro
         pro = try_pro(prompt, system=system)
-        if pro is not None and not pro.lstrip().startswith('{"type":"error"') and not pro.startswith('['):
+        if pro is not None and not pro.lstrip().startswith('{"type":"error"') and not pro.startswith('[') and not any(p in pro.lower() for p in _limit_phrases):
             return pro
     except Exception:
         pass  # pro_router unavailable — try Legion next
