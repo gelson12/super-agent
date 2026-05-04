@@ -6,6 +6,23 @@ It gives Claude CLI situational awareness of the system architecture.
 
 ---
 
+## MEMORY INSTRUCTIONS (READ FIRST)
+
+You ALWAYS have memory. It lives in two places:
+1. **This file (CLAUDE.md)** — auto-loaded on every `claude -p` invocation
+2. **Memory directory** — `/root/.claude/projects/-workspace-super-agent/memory/bridge_os_current.md`
+
+When asked to "recall memory", "what do you know", or "what are our pending improvements":
+- **NEVER say memory is empty** — it is not. This file IS the memory.
+- Summarize the key system state from the BOT ARCHITECTURE and PENDING ISSUES sections below.
+- Do NOT apologize or suggest the user share information again. You already have it.
+
+If MCP tools are not loaded (Obsidian, n8n): that is fine. Answer from this file's content.
+
+---
+
+---
+
 ## OBSIDIAN KNOWLEDGE VAULT (MCP)
 
 A persistent Obsidian knowledge vault is available as an MCP server.
@@ -267,8 +284,39 @@ Fix:
 
 ---
 
+## KNOWN FIXED BUGS (do NOT re-introduce)
+
+### Parse response node (ALL 11 V2 bots) — FIXED 2026-05-04
+- **Bug:** `const raw = $json.response || '';` — super-agent returns `reply_text`, not `response`. This caused all bots to produce empty replies and never call Reply on Telegram.
+- **Fix:** `const raw = $json.response || $json.reply_text || '';`
+- **Status:** All 11 V2 bots patched and reactivated.
+
+### CEO `Fetch open inbox` SQL — FIXED 2026-05-04
+- **Bug:** `bridge.agent_performance` queried with non-existent columns: `bot_name`, `total_runs`, `is_successful`, `avg_latency_ms`, `last_run_at`
+- **Real schema:** `agent_name`, `tasks_total`, `tasks_success`, `tasks_failed`, `date`
+- **Fix:** Rewrote `team_perf` CTE. Removed CTEs for `bridge.bot_context_overrides` and `bridge.bot_improvement_proposals` (tables may not exist).
+
+### CoS `Execute low-risk action` SQL — FIXED 2026-05-04
+- **Bug 1:** Missing comma before `apply_context AS (` CTE → syntax error
+- **Bug 2:** Default `memo_type` was `'status'` → not in allowed set
+- **Allowed memo_types:** `directive`, `report`, `proposal`, `alert`
+- **Fix:** Added comma + CASE guard coercing invalid types to `'report'`
+
+### Finance memo_type constraint — FIXED 2026-05-04
+- **Fix:** CASE guard ensuring only `directive/report/proposal/alert` are inserted, defaults to `'report'`
+
+### CRO token + enabled key — FIXED 2026-05-04
+- **Bug:** `Reply on Telegram` used `Bridge_CEO_BOT`; `Read enabled flag` checked `ceo_bot_enabled`
+- **Fix:** Now uses `Bridge_ChiefRevenueOptimizer_Bot` and `cro_bot_enabled`
+
+### CTO token fix — FIXED 2026-05-04
+- **Fix:** `Reply on Telegram` uses `Bridge_CTO_Bot` only (removed wrong CEO fallback)
+
+---
+
 ## PENDING ISSUES (as of 2026-05-04)
 
-- **Health:** All 13 bots reactivated with Telegram webhooks registered (2026-05-04)
+- **Health:** All 13 bots active, Telegram webhooks registered, credentials assigned (2026-05-04)
 - **inspiring-cat shell tasks**: Use `{"type": "shell", "payload": {"command": "bash -c '...'"}}` — NOT `{"command":..., "type":"shell"}` flat format
-- **Routing observations:** LEGION hive is primary fallback for all bots when inspiring-cat is down
+- **Legion hive**: 6 agents compete per query (shortlist_k=6, was 3). Fires on ANY Claude CLI failure.
+- **bridge.agent_performance schema**: `agent_name`, `tasks_total`, `tasks_success`, `tasks_failed`, `date` — use these exact names in any new SQL.
