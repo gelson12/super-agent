@@ -1040,6 +1040,63 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
         pass  # Never block dispatch on parser failure — fall through to normal routing
     # ── End APP_CONTEXT ───────────────────────────────────────────────────────
 
+    # ── ALPHA0 ADMIN MODE ─────────────────────────────────────────────────────
+    # Bypass all normal routing — send directly to LEGION with task_kind="admin".
+    # LEGION hive boosts claude_b (full tool + cwd access) and gemini_b first,
+    # then gracefully degrades to the full hive if both are unavailable.
+    # All agents receive the ADMIN_ROLE context so even text-only models can
+    # describe what needs to be done or make API calls via instructions.
+    _ADMIN_PASSCODE = "alpha0"
+    if _ADMIN_PASSCODE in message.lower():
+        from ..models.claude import _try_legion
+        _clean_admin = re.sub(r"alpha0", "", message, flags=re.IGNORECASE).strip()
+        _ADMIN_ROLE = (
+            "You are the Bridge Infrastructure Admin AI. ELEVATED ACCESS GRANTED.\n"
+            "You have full control over all Bridge Digital Solutions infrastructure:\n\n"
+            "SERVICES:\n"
+            "- GitHub: https://github.com/gelson12/super-agent (commit, push, PRs, files)\n"
+            "- n8n: https://outstanding-blessing-production-1d4b.up.railway.app (workflows, env vars)\n"
+            "- Super-Agent: https://super-agent-production.up.railway.app\n"
+            "- Inspiring-Cat: https://inspiring-cat-production.up.railway.app (Claude CLI worker)\n"
+            "- LEGION: https://legion-production-36db.up.railway.app\n"
+            "- Website: bridge-digital-solution.com (served from website/index.html in repo)\n\n"
+            "RAILWAY CLI (installed — use for Railway dashboard control):\n"
+            "- RAILWAY_TOKEN env var is set for authentication\n"
+            "- List services: railway service list\n"
+            "- Get env vars: railway variables --service <name>\n"
+            "- Set env var: railway variables set KEY=VALUE --service <name>\n"
+            "- Redeploy: railway redeploy --service <name> --yes\n"
+            "- Logs: railway logs --service <name> --tail 50\n"
+            "- Services: super-agent, inspiring-cat, legion, n8n, divine-contentment, radiant-appreciation\n\n"
+            "CODEBASE:\n"
+            "- Working directory: /workspace/super-agent (full read/write/execute access)\n"
+            "- N8N_KEY and GITHUB_PAT env vars available\n"
+            "- Can run patch scripts, edit files, commit, push, deploy n8n workflows\n\n"
+            "Execute the requested task completely. Reference exact file paths, service names, "
+            "variable keys, and API responses. Report what changed."
+        )
+        _admin_prompt = _ADMIN_ROLE + "\n\nUser request: " + _clean_admin
+        _admin_resp = _try_legion(
+            _admin_prompt,
+            timeout_s=600.0,
+            complexity=5,
+            task_kind="admin",
+        )
+        if _admin_resp:
+            _log(f"alpha0 admin mode → LEGION (len={len(_admin_resp)})")
+            return _build_extended_result({
+                "model_used": "LEGION/admin",
+                "response": _admin_resp + "\n\n🔐 <i>Admin mode — Bridge Infrastructure AI</i>",
+                "routed_by": "alpha0_admin",
+                "complexity": 5,
+                "cache_hit": False,
+                "session_id": session_id,
+            })
+        # LEGION unavailable — fall through with admin context prepended
+        _log("alpha0 admin mode: LEGION unavailable, falling through with admin context")
+        message = _admin_prompt
+    # ── End ALPHA0 ────────────────────────────────────────────────────────────
+
     # Track wall-clock latency for the full dispatch — emitted in insight_log
     _dispatch_start = _time.time()
     _routing_confidence: float = 0.0  # filled in by classifier; used in insight_log

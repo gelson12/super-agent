@@ -32,6 +32,9 @@ hive:
       agent_invoke:
         confidence_min: 0.85   # real actions need quality; keep default
         latency_fraction_max: 0.4
+      admin:
+        confidence_min: 0.90   # infra tasks need highest quality answer
+        latency_fraction_max: 0.95  # use nearly the full deadline — don't exit early
 
 failover:
   primary_to_legion:
@@ -64,6 +67,9 @@ modality_priors:
   chat:
     gemini_b: 0.10
     glm: 0.08        # GLM-4-Flash excels at multilingual chat and concise replies
+  admin:
+    claude_b: 0.50   # always leads the shortlist — only agent with cwd + full tool access
+    gemini_b: 0.20   # secondary: Gemini CLI as capable fallback for infra tasks
 
 # ── Refinement layer ──────────────────────────────────────────────────────────
 # Runs after pick_winner() to improve answer quality via cross-agent critique,
@@ -97,6 +103,14 @@ refinement:
 # ── Per-task-kind refinement overrides ───────────────────────────────────────
 # bridge_bots = high-quality business decisions — maximum refinement budget
 refinement_task_kind_overrides:
+  admin:
+    complexity_min: 1            # always refine admin/infra tasks regardless of complexity
+    synthesis_complexity_min: 1
+    cot_complexity_min: 2        # CoT on any moderately complex admin task
+    critique_deadline_ms: 15000
+    refine_deadline_ms: 25000
+    cot_deadline_ms: 35000
+    synthesis_deadline_ms: 20000
   bridge_bots:
     complexity_min: 1            # always refine business decisions
     synthesis_complexity_min: 1

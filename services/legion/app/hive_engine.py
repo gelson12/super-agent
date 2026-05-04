@@ -37,8 +37,10 @@ async def run_round(req: RespondRequest, agents: dict[str, object]) -> RespondRe
     #
     # EXCEPTION: scheduled_tick and low-complexity (<=2) requests are deliberately
     # routed to Legion for quota savings — never defer these even if primary is healthy.
+    _task_kind_early = getattr(req, "task_kind", "chat")
     _is_quota_save_route = (
-        getattr(req, "task_kind", "chat") == "scheduled_tick"
+        _task_kind_early == "scheduled_tick"
+        or _task_kind_early == "admin"  # admin always uses LEGION for tool-capable agents
         or getattr(req, "complexity", 3) <= 2
     )
     if os.environ.get("DUAL_ACCOUNT_ENABLED", "false").lower() == "true":
@@ -61,6 +63,15 @@ async def run_round(req: RespondRequest, agents: dict[str, object]) -> RespondRe
     for aid, bonus in prior.items():
         if aid in suitability_scores:
             suitability_scores[aid] = min(1.0, suitability_scores[aid] + bonus)
+
+    # Admin tasks: additionally apply admin modality priors keyed on task_kind so
+    # claude_b (cwd + full tools) and gemini_b always top the shortlist regardless
+    # of what modality the caller declared.
+    if getattr(req, "task_kind", "chat") == "admin":
+        admin_prior = cfg.modality_priors.get("admin", {})
+        for aid, bonus in admin_prior.items():
+            if aid in suitability_scores:
+                suitability_scores[aid] = min(1.0, suitability_scores[aid] + bonus)
 
     picked = shortlist(
         suitability_scores,

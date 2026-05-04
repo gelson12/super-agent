@@ -96,9 +96,10 @@ def _try_legion(
     # Size the timeout to accommodate Legion's refinement layer:
     # complexity >= 4 triggers CoT + critique (up to ~30s); lower gets quick path.
     if timeout_s is None:
-        # bridge_bots gets full 60s — it runs MoA + CoT + critique at max quality
-        if task_kind == "bridge_bots":
-            timeout_s = 60.0
+        if task_kind == "admin":
+            timeout_s = 600.0  # infra tasks: 10-min ceiling (claude -p can take time)
+        elif task_kind == "bridge_bots":
+            timeout_s = 60.0   # MoA + CoT + critique at max quality
         elif complexity >= 4:
             timeout_s = 45.0
         else:
