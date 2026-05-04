@@ -283,12 +283,53 @@ fi
 # Gives `claude -p "..."` subprocess direct tool access to the n8n REST API
 # so Claude can reason AND build workflows in a single call (no Python relay).
 
-# 1. Register the n8n MCP server with Claude CLI (idempotent — safe to rerun)
-if command -v claude >/dev/null 2>&1 && [ -n "$N8N_BASE_URL" ] && [ -n "$N8N_API_KEY" ]; then
-    claude mcp add n8n --stdio "python /app/mcp/n8n_mcp_server.py" 2>/dev/null || true
-    echo "[entrypoint] Claude CLI: n8n MCP server registered (n8n_mcp_server.py)."
+# 1. Write project .mcp.json so every `claude -p` from /workspace/super-agent
+#    gets n8n, obsidian, and filesystem MCP servers automatically.
+#    The n8n MCP server script lives in the repo at app/mcp/n8n_mcp_server.py.
+_SA_DIR="/workspace/super-agent"
+if [ -d "$_SA_DIR" ] && [ -n "$N8N_API_KEY" ]; then
+    python3 - << 'MCPEOF'
+import json, os, pathlib
+sa = pathlib.Path('/workspace/super-agent')
+sa.mkdir(parents=True, exist_ok=True)
+cfg = {
+    "mcpServers": {
+        "n8n": {
+            "command": "python3",
+            "args": [str(sa / "app/mcp/n8n_mcp_server.py")],
+            "env": {
+                "N8N_BASE_URL": "https://outstanding-blessing-production-1d4b.up.railway.app",
+                "N8N_API_KEY": os.environ.get("N8N_API_KEY", "")
+            }
+        },
+        "obsidian": {
+            "type": "sse",
+            "url": os.environ.get("OBSIDIAN_MCP_URL", "http://obsidian-vault.railway.internal:22360/sse")
+        },
+        "filesystem": {
+            "command": "npx",
+            "args": ["-y", "@modelcontextprotocol/server-filesystem", "/workspace"],
+            "env": {}
+        }
+    }
+}
+out = sa / ".mcp.json"
+out.write_text(json.dumps(cfg, indent=2))
+out.chmod(0o600)
+print(f"[entrypoint] .mcp.json written to {out}")
+MCPEOF
 else
-    echo "[entrypoint] INFO: Skipping n8n MCP registration (claude not found or N8N_BASE_URL/N8N_API_KEY not set)."
+    echo "[entrypoint] INFO: Skipping .mcp.json write (super-agent dir not found or N8N_API_KEY not set)."
+fi
+
+# 1b. Also register via `claude mcp add` for sessions not run from /workspace/super-agent
+if command -v claude >/dev/null 2>&1 && [ -f "/workspace/super-agent/app/mcp/n8n_mcp_server.py" ]; then
+    claude mcp add n8n --stdio "python3 /workspace/super-agent/app/mcp/n8n_mcp_server.py" \
+        -e N8N_BASE_URL="https://outstanding-blessing-production-1d4b.up.railway.app" \
+        -e N8N_API_KEY="${N8N_API_KEY}" 2>/dev/null || true
+    echo "[entrypoint] Claude CLI: n8n MCP server registered via claude mcp add."
+elif command -v claude >/dev/null 2>&1 && [ -n "$N8N_API_KEY" ]; then
+    echo "[entrypoint] INFO: n8n_mcp_server.py not found at /workspace/super-agent/app/mcp/ — skipping claude mcp add."
 fi
 
 # 1b. Register Obsidian MCP into ~/.claude.json (where Claude Code reads mcpServers from).
