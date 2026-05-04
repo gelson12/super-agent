@@ -325,39 +325,83 @@ return {
 """.strip()
 
 
-COMMIT_CODE = r"""
-// Prepare the payload for super-agent /tools/github_commit_demo.
-// One file per demo: {slug}/index.html. CSS is shared from _template/.
-const prev = $input.first().json;
-return {
-  json: {
-    ...prev,
-    commit_payload: {
-      repo: 'bridge_websites_demos',
-      branch: 'main',
-      commit_message: 'demo: ' + prev.slug + ' (lead ' + prev.lead_id.slice(0,8) + ')',
-      files: [
-        { path: prev.slug + '/index.html',  content: prev.rendered_html },
-        { path: prev.slug + '/brief.json',  content: JSON.stringify(prev.brief_json, null, 2) },
-      ],
-    }
-  }
-};
-""".strip()
+VERCEL_DEPLOY_CODE = r"""
+// Upload rendered HTML to Vercel and create a preview deployment.
+const https  = require('https');
+const crypto = require('crypto');
+const prev   = $input.first().json;
+const html   = prev.rendered_html || '';
+const slug   = prev.slug || 'demo';
+const token  = $env.VERCEL_TOKEN || '';
 
+if (!token) {
+  return [{ json: { ...prev, deploy_ok: false, commit_ok: false,
+    preview_url: null, vercel_error: 'VERCEL_TOKEN not set' } }];
+}
 
-PARSE_COMMIT_CODE = r"""
-const prev = $('Build commit payload').first().json;
-const resp = $json || {};
-const ok = !!resp.ok;
-return {
-  json: {
-    ...prev,
-    repo_commit_sha: (resp.committed && resp.committed.length) ? resp.committed.join(',') : null,
-    commit_ok: ok,
-    commit_errors: resp.errors || [],
+function httpsReq(opts, bodyBuf) {
+  return new Promise((resolve, reject) => {
+    const req = https.request(opts, res => {
+      const chunks = [];
+      res.on('data', c => chunks.push(c));
+      res.on('end', () => {
+        const raw = Buffer.concat(chunks).toString('utf8');
+        try { resolve({ status: res.statusCode, data: JSON.parse(raw) }); }
+        catch(e) { resolve({ status: res.statusCode, data: { raw: raw.slice(0,400) } }); }
+      });
+    });
+    req.on('error', reject);
+    req.setTimeout(30000, () => { req.destroy(); reject(new Error('timeout')); });
+    if (bodyBuf) req.write(bodyBuf);
+    req.end();
+  });
+}
+
+// 1. Upload file blob to Vercel blob store
+const htmlBuf = Buffer.from(html, 'utf8');
+const sha1    = crypto.createHash('sha1').update(htmlBuf).digest('hex');
+await httpsReq({
+  hostname: 'api.vercel.com', path: '/v2/files', method: 'POST',
+  headers: {
+    'Authorization': 'Bearer ' + token,
+    'Content-Type': 'text/html; charset=utf-8',
+    'Content-Length': htmlBuf.length,
+    'x-vercel-digest': sha1,
   }
-};
+}, htmlBuf);
+
+// 2. Create preview deployment (framework: null = pure static)
+const depName = ('bridge-' + slug).slice(0, 52);
+const depBody = Buffer.from(JSON.stringify({
+  name: depName,
+  files: [{ file: 'index.html', sha: sha1, size: htmlBuf.length }],
+  projectSettings: { framework: null },
+  target: 'preview',
+}));
+const depRes = await httpsReq({
+  hostname: 'api.vercel.com', path: '/v13/deployments', method: 'POST',
+  headers: {
+    'Authorization': 'Bearer ' + token,
+    'Content-Type': 'application/json',
+    'Content-Length': depBody.length,
+  }
+}, depBody);
+
+const dep       = depRes.data || {};
+const vercelUrl = dep.url ? 'https://' + dep.url : null;
+const deployOk  = !!vercelUrl;
+
+return [{ json: {
+  ...prev,
+  preview_url:    vercelUrl,
+  vercel_url:     vercelUrl,
+  vercel_id:      dep.id || null,
+  vercel_status:  dep.readyState || dep.status || 'unknown',
+  vercel_error:   deployOk ? null : JSON.stringify(dep).slice(0, 300),
+  deploy_ok:      deployOk,
+  commit_ok:      deployOk,
+  repo_commit_sha: dep.id || null,
+} }];
 """.strip()
 
 
@@ -490,60 +534,26 @@ def code_parse_v0():
     }
 
 
-def code_build_commit():
+def code_deploy_vercel():
     return {
-        "parameters": {"jsCode": COMMIT_CODE, "mode": "runOnceForAllItems"},
-        "id": "node_build_commit",
-        "name": "Build commit payload",
+        "parameters": {"jsCode": VERCEL_DEPLOY_CODE, "mode": "runOnceForAllItems"},
+        "id": "node_deploy_vercel",
+        "name": "Deploy to Vercel",
         "type": "n8n-nodes-base.code",
         "typeVersion": 2,
         "position": [1780, 400],
     }
 
 
-def http_commit_to_repo():
+def wait_vercel_ready():
     return {
-        "parameters": {
-            "method": "POST",
-            "url": "https://super-agent-production.up.railway.app/tools/github_commit_demo",
-            "sendHeaders": True,
-            "headerParameters": {"parameters": [
-                {"name": "X-Token", "value": "={{$env.SUPER_AGENT_PASSWORD}}"},
-                {"name": "Content-Type", "value": "application/json"},
-            ]},
-            "sendBody": True,
-            "specifyBody": "json",
-            "jsonBody": "={{ JSON.stringify($json.commit_payload) }}",
-            "options": {"timeout": 90000, "response": {"response": {"neverError": True}}},
-        },
-        "id": "node_commit",
-        "name": "github_commit_demo",
-        "type": "n8n-nodes-base.httpRequest",
-        "typeVersion": 4.2,
-        "position": [2000, 400],
-    }
-
-
-def code_parse_commit():
-    return {
-        "parameters": {"jsCode": PARSE_COMMIT_CODE, "mode": "runOnceForAllItems"},
-        "id": "node_parse_commit",
-        "name": "Parse commit result",
-        "type": "n8n-nodes-base.code",
-        "typeVersion": 2,
-        "position": [2220, 400],
-    }
-
-
-def wait_pages_propagate():
-    return {
-        "parameters": {"amount": 75, "unit": "seconds"},
+        "parameters": {"amount": 20, "unit": "seconds"},
         "id": "node_wait",
-        "name": "Wait for Pages (75s)",
+        "name": "Wait for Vercel (20s)",
         "type": "n8n-nodes-base.wait",
         "typeVersion": 1.1,
-        "position": [2440, 400],
-        "webhookId": "bridge-website-wait",
+        "position": [2000, 400],
+        "webhookId": "bridge-vercel-wait",
     }
 
 
@@ -552,7 +562,7 @@ def pg_insert_project():
         "parameters": {
             "operation": "executeQuery",
             "query": INSERT_WEBSITE_PROJECT_QUERY,
-            "options": {"queryReplacement": "={{ JSON.stringify({lead_id: $json.lead_id, slug: $json.slug, brief_json: $json.brief_json, copy_json: $json.copy_json, preview_url: $json.preview_url, repo_commit_sha: $json.repo_commit_sha, deployment_status: $json.commit_ok ? 'live' : 'failed'}) }}"},
+            "options": {"queryReplacement": "={{ JSON.stringify({lead_id: $json.lead_id, slug: $json.slug, brief_json: $json.brief_json, copy_json: $json.copy_json, build_method: 'v0_vercel', preview_url: $json.preview_url, repo_name: null, repo_commit_sha: $json.vercel_id, deployment_status: $json.commit_ok ? 'live' : 'failed'}) }}"},
         },
         "id": "node_insert_project",
         "name": "Insert website_project",
@@ -571,8 +581,8 @@ def pg_update_lead():
             "options": {
                 "queryReplacement": (
                     "={{ JSON.stringify({"
-                    "lead_id: $('Parse commit result').first().json.lead_id, "
-                    "commit_ok: $('Parse commit result').first().json.commit_ok"
+                    "lead_id: $('Deploy to Vercel').first().json.lead_id, "
+                    "commit_ok: $('Deploy to Vercel').first().json.commit_ok"
                     "}) }}"
                 )
             },
@@ -588,10 +598,10 @@ def pg_update_lead():
 
 def pg_log_llm_expense():
     qr = (
-        "={{ $('Parse commit result').first().json.lead_id }},"
-        "v0.dev website generation for {{ $('Parse commit result').first().json.slug }},"
-        "{{ $('Parse commit result').first().json.llm_cost_usd }},"
-        "{{ JSON.stringify($('Parse commit result').first().json.llm_meta) }}"
+        "={{ $('Deploy to Vercel').first().json.lead_id }},"
+        "v0.dev website generation for {{ $('Deploy to Vercel').first().json.slug }},"
+        "{{ $('Deploy to Vercel').first().json.llm_cost_usd }},"
+        "{{ JSON.stringify($('Deploy to Vercel').first().json.llm_meta) }}"
     )
     return {
         "parameters": {
@@ -613,14 +623,14 @@ def pg_log_event():
     # 'demo_build_failed' on commit failure.
     payload_expr = (
         "={{ JSON.stringify({"
-        "lead_id: $('Parse commit result').first().json.lead_id, "
-        "event_type: ($('Parse commit result').first().json.commit_ok ? 'demo_built' : 'demo_build_failed'), "
+        "lead_id: $('Deploy to Vercel').first().json.lead_id, "
+        "event_type: ($('Deploy to Vercel').first().json.commit_ok ? 'demo_built' : 'demo_build_failed'), "
         "old_status: 'In Progress', "
-        "new_status: ($('Parse commit result').first().json.commit_ok ? 'Ready for Marketing' : 'Cannot Build Yet'), "
-        "slug: $('Parse commit result').first().json.slug, "
-        "preview_url: $('Parse commit result').first().json.preview_url, "
-        "repo_commit_sha: $('Parse commit result').first().json.repo_commit_sha, "
-        "llm_cost_usd: $('Parse commit result').first().json.llm_cost_usd"
+        "new_status: ($('Deploy to Vercel').first().json.commit_ok ? 'Ready for Marketing' : 'Cannot Build Yet'), "
+        "slug: $('Deploy to Vercel').first().json.slug, "
+        "preview_url: $('Deploy to Vercel').first().json.preview_url, "
+        "repo_commit_sha: $('Deploy to Vercel').first().json.repo_commit_sha, "
+        "llm_cost_usd: $('Deploy to Vercel').first().json.llm_cost_usd"
         "}) }}"
     )
     return {
@@ -641,17 +651,17 @@ def pg_log_event():
 def http_website_bot_done():
     # Persona: Web Designer/Dev — celebrate success, offer optional Lovable upgrade.
     text = (
-        "{{ $('Parse commit result').first().json.commit_ok ? '✨  Demo ready!' : '⚠️  Build failed' }}\n"
+        "{{ $('Deploy to Vercel').first().json.commit_ok ? '✨  Demo live on Vercel!' : '⚠️  Build failed' }}\n"
         "\n"
         "  Client:    {{ $('Build brief').first().json.brief_json.business_name }}\n"
-        "  Status:    {{ $('Parse commit result').first().json.commit_ok ? 'Ready for Marketing' : 'Cannot Build Yet (rolled back)' }}\n"
+        "  Status:    {{ $('Deploy to Vercel').first().json.commit_ok ? 'Ready for Marketing' : 'Cannot Build Yet' }}\n"
         "\n"
-        "🌐  Static demo (live now):\n"
-        "  {{ $('Parse commit result').first().json.preview_url }}\n"
+        "🌐  Vercel preview URL:\n"
+        "  {{ $('Deploy to Vercel').first().json.preview_url }}\n"
         "\n"
-        "🤖  Built with v0.dev (polished, production-ready HTML)\n"
+        "🤖  Generated by v0.dev → deployed to Vercel\n"
         "\n"
-        "  Contact card baked in:\n"
+        "  Contact baked in:\n"
         "  📞  +44 7345 787028\n"
         "  ✉️  bridge.digital.solution@gmail.com\n"
         "\n"
@@ -687,8 +697,8 @@ def http_finance_bot():
         "🧾  Website build billed\n"
         "\n"
         "  Lead:      {{ $('Build brief').first().json.brief_json.business_name }}\n"
-        "  Model:     v0.dev ({{ $('Parse commit result').first().json.llm_meta.char_count }} chars generated)\n"
-        "  Cost:      ${{ $('Parse commit result').first().json.llm_cost_usd }}\n"
+        "  Model:     v0.dev ({{ $('Deploy to Vercel').first().json.llm_meta.char_count }} chars generated)\n"
+        "  Cost:      ${{ $('Deploy to Vercel').first().json.llm_cost_usd }}\n"
         "\n"
         "Logged to bridge.expenses.\n"
         "— Accounts"
@@ -720,11 +730,11 @@ def http_finance_bot():
 def respond():
     body = (
         "={ \"status\": \"ok\", "
-        "\"lead_id\": {{ JSON.stringify($('Parse commit result').first().json.lead_id) }}, "
-        "\"slug\": {{ JSON.stringify($('Parse commit result').first().json.slug) }}, "
-        "\"preview_url\": {{ JSON.stringify($('Parse commit result').first().json.preview_url) }}, "
-        "\"llm_cost_usd\": {{ $('Parse commit result').first().json.llm_cost_usd }}, "
-        "\"commit_ok\": {{ $('Parse commit result').first().json.commit_ok }} }"
+        "\"lead_id\": {{ JSON.stringify($('Deploy to Vercel').first().json.lead_id) }}, "
+        "\"slug\": {{ JSON.stringify($('Deploy to Vercel').first().json.slug) }}, "
+        "\"preview_url\": {{ JSON.stringify($('Deploy to Vercel').first().json.preview_url) }}, "
+        "\"llm_cost_usd\": {{ $('Deploy to Vercel').first().json.llm_cost_usd }}, "
+        "\"commit_ok\": {{ $('Deploy to Vercel').first().json.commit_ok }} }"
     )
     return {
         "parameters": {"respondWith": "json", "responseBody": body, "options": {}},
@@ -747,10 +757,8 @@ def build_workflow() -> dict:
         code_build_v0_prompt(),
         http_v0_generate(),
         code_parse_v0(),
-        code_build_commit(),
-        http_commit_to_repo(),
-        code_parse_commit(),
-        wait_pages_propagate(),
+        code_deploy_vercel(),
+        wait_vercel_ready(),
         pg_insert_project(),
         pg_update_lead(),
         pg_log_llm_expense(),
@@ -770,11 +778,9 @@ def build_workflow() -> dict:
     link("Website bot: starting", "Build v0 prompt")
     link("Build v0 prompt", "v0.dev generate")
     link("v0.dev generate", "Parse v0 HTML")
-    link("Parse v0 HTML", "Build commit payload")
-    link("Build commit payload", "github_commit_demo")
-    link("github_commit_demo", "Parse commit result")
-    link("Parse commit result", "Wait for Pages (75s)")
-    link("Wait for Pages (75s)", "Insert website_project")
+    link("Parse v0 HTML", "Deploy to Vercel")
+    link("Deploy to Vercel", "Wait for Vercel (20s)")
+    link("Wait for Vercel (20s)", "Insert website_project")
     link("Insert website_project", "Lead status (gated by commit_ok)")
     link("Lead status (gated by commit_ok)", "Log LLM expense")
     link("Log LLM expense", "Log workflow_event")
