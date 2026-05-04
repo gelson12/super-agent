@@ -46,7 +46,9 @@ def _fix_reactivate_workflows(error: str, context: dict) -> str | None:
     """Workflows went inactive after a redeploy — reactivate all that should be active."""
     from ..tools.n8n_tools import n8n_list_workflows, n8n_activate_workflow
     workflows_raw = n8n_list_workflows.invoke({})
-    if "error" in workflows_raw.lower() or not workflows_raw.strip():
+    # Bail only on actual error returns (start with "[n8n") or empty string —
+    # substring "error" false-triggers on workflow names like "Error Monitor".
+    if not workflows_raw.strip() or workflows_raw.startswith("[n8n"):
         return None
     reactivated = []
     for line in workflows_raw.splitlines():
@@ -207,8 +209,13 @@ def n8n_health_check() -> dict:
     }
 
     # 1. Reachability
+    # Error returns from n8n_tools._request always start with "[n8n" (e.g.
+    # "[n8n error: ...]", "[n8n HTTP 500: ...]", "[n8n network error ...]").
+    # Successful list_workflows output starts with "Total: N workflows" or
+    # "No workflows found." — substring-matching "error"/"timeout" against the
+    # whole body false-triggers on workflow names.
     wf_raw = n8n_list_workflows.invoke({})
-    if any(e in wf_raw.lower() for e in ("error", "refused", "timeout", "not found", "not set")):
+    if wf_raw.startswith("[n8n"):
         result["issues"].append(f"n8n unreachable: {wf_raw[:200]}")
         _log(f"Health check: UNREACHABLE — {wf_raw[:150]}")
         return result
