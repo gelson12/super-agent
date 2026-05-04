@@ -10,8 +10,8 @@ ranking:
   cold_start_sample_threshold: 30
 
 hive:
-  shortlist_k: 3
-  shortlist_max: 5
+  shortlist_k: 6
+  shortlist_max: 9
   deadlines_ms:
     claude_b: 8000
     gemini_b: 25000  # Node CLI cold-starts ~10-16s before first token
@@ -35,6 +35,9 @@ hive:
       admin:
         confidence_min: 0.90   # infra tasks need highest quality answer
         latency_fraction_max: 0.95  # use nearly the full deadline — don't exit early
+      bridge_bots:
+        confidence_min: 0.92   # business decisions need high-quality consensus
+        latency_fraction_max: 0.95  # wait for all agents — never short-circuit
 
 failover:
   primary_to_legion:
