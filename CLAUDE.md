@@ -1,5 +1,5 @@
 # Super-Agent — Claude CLI Context
-**Last updated:** 2026-05-03
+**Last updated:** 2026-05-04
 
 This file is auto-loaded by `claude -p` on every invocation inside this repo.
 It gives Claude CLI situational awareness of the system architecture.
@@ -162,6 +162,46 @@ The Claude CLI login flow in container/headless mode:
 
 ---
 
+## RAILWAY CLI — FULL DASHBOARD CONTROL
+
+`railway` CLI is installed in this container. `RAILWAY_TOKEN` env var is set for authentication.
+
+**Service names (use exactly as shown):**
+- `super-agent`, `inspiring-cat`, `legion`, `n8n`, `divine-contentment`, `radiant-appreciation`, `obsidian-vault`
+
+**Common Railway CLI commands:**
+```bash
+# List all services in the project
+railway service list
+
+# Get all env vars for a service
+railway variables --service super-agent
+
+# Set an env var on a service (triggers redeploy)
+railway variables set KEY=VALUE --service super-agent
+
+# Delete an env var
+railway variables delete KEY --service super-agent
+
+# View recent logs
+railway logs --service legion --tail 100
+
+# Redeploy a service (picks up latest deploy / env var changes)
+railway redeploy --service super-agent --yes
+
+# Get deployment status
+railway status --service super-agent
+```
+
+**Railway REST API (GraphQL) — fallback if CLI fails:**
+- Endpoint: `https://backboard.railway.app/graphql/v2`
+- Header: `Authorization: Bearer $RAILWAY_TOKEN`
+- Use for: variable upsert mutations, deployment triggers, service queries
+
+**When asked to manage Railway:** use the CLI directly via Bash tool. Always confirm what changed after each operation.
+
+---
+
 ## COMMON FIX PATTERNS
 
 **Routing misses a request type** → add the missing keyword to the appropriate `_*_KEYWORDS` set in `dispatcher.py`
@@ -173,6 +213,8 @@ The Claude CLI login flow in container/headless mode:
 **n8n task fails** → try 3 paths: Python n8n tools → `run_shell_via_cli_worker` curl → `run_authorized_shell_command` curl
 
 **Claude CLI DOWN** → wait up to 15 min for self-healing watchdog. Check all 4 recovery layers if it doesn't come back.
+
+**Railway variable/service task** → use `railway variables` / `railway redeploy` CLI commands. RAILWAY_TOKEN is pre-set.
 
 ---
 

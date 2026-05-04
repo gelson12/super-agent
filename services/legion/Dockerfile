@@ -23,6 +23,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN npm install -g --no-audit --no-fund \
       @anthropic-ai/claude-code \
       @google/gemini-cli \
+      @railway/cli \
     && npm cache clean --force
 
 # Kimi CLI removed 2026-04-24: Moonshot made `kimi` CLI paid-subscription-only
