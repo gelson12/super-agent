@@ -36,8 +36,8 @@ hive:
         confidence_min: 0.90   # infra tasks need highest quality answer
         latency_fraction_max: 0.95  # use nearly the full deadline — don't exit early
       bridge_bots:
-        confidence_min: 0.92   # business decisions need high-quality consensus
-        latency_fraction_max: 0.95  # wait for all agents — never short-circuit
+        confidence_min: 0.88   # high quality but exit if a strong answer arrives
+        latency_fraction_max: 0.60  # exit at 60% of deadline (~54s of 90s) — balances quality vs Telegram timeout
 
 failover:
   primary_to_legion:
