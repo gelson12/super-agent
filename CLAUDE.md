@@ -75,11 +75,15 @@ Controls whether an agent gets tool access or text-only.
 | Service | Purpose |
 |---------|---------|
 | `super-agent` | Main AI agent FastAPI app |
-| `radiant-appreciation` | Website host — auto-deploys from `website/index.html` |
-| `inspiring-cat` (VS Code) | CLI worker container — runs `claude -p`, `gemini`, shell tasks |
-| `n8n` | Automation workflows |
-| `divine-contentment` | PostgreSQL + pgvector |
-| `honest-analysis` | **UNKNOWN** — visible in Railway dashboard, zero codebase references. Not part of the CLI cascade. Needs audit: `railway service list` to confirm purpose. |
+| `radiant-appreciation` (Website 1) | Website host — auto-deploys from `website/index.html` (bridge-digital-solution.com) |
+| `VS-Code-inspiring-cat` | CLI worker container — runs `claude -p`, `gemini`, shell tasks |
+| `N8N` | Automation workflows (outstanding-blessing-production-1d4b.up.railway.app) |
+| `Postgres` (divine-contentment) | PostgreSQL + pgvector |
+| `obsidian-vault` | Obsidian knowledge vault MCP server (ws port 22360) |
+| `Legion` | Multi-agent hive (legion-production-36db.up.railway.app) |
+| `WebSite 2` (honest-analysis) | Secondary website service (honest-analysis-production-be5c.up.railway.app) |
+
+**Railway service names for CLI** (use exactly): `super-agent`, `VS-Code-inspiring-cat`, `Legion`, `N8N`, `Postgres`, `obsidian-vault`, `Website 1`, `WebSite 2`
 
 ---
 
@@ -218,8 +222,53 @@ railway status --service super-agent
 
 ---
 
-## PENDING ISSUES (as of 2026-05-03)
+## BOT ARCHITECTURE (13 bots total, updated 2026-05-04)
 
-- **Health:**
-- **Priorities for tomorrow:** none
-- **Routing observations:**
+### Admin Passcode
+- Include `alpha0` in any Telegram DM → ADMIN mode (full infra access, 10-min timeout, LEGION routes to claude_b only)
+- Reply includes 🔐 badge to confirm activation
+
+### V1 Bot (direct inspiring-cat Code node)
+| Bot | Workflow ID | Token env var |
+|-----|-------------|---------------|
+| Crypto Bridge Bot Commands | `kvMrFfKUp1zy9Fek` | (built-in) |
+
+### V2 Bots (Telegram trigger → super-agent `/webhook/bot-engine` → LEGION cascade)
+| Bot | Workflow ID | Token env var (N8N Railway) |
+|-----|-------------|------------------------------|
+| bridge_ceo_bot | `MHEnrG5QuQI158TE` | `Bridge_CEO_BOT` |
+| bridge_chief_of_staff_bot | `xjf7VZdJTJtk139i` | `Bridge_Chief_Of_Staff_bot` |
+| bridge_cleaner_bot | `2dtB0j1kYYI92rLq` | `Bridge_Cleaner_bot` |
+| bridge_pm_bot | `nohy3gSHGnq7TSWS` | `BRIDGE_PM_BOT_TOKEN` |
+| Bridge_Finance_BOT | `H3jz8gb4OBiruV58` | `BRIDGE_FINANCE_BOT_TOKEN` |
+| bridge_programmer_bot | `nO5Db4kI0a1jPJuD` | `Bridge_Programmer_bot` |
+| bridge_chief_sec_off_bot | `uD1oMScgPA5b1I9f` | `Bridge _Chief_Sec_Off_bot` |
+| bridge_security_risk_bot | `tnI9kunFSOCZHngg` | `Bridge_Security_Risk_bot` |
+| bridge_business_development_bot | `ptf7UNqQKpiIj7IG` | `Bridge_Business_Development_bot` |
+| Bridge_ChiefRevenueOptimizer_BOT | `0S3Jb1UQZNtSqsI5` | `Bridge_ChiefRevenueOptimizer_Bot` |
+| bridge_cto_bot | `EOYTWzQZQZTfTsU4` | `Bridge_CTO_Bot` |
+| bridge_researcher_bot | (check n8n) | `Bridge_Researcher_bot` |
+
+### If bots stop responding to DMs
+Root cause: Telegram trigger nodes lose their credential assignment after workflow updates.
+Fix:
+1. Check `GET /api/v1/workflows/{id}` — look for `telegramTrigger` node with `disabled:true` or `credentials:{}` empty
+2. n8n credentials for each bot are named "Bridge X Bot" (created 2026-05-04) — reassign if missing
+3. Deactivate + reactivate the workflow to re-register the webhook: `POST /workflows/{id}/deactivate` then `POST /workflows/{id}/activate`
+4. If "webhook conflict": change the node's `webhookId` to a new UUID, then deactivate/activate
+5. The inspiring-cat task_runner shell payload format: `{"type": "shell", "payload": {"command": "..."}}`
+
+### Website Builder Bot
+| Workflow | `RfisxPXfWubWWklJ` |
+|---|---|
+| Engine | v0.dev API → Vercel preview URL |
+| Fallback | LEGION (task_kind: bridge_bots) if v0.dev fails |
+| Vercel token | `VERCEL_TOKEN` env var on N8N Railway service |
+
+---
+
+## PENDING ISSUES (as of 2026-05-04)
+
+- **Health:** All 13 bots reactivated with Telegram webhooks registered (2026-05-04)
+- **inspiring-cat shell tasks**: Use `{"type": "shell", "payload": {"command": "bash -c '...'"}}` — NOT `{"command":..., "type":"shell"}` flat format
+- **Routing observations:** LEGION hive is primary fallback for all bots when inspiring-cat is down
