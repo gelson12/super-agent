@@ -3,6 +3,12 @@ Claude CLI agent pinned to Account B. Subprocess wrapper around
 @anthropic-ai/claude-code with HOME rewritten to an account-scoped directory
 so Account B's credentials never mix with Account A's (which lives in
 inspiring-cat's container, not here).
+
+Two execution modes:
+  chat  (default) — claude --print, stdin prompt, fast text response
+  admin (task_kind="admin") — claude -p, cwd=/workspace/super-agent,
+        full tool access (Bash, Read, Edit, Write, git), same capability
+        as inspiring-cat. Requires repo bootstrapped by bootstrap_repo.sh.
 """
 from __future__ import annotations
 
@@ -16,6 +22,7 @@ from app.models import AgentResponse
 log = logging.getLogger("legion.agent.claude_b")
 
 ACCOUNT_B_HOME = "/workspace/legion/claude-b"
+REPO_CWD = "/workspace/super-agent"
 
 
 class ClaudeBAgent:
@@ -36,14 +43,38 @@ class ClaudeBAgent:
                 latency_ms=0, self_confidence=0.0, error_class="disabled",
             )
         start = time.monotonic()
-        env = {**os.environ, "HOME": ACCOUNT_B_HOME}
+
+        # Strip API key so Account B OAuth is used (not pay-per-token API)
+        env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
+        env["HOME"] = ACCOUNT_B_HOME
+
+        # Admin mode detected via [ADMIN] prefix injected by Telegram handler.
+        # Uses claude -p with cwd=/workspace/super-agent (full tool access).
+        # Chat mode uses claude --print (fast, text-only, no file/bash access).
+        is_admin = query.startswith("[ADMIN]\n")
+        clean_query = query[8:] if is_admin else query
+        repo_available = os.path.isdir(REPO_CWD)
+
+        if is_admin and repo_available:
+            cmd = [self.binary, "-p", clean_query]
+            cwd = REPO_CWD
+            stdin_bytes = None
+            log.info("claude_b admin mode: cwd=%s deadline=%.0fs", cwd, deadline_ms / 1000)
+        else:
+            cmd = [self.binary, "--print", "--output-format", "text"]
+            cwd = None
+            stdin_bytes = clean_query.encode()
+            if is_admin and not repo_available:
+                log.warning("claude_b: admin mode requested but %s not found — falling back to --print", REPO_CWD)
+
         try:
             proc = await asyncio.create_subprocess_exec(
-                self.binary, "--print", "--output-format", "text",
-                stdin=asyncio.subprocess.PIPE,
+                *cmd,
+                stdin=asyncio.subprocess.PIPE if stdin_bytes is not None else asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=env,
+                cwd=cwd,
             )
         except FileNotFoundError:
             return AgentResponse(
@@ -53,7 +84,7 @@ class ClaudeBAgent:
             )
         try:
             stdout, stderr = await asyncio.wait_for(
-                proc.communicate(input=query.encode()),
+                proc.communicate(input=stdin_bytes),
                 timeout=deadline_ms / 1000,
             )
         except asyncio.TimeoutError:
@@ -82,5 +113,5 @@ class ClaudeBAgent:
             )
         return AgentResponse(
             agent_id=self.agent_id, content=text, success=True,
-            latency_ms=latency_ms, self_confidence=0.75,
+            latency_ms=latency_ms, self_confidence=0.85 if is_admin else 0.75,
         )
