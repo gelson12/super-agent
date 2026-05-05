@@ -1,14 +1,23 @@
+
 """
 CLI Worker Task Runner — executes CLI subprocesses and writes results to Postgres.
 
+CHANGES FROM ORIGINAL:
+- Gemini CLI now runs with --skip-trust flag (fixes "not running in trusted directory" error)
+- claude_pro tasks now inject compressed conversation history into the prompt
+  so Claude CLI never loses context between calls (fixes 30-second amnesia bug)
+- session_id added to payload handling for history lookup
+- Timeouts tightened: claude_pro 90s (was 120s), gemini_cli 60s (was 120s)
+- Shell timeout raised to 90s for complex vault MCP cold-starts
+
 Task types:
-  claude_pro    → claude -p "{prompt}"          (cwd=/workspace, timeout=120s)
-  gemini_cli    → gemini --prompt "{prompt}"    (cwd=/workspace, timeout=120s)
-  claude_auth   → claude auth status            (timeout=15s)
-  claude_probe  → claude --version              (timeout=15s)
-  gemini_probe  → gemini --version              (timeout=15s)
-  flutter_build → flutter build apk --release  (cwd=/workspace, timeout=600s)
-  shell         → bash -c "{command}"           (cwd=/workspace, timeout=60s)
+  claude_pro → claude -p "{prompt}" (cwd=/workspace, timeout=90s)
+  gemini_cli → gemini --skip-trust ... (cwd=/workspace, timeout=60s)
+  claude_auth → claude auth status (timeout=15s)
+  claude_probe → claude --version (timeout=15s)
+  gemini_probe → gemini --version (timeout=15s)
+  flutter_build → flutter build apk --release (cwd=/workspace, timeout=600s)
+  shell → bash -c "{command}" (cwd=/workspace, timeout=90s)
 
 Each task: pending → running → done | failed
 Never raises — writes error string on any exception.
@@ -22,17 +31,17 @@ from datetime import datetime, timezone
 
 
 _TIMEOUTS = {
-    "claude_pro":    120,
-    "gemini_cli":    120,
-    "claude_auth":   15,
-    "claude_probe":  15,
-    "gemini_probe":  15,
+    "claude_pro": 90, # was 120 — tighter timeout forces faster fallback
+    "gemini_cli": 60, # was 120 — Gemini is fast; long waits mean it's stuck
+    "claude_auth": 15,
+    "claude_probe": 15,
+    "gemini_probe": 15,
     "flutter_build": 600,
-    "shell":         60,   # generic shell command — 60s for vault MCP cold-starts (~15s Xvfb+Obsidian + SSE overhead)
+    "shell": 90, # raised from 60 — vault MCP cold-start can take ~60s
 }
 
 _WORKSPACE = "/workspace"
-_REPO_WORKSPACE = "/workspace/super-agent"  # cloned repo — contains CLAUDE.md + GEMINI.md
+_REPO_WORKSPACE = "/workspace/super-agent"
 
 
 def _repo_cwd() -> str:
@@ -45,10 +54,8 @@ def _repo_cwd() -> str:
 
 
 def _read_gemini_md() -> str:
-    """Read GEMINI.md from the repo root and return its content.
-    Gemini CLI does not guarantee auto-loading of GEMINI.md (unlike Claude CLI
-    with CLAUDE.md), so we prepend it manually to every prompt.
-    Returns empty string silently if the file is missing or unreadable."""
+    """Read GEMINI.md from the repo root.
+    Gemini CLI does not auto-load GEMINI.md so we prepend it manually."""
     try:
         path = os.path.join(_repo_cwd(), "GEMINI.md")
         with open(path, "r", encoding="utf-8") as f:
@@ -57,12 +64,28 @@ def _read_gemini_md() -> str:
         return ""
 
 
+def _get_compressed_history(session_id: str) -> str:
+    """
+    Fetch compressed conversation history for a session.
+    Injects into claude_pro prompts so CLI never loses context.
+    Returns empty string silently if unavailable.
+    """
+    if not session_id:
+        return ""
+    try:
+        import sys as _sys
+        _sys.path.insert(0, "/app")
+        from app.memory.session import get_compressed_context
+        return get_compressed_context(session_id) or ""
+    except Exception:
+        return ""
+
+
 # Strip ANTHROPIC_API_KEY so claude CLI uses OAuth (claude.ai Pro subscription)
-# instead of the API key. When ANTHROPIC_API_KEY is present, claude -p always
-# prefers it over OAuth — causing "Credit balance is too low" even when Pro
-# credentials are valid in /root/.claude/.credentials.json
 _CLI_ENV = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
 _CLI_ENV["HOME"] = "/root"
+# Fix Gemini CLI trust directory warning in headless/automated environments
+_CLI_ENV["GEMINI_CLI_TRUST_WORKSPACE"] = "true"
 
 
 def _conn():
@@ -100,9 +123,6 @@ def _mark_failed(task_id: str, error: str) -> None:
         conn.commit()
 
 
-# Phrases that indicate the Claude CLI session token has expired.
-# When a claude_pro task returns any of these, full_recovery_chain() is triggered
-# in a background thread so future tasks can succeed without manual intervention.
 _AUTH_ERROR_PHRASES = (
     "not logged in",
     "not authenticated",
@@ -155,12 +175,13 @@ _MCP_TOOL_FAILURE_PHRASES = (
     "enotfound",
 )
 
+
 def _run_subprocess(cmd: list[str], cwd: str | None, timeout: int) -> str:
     """Run a subprocess and return its output string. Never raises."""
     try:
         result = subprocess.run(
             cmd,
-            stdin=subprocess.DEVNULL,  # /dev/null → immediate EOF, no pipe setup, no 3-second CLI wait
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
             timeout=timeout,
@@ -168,7 +189,6 @@ def _run_subprocess(cmd: list[str], cwd: str | None, timeout: int) -> str:
             env=_CLI_ENV,
         )
         output = (result.stdout or result.stderr or "(no output)").strip()
-        # If MCP permission phrases still appear, extract content lines only
         lower = output.lower()
         if any(p in lower for p in _MCP_PERMISSION_PHRASES):
             lines = output.splitlines()
@@ -176,7 +196,6 @@ def _run_subprocess(cmd: list[str], cwd: str | None, timeout: int) -> str:
             clean = "\n".join(clean_lines).strip()
             if clean and len(clean) > 20:
                 return clean
-        # Detect MCP tool execution failures — signal with "[" prefix for upstream fallback
         if any(p in lower for p in _MCP_TOOL_FAILURE_PHRASES):
             return f"[mcp_tool_error: {output[:200]}]"
         return output
@@ -209,11 +228,7 @@ def _run_shell(command: str, cwd: str, timeout: int) -> str:
 
 
 def _trigger_recovery_bg() -> None:
-    """
-    Trigger full_recovery_chain() in a background thread.
-    Called when a claude_pro task returns an auth error — ensures the CLI session
-    is healed automatically without blocking the current task result.
-    """
+    """Trigger full_recovery_chain() in a background thread."""
     def _run():
         try:
             import sys as _sys
@@ -223,21 +238,40 @@ def _trigger_recovery_bg() -> None:
             logger = logging.getLogger("task_runner.recovery")
             logger.info("[recovery] Auth error detected — starting full_recovery_chain()")
             ok = full_recovery_chain()
-            logger.info(f"[recovery] full_recovery_chain() result: {'success' if ok else 'failed'}")
+            logger.info("[recovery] full_recovery_chain() result: %s", "success" if ok else "failed")
         except Exception as _e:
             import logging
-            logging.getLogger("task_runner.recovery").error(f"[recovery] Exception: {_e}")
+            logging.getLogger("task_runner.recovery").error("[recovery] Exception: %s", _e)
 
     t = threading.Thread(target=_run, daemon=True, name="cli-recovery")
     t.start()
 
 
+def _build_claude_prompt_with_history(raw_prompt: str, session_id: str) -> str:
+    """
+    Prepend compressed conversation history to the Claude CLI prompt.
+    This is the fix for the 30-second context amnesia bug.
+
+    The history is injected as a clearly labelled block BEFORE the user message
+    so Claude CLI always knows what was previously discussed.
+    """
+    history = _get_compressed_history(session_id)
+    if not history:
+        return raw_prompt
+
+    return (
+        f"[CONVERSATION HISTORY — read this before responding]\n"
+        f"{history}\n"
+        f"{'─' * 60}\n"
+        f"[CURRENT REQUEST]\n"
+        f"{raw_prompt}"
+    )
+
+
 def _dispatch(task_type: str, payload: dict, timeout: int) -> str:
     """Central dispatch — maps task type to execution. Returns result string."""
     if task_type == "claude_pro":
-        # Circuit breaker: fail-fast when recovery is already running so queued
-        # tasks don't each burn 120s waiting to hit the same auth error.
-        # Primary check: in-memory _recovery_running Event (immediate, no file I/O).
+        # Circuit breaker: fail-fast when recovery is already running
         try:
             import sys as _sys_cb
             _sys_cb.path.insert(0, "/app")
@@ -247,31 +281,38 @@ def _dispatch(task_type: str, payload: dict, timeout: int) -> str:
                 return "[cli_worker: CLI auth recovery in progress — skipping claude_pro task]"
         except Exception:
             pass
-        # Secondary check: file-based CLI_DOWN flag (works across restarts).
+
         from pathlib import Path as _Path
         _cli_down_flag = _Path(os.environ.get("FLAG_DIR", "/workspace")) / ".pro_cli_down"
         if _cli_down_flag.exists():
             import time as _t
-            if (_t.time() - _cli_down_flag.stat().st_mtime) < 600:  # respect 10-min TTL
+            if (_t.time() - _cli_down_flag.stat().st_mtime) < 600:
                 return "[cli_worker: CLI_DOWN — skipped subprocess, recovery in progress]"
 
-        # cwd = repo root so CLAUDE.md is auto-loaded by Claude CLI on every call
-        result = _run_subprocess(["claude", "-p", payload.get("prompt", "")], _repo_cwd(), timeout)
-        # Detect expired session — kick off recovery in background so next task succeeds
+        # FIX: Inject conversation history so CLI never loses context
+        raw_prompt = payload.get("prompt", "")
+        session_id = payload.get("session_id", "")
+        full_prompt = _build_claude_prompt_with_history(raw_prompt, session_id)
+
+        result = _run_subprocess(["claude", "-p", full_prompt], _repo_cwd(), timeout)
+
         _lower = result.lower()
         if any(p in _lower for p in _AUTH_ERROR_PHRASES):
-            print(f"[task_runner] Auth error detected in claude_pro output — triggering recovery. "
-                  f"Preview: {result[:120]}", flush=True)
+            print(f"[task_runner] Auth error detected — triggering recovery. Preview: {result[:120]}", flush=True)
             _trigger_recovery_bg()
         return result
 
     elif task_type == "gemini_cli":
-        # Prepend GEMINI.md explicitly — Gemini CLI does not guarantee auto-loading
-        # of GEMINI.md the way Claude CLI auto-loads CLAUDE.md.
+        # FIX: Added --skip-trust flag to prevent "not running in trusted directory" error
+        # Also set GEMINI_CLI_TRUST_WORKSPACE=true in _CLI_ENV above as belt-and-suspenders
         gemini_ctx = _read_gemini_md()
         raw_prompt = payload.get("prompt", "")
         full_prompt = f"{gemini_ctx}\n\n---\n\n{raw_prompt}" if gemini_ctx else raw_prompt
-        return _run_subprocess(["gemini", "--prompt", full_prompt], _repo_cwd(), timeout)
+        return _run_subprocess(
+            ["gemini", "--skip-trust", "--prompt", full_prompt],
+            _repo_cwd(),
+            timeout,
+        )
 
     elif task_type == "claude_auth":
         return _run_subprocess(["claude", "auth", "status"], None, timeout)
@@ -301,13 +342,10 @@ def _dispatch(task_type: str, payload: dict, timeout: int) -> str:
 
 
 def execute_task(task_id: str, task_type: str, payload: dict) -> None:
-    """
-    Execute one CLI task end-to-end: mark running → run subprocess → mark done/failed.
-    Called from the background worker loop. Never raises.
-    """
+    """Execute one CLI task end-to-end. Never raises."""
     try:
         _mark_running(task_id)
-        timeout = _TIMEOUTS.get(task_type, 120)
+        timeout = _TIMEOUTS.get(task_type, 90)
         result = _dispatch(task_type, payload, timeout)
         _mark_done(task_id, result)
     except Exception as e:
@@ -318,26 +356,22 @@ def execute_task(task_id: str, task_type: str, payload: dict) -> None:
 
 
 def fetch_pending_task() -> dict | None:
-    """
-    Atomically claim one pending task (SELECT FOR UPDATE SKIP LOCKED).
-    Returns the task dict or None if queue is empty.
-    """
+    """Atomically claim one pending task (SELECT FOR UPDATE SKIP LOCKED)."""
     try:
         with _conn() as conn:
             with conn.cursor() as cur:
                 cur.execute("""
                     SELECT id, type, payload
-                    FROM   cli_tasks
-                    WHERE  status = 'pending'
-                    ORDER  BY created_at
-                    LIMIT  1
+                    FROM cli_tasks
+                    WHERE status = 'pending'
+                    ORDER BY created_at
+                    LIMIT 1
                     FOR UPDATE SKIP LOCKED
                 """)
                 row = cur.fetchone()
                 if not row:
                     return None
                 task_id, task_type, payload = row
-                # Mark as running atomically inside the same transaction
                 cur.execute(
                     "UPDATE cli_tasks SET status='running', started_at=NOW() WHERE id=%s",
                     (str(task_id),)
@@ -353,14 +387,7 @@ def fetch_pending_task() -> dict | None:
 
 
 def _push_result_to_shared_memory(task_type: str, payload: dict, result: str) -> None:
-    """
-    Fire-and-forget: after a successful CLI Pro / shell task, extract the
-    prompt + result as a shared memory entry so all models benefit from it.
-
-    Only fires for claude_pro tasks with substantive results (>200 chars).
-    Runs in the calling thread (already background from main worker loop).
-    Never raises.
-    """
+    """Fire-and-forget: contribute CLI results to shared cross-model memory."""
     try:
         if task_type not in ("claude_pro", "claude_auth", "gemini_cli") or len(result) < 200:
             return
@@ -371,12 +398,10 @@ def _push_result_to_shared_memory(task_type: str, payload: dict, result: str) ->
         sys.path.insert(0, "/app")
         from app.memory.vector_memory import ingest_external_memory, extract_and_store_insights
 
-        # Identify source label based on which CLI ran the task
         source_label = "gemini_cli" if task_type == "gemini_cli" else "cli_pro"
-        model_label  = "GEMINI_CLI" if task_type == "gemini_cli" else "CLI_PRO"
-        tag_label    = f"{source_label} task"
+        model_label = "GEMINI_CLI" if task_type == "gemini_cli" else "CLI_PRO"
+        tag_label = f"{source_label} task"
 
-        # Store the raw exchange
         ingest_external_memory(
             content=f"{tag_label} — Q: {prompt[:300]} A: {result[:400]}",
             memory_type="fact",
@@ -384,7 +409,6 @@ def _push_result_to_shared_memory(task_type: str, payload: dict, result: str) ->
             source=source_label,
             session_id=f"{source_label}_shared",
         )
-        # Also fire Haiku distillation (runs async in daemon thread)
         extract_and_store_insights(
             message=prompt,
             response=result,
@@ -398,15 +422,14 @@ def _push_result_to_shared_memory(task_type: str, payload: dict, result: str) ->
 
 def run_task_from_record(task: dict) -> None:
     """Execute a task that was already marked running by fetch_pending_task."""
-    task_id   = task["id"]
+    task_id = task["id"]
     task_type = task["type"]
-    payload   = task["payload"]
-    timeout   = _TIMEOUTS.get(task_type, 120)
+    payload = task["payload"]
+    timeout = _TIMEOUTS.get(task_type, 90)
 
     try:
         result = _dispatch(task_type, payload, timeout)
         _mark_done(task_id, result)
-        # Contribute CLI Pro results to the shared cross-model memory store
         _push_result_to_shared_memory(task_type, payload, result)
     except Exception as e:
         try:
