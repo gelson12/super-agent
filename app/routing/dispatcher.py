@@ -1020,7 +1020,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
             from ..learning.gemini_cli_worker import ask_gemini_cli
             _loc_prompt = build_location_prompt(_app_ctx)
             _response = ask_gemini_cli(_loc_prompt)
-            _log(
+            _log.info(
                 f"APP_CONTEXT routing: LOCATION → GEMINI_CLI "
                 f"(lat={_app_ctx.get('CURRENT_LAT', '?')} "
                 f"lon={_app_ctx.get('CURRENT_LON', '?')} "
@@ -1083,7 +1083,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
             task_kind="admin",
         )
         if _admin_resp:
-            _log(f"alpha0 admin mode → LEGION (len={len(_admin_resp)})")
+            _log.info(f"alpha0 admin mode → LEGION (len={len(_admin_resp)})")
             return _build_extended_result({
                 "model_used": "LEGION/admin",
                 "response": _admin_resp + "\n\n🔐 <i>Admin mode — Bridge Infrastructure AI</i>",
@@ -1093,7 +1093,7 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
                 "session_id": session_id,
             })
         # LEGION unavailable — fall through with admin context prepended
-        _log("alpha0 admin mode: LEGION unavailable, falling through with admin context")
+        _log.info("alpha0 admin mode: LEGION unavailable, falling through with admin context")
         message = _admin_prompt
     # ── End ALPHA0 ────────────────────────────────────────────────────────────
 
