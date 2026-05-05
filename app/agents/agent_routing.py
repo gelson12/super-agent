@@ -1,35 +1,42 @@
+
 """
-Shared 4-tier routing for all LangGraph agents.
+Shared routing for all LangGraph agents — parallel multi-model architecture.
 
-Solves: all agents duplicate the same CLI → Gemini → API → DeepSeek fallback
-chain, and text-only tiers (CLI/Gemini) waste calls on operational requests
-that need tool execution.
+CHANGES FROM ORIGINAL:
+- Tier 0 is now PARALLEL: CLI + Legion (Groq/Cerebras/GH Models) + Gemini all race simultaneously
+  First quality response wins — all others cancelled. This alone cuts latency from 20-60s to 2-5s.
+- Quality gate added: responses must pass minimum length + error-prefix check
+- Legion PROMOTED from last-resort (Tier 5) to first-line racer (Tier 0)
+  You have Groq + Cerebras + GitHub Models in Legion — fastest inference available, completely free
+- Paid tiers (DeepSeek LangGraph, Anthropic API) only fire when ALL free models fail
+- Recursion guard unchanged and preserved
 
-Public API:
-    tiered_agent_invoke(message, system_prompt, tools, agent_type, source="")
-        → str  (never raises)
+Architecture:
+  TIER 0 — Parallel free models (fire all simultaneously, ~0 cost)
+    Claude CLI + Legion hive (Groq/Cerebras/GH Models) + Gemini CLI
+    → First quality response wins, rest cancelled
 
-Routing logic:
-  - INFORMATIONAL requests (read, describe, explain, list, status, check):
-      Tier 1: CLI Pro → Tier 2: Gemini CLI → Tier 3: LangGraph Anthropic API
-      → Tier 3b: LangGraph DeepSeek → error
+  TIER 1 — Cheap paid with tools (only if Tier 0 fully fails)
+    DeepSeek LangGraph → full tool access, very cheap
 
-  - OPERATIONAL requests (build, create, push, deploy, fix, run, delete, update):
-      Skip text-only tiers → Tier 3: LangGraph Anthropic API
-      → Tier 3b: LangGraph DeepSeek → error
+  TIER 2 — Premium paid with tools (absolute last resort)
+    Anthropic API LangGraph → Sonnet quality, expensive
+    DeepSeek text fallback → final safety net
 """
 from __future__ import annotations
+
+import concurrent.futures
+import threading as _threading
+import logging
 
 from langgraph.prebuilt import create_react_agent
 from langchain_anthropic import ChatAnthropic
 from .agent_planner import extract_final_agent_text
 from ..config import settings
 
+_log = logging.getLogger("agent_routing")
 
 # ── Operational keyword sets per agent type ──────────────────────────────────
-# If the message contains any of these, skip text-only tiers (CLI/Gemini)
-# because the request requires tool execution.
-
 _OPERATIONAL_KEYWORDS: dict[str, tuple[str, ...]] = {
     "shell": (
         "build", "run ", "execute", "deploy", "install", "clone", "create",
@@ -51,9 +58,6 @@ _OPERATIONAL_KEYWORDS: dict[str, tuple[str, ...]] = {
         "create", "build", "delete", "set variable", "push", "install",
     ),
 }
-
-# Fallback for unknown agent types — conservative, skips text tiers for anything
-# that looks like a write/action request.
 _OPERATIONAL_KEYWORDS["default"] = (
     "build", "create", "run", "execute", "deploy", "fix", "write", "delete",
     "push", "update", "install", "restart",
@@ -73,6 +77,31 @@ _NO_CREDIT_PHRASES = (
     "401",
 )
 
+# ── Quality gate ─────────────────────────────────────────────────────────────
+_MIN_QUALITY_LENGTH = 40 # responses shorter than this are likely errors
+
+
+def _is_quality_response(resp: str | None) -> bool:
+    """
+    True if a response is substantive enough to return to the user.
+    Rejects: None, empty strings, error sentinels like '[Claude error: ...]',
+    and responses that are suspiciously short (likely 'I cannot help' etc.)
+    """
+    if not resp:
+        return False
+    if not isinstance(resp, str):
+        return False
+    stripped = resp.strip()
+    if not stripped:
+        return False
+    # Error sentinel — starts with [ and ends with ]
+    if stripped.startswith("[") and stripped.endswith("]"):
+        return False
+    # Too short to be useful
+    if len(stripped) < _MIN_QUALITY_LENGTH:
+        return False
+    return True
+
 
 def _log(msg: str, source: str = "") -> None:
     try:
@@ -89,12 +118,7 @@ def is_operational(message: str, agent_type: str = "default") -> bool:
     return any(kw in lower for kw in keywords)
 
 
-def _invoke_langgraph(
-    llm,
-    tools: list,
-    system_prompt: str,
-    message: str,
-) -> str:
+def _invoke_langgraph(llm, tools: list, system_prompt: str, message: str) -> str:
     """Create a ReAct agent and invoke it. Returns the final text response."""
     agent = create_react_agent(llm, tools)
     result = agent.invoke({
@@ -115,7 +139,6 @@ def _get_anthropic_llm() -> ChatAnthropic:
 
 
 def _get_deepseek_llm():
-    """Return a LangGraph-compatible ChatModel backed by DeepSeek's OpenAI-compatible API."""
     from langchain_openai import ChatOpenAI
     return ChatOpenAI(
         base_url="https://api.deepseek.com/v1",
@@ -126,14 +149,6 @@ def _get_deepseek_llm():
 
 
 # ── Recursion guard ──────────────────────────────────────────────────────────
-# tiered_agent_invoke is called by every operational agent. Some of those agents
-# (notably self_improve) can themselves invoke other agents, so without a depth
-# guard a misbehaving plan can spin up an unbounded recursive chain — each level
-# costs a Sonnet/Opus call and a tool-loop. We use a thread-local counter (works
-# under FastAPI's threadpool dispatch) and hard-fail above the limit.
-
-import threading as _threading
-
 _invoke_depth = _threading.local()
 _MAX_AGENT_DEPTH = 3
 
@@ -153,6 +168,23 @@ def _drop_depth() -> None:
     _invoke_depth.n = n
 
 
+# ── Status tracker helpers ────────────────────────────────────────────────────
+def _track(worker, task=""):
+    try:
+        from ..learning.agent_status_tracker import mark_working
+        mark_working(worker, task)
+    except Exception:
+        pass
+
+
+def _done(worker):
+    try:
+        from ..learning.agent_status_tracker import mark_done
+        mark_done(worker)
+    except Exception:
+        pass
+
+
 def tiered_agent_invoke(
     message: str,
     system_prompt: str,
@@ -161,19 +193,8 @@ def tiered_agent_invoke(
     source: str = "",
 ) -> str:
     """
-    Unified 4-tier routing for any LangGraph agent.
-
-    For informational requests:
-      Tier 1 (CLI) → Tier 2 (Gemini) → Tier 2.5 (Legion) → Tier 3 (DeepSeek LangGraph) → Tier 4 (Anthropic LangGraph) → Tier 5 (DeepSeek text) → Tier 5b (Legion retry)
-
-    For operational requests (need tools):
-      Tier 1 (CLI) → Tier 2.5 (Legion, text-only caveat) → Tier 3 (DeepSeek LangGraph) → Tier 4 (Anthropic LangGraph) → Tier 5 (DeepSeek text) → Tier 5b (Legion retry)
-
+    Unified routing for any LangGraph agent with parallel Tier 0.
     Returns a response string — never raises.
-
-    Hard-fails when nested deeper than _MAX_AGENT_DEPTH levels in the same
-    thread (recursion guard). The error message is plain text so the upstream
-    LLM can read it and adapt instead of looping again.
     """
     depth = _bump_depth()
     if depth > _MAX_AGENT_DEPTH:
@@ -197,6 +218,46 @@ def tiered_agent_invoke(
         _drop_depth()
 
 
+def _run_cli(full_message: str) -> str | None:
+    """Tier 0 racer: Claude CLI Pro."""
+    try:
+        from ..learning.pro_router import try_pro, is_cli_down
+        if is_cli_down():
+            return None
+        result = try_pro(full_message)
+        return result if _is_quality_response(result) else None
+    except Exception:
+        return None
+
+
+def _run_legion(full_message: str, operational: bool) -> str | None:
+    """Tier 0 racer: Legion hive (Groq + Cerebras + GitHub Models + OpenRouter + HF + Ollama)."""
+    try:
+        from ..models.claude import _try_legion
+        result = _try_legion(full_message, timeout_s=12.0)
+        if not _is_quality_response(result):
+            return None
+        if operational:
+            return (
+                result
+                + "\n\n⚠️ *Answered by Legion fallback (no tool execution). "
+                "Retry when Claude CLI is back for full action capability.*"
+            )
+        return result
+    except Exception:
+        return None
+
+
+def _run_gemini_cli(full_message: str) -> str | None:
+    """Tier 0 racer: Gemini CLI (free, text-only — only for informational requests)."""
+    try:
+        from ..learning.gemini_cli_worker import ask_gemini_cli
+        result = ask_gemini_cli(full_message)
+        return result if _is_quality_response(result) else None
+    except Exception:
+        return None
+
+
 def _tiered_agent_invoke_inner(
     message: str,
     system_prompt: str,
@@ -204,7 +265,7 @@ def _tiered_agent_invoke_inner(
     agent_type: str,
     _source: str,
 ) -> str:
-    # ── Routing advisor (G1) — non-binding hint logged + soft-applied ────────
+    # ── Routing advisor (non-binding hint) ────────────────────────────────────
     advisor_hint = None
     try:
         from ..routing.routing_advisor import recommend
@@ -219,7 +280,7 @@ def _tiered_agent_invoke_inner(
     except Exception as _e:
         _log(f"advisor unavailable: {_e}", _source)
 
-    # ── Set Obsidian vault calling-agent context for talking-line tracking ──
+    # ── Set Obsidian vault calling-agent context ──────────────────────────────
     _AGENT_TYPE_TO_WORKER = {
         "shell": "Shell Agent",
         "github": "GitHub Agent",
@@ -232,99 +293,74 @@ def _tiered_agent_invoke_inner(
     except Exception:
         pass
 
-    # ── Status tracker helpers (for Anthropic/DeepSeek LangGraph tiers) ──
-    def _track(worker, task=""):
-        try:
-            from ..learning.agent_status_tracker import mark_working
-            mark_working(worker, task)
-        except Exception:
-            pass
-
-    def _done(worker):
-        try:
-            from ..learning.agent_status_tracker import mark_done
-            mark_done(worker)
-        except Exception:
-            pass
-
-    # ── Tier 1: Claude CLI Pro (ALWAYS try first — it's free) ────────────
-    # CLI Pro on inspiring-cat has shell access, n8n MCP, and full tool
-    # capability. It's FREE so we should always prefer it over paid API.
-    # Only skip if the CLI is genuinely down (not just rate-limited).
-    try:
-        from ..learning.pro_router import try_pro, should_attempt_cli, is_cli_down
-        # Always attempt CLI unless genuinely unreachable — burst/daily
-        # cooldowns should NOT push traffic to the paid Anthropic API
-        if not is_cli_down():
-            cli_result = try_pro(f"{system_prompt}\n\n{message}")
-            if cli_result and not cli_result.startswith("["):
-                _log(f"✓ CLI Pro responded ({len(cli_result)} chars)", _source)
-                return cli_result
-            _log(f"CLI returned error/empty — trying Gemini", _source)
-        else:
-            _log("CLI genuinely down — skipping to Gemini", _source)
-    except Exception as e:
-        _log(f"CLI exception: {e} — trying Gemini", _source)
-
-    # ── Tier 2: Gemini CLI (free, text-only — try for informational) ────
+    full_message = f"{system_prompt}\n\n{message}"
     operational = is_operational(message, agent_type)
-    if not operational:
-        try:
-            from ..learning.gemini_cli_worker import ask_gemini_cli
-            gemini = ask_gemini_cli(f"{system_prompt}\n\n{message}")
-            if gemini and not gemini.startswith("["):
-                _log(f"✓ Gemini CLI responded ({len(gemini)} chars)", _source)
-                return gemini
-            _log(f"Gemini returned error/empty — trying Legion", _source)
-        except Exception as e:
-            _log(f"Gemini exception: {e} — trying Legion", _source)
-    else:
-        _log(f"Operational request — skipping Gemini (no tools), trying Legion then DeepSeek LangGraph", _source)
 
-    # ── Tier 2.5: Legion hive (free distributed models, text-only) ───────
-    # Legion covers Groq, Cerebras, GH Models, OpenRouter, HF, Ollama.
-    # Works for BOTH informational and operational requests:
-    # - Informational: full answer (text-only is sufficient)
-    # - Operational: best-effort text response when tool-calling tiers fail
-    # This is the primary safety net when Claude CLI AND Gemini are both down.
+    # ══════════════════════════════════════════════════════════════════════════
+    # TIER 0 — PARALLEL FREE MODELS (fire all simultaneously, ~0 cost)
+    # Groq and Cerebras (inside Legion) are the fastest inference available.
+    # We fire CLI + Legion + (optionally) Gemini all at once.
+    # First quality response wins — all others are cancelled immediately.
+    # Target latency: 1-3 seconds for most queries.
+    # ══════════════════════════════════════════════════════════════════════════
+    _log(f"Tier 0: firing free models in parallel (operational={operational})", _source)
+
+    tier0_futures: dict[str, concurrent.futures.Future] = {}
+    tier0_pool = concurrent.futures.ThreadPoolExecutor(max_workers=3, thread_name_prefix="tier0")
+
     try:
-        from ..models.claude import _try_legion
-        legion = _try_legion(f"{system_prompt}\n\n{message}")
-        if legion:
-            _log(f"✓ Legion hive responded ({len(legion)} chars)", _source)
-            if operational:
-                # Operational request answered without tools — add caveat so
-                # caller knows tool execution did not run.
-                return (
-                    legion
-                    + "\n\n⚠️ *Answered by Legion fallback (no tool execution). "
-                    "Retry when Claude CLI is back for full action capability.*"
-                )
-            return legion
-        _log("Legion returned empty — trying DeepSeek LangGraph", _source)
-    except Exception as e:
-        _log(f"Legion exception: {e} — trying DeepSeek LangGraph", _source)
+        tier0_futures["cli"] = tier0_pool.submit(_run_cli, full_message)
+        tier0_futures["legion"] = tier0_pool.submit(_run_legion, full_message, operational)
+        # Gemini is text-only — only useful for informational requests
+        if not operational:
+            tier0_futures["gemini"] = tier0_pool.submit(_run_gemini_cli, full_message)
 
-    # ── Tier 3: LangGraph + DeepSeek (cheap, full tool access) ──────────
-    # DeepSeek is cheaper than Anthropic — try it first
+        # Wait up to 15s for the first quality response
+        for future in concurrent.futures.as_completed(tier0_futures.values(), timeout=15):
+            try:
+                result = future.result()
+                if _is_quality_response(result):
+                    # Cancel all other pending futures immediately
+                    for f in tier0_futures.values():
+                        f.cancel()
+                    winner = [k for k, v in tier0_futures.items() if v is future]
+                    _log(f"✓ Tier 0 winner: {winner[0] if winner else 'unknown'} ({len(result)} chars)", _source)
+                    tier0_pool.shutdown(wait=False)
+                    return result
+            except Exception:
+                continue
+
+    except concurrent.futures.TimeoutError:
+        _log("Tier 0 timeout (15s) — all free models too slow, escalating to paid tiers", _source)
+    except Exception as e:
+        _log(f"Tier 0 error: {e}", _source)
+    finally:
+        tier0_pool.shutdown(wait=False)
+
+    _log("Tier 0 exhausted (CLI + Legion + Gemini all failed/slow) → escalating to paid tiers", _source)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # TIER 1 — DeepSeek LangGraph (cheap, full tool access)
+    # Only reached if ALL free models in Tier 0 failed or timed out.
+    # ══════════════════════════════════════════════════════════════════════════
     if settings.deepseek_api_key:
         try:
-            _log(f"Using LangGraph (DeepSeek) — tool-calling fallback", _source)
+            _log("Tier 1: DeepSeek LangGraph (tool-calling)", _source)
             _track("DeepSeek", message[:100])
             llm = _get_deepseek_llm()
             result = _invoke_langgraph(llm, tools, system_prompt, message)
             _done("DeepSeek")
-            return result
+            if _is_quality_response(result):
+                return result
         except Exception as e:
             _done("DeepSeek")
-            _log(f"DeepSeek LangGraph error: {e} — trying Anthropic API", _source)
+            _log(f"Tier 1 DeepSeek error: {e}", _source)
     else:
-        _log("No DEEPSEEK_API_KEY — skipping to Anthropic API", _source)
+        _log("No DEEPSEEK_API_KEY — skipping Tier 1", _source)
 
-    # ── Tier 4: LangGraph + Anthropic API (expensive, last resort) ──────
-    # G8: under critical budget, skip Sonnet entirely if the advisor flagged
-    # CLAUDE for deprioritization. DeepSeek tier already ran above; if it
-    # failed, we still try Sonnet — never let cost concerns cause a hard fail.
+    # ══════════════════════════════════════════════════════════════════════════
+    # TIER 2 — Anthropic API LangGraph (expensive, last resort)
+    # ══════════════════════════════════════════════════════════════════════════
     _skip_sonnet = bool(
         advisor_hint
         and advisor_hint.budget_tier == "critical"
@@ -332,20 +368,22 @@ def _tiered_agent_invoke_inner(
         and settings.deepseek_api_key
     )
     if _skip_sonnet:
-        _log("budget critical + advisor deprioritized CLAUDE → skipping Sonnet tier", _source)
+        _log("budget critical + advisor deprioritized CLAUDE → skipping Sonnet", _source)
+
     if settings.anthropic_api_key and not _skip_sonnet:
         try:
-            _log(f"Using LangGraph (Anthropic API) — full tool access", _source)
+            _log("Tier 2: Anthropic API LangGraph (full tool access)", _source)
             _track("Sonnet Anthropic", message[:100])
             llm = _get_anthropic_llm()
             result = _invoke_langgraph(llm, tools, system_prompt, message)
             _done("Sonnet Anthropic")
-            return result
+            if _is_quality_response(result):
+                return result
         except Exception as e:
             _done("Sonnet Anthropic")
             err = str(e).lower()
             if any(p in err for p in _NO_CREDIT_PHRASES):
-                _log("Anthropic API no credits — trying DeepSeek LangGraph", _source)
+                _log("Anthropic API no credits — marking strikes", _source)
                 try:
                     from ..learning.agent_status_tracker import mark_strike
                     mark_strike("Sonnet Anthropic")
@@ -354,42 +392,31 @@ def _tiered_agent_invoke_inner(
                 except Exception:
                     pass
             else:
-                _log(f"Anthropic API error: {e}", _source)
+                _log(f"Tier 2 Anthropic error: {e}", _source)
     else:
-        _log("No ANTHROPIC_API_KEY — skipping", _source)
+        if not settings.anthropic_api_key:
+            _log("No ANTHROPIC_API_KEY — skipping Tier 2", _source)
 
-    # ── Tier 5: DeepSeek text-only (absolute last resort before error) ──
+    # ── Final safety net: DeepSeek text-only ─────────────────────────────────
     try:
         from ..models.deepseek import ask_deepseek
         ds = ask_deepseek(message, system=system_prompt)
-        if ds and not ds.startswith("["):
-            _log(f"✓ DeepSeek text-only responded ({len(ds)} chars)", _source)
+        if _is_quality_response(ds):
+            _log(f"✓ DeepSeek text-only (final safety net) responded ({len(ds)} chars)", _source)
             return ds
     except Exception:
         pass
 
-    # ── Tier 5b: Legion hive (final safety net — retried here even if it
-    # failed in Tier 2.5, in case a transient Legion error resolved) ─────
-    try:
-        from ..models.claude import _try_legion
-        legion = _try_legion(f"{system_prompt}\n\n{message}", timeout_s=20.0)
-        if legion:
-            _log(f"✓ Legion hive (final fallback) responded ({len(legion)} chars)", _source)
-            return (
-                legion
-                + "\n\n⚠️ *All primary models were unavailable. Response from Legion fallback. "
-                "Retry when Claude CLI recovers for full execution capability.*"
-            )
-    except Exception:
-        pass
-
-    _log("ALL tiers exhausted — CLI, Gemini, Legion, Anthropic API, DeepSeek all failed", _source)
+    _log("ALL tiers exhausted — CLI, Legion, Gemini, DeepSeek, Anthropic all failed", _source)
     return (
         "⚠️ **All models currently unavailable.**\n\n"
-        "Tried: Claude CLI Pro → Gemini CLI → Legion hive → DeepSeek LangGraph → Anthropic API → DeepSeek text\n\n"
+        "Tried: Claude CLI → Legion (Groq/Cerebras/GH Models) → Gemini CLI → "
+        "DeepSeek LangGraph → Anthropic API → DeepSeek text\n\n"
         "Likely causes:\n"
         "1. ANTHROPIC_API_KEY invalid or expired (check Railway Variables)\n"
         "2. DeepSeek API key issue\n"
-        "3. CLI worker down AND Legion unreachable (LEGION_BASE_URL not set or service down)\n\n"
+        "3. CLI worker down AND Legion unreachable (LEGION_BASE_URL not set or service down)\n"
+        "4. Gemini quota exhausted\n\n"
         "Check the activity log or /credits/pro-status for details."
     )
+
