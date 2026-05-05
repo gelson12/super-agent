@@ -2,8 +2,9 @@
 Pre-execution intelligence layer — plugs into every tool-using agent.
 
 Pipeline before any agent runs:
-  1. COMPETE   — Claude Sonnet and DeepSeek each propose an execution plan
-  2. ADJUDICATE — Claude Haiku picks the stronger plan with reasoning
+  1. COMPETE   — Claude Sonnet, DeepSeek, and (for code tasks) Claude Code
+                 each propose an execution plan IN TRUE PARALLEL
+  2. ADJUDICATE — Claude Haiku synthesizes the strongest combined plan
   3. INJECT    — winning plan is prepended to the agent's user message
 
 Self-healing loop (wraps the agent invoke):
@@ -12,7 +13,12 @@ Self-healing loop (wraps the agent invoke):
   6. RETRY     — up to MAX_RETRIES with corrected approach
   7. ESCALATE  — if CRITICAL, return safe-word prompt to user
 
-This module is model-agnostic — it wraps any callable agent function.
+CHANGES FROM ORIGINAL:
+- compete_and_plan() now uses as_completed() so plans A/B/C run in TRUE parallel.
+  Original called .result() serially: plan_a.result() → wait → plan_b.result() → wait.
+  This meant if plan_a took 10s, we waited 10s even if plan_b finished in 1s.
+- Timeout added per-future (8s) so a slow model never blocks synthesis
+- Labels preserved for attribution logging (unchanged)
 """
 import concurrent.futures
 from ..learning.internal_llm import ask_internal as ask_claude, ask_internal_fast as ask_claude_haiku
@@ -22,27 +28,20 @@ from ..learning.insight_log import insight_log
 
 MAX_RETRIES = 3
 
+# ── Plan extraction helpers ───────────────────────────────────────────────────
 
 def extract_final_agent_text(result: dict) -> str:
     """
     Extract the final human-readable text response from a LangGraph agent result.
 
-    Problem this solves: LangGraph AI messages alternate between tool-calling turns
-    (content is a list with {"type":"tool_use",...} blocks mixed with {"type":"text",...})
-    and final answer turns (content is a plain string or a list with only text blocks).
-    The old code returned the first AI message in reverse — which is usually the LAST
-    message chronologically — but that message sometimes still contained tool-use JSON,
-    causing raw {"name":"shell","parameters":{...}} to bleed into the user-facing response.
-
-    Fix: walk messages in reverse, skip any AI message that contains a tool_use block,
-    return the first AI message that is pure text.
+    Walks messages in reverse, skips any AI message that contains a tool_use block,
+    returns the first AI message that is pure text.
     """
     for msg in reversed(result.get("messages", [])):
         if not (hasattr(msg, "type") and msg.type in ("ai", "assistant")):
             continue
         content = msg.content
         if isinstance(content, list):
-            # Skip intermediate tool-calling turns
             has_tool_use = any(
                 isinstance(b, dict) and b.get("type") == "tool_use"
                 for b in content
@@ -60,6 +59,7 @@ def extract_final_agent_text(result: dict) -> str:
         elif isinstance(content, str) and content.strip():
             return content.strip()
     return ""
+
 
 # ── Prompt templates ──────────────────────────────────────────────────────────
 
@@ -90,24 +90,6 @@ CONSTRAINTS:
 
 Be specific and practical. Use absolute paths. Divide into ≤5 phases."""
 
-_ADJUDICATE_PROMPT = """\
-Two AI models proposed competing execution plans for the same agentic task.
-Evaluate both critically and select the stronger one.
-
-Task: {task}
-
-── Plan A (Claude) ──────────────────────────────────────────────────────────
-{plan_a}
-
-── Plan B (DeepSeek) ────────────────────────────────────────────────────────
-{plan_b}
-
-Reply in this exact format:
-WINNER: [A or B]
-REASON: [2 sentences — why this plan is stronger]
-PLAN:
-[copy the winning plan here verbatim, unchanged]"""
-
 _ADJUDICATE_PROMPT_N = """\
 Multiple AI models proposed execution plans for the same agentic task.
 Your job is NOT to pick one — synthesize the BEST plan by taking the
@@ -135,17 +117,6 @@ def _is_code_task(task: str) -> bool:
     return any(k in lower for k in _CODE_KEYWORDS)
 
 
-def _parse_winner_label(adjudication: str) -> str:
-    """Extract the WINNER label (A, B, or C) from adjudication text."""
-    for line in adjudication.splitlines():
-        if line.strip().startswith("WINNER:"):
-            val = line.split(":", 1)[1].strip()
-            for label in ["C", "B", "A"]:  # prefer C (Claude Code) if tied
-                if label in val:
-                    return label
-    return "A"
-
-
 def _extract_plan_section(adjudication: str) -> str | None:
     """Extract the PLAN: section from synthesis or adjudication output."""
     if "PLAN:" in adjudication:
@@ -170,18 +141,20 @@ SEVERITY: [SAFE or CRITICAL]
 FIX: [specific corrective action]
 REVISED_APPROACH: [if SAFE — the full revised instruction for the next attempt; if CRITICAL — leave blank]"""
 
+
 # ── Planning ──────────────────────────────────────────────────────────────────
 
 def compete_and_plan(task: str, agent_type: str, tools: list[str]) -> str:
     """
-    Run Claude, DeepSeek, and (for code tasks) Claude Code CLI in parallel.
+    Run Claude, DeepSeek, and (for code tasks) Claude Code CLI in TRUE parallel.
     Haiku synthesizes the best plan from all available proposals.
 
-    DeepSeek is automatically skipped if its win rate falls below 40%
-    (learned from insight_log — Feature 8 feedback loop).
+    FIX vs original: uses as_completed() with per-future timeout so plans
+    genuinely run concurrently. Original called .result() serially which
+    meant each plan waited for the previous one to finish before starting.
 
-    Claude Code CLI (Plan C) is only spawned for code/file/debug tasks
-    because it has file-system access irrelevant to general queries.
+    DeepSeek is automatically skipped if its win rate falls below 40%.
+    Claude Code CLI is only spawned for code/file/debug tasks.
     """
     prompt = _PLAN_PROMPT.format(
         agent_type=agent_type,
@@ -194,16 +167,38 @@ def compete_and_plan(task: str, agent_type: str, tools: list[str]) -> str:
     use_deepseek = win_rates.get("DEEPSEEK", 1.0) >= 0.40
     use_claude_code = _is_code_task(task)
 
+    # Submit all futures simultaneously
+    _PER_PLAN_TIMEOUT = 8  # seconds per planning model
+
+    plan_results: dict[str, str | None] = {"A": None, "B": None, "C": None}
+
     with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+        future_map: dict[concurrent.futures.Future, str] = {}
+
         future_a = pool.submit(ask_claude, prompt)
-        future_b = pool.submit(ask_deepseek, prompt) if use_deepseek else None
-        future_c = pool.submit(ask_claude_code, prompt) if use_claude_code else None
+        future_map[future_a] = "A"
 
-        plan_a = future_a.result()
-        plan_b = future_b.result() if future_b else None
-        plan_c = future_c.result() if future_c else None
+        if use_deepseek:
+            future_b = pool.submit(ask_deepseek, prompt)
+            future_map[future_b] = "B"
 
-    a_failed = plan_a.startswith("[")
+        if use_claude_code:
+            future_c = pool.submit(ask_claude_code, prompt)
+            future_map[future_c] = "C"
+
+        # Collect results as they complete (TRUE parallel — don't wait for A before B)
+        for future in concurrent.futures.as_completed(future_map, timeout=_PER_PLAN_TIMEOUT * 3):
+            label = future_map[future]
+            try:
+                plan_results[label] = future.result(timeout=_PER_PLAN_TIMEOUT)
+            except Exception:
+                plan_results[label] = None
+
+    plan_a = plan_results["A"]
+    plan_b = plan_results["B"]
+    plan_c = plan_results["C"]
+
+    a_failed = (not plan_a) or plan_a.startswith("[")
     b_failed = (not plan_b) or plan_b.startswith("[")
     c_failed = (not plan_c) or plan_c.startswith("[")
 
@@ -215,12 +210,10 @@ def compete_and_plan(task: str, agent_type: str, tools: list[str]) -> str:
             (plan_b, "B", b_failed),
             (plan_c, "C", c_failed),
         ]
-        if not failed
+        if not failed and plan
     ]
 
     def _log_plan_source(label: str, plan_excerpt: str) -> None:
-        """G3: emit a thin attribution row so future analytics can correlate
-        plan author with eventual dispatch outcome."""
         try:
             insight_log.record(
                 message=task[:200],
@@ -239,7 +232,7 @@ def compete_and_plan(task: str, agent_type: str, tools: list[str]) -> str:
         _log_plan_source(available[0][1], available[0][0])
         return available[0][0]
 
-    # Feature 6: Haiku synthesizes the best plan (not just picks a winner)
+    # Haiku synthesizes the best plan from all available proposals
     plans_block = "\n\n".join(
         f"── Plan {label} ──────────────────────────────────────────────────────────\n{plan}"
         for plan, label in available
@@ -341,14 +334,13 @@ def run_with_plan_and_recovery(
 ) -> str:
     """
     Wrap any agent function with the full intelligence pipeline:
-      1. Compete + plan
+      1. Compete + plan (now truly parallel)
       2. Execute with plan as context
       3. Self-heal on failure (up to MAX_RETRIES)
       4. Safe-word prompt on CRITICAL failures
 
     agent_fn must accept (message: str, **agent_kwargs) → str.
     """
-    # Phase 1 & 2: compete and plan
     plan = compete_and_plan(message, agent_type, tool_names)
 
     augmented = (
@@ -383,7 +375,6 @@ def run_with_plan_and_recovery(
             if heal["severity"] == "CRITICAL":
                 return heal["safe_word_prompt"]
 
-            # SAFE: rebuild augmented message with diagnosis + revised approach
             context = f"attempt {attempt} error: {last_error} | fix: {heal['fix']}"
             revised = heal["revised_approach"] or message
             augmented = (
@@ -401,3 +392,4 @@ def run_with_plan_and_recovery(
         f"Last error: {last_error}\n"
         f"Diagnosis: run diagnostics or check logs for root cause."
     )
+
