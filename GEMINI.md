@@ -1,5 +1,5 @@
 # Super-Agent — Gemini CLI Context
-**Last updated:** 2026-05-04
+**Last updated:** 2026-05-06
 
 This file is auto-loaded by `gemini --prompt` on every invocation inside this repo.
 It gives Gemini CLI situational awareness of the system architecture.
@@ -83,7 +83,7 @@ Classification categories:
 | `83ZQ9b5xReUaF6Ib` | Chief of Staff — Command Centre | ACTIVE |
 | `14cHr1Y6srSRFQpm` | Claude Inbox Trash Purge | ACTIVE |
 
-*(56 active workflows total on n8n instance)*
+*(104 active workflows total on n8n instance)*
 
 ---
 
@@ -113,8 +113,8 @@ cd /workspace/super-agent && git add <files> && git commit -m "msg" && git push 
 
 ---
 
-## PENDING ISSUES (2026-05-04)
+## PENDING ISSUES (2026-05-06)
 
-- **Health:**
+- **Health:** 1.3% error rate, 1036 GB free disk, 69 n8n active workflows, 0 recent n8n failures, disk at 50% used
 - **Priorities for tomorrow:** none
-- **Routing observations:**
+- **Routing observations:** GitHub_Agent dominates routing via github_keywords; Claude Code CLI nightly review timed out; all recent error=False; heavy Bridge Digital business bot routing
