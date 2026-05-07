@@ -1,5 +1,5 @@
 # Super-Agent — Gemini CLI Context
-**Last updated:** 2026-05-06
+**Last updated:** 2026-05-07
 
 This file is auto-loaded by `gemini --prompt` on every invocation inside this repo.
 It gives Gemini CLI situational awareness of the system architecture.
@@ -113,8 +113,8 @@ cd /workspace/super-agent && git add <files> && git commit -m "msg" && git push 
 
 ---
 
-## PENDING ISSUES (2026-05-06)
+## PENDING ISSUES (2026-05-07)
 
-- **Health:**
+- **Health:** Error rate stable at 1.3% across ~2,155 interactions. n8n: 69 active workflows, reachable ✅ — 2 anomaly alerts for n8n failure spikes today, all auto-recovered. Disk ~49% used (~1,066 GB free). Budget usage 0.8%. Nightly review 2026-05-07 timed out (Claude Code CLI worker no response in 130s). Model attribution in cost_ledger shows "UNKNOWN" for all entries — needs fix.
 - **Priorities for tomorrow:** none
-- **Routing observations:**
+- **Routing observations:** No misroutes detected. Haiku + Gemini parallel classifier functioning correctly. Claude Code CLI worker timeout during nightly reviews is a recurring pattern (2 nights running) — consider raising timeout or using Gemini CLI for the nightly review task instead.
