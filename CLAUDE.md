@@ -1,5 +1,5 @@
 # Super-Agent — Claude CLI Context
-**Last updated:** 2026-05-06
+**Last updated:** 2026-05-07
 
 This file is auto-loaded by `claude -p` on every invocation inside this repo.
 It gives Claude CLI situational awareness of the system architecture.
@@ -337,8 +337,8 @@ Fix:
 
 ---
 
-## PENDING ISSUES (as of 2026-05-06)
+## PENDING ISSUES (as of 2026-05-07)
 
-- **Health:** Nightly review 2026-05-06 timed out (Claude Code CLI worker — 130s no response). 2026-05-05 failed due to monthly usage limit. Consider reducing review scope or switching to Gemini CLI for nightly reviews.
+- **Health:** Error rate stable at 1.3% across ~2,155 interactions. n8n: 69 active workflows, reachable ✅ — 2 anomaly alerts fired today for n8n failure spikes (≥3 failures per window), all auto-recovered without intervention. Disk ~49% used (~1,066 GB free). Budget usage 0.8%. Nightly review 2026-05-07 timed out (Claude Code CLI worker — 130s no response), same pattern as previous night. Model column in cost_ledger shows "UNKNOWN" for all entries — needs investigation to fix model attribution.
 - **Priorities for tomorrow:** none
-- **Routing observations:**
+- **Routing observations:** No misroutes detected. All agents routing correctly. Haiku + Gemini parallel classifier working as expected. Consider investigating why Claude Code CLI worker times out during nightly reviews at 130s — may need timeout increase or switch to Gemini CLI for nightly review task.
