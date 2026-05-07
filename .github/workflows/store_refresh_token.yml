@@ -1,13 +1,10 @@
 name: Store Refresh Token Secret
 
-# Fired by inspiring-cat (via _push_token_to_railway) after EVERY successful
-# token refresh — Playwright recovery, direct OAuth, proactive renewal.
-#
-# This keeps CLAUDE_REFRESH_TOKEN secret always current so the proactive
-# renewal cron always has a valid refresh_token to work with.
-#
-# The refresh_token rotates with each OAuth exchange — without this workflow,
-# the stored secret would go stale after the first proactive renewal run.
+# ─────────────────────────────────────────────────────────────────────────────
+# MUTED (7 May 2026) — see Finance Ops record.
+# Falls 4 seconds after dispatch because GH_PAT secret is missing/expired.
+# gh secret set commands cannot authenticate without a valid PAT.
+# ─────────────────────────────────────────────────────────────────────────────
 
 on:
   repository_dispatch:
@@ -25,7 +22,15 @@ jobs:
     timeout-minutes: 3
 
     steps:
+      - name: ⛔ MUTED — store-refresh-token job skipped
+        run: |
+          echo "⛔ Store Refresh Token Secret muted (7 May 2026)."
+          echo "Reason: GH_PAT secret missing or expired (4s failure)."
+          echo "Unmute: generate fresh GitHub PAT with repo scope and update GH_PAT secret."
+          exit 0
+
       - name: Store CLAUDE_REFRESH_TOKEN and CLAUDE_CLIENT_ID secrets
+        if: false
         env:
           GH_TOKEN:      ${{ secrets.GH_PAT }}
           REFRESH_TOKEN: ${{ github.event.client_payload.refresh_token }}
