@@ -1,29 +1,16 @@
 name: Railway Token Persist — Layer 2
 
-# Three independent trigger paths for maximum resilience:
-#
-#   A) repository_dispatch: railway_token_persist
-#      Container fires this immediately after every Layer 4 token refresh.
-#      Payload carries the fresh token → runner updates Railway env var.
-#
-#   B) schedule every 4 hours (proactive independent sentinel)
-#      Pings inspiring-cat to request a sync regardless of container state.
-#      Container fires a new dispatch → a fresh job picks it up.
-#      Detects and alerts if container is unreachable.
-#
-#   C) workflow_dispatch (manual / dry-run testing)
-#
-# Security:
-#   - Token travels only in dispatch payload (HTTPS-encrypted by GitHub).
-#   - Token is placed in $GITHUB_ENV, never in step outputs or logs.
-#   - RAILWAY_TOKEN stored as GitHub secret — never echoed.
-#   - Callback authenticated with INSPIRING_CAT_WEBHOOK_SECRET.
+# ─────────────────────────────────────────────────────────────────────────────
+# MUTED (7 May 2026) — see Finance Ops record.
+# Token refresh chain broken. RAILWAY_TOKEN GitHub secret is stale/expired.
+# Scheduled sentinel and dispatch trigger both bypassed silently.
+# ─────────────────────────────────────────────────────────────────────────────
 
 on:
   repository_dispatch:
     types: [railway_token_persist]
   schedule:
-    - cron: '0 */4 * * *'   # Every 4 hours — proactive independent check
+    - cron: '0 */4 * * *'
   workflow_dispatch:
     inputs:
       dry_run:
@@ -35,9 +22,6 @@ env:
   INSPIRING_CAT_URL: https://inspiring-cat-production.up.railway.app
   SUPER_AGENT_URL: https://super-agent-production.up.railway.app
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Job A/C — Dispatch or manual: update Railway env var with fresh token
-# ─────────────────────────────────────────────────────────────────────────────
 jobs:
   update-railway-env:
     if: github.event_name == 'repository_dispatch' || github.event_name == 'workflow_dispatch'
@@ -45,6 +29,14 @@ jobs:
     timeout-minutes: 5
 
     steps:
+      - name: ⛔ MUTED — all dispatch jobs skipped
+        if: github.event_name == 'repository_dispatch'
+        run: |
+          echo "⛔ Layer 2 update-railway-env muted (7 May 2026)."
+          echo "Reason: RAILWAY_TOKEN GitHub secret stale."
+          echo "Unmute: generate fresh Railway API token and update secret."
+          exit 0
+
       - name: Extract payload
         id: payload
         run: |
@@ -55,7 +47,6 @@ jobs:
           NONCE="${{ github.event.client_payload.nonce }}"
           CALLBACK="${{ github.event.client_payload.callback_url }}"
 
-          # Defaults for manual dispatch
           VARIABLE="${VARIABLE:-CLAUDE_SESSION_TOKEN}"
           TRIGGER="${TRIGGER:-manual}"
 
@@ -66,7 +57,6 @@ jobs:
           echo "nonce=${NONCE}"            >> $GITHUB_OUTPUT
           echo "callback_url=${CALLBACK}"  >> $GITHUB_OUTPUT
 
-          # Store token in env only — never in step outputs (keeps it out of logs)
           echo "RAILWAY_TOKEN_VALUE=${{ github.event.client_payload.token }}" >> $GITHUB_ENV
 
           echo "Trigger: ${TRIGGER} | Variable: ${VARIABLE} | TTL: ${TTL}s"
@@ -202,17 +192,21 @@ jobs:
             -d "$PAYLOAD" \
             --max-time 15 || echo "Callback unreachable (non-critical)"
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Job B — Scheduled sentinel: ping inspiring-cat every 4h
-# ─────────────────────────────────────────────────────────────────────────────
   scheduled-sentinel:
     if: github.event_name == 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 3
 
     steps:
+      - name: ⛔ MUTED — scheduled sentinel skipped
+        run: |
+          echo "⛔ Layer 2 scheduled-sentinel muted (7 May 2026)."
+          echo "Reason: RAILWAY_TOKEN GitHub secret stale."
+          echo "Unmute: generate fresh Railway API token and update secret."
+          exit 0
+
       - name: Request token sync from super-agent
+        if: false
         id: ping
         env:
           WEBHOOK_SECRET: ${{ secrets.INSPIRING_CAT_WEBHOOK_SECRET }}
@@ -243,7 +237,7 @@ jobs:
           fi
 
       - name: Alert if container unreachable
-        if: steps.ping.outputs.container_unreachable == 'true'
+        if: false
         env:
           N8N_WEBHOOK: ${{ secrets.N8N_ALERT_WEBHOOK }}
           CODE:        ${{ steps.ping.outputs.container_http }}
@@ -254,6 +248,7 @@ jobs:
             --max-time 10 || true
 
       - name: Also check Layer 4 health + fallback dispatch if super-agent was down
+        if: false
         id: health
         env:
           N8N_WEBHOOK: ${{ secrets.N8N_ALERT_WEBHOOK }}
@@ -268,7 +263,6 @@ jobs:
           echo "Health check HTTP ${CODE}"
 
           if [ "$CODE" = "200" ]; then
-            # inspiring-cat uses claude_available (not pro_cli_available)
             PRO=$(echo "$BODY" | jq -r '.pro_cli_available // .claude_available // false')
             TTL=$(echo "$BODY" | jq -r '.token_ttl_seconds // .claude_token_expires_in_s // 0')
             echo "claude_available=${PRO}, ttl=${TTL}s"
@@ -284,9 +278,6 @@ jobs:
               echo "✅ Layer 4 healthy — token valid for ${TTL}s"
             fi
 
-            # If super-agent was unreachable AND inspiring-cat is healthy AND TTL < 21600 (6h),
-            # fire a direct dispatch from here using the TTL we know — inspiring-cat will
-            # fire Trigger A on its own at the 6h threshold, so this is just an extra nudge.
             if [ "${SUPER_AGENT_DOWN}" = "true" ] && [ "$PRO" = "true" ]; then
               echo "⚠️  super-agent down but inspiring-cat healthy — noting for alerting"
               echo "Trigger A (inspiring-cat → GitHub) and Trigger C (6h proactive) remain active independently."
