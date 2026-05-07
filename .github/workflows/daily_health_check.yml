@@ -11,6 +11,12 @@ on:
         required: false
         default: 'manual'
 
+# ─────────────────────────────────────────────────────────────────────────────
+# MUTED (7 May 2026) — see Finance Ops record.
+# Token refresh chain (GH_PAT / RAILWAY_TOKEN) needs repair before this
+# workflow can run successfully. Scheduled runs exit silently.
+# ─────────────────────────────────────────────────────────────────────────────
+
 jobs:
   health-check:
     name: Run system health monitor
@@ -18,20 +24,32 @@ jobs:
     timeout-minutes: 10
 
     steps:
+      - name: ⛔ MUTED — scheduled run skipped
+        if: github.event_name == 'schedule'
+        run: |
+          echo "⛔ Daily Health Check muted (7 May 2026)."
+          echo "Reason: Token refresh chain broken (GH_PAT / RAILWAY_TOKEN)."
+          echo "Unmute: fix store_refresh_token workflow first."
+          exit 0
+
       - name: Checkout
+        if: github.event_name != 'schedule'
         uses: actions/checkout@v4
 
       - name: Set up Python 3.11
+        if: github.event_name != 'schedule'
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
           cache: pip
 
       - name: Install dependencies
+        if: github.event_name != 'schedule'
         run: |
           pip install --quiet httpx psycopg2-binary
 
       - name: Run health monitor
+        if: github.event_name != 'schedule'
         env:
           DATABASE_URL:          ${{ secrets.DATABASE_URL }}
           N8N_BASE_URL:          ${{ secrets.N8N_BASE_URL }}
@@ -46,7 +64,7 @@ jobs:
         run: python scripts/system_health_monitor.py
 
       - name: Upload result summary
-        if: always()
+        if: always() && github.event_name != 'schedule'
         run: |
           echo "## Health Check Result" >> $GITHUB_STEP_SUMMARY
           echo "Run type: ${RUN_TYPE:-scheduled}" >> $GITHUB_STEP_SUMMARY
