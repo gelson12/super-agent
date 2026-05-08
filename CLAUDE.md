@@ -1,5 +1,5 @@
 # Super-Agent — Claude CLI Context
-**Last updated:** 2026-05-07
+**Last updated:** 2026-05-08
 
 This file is auto-loaded by `claude -p` on every invocation inside this repo.
 It gives Claude CLI situational awareness of the system architecture.
@@ -191,7 +191,7 @@ All gemini calls also pass `--skip-trust` flag directly. No more trust directory
 | `83ZQ9b5xReUaF6Ib` | Chief of Staff — Command Centre | ACTIVE | ✅ |
 | `14cHr1Y6srSRFQpm` | Claude Inbox Trash Purge | ACTIVE | ✅ |
 
-*(56 active workflows total on n8n instance)*
+*(70 active workflows total on n8n instance — up from 69 yesterday)*
 
 ---
 
@@ -337,8 +337,8 @@ Fix:
 
 ---
 
-## PENDING ISSUES (as of 2026-05-07)
+## PENDING ISSUES (as of 2026-05-08)
 
-- **Health:** Error rate stable at 1.3% across ~2,155 interactions. n8n: 69 active workflows, reachable ✅ — 2 anomaly alerts fired today for n8n failure spikes (≥3 failures per window), all auto-recovered without intervention. Disk ~49% used (~1,066 GB free). Budget usage 0.8%. Nightly review 2026-05-07 timed out (Claude Code CLI worker — 130s no response), same pattern as previous night. Model column in cost_ledger shows "UNKNOWN" for all entries — needs investigation to fix model attribution.
+- **Health:** Error rate stable at 1.3% across ~2,294 interactions. n8n: 70 active workflows (up from 69), reachable ✅ — intermittent failure spikes (≤1 per window) all auto-recovered without intervention. Disk ~49.7% used (~1,045 GB free). Budget usage stable. Nightly review 2026-05-08 timed out again (Claude Code CLI — 60s timeout, same recurring pattern as previous 2 nights). Model column in cost_ledger shows "UNKNOWN" for all entries — needs investigation to fix model attribution.
 - **Priorities for tomorrow:** none
-- **Routing observations:** No misroutes detected. All agents routing correctly. Haiku + Gemini parallel classifier working as expected. Consider investigating why Claude Code CLI worker times out during nightly reviews at 130s — may need timeout increase or switch to Gemini CLI for nightly review task.
+- **Routing observations:** No misroutes detected. Haiku + Gemini parallel classifier working as expected. Claude Code CLI worker timeout during nightly reviews is a recurring pattern (3 nights running: 2026-05-06, 05-07, 05-08) — nightly review fell back to 60s timeout and produced no valid JSON output. Consider switching nightly review to Gemini CLI or raising the Claude Code timeout.
