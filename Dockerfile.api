@@ -35,6 +35,17 @@ RUN npm install -g @railway/cli
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# ── Claude Code skills — explicit COPY before the wide `COPY . .` so the
+# cache key for this layer is tied directly to .claude/skills contents
+# (otherwise Docker can match a pre-skills `COPY . .` cached layer and
+# the new files never land in the image). Skills installed here at
+# /root/.claude/skills/ which is where `claude` actually scans.
+# Observed 2026-05-08: even after the .cli/.main Dockerfiles were
+# patched, the inspiring-cat container's /root/.claude/skills/ stayed
+# empty — meaning Railway is using Dockerfile.api for the build. This
+# fix mirrors the equivalent change in the other two Dockerfiles. ─────
+COPY .claude/skills /root/.claude/skills/
+
 # ── Application source ────────────────────────────────────────────────────────
 COPY . .
 
