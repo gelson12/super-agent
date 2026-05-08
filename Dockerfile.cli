@@ -135,6 +135,19 @@ RUN mkdir -p /workspace /workspace/.vscode /workspace/.vscode-ext /var/log/super
     && mkdir -p /root/.claude && chmod 700 /root/.claude \
     && mkdir -p /root/.gemini && chmod 700 /root/.gemini
 
+# ── Claude Code skills (copied from repo .claude/skills into HOME) ────────────
+# `claude` resolves user-scope skills from $HOME/.claude/skills, not from the
+# working directory. The repo ships .claude/skills/<name>/SKILL.md which the
+# `COPY . .` above placed at /app/.claude/skills/; this step links them into
+# the location Claude CLI actually scans. Idempotent: succeeds whether or not
+# the repo currently ships skills.
+RUN if [ -d /app/.claude/skills ]; then \
+      cp -r /app/.claude/skills/. /root/.claude/skills/ 2>/dev/null || true; \
+      echo "[docker] copied $(ls /root/.claude/skills 2>/dev/null | wc -l) skills into /root/.claude/skills/"; \
+    else \
+      echo "[docker] no /app/.claude/skills dir present; skipping"; \
+    fi
+
 # ── Entrypoint ────────────────────────────────────────────────────────────────
 COPY entrypoint.cli.sh /app/entrypoint.cli.sh
 RUN sed -i 's/\r//' /app/entrypoint.cli.sh && chmod +x /app/entrypoint.cli.sh
