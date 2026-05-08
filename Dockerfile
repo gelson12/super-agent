@@ -107,6 +107,15 @@ RUN playwright install --with-deps chromium
 RUN playwright install --with-deps firefox
 RUN python -m camoufox fetch
 
+# ── Claude Code skills (copied early so the cache key for this layer is
+# tied to .claude/skills contents). Without this explicit COPY before
+# `COPY . .`, Railway's layer cache happily reuses a `COPY . .` layer
+# from a build that pre-dated the skills directory — the wider COPY's
+# hash matches even though the source tree now contains new files.
+# Observed 2026-05-08 on inspiring-cat-production: build log showed
+# `COPY . . cached  0ms` and skills never landed in the image. ──────────────
+COPY .claude/skills /root/.claude/skills/
+
 # ── Application source ────────────────────────────────────────────────────────
 COPY . .
 
@@ -121,22 +130,12 @@ RUN mkdir -p /workspace /workspace/.vscode /workspace/.vscode-ext /var/log/super
     && mkdir -p /root/.claude && chmod 700 /root/.claude \
     && mkdir -p /root/.gemini && chmod 700 /root/.gemini
 
-# ── Claude Code skills (copied from repo .claude/skills into HOME) ────────────
-# `claude` resolves user-scope skills from $HOME/.claude/skills, not from the
-# working directory. The repo ships .claude/skills/<name>/SKILL.md which the
-# `COPY . .` above placed at /app/.claude/skills/; this step copies them into
-# the location Claude CLI actually scans. Critical: must ensure the dest dir
-# exists FIRST (`cp -r src/. dest/` fails silently if dest doesn't exist), and
-# we deliberately do NOT swallow stderr — a copy failure should surface in
-# build logs rather than producing a container with missing skills.
-RUN if [ -d /app/.claude/skills ]; then \
-      mkdir -p /root/.claude/skills && \
-      cp -r /app/.claude/skills/. /root/.claude/skills/ && \
-      echo "[docker] copied $(ls /root/.claude/skills | wc -l) skills into /root/.claude/skills/" && \
-      ls /root/.claude/skills; \
-    else \
-      echo "[docker] WARNING: /app/.claude/skills not present in build context; skipping"; \
-    fi
+# ── Skill verification ────────────────────────────────────────────────────────
+# Skills were already copied into /root/.claude/skills/ via the explicit COPY
+# earlier in this Dockerfile (placed before `COPY . .` to bust Docker's layer
+# cache). This RUN exists only to print what landed so build logs show it.
+RUN echo "[docker] skills present at /root/.claude/skills/:" && \
+    ls -la /root/.claude/skills/ 2>/dev/null || echo "[docker] WARNING: skills directory missing"
 
 # ── Entrypoint (strip Windows CRLF → LF, then make executable) ───────────────
 COPY entrypoint.sh /app/entrypoint.sh
