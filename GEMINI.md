@@ -1,5 +1,5 @@
 # Super-Agent — Gemini CLI Context
-**Last updated:** 2026-05-07
+**Last updated:** 2026-05-08
 
 This file is auto-loaded by `gemini --prompt` on every invocation inside this repo.
 It gives Gemini CLI situational awareness of the system architecture.
@@ -83,7 +83,7 @@ Classification categories:
 | `83ZQ9b5xReUaF6Ib` | Chief of Staff — Command Centre | ACTIVE |
 | `14cHr1Y6srSRFQpm` | Claude Inbox Trash Purge | ACTIVE |
 
-*(56 active workflows total on n8n instance)*
+*(70 active workflows total on n8n instance — up from 69 yesterday)*
 
 ---
 
@@ -113,8 +113,8 @@ cd /workspace/super-agent && git add <files> && git commit -m "msg" && git push 
 
 ---
 
-## PENDING ISSUES (2026-05-07)
+## PENDING ISSUES (2026-05-08)
 
-- **Health:** Error rate stable at 1.3% across ~2,155 interactions. n8n: 69 active workflows, reachable ✅ — 2 anomaly alerts for n8n failure spikes today, all auto-recovered. Disk ~49% used (~1,066 GB free). Budget usage 0.8%. Nightly review 2026-05-07 timed out (Claude Code CLI worker no response in 130s). Model attribution in cost_ledger shows "UNKNOWN" for all entries — needs fix.
+- **Health:** Error rate stable at 1.3% across ~2,294 interactions. n8n: 70 active workflows (up from 69), reachable ✅ — intermittent failure spikes (≤1 per window) all auto-recovered. Disk ~49.7% used (~1,045 GB free). Budget usage stable. Nightly review 2026-05-08 timed out (Claude Code CLI — 60s timeout, recurring pattern for 3rd night running). Model attribution in cost_ledger shows "UNKNOWN" for all entries — needs fix.
 - **Priorities for tomorrow:** none
-- **Routing observations:** No misroutes detected. Haiku + Gemini parallel classifier functioning correctly. Claude Code CLI worker timeout during nightly reviews is a recurring pattern (2 nights running) — consider raising timeout or using Gemini CLI for the nightly review task instead.
+- **Routing observations:** No misroutes detected. Haiku + Gemini parallel classifier functioning correctly. Claude Code CLI worker timeout during nightly reviews is a recurring pattern (3 nights running: 2026-05-06, 05-07, 05-08) — consider switching nightly review to Gemini CLI or raising the Claude Code timeout.
