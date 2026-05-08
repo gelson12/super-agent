@@ -124,14 +124,18 @@ RUN mkdir -p /workspace /workspace/.vscode /workspace/.vscode-ext /var/log/super
 # ── Claude Code skills (copied from repo .claude/skills into HOME) ────────────
 # `claude` resolves user-scope skills from $HOME/.claude/skills, not from the
 # working directory. The repo ships .claude/skills/<name>/SKILL.md which the
-# `COPY . .` above placed at /app/.claude/skills/; this step links them into
-# the location Claude CLI actually scans. Idempotent: succeeds whether or not
-# the repo currently ships skills.
+# `COPY . .` above placed at /app/.claude/skills/; this step copies them into
+# the location Claude CLI actually scans. Critical: must ensure the dest dir
+# exists FIRST (`cp -r src/. dest/` fails silently if dest doesn't exist), and
+# we deliberately do NOT swallow stderr — a copy failure should surface in
+# build logs rather than producing a container with missing skills.
 RUN if [ -d /app/.claude/skills ]; then \
-      cp -r /app/.claude/skills/. /root/.claude/skills/ 2>/dev/null || true; \
-      echo "[docker] copied $(ls /root/.claude/skills 2>/dev/null | wc -l) skills into /root/.claude/skills/"; \
+      mkdir -p /root/.claude/skills && \
+      cp -r /app/.claude/skills/. /root/.claude/skills/ && \
+      echo "[docker] copied $(ls /root/.claude/skills | wc -l) skills into /root/.claude/skills/" && \
+      ls /root/.claude/skills; \
     else \
-      echo "[docker] no /app/.claude/skills dir present; skipping"; \
+      echo "[docker] WARNING: /app/.claude/skills not present in build context; skipping"; \
     fi
 
 # ── Entrypoint (strip Windows CRLF → LF, then make executable) ───────────────
