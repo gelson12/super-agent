@@ -1,5 +1,5 @@
 # Super-Agent — Gemini CLI Context
-**Last updated:** 2026-05-08
+**Last updated:** 2026-05-09
 
 This file is auto-loaded by `gemini --prompt` on every invocation inside this repo.
 It gives Gemini CLI situational awareness of the system architecture.
@@ -113,8 +113,8 @@ cd /workspace/super-agent && git add <files> && git commit -m "msg" && git push 
 
 ---
 
-## PENDING ISSUES (2026-05-08)
+## PENDING ISSUES (2026-05-09)
 
-- **Health:** Error rate stable at 1.3% across ~2,294 interactions. n8n: 70 active workflows (up from 69), reachable ✅ — intermittent failure spikes (≤1 per window) all auto-recovered. Disk ~49.7% used (~1,045 GB free). Budget usage stable. Nightly review 2026-05-08 timed out (Claude Code CLI — 60s timeout, recurring pattern for 3rd night running). Model attribution in cost_ledger shows "UNKNOWN" for all entries — needs fix.
+- **Health:** Error rate at 0% across 108 recent interactions (smaller sample window). n8n: 70 active workflows (unchanged from yesterday), reachable ✅ — no errors, system fully healthy. No intermittent spikes detected. Model attribution in cost_ledger still shows "UNKNOWN" for all entries — not yet fixed.
 - **Priorities for tomorrow:** none
-- **Routing observations:** No misroutes detected. Haiku + Gemini parallel classifier functioning correctly. Claude Code CLI worker timeout during nightly reviews is a recurring pattern (3 nights running: 2026-05-06, 05-07, 05-08) — consider switching nightly review to Gemini CLI or raising the Claude Code timeout.
+- **Routing observations:** No errors recorded across all models — system clean. Claude Code CLI worker timeout during nightly reviews is now a recurring pattern (4 nights running: 2026-05-06 through 2026-05-09) — consider switching nightly review to Gemini CLI or raising the Claude Code timeout.
