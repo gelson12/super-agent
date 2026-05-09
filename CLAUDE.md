@@ -191,7 +191,7 @@ All gemini calls also pass `--skip-trust` flag directly. No more trust directory
 | `83ZQ9b5xReUaF6Ib` | Chief of Staff — Command Centre | ACTIVE | ✅ |
 | `14cHr1Y6srSRFQpm` | Claude Inbox Trash Purge | ACTIVE | ✅ |
 
-*(70 active workflows total on n8n instance — up from 69 yesterday)*
+*(70 active workflows total on n8n instance)*
 
 ---
 
@@ -339,6 +339,6 @@ Fix:
 
 ## PENDING ISSUES (as of 2026-05-09)
 
-- **Health:** Error rate at 0% across 108 recent interactions (smaller sample window). n8n: 70 active workflows (unchanged from yesterday), reachable ✅ — no errors, system fully healthy. No intermittent spikes detected. Model column in cost_ledger still shows "UNKNOWN" for all entries — not yet fixed.
+- **Health:** Error rate stable at 1.2% across ~2,407 interactions (down from 1.3%). n8n: 70 active workflows, reachable ✅ — 0 recent failures, all auto-recovered. Disk ~48.7% used (~1,066 GB free). Budget usage stable. Nightly review 2026-05-09 failed — Claude Code CLI returned "You've hit your org's monthly usage limit" (org quota exhausted). Model column in cost_ledger still shows "UNKNOWN" for all 80 entries — model attribution remains unfixed.
 - **Priorities for tomorrow:** none
-- **Routing observations:** No errors recorded across all models — system clean. Claude Code CLI worker timeout during nightly reviews is now a recurring pattern (4 nights running: 2026-05-06 through 2026-05-09) — should consider switching nightly review to Gemini CLI or raising the Claude Code timeout.
+- **Routing observations:** No misroutes detected. Haiku + Gemini parallel classifier working as expected. Claude Code CLI nightly review failure escalated: after 4 nights of timeouts (05-06 through 05-08), tonight it hit org quota exhaustion — the recurring Claude Code CLI issue now has a second dimension (quota). Strongly consider switching nightly review to Gemini CLI as default, or raising the Claude Code timeout and configuring a different Claude account.
