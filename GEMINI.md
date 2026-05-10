@@ -1,5 +1,5 @@
 # Super-Agent — Gemini CLI Context
-**Last updated:** 2026-05-09
+**Last updated:** 2026-05-10
 
 This file is auto-loaded by `gemini --prompt` on every invocation inside this repo.
 It gives Gemini CLI situational awareness of the system architecture.
@@ -113,8 +113,8 @@ cd /workspace/super-agent && git add <files> && git commit -m "msg" && git push 
 
 ---
 
-## PENDING ISSUES (2026-05-09)
+## PENDING ISSUES (2026-05-10)
 
-- **Health:** Error rate stable at 1.2% across ~2,407 interactions (down from 1.3%). n8n: 70 active workflows, reachable ✅ — 0 recent failures, all auto-recovered. Disk ~48.7% used (~1,066 GB free). Budget usage stable. Nightly review 2026-05-09 failed — Claude Code CLI returned "You've hit your org's monthly usage limit" (org quota exhausted). Model attribution in cost_ledger still shows "UNKNOWN" for all entries — needs fix.
+- **Health:** Error rate stable at 1.2% across ~2,484 interactions (up from 2,407). n8n: 70 active workflows, reachable ✅ — 0 recent failures, all auto-recovered. Disk ~48.7% used (~1,066 GB free). Budget usage stable. Nightly review 2026-05-10 failed — Claude Code CLI returned org quota exhaustion. Weekly review 2026-05-10 also failed — Opus returned org quota exhaustion. Model attribution in cost_ledger now shows "UNKNOWN" for 129 of 133 entries (96%) — needs fix, worsening as entries accumulate.
 - **Priorities for tomorrow:** none
-- **Routing observations:** No misroutes detected. Haiku + Gemini parallel classifier functioning correctly. Claude Code CLI nightly review failure escalated: after 4 nights of timeouts (05-06 through 05-08), tonight hit org quota exhaustion — strongly consider switching nightly review to Gemini CLI as default.
+- **Routing observations:** No misroutes detected. Haiku + Gemini parallel classifier functioning correctly. Both nightly AND weekly reviews now failing due to Claude Code CLI / Opus org quota exhaustion — strongly consider switching all review cycles to Gemini CLI as the default engine.
