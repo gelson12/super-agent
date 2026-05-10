@@ -115,6 +115,6 @@ cd /workspace/super-agent && git add <files> && git commit -m "msg" && git push 
 
 ## PENDING ISSUES (2026-05-10)
 
-- **Health:** Error rate stable at 1.2% across ~2,484 interactions (up from 2,407). n8n: 70 active workflows, reachable ✅ — 0 recent failures, all auto-recovered. Disk ~48.7% used (~1,066 GB free). Budget usage stable. Nightly review 2026-05-10 failed — Claude Code CLI returned org quota exhaustion. Weekly review 2026-05-10 also failed — Opus returned org quota exhaustion. Model attribution in cost_ledger now shows "UNKNOWN" for 129 of 133 entries (96%) — needs fix, worsening as entries accumulate.
+- **Health:** Error rate stable at 1.2% across ~2,484 interactions (up from ~2,407). n8n: 70 active workflows, reachable ✅ — 0 recent failures, all auto-recovered. Disk ~48.7% used (~1,067 GB free). Budget usage stable. Nightly review 2026-05-10 failed — Claude Code CLI returned "You've hit your org's monthly usage limit" (5th consecutive nightly failure: 05-06 through 05-10, last 3 due to org quota exhaustion). Model attribution in cost_ledger: 129 of 133 entries still show "UNKNOWN" — needs fix.
 - **Priorities for tomorrow:** none
-- **Routing observations:** No misroutes detected. Haiku + Gemini parallel classifier functioning correctly. Both nightly AND weekly reviews now failing due to Claude Code CLI / Opus org quota exhaustion — strongly consider switching all review cycles to Gemini CLI as the default engine.
+- **Routing observations:** No misroutes detected. Haiku + Gemini parallel classifier functioning correctly. Claude Code CLI nightly review issue now at 5 nights running — switched from timeouts to org quota exhaustion after night 3. Strongly consider switching nightly review to Gemini CLI as default.
