@@ -1,5 +1,5 @@
 # Super-Agent — Gemini CLI Context
-**Last updated:** 2026-05-10
+**Last updated:** 2026-05-11
 
 This file is auto-loaded by `gemini --prompt` on every invocation inside this repo.
 It gives Gemini CLI situational awareness of the system architecture.
@@ -113,8 +113,8 @@ cd /workspace/super-agent && git add <files> && git commit -m "msg" && git push 
 
 ---
 
-## PENDING ISSUES (2026-05-10)
+## PENDING ISSUES (2026-05-11)
 
-- **Health:** Error rate stable at 1.2% across ~2,484 interactions (up from ~2,407). n8n: 70 active workflows, reachable ✅ — 0 recent failures, all auto-recovered. Disk ~48.7% used (~1,067 GB free). Budget usage stable. Nightly review 2026-05-10 failed — Claude Code CLI returned "You've hit your org's monthly usage limit" (5th consecutive nightly failure: 05-06 through 05-10, last 3 due to org quota exhaustion). Model attribution in cost_ledger: 129 of 133 entries still show "UNKNOWN" — needs fix.
+- **Health:** Error rate stable at 1.1% across ~2,660 interactions (up from ~2,484). n8n: 70 active workflows, reachable ✅ — 0 recent failures, all auto-recovered. Disk ~45.7% used (~1,129 GB free). Budget usage stable. Nightly review 2026-05-11 failed — Claude Code CLI returned "You've hit your org's monthly usage limit" (6th consecutive nightly failure: 05-06 through 05-11, last 4 due to org quota exhaustion). Model attribution in cost_ledger: 111 of 113 entries still show "UNKNOWN" — needs fix.
 - **Priorities for tomorrow:** none
-- **Routing observations:** No misroutes detected. Haiku + Gemini parallel classifier functioning correctly. Claude Code CLI nightly review issue now at 5 nights running — switched from timeouts to org quota exhaustion after night 3. Strongly consider switching nightly review to Gemini CLI as default.
+- **Routing observations:** No misroutes detected. Haiku + Gemini parallel classifier functioning correctly. Claude Code CLI nightly review issue now at 6 nights running — switched from timeouts to org quota exhaustion after night 3. Strongly consider switching nightly review to Gemini CLI as default.
