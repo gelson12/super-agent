@@ -1,5 +1,5 @@
 # Super-Agent — Gemini CLI Context
-**Last updated:** 2026-05-11
+**Last updated:** 2026-05-12
 
 This file is auto-loaded by `gemini --prompt` on every invocation inside this repo.
 It gives Gemini CLI situational awareness of the system architecture.
@@ -113,8 +113,8 @@ cd /workspace/super-agent && git add <files> && git commit -m "msg" && git push 
 
 ---
 
-## PENDING ISSUES (2026-05-11)
+## PENDING ISSUES (2026-05-12)
 
-- **Health:** Error rate dipped to 1.1% across ~2,660 interactions (up from ~2,484). n8n: 70 active workflows, reachable ✅ — 0 recent failures, all auto-recovered. Disk ~45.7% used (~1,129 GB free). Budget usage stable. Nightly review 2026-05-11 failed — Claude Code CLI returned "You've hit your org's monthly usage limit" (6th consecutive nightly failure: 05-06 through 05-11, all due to org quota exhaustion since night 3). Model attribution in cost_ledger: 111 of 113 entries still show "UNKNOWN" — needs fix.
+- **Health:** Error rate at 1.2% across ~2,752 interactions (up from ~2,660). n8n: 70 active workflows, reachable ✅ — 0 recent failures, all auto-recovered. Disk ~47.3% used (~1,094 GB free). Budget usage stable. Nightly review 2026-05-12 failed — Claude Code CLI returned "You've hit your org's monthly usage limit" (7th consecutive nightly failure: 05-06 through 05-12, all due to org quota exhaustion since night 3). Model attribution in cost_ledger: 48 of 48 entries show "UNKNOWN" (100%) — model attribution remains unfixed and has regressed to complete failure.
 - **Priorities for tomorrow:** none
-- **Routing observations:** No misroutes detected. Haiku + Gemini parallel classifier functioning correctly. Claude Code CLI nightly review issue now at 6 nights running — org quota exhaustion since night 3. Nightly review 05-11 reviewed 165 interactions before failing. Strongly consider switching nightly review to Gemini CLI as default.
+- **Routing observations:** No misroutes detected. Haiku + Gemini parallel classifier functioning correctly. Claude Code CLI nightly review issue now at 7 nights running — org quota exhaustion since night 3. Nightly review 05-12 reviewed only 86 interactions before failing (down from 165 on 05-11). Strongly consider switching nightly review to Gemini CLI as default — today's failure confirms Claude Code CLI nightly review is permanently broken until next org billing cycle.
