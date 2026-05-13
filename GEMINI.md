@@ -1,5 +1,5 @@
 # Super-Agent — Gemini CLI Context
-**Last updated:** 2026-05-12
+**Last updated:** 2026-05-13
 
 This file is auto-loaded by `gemini --prompt` on every invocation inside this repo.
 It gives Gemini CLI situational awareness of the system architecture.
@@ -113,8 +113,8 @@ cd /workspace/super-agent && git add <files> && git commit -m "msg" && git push 
 
 ---
 
-## PENDING ISSUES (2026-05-12)
+## PENDING ISSUES (2026-05-13)
 
-- **Health:** Error rate stable at 1.2% across ~2,752 interactions (up from ~2,660). n8n: 70 active workflows, reachable ✅ — 0 recent failures, all auto-recovered. Disk ~47% used (~1,095 GB free). Budget usage stable. Nightly review 2026-05-12 failed — Claude Code CLI returned "You've hit your org's monthly usage limit" (7th consecutive nightly failure: 05-06 through 05-12, all due to org quota exhaustion). Model column in cost_ledger: all 48 entries still show "UNKNOWN" — model attribution remains unfixed.
+- **Health:** Error rate stable at 1.2% across ~2,865 interactions (up from ~2,752). n8n: 70 active workflows, reachable ✅ — 2 transient timeout errors today, both auto-recovered. Disk ~49–51% used (~1,048 GB free). Budget ~0.6–0.8%. Nightly review 2026-05-13 failed — Claude Code CLI timed out (130s). Model column in cost_ledger: all entries still show "UNKNOWN" — model attribution remains unfixed.
 - **Priorities for tomorrow:** none
-- **Routing observations:** No misroutes detected. Haiku + Gemini parallel classifier functioning correctly. Claude Code CLI nightly review issue now at 7 nights running — org quota exhaustion since night 3. Nightly review 05-12 reviewed 86 interactions before failing. Strongly consider switching nightly review to Gemini CLI as default.
+- **Routing observations:** No misroutes detected. 1.2% error rate stable. 2 auto-recovered n8n timeouts (n8n_early route). Haiku + Gemini parallel classifier functioning correctly. Nightly review continues to fail — consider switching to Gemini CLI as default.
