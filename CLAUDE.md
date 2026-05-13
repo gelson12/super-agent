@@ -1,5 +1,5 @@
 # Super-Agent — Claude CLI Context
-**Last updated:** 2026-05-12
+**Last updated:** 2026-05-13
 
 This file is auto-loaded by `claude -p` on every invocation inside this repo.
 It gives Claude CLI situational awareness of the system architecture.
@@ -337,8 +337,8 @@ Fix:
 
 ---
 
-## PENDING ISSUES (as of 2026-05-12)
+## PENDING ISSUES (as of 2026-05-13)
 
-- **Health:** Error rate stable at 1.2% across ~2,752 interactions (up from ~2,660). n8n: 70 active workflows, reachable ✅ — 0 recent failures, all auto-recovered. Disk ~47% used (~1,095 GB free). Budget usage stable. Nightly review 2026-05-12 failed — Claude Code CLI returned "You've hit your org's monthly usage limit" (7th consecutive nightly failure: 05-06 through 05-12, all due to org quota exhaustion). Model column in cost_ledger: all 48 entries still show "UNKNOWN" — model attribution remains unfixed.
+- **Health:** Error rate stable at 1.2% across ~2,865 interactions (up from ~2,752). n8n: 70 active workflows, reachable ✅ — 2 transient timeout errors today (info@terrapinn.com, security@info.n8n.io), both auto-recovered ("n8n already reachable — no repair needed"). Disk ~49–51% used (~1,048 GB free). Budget ~0.6–0.8%. Nightly review 2026-05-13 failed — Claude Code CLI timed out ("waiting for CLI worker after 130s") — 8th consecutive nightly failure in various forms. Model column in cost_ledger: all ~75 entries still show "UNKNOWN" — model attribution remains unfixed.
 - **Priorities for tomorrow:** none
-- **Routing observations:** No misroutes detected. Haiku + Gemini parallel classifier working as expected. Claude Code CLI nightly review issue now at 7 nights running — org quota exhaustion since night 3. Nightly review 05-12 reviewed 86 interactions before failing. Strongly consider switching nightly review to Gemini CLI as default, or configuring a different Claude account/API key for the review process.
+- **Routing observations:** No misroutes detected. 1.2% error rate stable. 2 auto-recovered n8n timeouts (both on `n8n_early` route with `error_category: timeout`). Haiku + Gemini parallel classifier working as expected. Nightly review continues to fail — consider switching to Gemini CLI or a lighter review method.
