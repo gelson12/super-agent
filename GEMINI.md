@@ -1,5 +1,5 @@
 # Super-Agent — Gemini CLI Context
-**Last updated:** 2026-05-13
+**Last updated:** 2026-05-14
 
 This file is auto-loaded by `gemini --prompt` on every invocation inside this repo.
 It gives Gemini CLI situational awareness of the system architecture.
@@ -113,8 +113,9 @@ cd /workspace/super-agent && git add <files> && git commit -m "msg" && git push 
 
 ---
 
-## PENDING ISSUES (2026-05-13)
 
-- **Health:** Error rate stable at 1.2% across ~2,865 interactions (up from ~2,752). n8n: 70 active workflows, reachable ✅ — occasional transient failures (0 at latest check), all auto-recovered. Disk ~49.6% used (~1,048 GB free). Budget usage stable. Nightly review 2026-05-13 failed — Claude Code CLI timed out after 130s (8th consecutive nightly failure: 05-06 through 05-13, all due to org quota exhaustion / CLI timeout). Model column in cost_ledger: now 73 entries total, all 73 still show "UNKNOWN" — model attribution remains unfixed.
+## PENDING ISSUES (2026-05-14)
+
+- **Health:** Error rate stable at 1.2% across ~2,946 interactions (up from ~2,865). n8n: 68 active workflows, reachable ✅ — occasional transient failures (2 at peak, 0 at latest check), all auto-recovered. Disk ~48.6% used (~1,068 GB free). Budget usage stable. Nightly review 2026-05-14 failed — Claude Code CLI timed out after 130s (9th consecutive nightly failure: 05-06 through 05-14, all due to org quota exhaustion / CLI timeout). Model column in cost_ledger: now 47 entries total, all still show "UNKNOWN" — model attribution remains unfixed. Improvement cycle identified tool caching for bridge agent system prompts as next optimization target.
 - **Priorities for tomorrow:** none
-- **Routing observations:** No misroutes detected. Haiku + Gemini parallel classifier working as expected. Nightly review 05-13 reviewed 109 interactions before timing out. Claude Code CLI nightly review now at 8 consecutive failures — still relying on Claude Code despite persistent org quota issues. Strongly recommend switching nightly review to Gemini CLI as default.
+- **Routing observations:** No misroutes detected. Haiku + Gemini parallel classifier working as expected. Nightly review 05-14 reviewed 77 interactions before timing out. Claude Code CLI nightly review now at 9 consecutive failures — still relying on Claude Code despite persistent org quota issues. Strongly recommend switching nightly review to Gemini CLI as default.
