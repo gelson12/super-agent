@@ -648,6 +648,19 @@ def _is_debug_request(message: str) -> bool:
     return any(k in lower for k in _DEBUG_KEYWORDS)
 
 
+_PERSONAL_MAILBOX_KEYWORDS = {
+    "outlook", "hotmail", "outlook.com", "outlook_qa",
+    "personal mail", "my inbox", "my email", "personal email",
+    "my outlook", "read my", "check my mail", "check my email",
+    "in my inbox",
+}
+
+
+def _is_personal_mailbox_request(message: str) -> bool:
+    lower = message.lower()
+    return any(k in lower for k in _PERSONAL_MAILBOX_KEYWORDS)
+
+
 def _is_n8n_request(message: str) -> bool:
     lower = message.lower()
     return any(k in lower for k in _N8N_KEYWORDS)
@@ -1797,10 +1810,44 @@ def dispatch(message: str, force_model: str | None = None, session_id: str = "de
             "cache_hit": False,
         }, routing_explanation=f"Self-improve agent selected — infrastructure query detected (complexity={complexity}).")
 
+    # ── 4c2. Personal mailbox routing (before isolation_debug) ──────────────────
+    # Catches personal email/mailbox queries that would otherwise fall into
+    # isolation_debug because they contain words like "not working", "error",
+    # "broken" when describing email issues. Routes to SHELL agent normally
+    # so it can inspect mailbox/secretary functionality without debug isolation.
+    if _is_personal_mailbox_request(message):
+        _write_active_task(session_id, message)
+        response = _safe_agent_call(run_shell_agent, _agent_message, authorized=authorized, agent_name="shell_agent")
+        _clear_active_task(session_id)
+        store_memory(session_id, f"Q: {message[:300]} A: {response[:300]}")
+        insight_log.record(message, "SHELL", response, "personal_mailbox", complexity, session_id)
+        adapter.tick()
+        _vault_log_outcome("SHELL", message, response, session_id)
+        _set_last_agent(session_id, "SHELL")
+        response = _maybe_add_next_step(response, session_id, "SHELL")
+        _record_and_prewarm(session_id, "SHELL")
+        return _build_extended_result({
+            "model_used": "SHELL",
+            "response": response,
+            "routed_by": "personal_mailbox",
+            "complexity": complexity,
+            "cache_hit": False,
+        }, routing_explanation=f"Shell agent selected for personal mailbox query — routed before isolation_debug to avoid debug stance (complexity={complexity}).")
+
+
     # ── 4d. Isolation debug routing ───────────────────────────────────────────
     # Guard: skip debug routing for N8N requests — "workflow isn't working" should
     # go to the n8n agent, not shell debug, even though it contains "not working".
     if _is_debug_request(message) and not _is_n8n_request(message):
+        # Log unmatched tokens for gap analysis — makes isolation_debug catch visible
+        try:
+            from ..activity_log import bg_log as _bg_debug
+            _lower = message.lower()
+            _matched = {k for k in _DEBUG_KEYWORDS if k in _lower}
+            _bg_debug(f"isolation_debug fired: session={session_id}, matched={_matched}, message_preview={message[:80]}", source="dispatch")
+        except Exception:
+            pass
+
         _write_active_task(session_id, message)
         response = run_shell_agent(message, authorized=authorized, debug_mode=True)
         # If shell debug itself errors, escalate straight to self-improve agent
