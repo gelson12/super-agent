@@ -7268,16 +7268,21 @@ def memory_ingest(req: _MemoryIngestRequest, request: Request):
 
 
 @app.get("/memory/export", tags=["memory"])
-def memory_export(limit: int = 100, min_importance: int = 3):
+def memory_export(limit: int = 100, min_importance: int = 3, source: str | None = None):
     """
     Export recent important memories from the shared DB for cross-agent sync.
     No auth required — read-only, non-sensitive summaries only.
+
+    Query params:
+        limit: max memories (1-500, default 100)
+        min_importance: filter by importance (0-5)
+        source: optional source tag to filter by (e.g. 'crypto_specialist_v3')
     """
     limit = max(1, min(limit, 500))
     min_importance = max(0, min(min_importance, 5))
     try:
         from .memory.vector_memory import export_memories
-        memories = export_memories(limit=limit, min_importance=min_importance)
+        memories = export_memories(limit=limit, min_importance=min_importance, source=source)
         return {"memories": memories, "count": len(memories)}
     except Exception as e:
         raise HTTPException(500, f"Memory export failed: {e}")

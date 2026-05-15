@@ -725,11 +725,16 @@ def ingest_external_memory(
         return False
 
 
-def export_memories(limit: int = 100, min_importance: int = 3) -> list[dict]:
+def export_memories(limit: int = 100, min_importance: int = 3, source: str | None = None) -> list[dict]:
     """
     Export recent important memories as structured dicts.
     Used by the /memory/export endpoint so Claude Code can pull
     cross-session insights and write them to local memory files.
+
+    Args:
+        limit: max number of memories to return
+        min_importance: filter by minimum importance level
+        source: optional source tag (e.g. 'crypto_specialist_v3') to filter results
     """
     results = []
     if _pg_enabled and _conn_str:
@@ -737,13 +742,19 @@ def export_memories(limit: int = 100, min_importance: int = 3) -> list[dict]:
             import psycopg2
             conn = psycopg2.connect(_conn_str)
             cur = conn.cursor()
-            cur.execute("""
+            where_parts = ["importance >= %s"]
+            params = [min_importance]
+            if source:
+                where_parts.append("source = %s")
+                params.append(source)
+            where_clause = " AND ".join(where_parts)
+            cur.execute(f"""
                 SELECT content, source, memory_type, importance, created_at
                 FROM agent_memories
-                WHERE importance >= %s
+                WHERE {where_clause}
                 ORDER BY created_at DESC
                 LIMIT %s
-            """, (min_importance, limit))
+            """, params + [limit])
             for row in cur.fetchall():
                 results.append({
                     "content": row[0],
