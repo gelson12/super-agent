@@ -1,5 +1,5 @@
 # Super-Agent — Claude CLI Context
-**Last updated:** 2026-05-07
+**Last updated:** 2026-05-14
 
 This file is auto-loaded by `claude -p` on every invocation inside this repo.
 It gives Claude CLI situational awareness of the system architecture.
@@ -191,7 +191,7 @@ All gemini calls also pass `--skip-trust` flag directly. No more trust directory
 | `83ZQ9b5xReUaF6Ib` | Chief of Staff — Command Centre | ACTIVE | ✅ |
 | `14cHr1Y6srSRFQpm` | Claude Inbox Trash Purge | ACTIVE | ✅ |
 
-*(56 active workflows total on n8n instance)*
+*(70 active workflows total on n8n instance)*
 
 ---
 
@@ -337,8 +337,8 @@ Fix:
 
 ---
 
-## PENDING ISSUES (as of 2026-05-07)
+## PENDING ISSUES (as of 2026-05-14)
 
-- **Health:** Error rate stable at 1.3% across ~2,155 interactions. n8n: 69 active workflows, reachable ✅ — 2 anomaly alerts fired today for n8n failure spikes (≥3 failures per window), all auto-recovered without intervention. Disk ~49% used (~1,066 GB free). Budget usage 0.8%. Nightly review 2026-05-07 timed out (Claude Code CLI worker — 130s no response), same pattern as previous night. Model column in cost_ledger shows "UNKNOWN" for all entries — needs investigation to fix model attribution.
+- **Health:** Error rate stable at 1.2% across ~2,946 interactions (up from ~2,865). n8n: 68 active workflows, reachable ✅ — occasional transient failures (2 at peak, 0 at latest check), all auto-recovered. Disk ~48.6% used (~1,068 GB free). Budget usage stable. Nightly review 2026-05-14 failed — Claude Code CLI timed out after 130s (9th consecutive nightly failure: 05-06 through 05-14, all due to org quota exhaustion / CLI timeout). Model column in cost_ledger: now 47 entries total, all still show "UNKNOWN" — model attribution remains unfixed. Improvement cycle identified tool caching for bridge agent system prompts as next optimization target.
 - **Priorities for tomorrow:** none
-- **Routing observations:** No misroutes detected. All agents routing correctly. Haiku + Gemini parallel classifier working as expected. Consider investigating why Claude Code CLI worker times out during nightly reviews at 130s — may need timeout increase or switch to Gemini CLI for nightly review task.
+- **Routing observations:** No misroutes detected. Haiku + Gemini parallel classifier working as expected. Nightly review 05-14 reviewed 77 interactions before timing out. Claude Code CLI nightly review now at 9 consecutive failures — still relying on Claude Code despite persistent org quota issues. Strongly recommend switching nightly review to Gemini CLI as default, or configuring a different Claude account/API key.
