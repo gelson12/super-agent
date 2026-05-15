@@ -1,5 +1,5 @@
 # Super-Agent — Claude CLI Context
-**Last updated:** 2026-05-14
+**Last updated:** 2026-05-15
 
 This file is auto-loaded by `claude -p` on every invocation inside this repo.
 It gives Claude CLI situational awareness of the system architecture.
@@ -337,8 +337,8 @@ Fix:
 
 ---
 
-## PENDING ISSUES (as of 2026-05-14)
+## PENDING ISSUES (as of 2026-05-15)
 
-- **Health:** Error rate stable at 1.2% across ~2,946 interactions (up from ~2,865). n8n: 68 active workflows, reachable ✅ — occasional transient failures (2 at peak, 0 at latest check), all auto-recovered. Disk ~48.6% used (~1,068 GB free). Budget usage stable. Nightly review 2026-05-14 failed — Claude Code CLI timed out after 130s (9th consecutive nightly failure: 05-06 through 05-14, all due to org quota exhaustion / CLI timeout). Model column in cost_ledger: now 47 entries total, all still show "UNKNOWN" — model attribution remains unfixed. Improvement cycle identified tool caching for bridge agent system prompts as next optimization target.
+- **Health:** Error rate at 0.0% across ~57 interactions (insight log). n8n: 79 active workflows (104 total), all reachable ✅ — no transient failures. Disk healthy. Budget usage stable. Nightly review 2026-05-15 failed — Claude Code CLI timed out after 90s (10th consecutive nightly failure: 05-06 through 05-15, all due to org quota exhaustion / CLI timeout). Model column in cost_ledger still shows "UNKNOWN" — model attribution remains unfixed.
 - **Priorities for tomorrow:** none
-- **Routing observations:** No misroutes detected. Haiku + Gemini parallel classifier working as expected. Nightly review 05-14 reviewed 77 interactions before timing out. Claude Code CLI nightly review now at 9 consecutive failures — still relying on Claude Code despite persistent org quota issues. Strongly recommend switching nightly review to Gemini CLI as default, or configuring a different Claude account/API key.
+- **Routing observations:** No errors recorded across GITHUB, SHELL, or CLAUDE routes. Nightly review 05-15 reviewed 77 interactions before timing out. Claude Code CLI nightly review now at 10 consecutive failures — still relying on Claude Code despite persistent org quota issues. Strongly recommend switching nightly review to Gemini CLI as default, or configuring a different Claude account/API key.
