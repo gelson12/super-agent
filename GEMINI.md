@@ -83,7 +83,7 @@ Classification categories:
 | `83ZQ9b5xReUaF6Ib` | Chief of Staff — Command Centre | ACTIVE |
 | `14cHr1Y6srSRFQpm` | Claude Inbox Trash Purge | ACTIVE |
 
-*(70 active workflows total on n8n instance)*
+*(68 active workflows total on n8n instance)*
 
 ---
 
@@ -116,6 +116,6 @@ cd /workspace/super-agent && git add <files> && git commit -m "msg" && git push 
 
 ## PENDING ISSUES (2026-05-15)
 
-- **Health:** Error rate at 0.0% across ~57 interactions (insight log). n8n: 79 active workflows (104 total), all reachable ✅ — no transient failures. Disk healthy. Budget usage stable. Nightly review 2026-05-15 failed — Claude Code CLI timed out after 90s (10th consecutive nightly failure: 05-06 through 05-15, all due to org quota exhaustion / CLI timeout). Model column in cost_ledger still shows "UNKNOWN" — model attribution remains unfixed.
+- **Health:** Error rate ~1.1% across ~3,026 interactions (agent_metrics). Insight log: 57 entries with 0 errors (narrow scope). n8n: 68 active workflows (104 total), reachable ✅ — occasional transient failures (Gemini 429 auto-recovered, bridge bot ECONNRESETs from stale memo bloat). Disk ~49.8% used (~1,044 GB free). Nightly review 2026-05-15 failed — Claude Code CLI org quota exhausted (10th consecutive nightly failure: 05-06 through 05-15). Cost ledger reset to 0 entries. Model attribution remains blind in both cost_ledger and prod_usage_log.
 - **Priorities for tomorrow:** none
-- **Routing observations:** No errors recorded across GITHUB, SHELL, or CLAUDE routes. Nightly review 05-15 reviewed 77 interactions before timing out. Claude Code CLI nightly review now at 10 consecutive failures — strongly recommend switching nightly review to Gemini CLI as default.
+- **Routing observations:** No misroutes detected across GITHUB, SHELL, or CLAUDE routes. Haiku + Gemini parallel classifier nominal. Nightly review 05-15 attempted but Claude Code CLI org quota exhausted before review completed. 10 consecutive nightly failures — strongly recommend switching nightly review to Gemini CLI as default. 2 bridge bots deactivated (bridge_ceo_bot SQL column mismatch, bridge_chief_sec_off_bot webhook config). Gemini free-tier key `AIzaSyA6qcqiigyQOkdRcugrEoJKABU6wAYeq9c` zero quota across all models — Chief of Staff health monitor breaks every 20min.
