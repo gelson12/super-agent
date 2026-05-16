@@ -1,5 +1,5 @@
 # Super-Agent — Gemini CLI Context
-**Last updated:** 2026-05-15
+**Last updated:** 2026-05-16
 
 This file is auto-loaded by `gemini --prompt` on every invocation inside this repo.
 It gives Gemini CLI situational awareness of the system architecture.
@@ -83,7 +83,7 @@ Classification categories:
 | `83ZQ9b5xReUaF6Ib` | Chief of Staff — Command Centre | ACTIVE |
 | `14cHr1Y6srSRFQpm` | Claude Inbox Trash Purge | ACTIVE |
 
-*(68 active workflows total on n8n instance)*
+*(71 active workflows total on n8n instance)*
 
 ---
 
@@ -114,8 +114,8 @@ cd /workspace/super-agent && git add <files> && git commit -m "msg" && git push 
 ---
 
 
-## PENDING ISSUES (2026-05-15)
+## PENDING ISSUES (2026-05-16)
 
-- **Health:** Error rate ~1.1% across ~3,026 interactions (agent_metrics). Insight log: 57 entries with 0 errors (narrow scope). n8n: 68 active workflows (104 total), reachable ✅ — occasional transient failures (Gemini 429 auto-recovered, bridge bot ECONNRESETs from stale memo bloat). Disk ~49.8% used (~1,044 GB free). Nightly review 2026-05-15 failed — Claude Code CLI org quota exhausted (10th consecutive nightly failure: 05-06 through 05-15). Cost ledger reset to 0 entries. Model attribution remains blind in both cost_ledger and prod_usage_log.
+- **Health:** Error rate steady at ~1.1% across ~3,078 interactions (agent_metrics). Insight log: 48 entries with 0 errors (narrow scope). n8n: 71 active workflows (105 total), reachable ✅ — occasional transient failures (Gemini 429 auto-recovered, bridge bot ECONNRESETs from stale memo bloat). Disk ~47.3% used (~1,096 GB free). Nightly review 2026-05-16 failed — Claude Code CLI timed out after 130s (11th consecutive nightly failure: 05-06 through 05-16). Cost ledger: 26 entries, all model = UNKNOWN. Model attribution remains blind in both cost_ledger and prod_usage_log.
 - **Priorities for tomorrow:** none
-- **Routing observations:** No misroutes detected across GITHUB, SHELL, or CLAUDE routes. Haiku + Gemini parallel classifier nominal. Nightly review 05-15 attempted but Claude Code CLI org quota exhausted before review completed. 10 consecutive nightly failures — strongly recommend switching nightly review to Gemini CLI as default. 2 bridge bots deactivated (bridge_ceo_bot SQL column mismatch, bridge_chief_sec_off_bot webhook config). Gemini free-tier key `AIzaSyA6qcqiigyQOkdRcugrEoJKABU6wAYeq9c` zero quota across all models — Chief of Staff health monitor breaks every 20min.
+- **Routing observations:** No misroutes detected across GITHUB, SHELL, or CLAUDE routes. Insight log shows 3 GitHub-routed queries (outlook_qa sessions) routed successfully by github_keywords. All bridge bot sessions routed by 'forced' via webhook-bot-engine. Haiku + Gemini parallel classifier nominal. Nightly review 05-16 attempted but Claude Code CLI timed out at 130s — 11 consecutive nightly failures — strongly recommend switching nightly review to Gemini CLI as default. 2 bridge bots remain deactivated (bridge_ceo_bot SQL column mismatch, bridge_chief_sec_off_bot webhook config). Gemini free-tier key `AIzaSyA6qcqiigyQOkdRcugrEoJKABU6wAYeq9c` zero quota across all models — Chief of Staff health monitor breaks every 20min.
