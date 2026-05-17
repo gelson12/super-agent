@@ -1,5 +1,5 @@
 # Super-Agent — Claude CLI Context
-**Last updated:** 2026-05-16
+**Last updated:** 2026-05-17
 
 This file is auto-loaded by `claude -p` on every invocation inside this repo.
 It gives Claude CLI situational awareness of the system architecture.
@@ -337,8 +337,8 @@ Fix:
 
 ---
 
-## PENDING ISSUES (2026-05-16)
+## PENDING ISSUES (2026-05-17)
 
-- **Health:** Error rate ~1.1% across ~3,079 interactions (agent_metrics). Insight log: 47 entries with 0 errors (narrow scope). n8n: 71 active workflows (105 total), reachable ✅ — occasional transient failures (Gemini 429 auto-recovered, bridge bot ECONNRESETs from stale memo bloat). Disk ~47.3% used (~1,095 GB free). Nightly review 2026-05-16 failed — Claude Code CLI timed out after 130s (11th consecutive nightly failure: 05-06 through 05-16). Cost ledger: 26 entries, all UNKNOWN. Model attribution remains blind in both cost_ledger and prod_usage_log.
+- **Health:** All systems nominal. Error rate steady at 1.2% across ~3,132 interactions (agent_metrics). n8n: 71 active workflows, 0 recent failures. Disk ~46.3% used (~1,116 GB free). Nightly review 2026-05-17 — Claude Code CLI timed out after 130s (12th consecutive nightly failure: 05-06 through 05-17). Cost ledger: entries remain UNKNOWN.
 - **Priorities for tomorrow:** none
-- **Routing observations:** No misroutes detected across GITHUB, SHELL, or CLAUDE routes. Haiku + Gemini parallel classifier nominal. Nightly review 05-16 attempted but Claude Code CLI timed out after 130s — 11 consecutive nightly failures, still no action taken to switch to Gemini CLI as default. bridge_ceo_bot still INACTIVE (SQL column mismatch). Gemini free-tier key `AIzaSyA6qcqiigyQOkdRcugrEoJKABU6wAYeq9c` zero quota across all models — Chief of Staff health monitor breaks every 20min.
+- **Routing observations:** CLI worker timed out during nightly review (210s); general agent routing fell back to paid tiers as free models were unresponsive. Forced routing (via session_id) continues to work reliably for Bridge bots. No regression in keyword routing. bridge_ceo_bot still INACTIVE. Gemini free-tier key still at zero quota — Chief of Staff health monitor still impacted.
