@@ -405,16 +405,21 @@ async def _lifespan(app: FastAPI):
         pass
 
     scheduler = BackgroundScheduler()
-    # Health check: starts at 30min, dynamically respected via _hc_uses_llm() inside the job.
-    # The interval itself stays at 30min but the job skips the LLM at reduced/critical tiers.
-    # This avoids needing to restart the scheduler when credit tier changes.
-    scheduler.add_job(
-        _scheduled_health_check,
-        "interval",
-        minutes=30,
-        id="health_check",
-        replace_existing=True,
-    )
+    # Health check DISABLED by default — it made a recurring LLM-backed health
+    # call every 30min (~48/day) that drained the Pro weekly quota. The
+    # cli_worker /health probe is now quota-free (file-based token-expiry
+    # check), so this scheduled job is no longer needed to know auth is alive.
+    # Set SUPER_AGENT_ENABLE_HEALTH_CHECK=true to re-enable.
+    if os.environ.get("SUPER_AGENT_ENABLE_HEALTH_CHECK", "").lower() in ("1", "true", "yes"):
+        scheduler.add_job(
+            _scheduled_health_check,
+            "interval",
+            minutes=30,
+            id="health_check",
+            replace_existing=True,
+        )
+    else:
+        bg_log("health_check job disabled — set SUPER_AGENT_ENABLE_HEALTH_CHECK=true to re-enable", source="boot")
     def _nightly_review_job():
         if not _should_run("nightly_review"):
             return
@@ -444,13 +449,20 @@ async def _lifespan(app: FastAPI):
         id="weekly_review",
         replace_existing=True,
     )
-    scheduler.add_job(
-        _monitor_tick,
-        "interval",
-        minutes=30,
-        id="improvement_monitor",
-        replace_existing=True,
-    )
+    # improvement_monitor (self-improvement loop) DISABLED by default — it made
+    # a recurring LLM call every 30min. This mirrors the existing
+    # SUPER_AGENT_DISABLE_SELF_IMPROVE intent. Set
+    # SUPER_AGENT_ENABLE_IMPROVEMENT_MONITOR=true to re-enable.
+    if os.environ.get("SUPER_AGENT_ENABLE_IMPROVEMENT_MONITOR", "").lower() in ("1", "true", "yes"):
+        scheduler.add_job(
+            _monitor_tick,
+            "interval",
+            minutes=30,
+            id="improvement_monitor",
+            replace_existing=True,
+        )
+    else:
+        bg_log("improvement_monitor job disabled — set SUPER_AGENT_ENABLE_IMPROVEMENT_MONITOR=true to re-enable", source="boot")
 
     # Weekly benchmark — runs every Monday 01:00 UTC (day after weekly review)
     def _benchmark_job():

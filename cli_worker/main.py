@@ -443,32 +443,31 @@ def _gemini_auth_ok() -> bool:
 
 def _probe_claude_prompt(timeout: int = 20) -> bool:
     """
-    Test whether the Claude prompt is actually responsive — not just whether
-    the binary exists. Sends a real `-p` prompt and checks for non-empty output.
-    Falls back to version check if the prompt probe hangs or errors.
+    Report whether Claude auth is valid WITHOUT spending model quota.
+
+    Previously this ran a real `claude -p "ok"` inference call on every
+    uncached /health hit — roughly one model call per minute, 24/7 — which
+    silently burned the Pro weekly quota just to answer "is auth alive?".
+
+    It now checks the OAuth token expiry in the credentials file instead:
+    auth is healthy if a token exists and is not within 60s of expiring.
+    If the credentials file has no usable expiry, it falls back to a
+    `claude --version` binary check, which also costs zero quota. An
+    expired/expiring token returns False, which lets the watchdog run its
+    recovery chain — i.e. recovery still fires exactly when it is needed.
+
+    `timeout` is kept for signature compatibility (callers still pass it)
+    but is unused now that no subprocess prompt runs.
     """
     try:
-        r = subprocess.run(
-            ["claude", "-p", "ok"],
-            capture_output=True,
-            stdin=subprocess.DEVNULL,
-            timeout=timeout,
-            env={**os.environ, "HOME": "/root"},
-        )
-        # returncode 0 means auth is valid — stdout may be empty for short prompts
-        if r.returncode == 0:
-            return True
-        # Non-zero exit with auth-related error → definitely down
-        combined = ((r.stdout or b"") + (r.stderr or b"")).decode("utf-8", errors="replace").lower()
-        if any(p in combined for p in ("authentication", "login", "unauthorized", "token")):
-            return False
-        # returncode != 0 but no clear auth error → treat as down
-        return False
-    except subprocess.TimeoutExpired:
-        return False
+        expiry = _read_token_expiry()
+        remaining = expiry.get("expires_in_s")
+        if remaining is not None:
+            return remaining > 60
     except Exception:
-        # Binary missing or other OS error — fall back to version probe
-        return _probe(["claude", "--version"])
+        pass
+    # No usable expiry info — fall back to a no-quota binary presence check.
+    return _probe(["claude", "--version"])
 
 
 def _read_token_expiry() -> dict:
