@@ -2968,7 +2968,8 @@ _TOKEN_INVENTORY: dict[str, list[tuple[str, str]]] = {
     ],
     "infrastructure": [
         ("DATABASE_URL", "PostgreSQL (Railway-injected); SQLite fallback"),
-        ("RAILWAY_TOKEN", "Railway control plane (CLI + GraphQL)"),
+        ("RAILWAY_API_TOKEN", "Railway ACCOUNT token — account-wide CLI (reach ALL services)"),
+        ("RAILWAY_TOKEN", "Railway PROJECT token (CLI + GraphQL, single project)"),
         ("RAILWAY_PUBLIC_DOMAIN", "Auto-injected; used to build self-referencing URLs"),
         ("CLI_WORKER_URL", "Dedicated cli-worker service URL (overrides inspiring-cat)"),
         ("LEGION_BASE_URL", "Legion hive (distributed Haiku)"),

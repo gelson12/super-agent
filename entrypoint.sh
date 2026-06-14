@@ -50,17 +50,30 @@ if [ -n "$GITHUB_SSH_KEY" ]; then
 fi
 
 # ── Railway CLI authentication ────────────────────────────────────────────────
-# Newer Railway CLI reads RAILWAY_TOKEN env var automatically — no login command needed
-if [ -n "$RAILWAY_TOKEN" ]; then
-    export RAILWAY_TOKEN="${RAILWAY_TOKEN}"
-    # Verify the token works silently
+# Two token types — the Railway CLI reads either from the env automatically, so
+# NO interactive `railway login` is ever needed (that opens a browser and cannot
+# run headlessly). A token stays valid until you revoke it = "always logged in".
+#   RAILWAY_API_TOKEN — ACCOUNT/WORKSPACE token. The "structure link" to ALL the
+#     other containers: enables `railway whoami`, `railway list`, `railway link`,
+#     and cross-service `railway logs/variables/redeploy --service <name>` across
+#     EVERY project. Set this on the inspiring-cat service to patch anything.
+#   RAILWAY_TOKEN     — PROJECT token (scoped to one project). Used by the app's
+#     own autonomous redeploy; left untouched here. NOTE: when a project token is
+#     present it can pin the CLI to that one project, so the VS Code terminal env
+#     below deliberately clears RAILWAY_TOKEN and exports only RAILWAY_API_TOKEN.
+if [ -n "$RAILWAY_API_TOKEN" ]; then
+    export RAILWAY_API_TOKEN="${RAILWAY_API_TOKEN}"
     if railway whoami >/dev/null 2>&1; then
-        echo "[entrypoint] Railway CLI authenticated ($(railway whoami 2>/dev/null))."
+        echo "[entrypoint] Railway CLI authenticated ACCOUNT-WIDE ($(railway whoami 2>/dev/null)) — can reach all services."
     else
-        echo "[entrypoint] WARNING: RAILWAY_TOKEN is set but Railway CLI auth failed — token may be expired."
+        echo "[entrypoint] WARNING: RAILWAY_API_TOKEN set but 'railway whoami' failed — token may be revoked/expired."
     fi
+elif [ -n "$RAILWAY_TOKEN" ]; then
+    export RAILWAY_TOKEN="${RAILWAY_TOKEN}"
+    # Project tokens are not tied to a user, so `whoami` won't authenticate them.
+    echo "[entrypoint] Railway CLI has a PROJECT token only (RAILWAY_TOKEN) — scoped to one project. Set RAILWAY_API_TOKEN for account-wide control of all containers."
 else
-    echo "[entrypoint] WARNING: RAILWAY_TOKEN not set — autonomous redeploy disabled."
+    echo "[entrypoint] WARNING: no RAILWAY_API_TOKEN / RAILWAY_TOKEN set — Railway CLI unauthenticated; remote patching disabled."
 fi
 
 # ── Claude.ai Pro session token (credentials for claude CLI) ─────────────────
@@ -161,6 +174,26 @@ elif [ -d "/workspace/super-agent/.git" ]; then
     git -C /workspace/super-agent pull --ff-only 2>&1 | tail -2 | sed 's/^/[entrypoint] /' || true
 fi
 
+# ── Auto-clone EXTRA patch-target repos into /workspace ──────────────────────
+# Space-separated list of owner/repo, e.g.:
+#   WORKSPACE_REPOS="gelson12/friday_jarvis2 gelson12/OpenJarvis-Avengers gelson12/OpenJarvis"
+# Pre-clones every repo you might need to patch remotely, push-ready (HTTPS+token);
+# already-cloned repos are fast-forward pulled. Idempotent — safe every boot.
+if [ -n "$_GH_TOKEN" ] && [ -n "$WORKSPACE_REPOS" ]; then
+    for _repo in $WORKSPACE_REPOS; do
+        _name=$(basename "$_repo" .git)
+        if [ -d "/workspace/${_name}/.git" ]; then
+            echo "[entrypoint] ${_name} already cloned — pulling latest..."
+            git -C "/workspace/${_name}" pull --ff-only 2>&1 | tail -2 | sed 's/^/[entrypoint] /' || true
+        else
+            echo "[entrypoint] Cloning ${_repo} → /workspace/${_name} ..."
+            git clone "https://x-access-token:${_GH_TOKEN}@github.com/${_repo}.git" \
+                "/workspace/${_name}" 2>&1 | tail -3 | sed 's/^/[entrypoint] /' || true
+        fi
+    done
+    echo "[entrypoint] WORKSPACE_REPOS clone/pull complete."
+fi
+
 # ── VS Code workspace settings (GitHub + Railway + n8n env vars in terminal) ──
 cat > /workspace/.vscode/settings.json <<VSCODE
 {
@@ -175,7 +208,8 @@ cat > /workspace/.vscode/settings.json <<VSCODE
   "extensions.ignoreRecommendations": true,
   "terminal.integrated.defaultProfile.linux": "bash",
   "terminal.integrated.env.linux": {
-    "RAILWAY_TOKEN":      "${RAILWAY_TOKEN:-}",
+    "RAILWAY_API_TOKEN":  "${RAILWAY_API_TOKEN:-}",
+    "RAILWAY_TOKEN":      "",
     "GITHUB_PAT":         "${GITHUB_PAT:-}",
     "GITHUB_TOKEN":       "${GITHUB_TOKEN:-${GITHUB_PAT:-}}",
     "GH_TOKEN":           "${GITHUB_TOKEN:-${GITHUB_PAT:-}}",
@@ -287,8 +321,19 @@ fi
 # 2. Write Claude Code CLI settings — pre-approve all tools so MCP calls never
 #    pause to ask for permission (--dangerously-skip-permissions blocked as root).
 mkdir -p /root/.claude
+# model + effortLevel persist the default brain for BOTH the interactive VS Code
+# Claude Code AND every `claude -p` worker call (they share this file):
+#   "model": "claude-opus-4-8"   → Opus 4.8
+#   "effortLevel": "ultracode"   → xhigh reasoning + automatic dynamic-workflow
+#       orchestration (Claude Code's /ultracode behaviour), applied to every task.
+# NOTE: "ultracode"/"xhigh" may be plan-gated (this container auths as Claude.ai
+# Pro). If the plan caps effort, the value won't take — verify in the live REPL
+# (run `/ultracode`, "set as default", then `cat /root/.claude/settings.json`)
+# and replace the value below with exactly what the build writes.
 cat > /root/.claude/settings.json <<'CLAUDESETTINGS'
 {
+  "model": "claude-opus-4-8",
+  "effortLevel": "ultracode",
   "permissions": {
     "allow": [
       "Bash(*)",
@@ -311,7 +356,7 @@ cat > /root/.claude/settings.json <<'CLAUDESETTINGS'
 }
 CLAUDESETTINGS
 chmod 600 /root/.claude/settings.json
-echo "[entrypoint] Claude Code CLI settings written — all tools pre-approved (no permission prompts)."
+echo "[entrypoint] Claude Code CLI settings written — Opus 4.8 + ultracode default, all tools pre-approved."
 
 # 3. Write CLAUDE.md to /workspace so every `claude -p` invocation inherits
 #    the n8n API reference and workflow conventions automatically.
@@ -447,6 +492,40 @@ Use an HTTP Request node pointing at Super Agent:
 3. Fix the parameter or node type, then \`update_workflow\`
 
 ---
+
+## Sibling Railway Services & Patch Recipes (remote ops from here)
+
+This container is authenticated ACCOUNT-WIDE via RAILWAY_API_TOKEN, so from the
+VS Code terminal you can inspect and patch EVERY Railway service — not just this
+one. This is the "structure link" to all the other containers. ALWAYS discover
+the live inventory first (names/IDs change):
+
+\`\`\`
+railway whoami                              # confirm account-level auth
+railway list                                # all projects + services you own
+railway link                                # pick a project/service to act on
+\`\`\`
+
+Then patch any service by name:
+
+\`\`\`
+railway logs --service <name> --tail 50            # read a service's logs
+railway variables --service <name>                 # view env vars
+railway variables set KEY=VALUE --service <name>   # set an env var
+railway variables delete KEY --service <name>      # remove an env var
+railway redeploy --service <name> --yes            # restart / redeploy
+railway up                                         # deploy the linked repo/service
+\`\`\`
+
+Typical remote patch flow: 1) \`railway list\` → find the service. 2) Clone/pull
+its repo in /workspace (git is pre-authed via GITHUB_PAT). 3) Edit with Claude
+Code. 4) \`git push\` (auto-deploy services rebuild) OR
+\`railway redeploy --service <name> --yes\`.
+
+Known services as of writing (VERIFY with \`railway list\` — never assume):
+super-agent (this / inspiring-cat) · friday_jarvis2 (voice worker + UI) ·
+OpenJarvis-Avengers (worker + UI) · osiris · hermes-agent · n8n · obsidian-vault · legion.
+n8n base: ${N8N_BASE_URL:-not set}
 
 ## File System
 - /workspace — cloned repos, code, builds

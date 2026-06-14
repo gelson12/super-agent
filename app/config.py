@@ -52,8 +52,14 @@ class Settings(BaseSettings):
     n8n_base_url: str = ""   # e.g. https://n8n-production.up.railway.app
     n8n_api_key: str = ""    # n8n → Settings → n8n API → Create API Key
 
-    # Railway CLI token — set via Railway env var RAILWAY_TOKEN
+    # Railway CLI token — set via Railway env var RAILWAY_TOKEN (PROJECT-scoped)
     railway_token: str = ""
+
+    # Railway ACCOUNT/workspace token — set via Railway env var RAILWAY_API_TOKEN.
+    # Account-wide: lets the in-container CLI reach EVERY project/service
+    # (railway list/link + cross-service redeploy/logs/variables). This is what
+    # enables remote-patching all the other containers from this one's VS Code.
+    railway_api_token: str = ""
 
     # PostgreSQL — injected automatically by Railway when PostgreSQL plugin is added.
     # Falls back to SQLite in /workspace if not set.
